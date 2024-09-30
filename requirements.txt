@@ -131,7 +131,7 @@ pg8000==1.30.5
     # via testing-postgresql
 phonetics==1.0.5
     # via splink
-pillow==10.2.0
+pillow==10.3.0
     # via matplotlib
 platformdirs==3.11.0
     # via

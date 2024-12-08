@@ -9,7 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     select,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, BYTEA
+from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, JSONB
 from sqlalchemy.orm import Session, relationship
 
 from matchbox.server.postgresql.db import MBDB
@@ -152,9 +152,11 @@ class Sources(CountMixin, MBDB.MatchboxBase):
     model = Column(
         BYTEA, ForeignKey("models.hash", ondelete="CASCADE"), primary_key=True
     )
+    alias = Column(VARCHAR, nullable=False, unique=True)
     schema = Column(VARCHAR, nullable=False)
     table = Column(VARCHAR, nullable=False)
     id = Column(VARCHAR, nullable=False)
+    indices = Column(JSONB, nullable=False)
 
     # Relationships
     dataset_model = relationship("Models", back_populates="source")

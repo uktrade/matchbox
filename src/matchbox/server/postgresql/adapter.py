@@ -1,3 +1,4 @@
+import base64
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
@@ -354,10 +355,17 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 .first()
             )
             if dataset:
+                dataset_indices: dict[str, bytes] = {}
+                for index_type, index_b64_list in dataset.indices.items():
+                    dataset_indices[index_type] = [
+                        base64.b64decode(b64.encode("utf-8")) for b64 in index_b64_list
+                    ]
                 return Source(
+                    alias=dataset.alias,
                     db_schema=dataset.schema,
                     db_table=dataset.table,
                     db_pk=dataset.id,
+                    db_columns=dataset_indices,
                     database=SourceWarehouse.from_engine(engine),
                 )
             else:

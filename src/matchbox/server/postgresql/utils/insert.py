@@ -47,9 +47,14 @@ def insert_dataset(dataset: Source, engine: Engine, batch_size: int) -> None:
 
     source_data = {
         "model": model_hash,
+        "alias": dataset.alias,
         "schema": dataset.db_schema,
         "table": dataset.db_table,
         "id": dataset.db_pk,
+        "indices": {
+            "literal": [c.literal.base64 for c in dataset.db_columns if c.indexed],
+            "alias": [c.alias.base64 for c in dataset.db_columns if c.indexed],
+        },
     }
 
     clusters = dataset_to_hashlist(dataset=dataset, model_hash=model_hash)

@@ -38,6 +38,7 @@ dev = [
     "pytest-env>=1.1.5",
     "ruff>=0.6.8",
     "docker>=7.1.0",
+    "tomli-w>=1.1.0",
 ]
 typing = [
     "polars>=1.11.0",

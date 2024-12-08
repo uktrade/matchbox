@@ -1,4 +1,5 @@
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import pyarrow as pa
@@ -288,6 +289,17 @@ def query(
             if dataset is None:
                 raise MatchboxDatasetError(
                     db_schema=source.db_schema, db_table=source.db_table
+                )
+
+            # Warn if non-indexed fields have been requested
+            not_indexed = set(fields) - set(
+                c.literal.name for c in source.db_columns if c.indexed
+            )
+            if not_indexed:
+                warnings.warn(
+                    "Found non-indexed fields. Do not use these fields in match jobs:"
+                    f"{', '.join(sorted(not_indexed))}",
+                    stacklevel=2,
                 )
 
             hash_query = _resolve_cluster_hierarchy(

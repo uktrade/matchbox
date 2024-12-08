@@ -6,7 +6,7 @@ from matchbox.common.exceptions import MatchboxValidatonError
 from matchbox.common.hash import HASH_FUNC
 from pandas import DataFrame
 from pyarrow import Table as ArrowTable
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import (
     LABEL_STYLE_TABLENAME_PLUS_COL,
     ColumnElement,
@@ -31,6 +31,28 @@ else:
 ReturnTypeStr = Literal["arrow", "pandas", "polars"]
 
 T = TypeVar("T")
+
+
+class Match(BaseModel):
+    """A match between primary keys in the Matchbox database."""
+
+    cluster: bytes | None
+    source: str
+    source_id: set[str] = Field(default_factory=set)
+    target: str
+    target_id: set[str] = Field(default_factory=set)
+
+    @model_validator(mode="after")
+    def found_or_none(self) -> "Match":
+        if self.cluster is None and (self.source_id or self.target_id):
+            raise ValueError(
+                "A match must have a cluster if source_id or target_id is set."
+            )
+        elif self.cluster is not None and not (self.source_id or self.target_id):
+            raise ValueError(
+                "A match must have source_id or target_id if cluster is set."
+            )
+        return self
 
 
 class Probability(BaseModel):

@@ -5,7 +5,7 @@ from rustworkx import PyDiGraph
 from sqlalchemy import Engine, and_, bindparam, delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from matchbox.common.db import Source, SourceWarehouse
+from matchbox.common.db import Match, Source, SourceWarehouse
 from matchbox.common.exceptions import (
     MatchboxDataError,
     MatchboxDatasetError,
@@ -28,7 +28,7 @@ from matchbox.server.postgresql.utils.insert import (
     insert_model,
     insert_results,
 )
-from matchbox.server.postgresql.utils.query import query
+from matchbox.server.postgresql.utils.query import match, query
 from matchbox.server.postgresql.utils.results import (
     get_model_clusters,
     get_model_probabilities,
@@ -290,6 +290,38 @@ class MatchboxPostgres(MatchboxDBAdapter):
             model=model,
             threshold=threshold,
             limit=limit,
+        )
+
+    def match(
+        self,
+        source_id: str,
+        source: str,
+        target: str | list[str],
+        model: str,
+        threshold: float | dict[str, float] | None = None,
+    ) -> Match | list[Match]:
+        """Matches an ID in a source dataset and returns the keys in the targets.
+
+        Args:
+            source_id: The ID of the source to match.
+            source: The name of the source dataset.
+            target: The name of the target dataset(s).
+            model: The name of the model to use for matching.
+            threshold (optional): the threshold to use for creating clusters
+                If None, uses the models' default threshold
+                If a float, uses that threshold for the specified model, and the
+                model's cached thresholds for its ancestors
+                If a dictionary, expects a shape similar to model.ancestors, keyed
+                by model name and valued by the threshold to use for that model. Will
+                use these threshold values instead of the cached thresholds
+        """
+        return match(
+            source_id=source_id,
+            source=source,
+            target=target,
+            model=model,
+            engine=MBDB.get_engine(),
+            threshold=threshold,
         )
 
     def index(self, dataset: Source) -> None:

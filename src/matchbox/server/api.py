@@ -149,6 +149,11 @@ async def query():
     raise HTTPException(status_code=501, detail="Not implemented")
 
 
+@app.get("/match")
+async def match():
+    raise HTTPException(status_code=501, detail="Not implemented")
+
+
 @app.get("/validate/hash")
 async def validate_hashes():
     raise HTTPException(status_code=501, detail="Not implemented")

@@ -3,7 +3,7 @@ from typing import Callable
 import pytest
 import rustworkx as rx
 from dotenv import find_dotenv, load_dotenv
-from matchbox.common.db import Source
+from matchbox.common.db import Match, Source
 from matchbox.common.exceptions import (
     MatchboxDataError,
     MatchboxDatasetError,
@@ -16,7 +16,7 @@ from matchbox.common.results import (
     Results,
     to_clusters,
 )
-from matchbox.helpers.selector import query, selector, selectors
+from matchbox.helpers.selector import match, query, selector, selectors
 from matchbox.server.base import MatchboxDBAdapter, MatchboxModelAdapter
 from pandas import DataFrame
 
@@ -540,6 +540,72 @@ class TestMatchboxBackend:
             "test_duns_duns",
         }
         assert crn_duns.hash.nunique() == 1000
+
+    def test_match_one_to_many(self, revolution_inc: dict[str, list[str]]):
+        """Test that matching data works when the target has many IDs."""
+        self.setup_database("link")
+
+        crn_x_duns = "deterministic_naive_test.crn_naive_test.duns"
+        crn_wh = self.warehouse_data[0]
+        duns_wh = self.warehouse_data[1]
+
+        res = match(
+            backend=self.backend,
+            source_id=revolution_inc["duns"][0],
+            source=str(duns_wh),
+            target=str(crn_wh),
+            model=crn_x_duns,
+        )
+
+        assert isinstance(res, Match)
+        assert res.source == str(duns_wh)
+        assert res.target == str(crn_wh)
+        assert res.source_id == set(revolution_inc["duns"])
+        assert res.target_id == set(revolution_inc["crn"])
+
+    def test_match_many_to_one(self, revolution_inc: dict[str, list[str]]):
+        """Test that matching data works when the source has more possible IDs."""
+        self.setup_database("link")
+
+        crn_x_duns = "deterministic_naive_test.crn_naive_test.duns"
+        crn_wh = self.warehouse_data[0]
+        duns_wh = self.warehouse_data[1]
+
+        res = match(
+            backend=self.backend,
+            source_id=revolution_inc["crn"][0],
+            source=str(crn_wh),
+            target=str(duns_wh),
+            model=crn_x_duns,
+        )
+
+        assert isinstance(res, Match)
+        assert res.source == str(crn_wh)
+        assert res.target == str(duns_wh)
+        assert res.source_id == set(revolution_inc["crn"])
+        assert res.target_id == set(revolution_inc["duns"])
+
+    def test_match_none_to_none(self):
+        """Test that matching data work when the supplied key doesn't exist."""
+        self.setup_database("link")
+
+        crn_x_duns = "deterministic_naive_test.crn_naive_test.duns"
+        crn_wh = self.warehouse_data[0]
+        duns_wh = self.warehouse_data[1]
+
+        res = match(
+            backend=self.backend,
+            source_id="foo",
+            source=str(crn_wh),
+            target=str(duns_wh),
+            model=crn_x_duns,
+        )
+
+        assert isinstance(res, Match)
+        assert res.source == str(crn_wh)
+        assert res.target == str(duns_wh)
+        assert res.source_id == set()
+        assert res.target_id == set()
 
     def test_clear(self):
         """Test clearing the database."""

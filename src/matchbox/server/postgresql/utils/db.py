@@ -3,15 +3,22 @@ import cProfile
 import io
 import pstats
 from itertools import islice
-from typing import Any, Callable, Iterable, Tuple
+from typing import Any, Callable, Iterable
 
 import rustworkx as rx
 from pg_bulk_ingest import Delete, Upsert, ingest
-from sqlalchemy import Engine, MetaData, Table
+from sqlalchemy import Engine, Index, MetaData, Table
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.orm import DeclarativeMeta, Session
 
-from matchbox.server.postgresql.orm import Models, ModelsFrom, ModelType, Sources
+from matchbox.server.postgresql.orm import (
+    Clusters,
+    Contains,
+    Models,
+    ModelsFrom,
+    ModelType,
+    Sources,
+)
 
 # Retrieval
 
@@ -46,6 +53,44 @@ def get_model_subgraph(engine: Engine) -> rx.PyDiGraph:
             parent_idx = models.get(edge.parent)
             child_idx = models.get(edge.child)
             _ = G.add_edge(parent_idx, child_idx, {"type": "from"})
+
+    return G
+
+
+def get_data_subgraph(engine: Engine) -> rx.PyDiGraph:
+    """Retrieves the complete data subgraph as a PyDiGraph."""
+    G = rx.PyDiGraph()
+    nodes = {}
+
+    with Session(engine) as session:
+        sources = {source.model: source for source in session.query(Sources).all()}
+
+        for source in sources.values():
+            source_id = f"{source.schema}.{source.table}"
+            if source_id not in nodes:
+                source_idx = G.add_node({"id": source_id, "type": "source"})
+                nodes[source_id] = source_idx
+
+        for cluster in session.query(Clusters).all():
+            cluster_id = cluster.hash
+            if cluster_id not in nodes:
+                cluster_idx = G.add_node({"id": cluster_id, "type": "cluster"})
+                nodes[cluster_id] = cluster_idx
+
+            if cluster.id is not None and cluster.dataset is not None:
+                source = sources.get(cluster.dataset)
+                if source:
+                    data_id = str(cluster.id)
+                    data_idx = G.add_node({"id": data_id, "type": "data"})
+
+                    source_id = f"{source.schema}.{source.table}"
+                    G.add_edge(data_idx, nodes[source_id], {"type": "source"})
+                    G.add_edge(nodes[cluster_id], data_idx, {"type": "data"})
+
+        for contains in session.query(Contains).all():
+            G.add_edge(
+                nodes[contains.parent], nodes[contains.child], {"type": "contains"}
+            )
 
     return G
 
@@ -87,16 +132,53 @@ def batched(iterable: Iterable, n: int) -> Iterable:
 
 def data_to_batch(
     records: list[tuple], table: Table, batch_size: int
-) -> Callable[[str], Tuple[Any]]:
+) -> Callable[[str], tuple[Any]]:
     """Constructs a batches function for any dataframe and table."""
 
     def _batches(
         high_watermark,  # noqa ARG001 required for pg_bulk_ingest
-    ) -> Iterable[Tuple[None, None, Iterable[Tuple[Table, tuple]]]]:
+    ) -> Iterable[tuple[None, None, Iterable[tuple[Table, tuple]]]]:
         for batch in batched(records, batch_size):
             yield None, None, ((table, t) for t in batch)
 
     return _batches
+
+
+def isolate_table(table: DeclarativeMeta) -> tuple[MetaData, Table]:
+    """Creates an isolated copy of a SQLAlchemy table.
+
+    This is used to prevent pg_bulk_ingest from attempting to drop unrelated tables
+    in the same schema. The function creates a new Table instance with:
+
+    * A fresh MetaData instance
+    * Copied columns
+    * Recreated indices properly bound to the new table
+
+    Args:
+        table: The DeclarativeMeta class whose table should be isolated
+
+    Returns:
+        A tuple of:
+            * The isolated SQLAlchemy MetaData
+            * A new SQLAlchemy Table instance with all columns and indices
+    """
+    isolated_metadata = MetaData(schema=table.__table__.schema)
+
+    isolated_table = Table(
+        table.__table__.name,
+        isolated_metadata,
+        *[c._copy() for c in table.__table__.columns],
+        schema=table.__table__.schema,
+    )
+
+    for idx in table.__table__.indexes:
+        Index(
+            idx.name,
+            *[isolated_table.c[col.name] for col in idx.columns],
+            **{k: v for k, v in idx.kwargs.items()},
+        )
+
+    return isolated_metadata, isolated_table
 
 
 def batch_ingest(
@@ -110,14 +192,7 @@ def batch_ingest(
     We isolate the table and metadata as pg_bulk_ingest will try and drop unrelated
     tables if they're in the same schema.
     """
-
-    isolated_metadata = MetaData(schema=table.__table__.schema)
-    isolated_table = Table(
-        table.__table__.name,
-        isolated_metadata,
-        *[c._copy() for c in table.__table__.columns],
-        schema=table.__table__.schema,
-    )
+    isolated_metadata, isolated_table = isolate_table(table)
 
     fn_batch = data_to_batch(
         records=records,

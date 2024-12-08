@@ -4,7 +4,7 @@ from pandas import DataFrame
 from pyarrow import Table as ArrowTable
 from sqlalchemy import Engine, inspect
 
-from matchbox.common.db import Source, get_schema_table_names
+from matchbox.common.db import Match, Source, get_schema_table_names
 from matchbox.server import MatchboxDBAdapter, inject_backend
 
 
@@ -90,4 +90,38 @@ def query(
         threshold=threshold,
         return_type="pandas" if not return_type else return_type,
         limit=limit,
+    )
+
+
+@inject_backend
+def match(
+    backend: MatchboxDBAdapter,
+    source_id: str,
+    source: str,
+    target: str | list[str],
+    model: str,
+    threshold: float | dict[str, float] | None = None,
+) -> Match | list[Match]:
+    """Matches IDs against the selected backend.
+
+    Args:
+        backend: the backend to query
+        source_id: The ID of the source to match.
+        source: The name of the source dataset.
+        target: The name of the target dataset(s).
+        model: the model to use for filtering results
+        threshold (optional): the threshold to use for creating clusters
+            If None, uses the models' default threshold
+            If a float, uses that threshold for the specified model, and the
+            model's cached thresholds for its ancestors
+            If a dictionary, expects a shape similar to model.ancestors, keyed
+            by model name and valued by the threshold to use for that model. Will
+            use these threshold values instead of the cached thresholds
+    """
+    return backend.match(
+        source_id=source_id,
+        source=source,
+        target=target,
+        model=model,
+        threshold=threshold,
     )

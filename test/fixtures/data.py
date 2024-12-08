@@ -1,6 +1,6 @@
 import logging
-import uuid
 from pathlib import Path
+from uuid import UUID
 
 import numpy as np
 import pandas as pd
@@ -34,7 +34,7 @@ def all_companies(test_root_dir: Path) -> DataFrame:
     df = pd.read_csv(
         Path(test_root_dir, "data", "all_companies.csv"), encoding="utf-8"
     ).reset_index(names="id")
-    df["id"] = df["id"].apply(lambda x: uuid.UUID(int=x))
+    df["id"] = df["id"].apply(lambda x: UUID(int=x))
     return df
 
 
@@ -60,7 +60,7 @@ def crn_companies(all_companies: DataFrame) -> DataFrame:
 
     df_crn["id"] = range(df_crn.shape[0])
     df_crn = df_crn.filter(["id", "company_name", "crn"])
-    df_crn["id"] = df_crn["id"].apply(lambda x: uuid.UUID(int=x))
+    df_crn["id"] = df_crn["id"].apply(lambda x: UUID(int=x))
     df_crn = df_crn.convert_dtypes(dtype_backend="pyarrow")
 
     return df_crn
@@ -79,7 +79,7 @@ def duns_companies(all_companies: DataFrame) -> DataFrame:
     """
     df_duns = (
         all_companies.filter(["company_name", "duns"])
-        .sample(n=500)
+        .sample(n=500, random_state=1618)
         .reset_index(drop=True)
         .convert_dtypes(dtype_backend="pyarrow")
     )
@@ -106,10 +106,40 @@ def cdms_companies(all_companies: DataFrame) -> DataFrame:
     df_cdms.columns = ["crn", "cdms"]
 
     df_cdms.reset_index(names="id", inplace=True)
-    df_cdms["id"] = df_cdms["id"].apply(lambda x: uuid.UUID(int=x))
+    df_cdms["id"] = df_cdms["id"].apply(lambda x: UUID(int=x))
     df_cdms = df_cdms.convert_dtypes(dtype_backend="pyarrow")
 
     return df_cdms
+
+
+@pytest.fixture(scope="session")
+def revolution_inc(
+    crn_companies: DataFrame, duns_companies: DataFrame, cdms_companies: DataFrame
+) -> dict[str, str]:
+    """
+    Revolution Inc. as it exists across all three datasets.
+
+    UUIDs are converted to strings to mirror how Matchbox stores them.
+    """
+    crn_ids = crn_companies[
+        crn_companies["company_name"].str.contains("Revolution", case=False)
+    ]["id"].tolist()
+
+    duns_ids = duns_companies[
+        duns_companies["company_name"].str.contains("Revolution", case=False)
+    ]["id"].tolist()
+
+    revolution_crn = crn_companies[
+        crn_companies["company_name"].str.contains("Revolution", case=False)
+    ]["crn"].iloc[0]
+
+    cdms_ids = cdms_companies[cdms_companies["crn"] == revolution_crn]["id"].tolist()
+
+    return {
+        "crn": [str(id) for id in crn_ids],
+        "duns": [str(id) for id in duns_ids],
+        "cdms": [str(id) for id in cdms_ids],
+    }
 
 
 @pytest.fixture(scope="function")

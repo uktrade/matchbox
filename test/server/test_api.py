@@ -1,6 +1,9 @@
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
+from matchbox.common.graph import (
+    ResolutionGraph,
+)
 from matchbox.server import app
 
 client = TestClient(app)
@@ -112,6 +115,12 @@ class TestMatchboxAPI:
     #     response = client.get("/validate/hash")
     #     assert response.status_code == 200
 
-    # def test_get_model_subgraph():
-    #     response = client.get("/report/models")
-    #     assert response.status_code == 200
+    @patch("matchbox.server.base.BackendManager.get_backend")
+    def test_get_resolution_graph(self, get_backend, resolution_graph):
+        mock_backend = Mock()
+        mock_backend.get_resolution_graph = Mock(return_value=resolution_graph)
+        get_backend.return_value = mock_backend
+
+        response = client.get("/report/resolutions")
+        assert response.status_code == 200
+        assert ResolutionGraph.model_validate(response.json())

@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from matchbox.common.db import Source
+from matchbox.common.graph import ResolutionNodeKind
 from matchbox.common.hash import dataset_to_hashlist, list_to_value_ordered_hash
 from matchbox.common.results import ClusterResults, ProbabilityResults, Results
 from matchbox.server.postgresql.orm import (
@@ -18,7 +19,6 @@ from matchbox.server.postgresql.orm import (
     Contains,
     Models,
     ModelsFrom,
-    ModelType,
     Probabilities,
     Sources,
 )
@@ -41,7 +41,7 @@ def insert_dataset(dataset: Source, engine: Engine, batch_size: int) -> None:
 
     model_data = {
         "hash": model_hash,
-        "type": ModelType.DATASET.value,
+        "type": ResolutionNodeKind.DATASET.value,
         "name": f"{dataset.db_schema}.{dataset.db_table}",
     }
 
@@ -139,7 +139,7 @@ def insert_model(
             insert(Models)
             .values(
                 hash=model_hash,
-                type=ModelType.MODEL.value,
+                type=ResolutionNodeKind.MODEL.value,
                 name=model,
                 description=description,
                 truth=1.0,

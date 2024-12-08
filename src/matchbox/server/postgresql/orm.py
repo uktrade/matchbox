@@ -1,5 +1,3 @@
-from enum import Enum
-
 from sqlalchemy import (
     FLOAT,
     INTEGER,
@@ -12,14 +10,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, BYTEA
 from sqlalchemy.orm import Session, relationship
 
+from matchbox.common.graph import ResolutionNodeKind
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
-
-
-class ModelType(Enum):
-    MODEL = "model"
-    DATASET = "dataset"
-    HUMAN = "human"
 
 
 class ModelsFrom(CountMixin, MBDB.MatchboxBase):
@@ -109,7 +102,7 @@ class Models(CountMixin, MBDB.MatchboxBase):
         self, model: "Models"
     ) -> tuple[bytes, dict[bytes, float]]:
         """Returns the model lineage and cached truth values to a dataset."""
-        if model.type != ModelType.DATASET.value:
+        if model.type != ResolutionNodeKind.DATASET.value:
             raise ValueError(
                 f"Target model must be of type 'dataset', got {model.type}"
             )
@@ -135,7 +128,7 @@ class Models(CountMixin, MBDB.MatchboxBase):
             lineage = {
                 parent: truth
                 for parent, truth, type in results
-                if type != ModelType.DATASET.value
+                if type != ResolutionNodeKind.DATASET.value
             }
 
             lineage[self.hash] = self.truth

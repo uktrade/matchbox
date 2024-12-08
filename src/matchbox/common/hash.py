@@ -1,3 +1,4 @@
+import base64
 import hashlib
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
@@ -15,6 +16,10 @@ T = TypeVar("T")
 HashableItem = TypeVar("HashableItem", bytes, bool, str, int, float, bytearray)
 
 HASH_FUNC = hashlib.sha256
+
+
+def hash_to_str(hash: bytes) -> str:
+    return base64.b64encode(hash).decode("utf-8")
 
 
 def dataset_to_hashlist(dataset: Source, model_hash: bytes) -> list[dict[str, Any]]:

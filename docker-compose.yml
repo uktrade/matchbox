@@ -21,6 +21,27 @@ services:
       - "5432:5432"
     volumes:
       - matchbox_data:/var/lib/postgresql/data
+  api:
+    build:
+      context: .
+      dockerfile: src/matchbox/server/Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      - matchbox-postgres
+    
+    develop:
+      # Create a `watch` configuration to update the app
+      # https://docs.docker.com/compose/file-watch/#compose-watch-versus-bind-mounts
+      watch:
+        # Sync the working directory with the `/app` directory in the container
+        - action: sync
+          path: ./src/matchbox/server
+          target: /code/src/matchbox/server
+
+        # Rebuild the image on changes to the `pyproject.toml`
+        - action: rebuild
+          path: ./pyproject.toml
 
 volumes:
   warehouse_data:

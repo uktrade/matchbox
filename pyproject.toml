@@ -10,6 +10,7 @@ dependencies = [
     "click>=8.1.7",
     "connectorx>=0.3.3",
     "duckdb>=1.1.1",
+    "httpx>=0.28.0",
     "matplotlib>=3.9.2",
     "pandas>=2.2.3",
     "psycopg2>=2.9.10",
@@ -38,6 +39,7 @@ dev = [
     "pytest-env>=1.1.5",
     "ruff>=0.6.8",
     "docker>=7.1.0",
+    "vcrpy>=6.0.2",
 ]
 typing = [
     "polars>=1.11.0",
@@ -89,7 +91,3 @@ log_cli = false
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
-
-[tool.pytest_env]
-MB__POSTGRES__SCHEMA = "test"
-MB__BATCH_SIZE = "400"

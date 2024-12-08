@@ -5,47 +5,37 @@ import pstats
 from itertools import islice
 from typing import Any, Callable, Iterable, Tuple
 
-import rustworkx as rx
 from pg_bulk_ingest import Delete, Upsert, ingest
 from sqlalchemy import Engine, MetaData, Table
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.orm import DeclarativeMeta, Session
 
-from matchbox.server.postgresql.orm import Models, ModelsFrom, ModelType, Sources
+from matchbox.common.graph import (
+    ResolutionEdge,
+    ResolutionGraph,
+    ResolutionNode,
+    ResolutionNodeKind,
+)
+from matchbox.server.postgresql.orm import Models, ModelsFrom
 
 # Retrieval
 
 
-def get_model_subgraph(engine: Engine) -> rx.PyDiGraph:
-    """Retrieves the model subgraph as a PyDiGraph."""
-    G = rx.PyDiGraph()
-    models = {}
-    datasets = {}
-
+def get_resolution_graph(engine: Engine) -> ResolutionGraph:
+    """Retrieves the resolution graph."""
+    G = ResolutionGraph(nodes=set(), edges=set())
     with Session(engine) as session:
-        for dataset in session.query(Sources).all():
-            dataset_idx = G.add_node(
-                {
-                    "id": str(dataset.model),
-                    "name": f"{dataset.schema}.{dataset.table}",
-                    "type": "dataset",
-                }
+        for resolution in session.query(Models).all():
+            G.nodes.add(
+                ResolutionNode(
+                    hash=resolution.hash,
+                    name=resolution.name,
+                    kind=ResolutionNodeKind(resolution.type),
+                )
             )
-            datasets[dataset.model] = dataset_idx
 
-        for model in session.query(Models).all():
-            model_idx = G.add_node(
-                {"id": str(model.hash), "name": model.name, "type": "model"}
-            )
-            models[model.hash] = model_idx
-            if model.type == ModelType.DATASET:
-                dataset_idx = datasets.get(model.hash)
-                _ = G.add_edge(model_idx, dataset_idx, {"type": "deduplicates"})
-
-        for edge in session.query(ModelsFrom).all():
-            parent_idx = models.get(edge.parent)
-            child_idx = models.get(edge.child)
-            _ = G.add_edge(parent_idx, child_idx, {"type": "from"})
+        for edge in session.query(ModelsFrom).filter(ModelsFrom.level == 1).all():
+            G.edges.add(ResolutionEdge(parent=edge.parent, child=edge.child))
 
     return G
 

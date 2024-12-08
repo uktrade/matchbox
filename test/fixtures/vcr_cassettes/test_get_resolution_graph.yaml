@@ -1,0 +1,32 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - localhost:8000
+      user-agent:
+      - python-httpx/0.28.0
+    method: GET
+    uri: http://localhost:8000/report/resolutions
+  response:
+    body:
+      string: '{"nodes":[],"edges":[]}'
+    headers:
+      content-length:
+      - '23'
+      content-type:
+      - application/json
+      date:
+      - Sun, 08 Dec 2024 16:55:39 GMT
+      server:
+      - uvicorn
+    status:
+      code: 200
+      message: OK
+version: 1

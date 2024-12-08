@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
-from rustworkx import PyDiGraph
 from sqlalchemy import Engine, and_, bindparam, delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -11,6 +10,7 @@ from matchbox.common.exceptions import (
     MatchboxDatasetError,
     MatchboxModelError,
 )
+from matchbox.common.graph import ResolutionGraph
 from matchbox.common.results import ClusterResults, ProbabilityResults, Results
 from matchbox.server.base import MatchboxDBAdapter, MatchboxModelAdapter
 from matchbox.server.postgresql.db import MBDB, MatchboxPostgresSettings
@@ -22,7 +22,7 @@ from matchbox.server.postgresql.orm import (
     Probabilities,
     Sources,
 )
-from matchbox.server.postgresql.utils.db import get_model_subgraph
+from matchbox.server.postgresql.utils.db import get_resolution_graph
 from matchbox.server.postgresql.utils.insert import (
     insert_dataset,
     insert_model,
@@ -363,9 +363,9 @@ class MatchboxPostgres(MatchboxDBAdapter):
             else:
                 raise MatchboxDatasetError(db_schema=db_schema, db_table=db_table)
 
-    def get_model_subgraph(self) -> PyDiGraph:
+    def get_resolution_graph(self) -> ResolutionGraph:
         """Get the full subgraph of a model."""
-        return get_model_subgraph(engine=MBDB.get_engine())
+        return get_resolution_graph(engine=MBDB.get_engine())
 
     def get_model(self, model: str) -> MatchboxPostgresModel:
         """Get a model from the database.

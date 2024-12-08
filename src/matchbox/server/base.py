@@ -17,10 +17,10 @@ from typing import (
 from dotenv import find_dotenv, load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from rustworkx import PyDiGraph
 from sqlalchemy import Engine
 
 from matchbox.common.db import Source
+from matchbox.common.graph import ResolutionGraph
 
 if TYPE_CHECKING:
     from pandas import DataFrame as PandasDataFrame
@@ -261,7 +261,7 @@ class MatchboxDBAdapter(ABC):
     def get_dataset(self, db_schema: str, db_table: str, engine: Engine) -> Source: ...
 
     @abstractmethod
-    def get_model_subgraph(self) -> PyDiGraph: ...
+    def get_resolution_graph(self) -> ResolutionGraph: ...
 
     @abstractmethod
     def get_model(self, model: str) -> MatchboxModelAdapter: ...

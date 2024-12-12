@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 server = [
+    "boto3>=1.35.79",
     "fastapi[standard]>=0.115.0,<0.116.0",
     "pg-bulk-ingest>=0.0.54",
     "tomli>=2.0.1",

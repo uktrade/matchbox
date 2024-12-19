@@ -188,6 +188,7 @@ class MatchboxModelAdapter(ABC):
     of those pairs calculated at every threshold.
     """
 
+    id: int
     hash: bytes
     name: str
 
@@ -254,7 +255,7 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def match(
         self,
-        source_id: str,
+        source_pk: str,
         source: str,
         target: str | list[str],
         resolution: str,
@@ -265,7 +266,16 @@ class MatchboxDBAdapter(ABC):
     def index(self, dataset: Source) -> None: ...
 
     @abstractmethod
+    def validate_ids(self, ids: list[int]) -> bool: ...
+
+    @abstractmethod
     def validate_hashes(self, hashes: list[bytes]) -> bool: ...
+
+    @abstractmethod
+    def id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]: ...
+
+    @abstractmethod
+    def hash_to_id(self, hashes: list[bytes]) -> dict[bytes, int | None]: ...
 
     @abstractmethod
     def get_dataset(self, db_schema: str, db_table: str, engine: Engine) -> Source: ...

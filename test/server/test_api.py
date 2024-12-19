@@ -112,8 +112,8 @@ class TestMatchboxAPI:
     #     response = client.get("/query")
     #     assert response.status_code == 200
 
-    # def test_validate_hashes():
-    #     response = client.get("/validate/hash")
+    # def test_validate_ids():
+    #     response = client.get("/validate/id")
     #     assert response.status_code == 200
 
     @patch("matchbox.server.base.BackendManager.get_backend")

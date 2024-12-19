@@ -1,11 +1,10 @@
 import logging
 from collections import defaultdict
+from itertools import count
 
-from sqlalchemy import (
-    Engine,
-    delete,
-    select,
-)
+import numpy as np
+import pandas as pd
+from sqlalchemy import Engine, bindparam, delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -46,7 +45,6 @@ def insert_dataset(dataset: Source, engine: Engine, batch_size: int) -> None:
     }
 
     source_data = {
-        "resolution": resolution_hash,
         "alias": dataset.alias,
         "schema": dataset.db_schema,
         "table": dataset.db_table,
@@ -57,10 +55,15 @@ def insert_dataset(dataset: Source, engine: Engine, batch_size: int) -> None:
         },
     }
 
-    clusters = dataset_to_hashlist(dataset=dataset, resolution_hash=resolution_hash)
+    clusters = dataset_to_hashlist(dataset=dataset)
 
     with engine.connect() as conn:
         logic_logger.info(f"Adding {dataset}")
+
+        # Generate existing max primary key values
+        next_cluster_id = Clusters.next_id()
+        resolution_data["resolution_id"] = Resolutions.next_id()
+        source_data["resolution_id"] = resolution_data["resolution_id"]
 
         # Upsert into Resolutions table
         resolution_stmt = insert(Resolutions).values([resolution_data])
@@ -78,7 +81,7 @@ def insert_dataset(dataset: Source, engine: Engine, batch_size: int) -> None:
         # Upsert into Sources table
         sources_stmt = insert(Sources).values([source_data])
         sources_stmt = sources_stmt.on_conflict_do_update(
-            index_elements=["resolution"],
+            index_elements=["resolution_id"],
             set_={
                 "schema": sources_stmt.excluded.schema,
                 "table": sources_stmt.excluded.table,
@@ -93,7 +96,15 @@ def insert_dataset(dataset: Source, engine: Engine, batch_size: int) -> None:
 
         # Upsert into Clusters table
         batch_ingest(
-            records=[(clus["hash"], clus["dataset"], clus["id"]) for clus in clusters],
+            records=[
+                (
+                    next_cluster_id + i,
+                    clus["hash"],
+                    source_data["resolution_id"],
+                    clus["source_pk"],
+                )
+                for i, clus in enumerate(clusters)
+            ],
             table=Clusters,
             conn=conn,
             batch_size=batch_size,
@@ -137,12 +148,17 @@ def insert_model(
 
         # Check if resolution exists
         exists_stmt = select(Resolutions).where(Resolutions.hash == resolution_hash)
-        exists = session.scalar(exists_stmt) is not None
+        exists_obj = session.scalar(exists_stmt)
+        exists = exists_obj is not None
+        resolution_id = (
+            Resolutions.next_id() if not exists else exists_obj.resolution_id
+        )
 
         # Upsert new resolution
         stmt = (
             insert(Resolutions)
             .values(
+                resolution_id=resolution_id,
                 hash=resolution_hash,
                 type=ResolutionNodeType.MODEL.value,
                 name=model,
@@ -164,8 +180,8 @@ def insert_model(
                 nodes and any of their direct or indirect parents"""
                 session.add(
                     ResolutionFrom(
-                        parent=parent_resolution.hash,
-                        child=resolution_hash,
+                        parent=parent_resolution.resolution_id,
+                        child=resolution_id,
                         level=1,
                         truth_cache=parent_resolution.truth,
                     )
@@ -173,7 +189,7 @@ def insert_model(
 
                 ancestor_entries = (
                     session.query(ResolutionFrom)
-                    .filter(ResolutionFrom.child == parent_resolution.hash)
+                    .filter(ResolutionFrom.child == parent_resolution.resolution_id)
                     .all()
                 )
 
@@ -181,7 +197,7 @@ def insert_model(
                     session.add(
                         ResolutionFrom(
                             parent=entry.parent,
-                            child=resolution_hash,
+                            child=resolution_id,
                             level=entry.level + 1,
                             truth_cache=entry.truth_cache,
                         )
@@ -196,14 +212,14 @@ def insert_model(
         session.commit()
 
     status = "Inserted new" if not exists else "Updated existing"
-    logic_logger.info(f"[{model}] {status} model with hash {resolution_hash}")
+    logic_logger.info(f"[{model}] {status} model with ID {resolution_id}")
     logic_logger.info(f"[{model}] Done!")
 
 
 def _cluster_results_to_hierarchical(
     probabilities: ProbabilityResults,
     clusters: ClusterResults,
-) -> list[tuple[bytes, bytes, float]]:
+) -> pd.DataFrame:
     """
     Converts results to a hierarchical structure by building up from base components.
 
@@ -212,7 +228,7 @@ def _cluster_results_to_hierarchical(
         clusters: Connected components at each threshold
 
     Returns:
-        list of (parent, child, threshold) tuples representing the hierarchy
+        Pandas DataFrame of (parent, child, threshold) tuples representing the hierarchy
     """
     prob_df = probabilities.dataframe
     cluster_df = clusters.dataframe
@@ -220,8 +236,8 @@ def _cluster_results_to_hierarchical(
     # Sort thresholds in descending order
     thresholds = sorted(cluster_df["threshold"].unique(), reverse=True)
 
-    hierarchy: list[tuple[bytes, bytes, float]] = []
-    ultimate_parents: dict[bytes, set[bytes]] = defaultdict(set)
+    hierarchy: list[tuple[int, int, float]] = []
+    ultimate_parents: dict[int, set[int]] = defaultdict(set)
 
     # Process each threshold level
     for threshold in thresholds:
@@ -231,7 +247,7 @@ def _cluster_results_to_hierarchical(
         current_probs = prob_df[prob_df["probability"] == threshold_float]
 
         for _, row in current_probs.iterrows():
-            parent = row["hash"]
+            parent = row["id"]
             left_id = row["left_id"]
             right_id = row["right_id"]
 
@@ -254,7 +270,7 @@ def _cluster_results_to_hierarchical(
             if len(children) <= 2:
                 continue  # Skip pairs already handled by pairwise probabilities
 
-            current_ultimate_parents: set[bytes] = set()
+            current_ultimate_parents: set[int] = set()
             for child in children:
                 current_ultimate_parents.update(ultimate_parents[child])
 
@@ -265,7 +281,45 @@ def _cluster_results_to_hierarchical(
                 ultimate_parents[child] = {parent}
 
     # Sort hierarchy by threshold (descending), then parent, then child
-    return sorted(hierarchy, key=lambda x: (x[2], x[0], x[1]), reverse=True)
+    return (
+        pd.DataFrame(hierarchy, columns=["parent", "child", "threshold"])
+        .sort_values(["threshold", "parent", "child"], ascending=[False, True, True])
+        .reset_index(drop=True)
+    )
+
+
+def _update_lookup_with_column(
+    df: pd.DataFrame,
+    column_name: str,
+    lookup: dict[bytes, int | None],
+    engine: Engine,
+):
+    """Updates the hash to int lookup based on the supplied data and column.
+
+    Mimics backend functionality. Would expect this function to disappear when
+    feature branch merges -- only here because data moves differently right now.
+    """
+    hashes = df[column_name].unique().tolist()
+    initial_dict = {hash: None for hash in hashes}
+
+    with Session(engine) as session:
+        data_inner_join = (
+            session.query(Clusters)
+            .filter(
+                Clusters.hash.in_(
+                    bindparam(
+                        "ins_ids",
+                        hashes,
+                        expanding=True,
+                    )
+                )
+            )
+            .all()
+        )
+
+    return lookup.update(
+        initial_dict | {item.hash: item.cluster_id for item in data_inner_join}
+    )
 
 
 def insert_results(
@@ -295,14 +349,52 @@ def insert_results(
         MatchboxResolutionError if the specified model doesn't exist.
     """
     logic_logger.info(
-        f"[{resolution.name}] Writing results data with batch size {batch_size}"
+        f"[{resolution.name}] Writing results data with batch size {batch_size:,}"
+    )
+
+    # Get the lookup of existing database values and generate new ones
+    hierarchy = _cluster_results_to_hierarchical(
+        probabilities=results.probabilities, clusters=results.clusters
+    )
+    hashes = np.unique(
+        np.concatenate([hierarchy["parent"].unique(), hierarchy["child"].unique()])
+    ).tolist()
+    lookup: dict[bytes, int | None] = {hash: None for hash in hashes}
+
+    with Session(engine) as session:
+        data_inner_join = (
+            session.query(Clusters)
+            .filter(
+                Clusters.hash.in_(
+                    bindparam(
+                        "ins_ids",
+                        hashes,
+                        expanding=True,
+                    )
+                )
+            )
+            .all()
+        )
+
+        gen_cluster_id = count(Clusters.next_id())
+
+    lookup.update({item.hash: item.cluster_id for item in data_inner_join})
+    lookup = {k: next(gen_cluster_id) if v is None else v for k, v in lookup.items()}
+
+    hierarchy["parent_id"] = (
+        hierarchy["parent"].apply(lambda i: lookup[i]).astype("int32[pyarrow]")
+    )
+    hierarchy["child_id"] = (
+        hierarchy["child"].apply(lambda i: lookup[i]).astype("int32[pyarrow]")
     )
 
     with Session(engine) as session:
         try:
             # Clear existing probabilities for this resolution
             session.execute(
-                delete(Probabilities).where(Probabilities.resolution == resolution.hash)
+                delete(Probabilities).where(
+                    Probabilities.resolution == resolution.resolution_id
+                )
             )
 
             session.commit()
@@ -319,19 +411,33 @@ def insert_results(
         try:
             total_records = results.clusters.dataframe.shape[0]
             logic_logger.info(
-                f"[{resolution.name}] Inserting {total_records} results objects"
+                f"[{resolution.name}] Inserting {total_records:,} results objects"
             )
 
-            cluster_records: list[tuple[bytes, None, None]] = []
-            contains_records: list[tuple[bytes, bytes]] = []
-            probability_records: list[tuple[bytes, bytes, float]] = []
-
-            for parent, child, threshold in _cluster_results_to_hierarchical(
-                probabilities=results.probabilities, clusters=results.clusters
-            ):
-                cluster_records.append((parent, None, None))
-                contains_records.append((parent, child))
-                probability_records.append((resolution.hash, parent, threshold))
+            cluster_records: list[tuple[int, bytes, None, None]] = list(
+                zip(
+                    hierarchy["parent_id"],
+                    hierarchy["parent"],
+                    [None] * hierarchy.shape[0],
+                    [None] * hierarchy.shape[0],
+                    strict=True,
+                )
+            )
+            contains_records: list[tuple[int, int]] = list(
+                zip(
+                    hierarchy["parent_id"],
+                    hierarchy["child_id"],
+                    strict=True,
+                )
+            )
+            probability_records: list[tuple[int, int, float]] = list(
+                zip(
+                    [resolution.resolution_id] * hierarchy.shape[0],
+                    hierarchy["parent_id"],
+                    hierarchy["threshold"],
+                    strict=True,
+                )
+            )
 
             batch_ingest(
                 records=cluster_records,

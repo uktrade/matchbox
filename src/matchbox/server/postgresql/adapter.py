@@ -72,7 +72,7 @@ class FilteredProbabilities(BaseModel):
 
             if self.over_truth:
                 query = query.join(
-                    Resolutions, Probabilities.resolution == Resolutions.hash
+                    Resolutions, Probabilities.resolution == Resolutions.resolution_id
                 ).filter(
                     and_(
                         Resolutions.truth.isnot(None),
@@ -113,6 +113,12 @@ class MatchboxPostgresModel(MatchboxModelAdapter):
     def __init__(self, resolution: Resolutions, backend: "MatchboxPostgres"):
         self.resolution: Resolutions = resolution
         self.backend: "MatchboxPostgres" = backend
+
+    @property
+    def id(self) -> int:
+        with Session(MBDB.get_engine()) as session:
+            session.add(self.resolution)
+            return self.resolution.resolution_id
 
     @property
     def hash(self) -> bytes:
@@ -197,8 +203,8 @@ class MatchboxPostgresModel(MatchboxModelAdapter):
         with Session(MBDB.get_engine()) as session:
             query = (
                 select(Resolutions.name, ResolutionFrom.truth_cache)
-                .join(Resolutions, Resolutions.hash == ResolutionFrom.parent)
-                .where(ResolutionFrom.child == self.resolution.hash)
+                .join(Resolutions, Resolutions.resolution_id == ResolutionFrom.parent)
+                .where(ResolutionFrom.child == self.resolution.resolution_id)
                 .where(ResolutionFrom.truth_cache.isnot(None))
             )
 
@@ -217,21 +223,21 @@ class MatchboxPostgresModel(MatchboxModelAdapter):
 
         with Session(MBDB.get_engine()) as session:
             model_names = list(new_values.keys())
-            name_to_hash = dict(
-                session.query(Resolutions.name, Resolutions.hash)
+            name_to_id = dict(
+                session.query(Resolutions.name, Resolutions.resolution_id)
                 .filter(Resolutions.name.in_(model_names))
                 .all()
             )
 
             for model_name, truth_value in new_values.items():
-                parent_hash = name_to_hash.get(model_name)
-                if parent_hash is None:
+                parent_id = name_to_id.get(model_name)
+                if parent_id is None:
                     raise ValueError(f"Model '{model_name}' not found in database")
 
                 session.execute(
                     ResolutionFrom.__table__.update()
-                    .where(ResolutionFrom.parent == parent_hash)
-                    .where(ResolutionFrom.child == self.resolution.hash)
+                    .where(ResolutionFrom.parent == parent_id)
+                    .where(ResolutionFrom.child == self.resolution.resolution_id)
                     .values(truth_cache=truth_value)
                 )
 
@@ -302,7 +308,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     def match(
         self,
-        source_id: str,
+        source_pk: str,
         source: str,
         target: str | list[str],
         resolution: str,
@@ -311,7 +317,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
         """Matches an ID in a source dataset and returns the keys in the targets.
 
         Args:
-            source_id: The ID of the source to match.
+            source_pk: The primary key to match from the source.
             source: The name of the source dataset.
             target: The name of the target dataset(s).
             resolution: The name of the resolution to use for matching.
@@ -325,7 +331,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 Will use these threshold values instead of the cached thresholds
         """
         return match(
-            source_id=source_id,
+            source_pk=source_pk,
             source=source,
             target=target,
             resolution=resolution,
@@ -345,6 +351,40 @@ class MatchboxPostgres(MatchboxDBAdapter):
             engine=MBDB.get_engine(),
             batch_size=self.settings.batch_size,
         )
+
+    def validate_ids(self, ids: list[int]) -> None:
+        """Validates a list of IDs exist in the database.
+
+        Args:
+            hashes: A list of IDs to validate.
+
+        Raises:
+            MatchboxDataError: If some items don't exist in the target table.
+        """
+        with Session(MBDB.get_engine()) as session:
+            data_inner_join = (
+                session.query(Clusters)
+                .filter(
+                    Clusters.cluster_id.in_(
+                        bindparam(
+                            "ins_ids",
+                            ids,
+                            expanding=True,
+                        )
+                    )
+                )
+                .all()
+            )
+
+        existing_ids = {item.cluster_id for item in data_inner_join}
+        missing_ids = set(ids) - existing_ids
+
+        if missing_ids:
+            raise MatchboxDataError(
+                message="Some items don't exist in Clusters table.",
+                table=Clusters.__tablename__,
+                data=missing_ids,
+            )
 
     def validate_hashes(self, hashes: list[bytes]) -> None:
         """Validates a list of hashes exist in the database.
@@ -379,6 +419,62 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 table=Clusters.__tablename__,
                 data=missing_hashes,
             )
+
+    def id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]:
+        """Get a lookup of hashes from a list of IDs.
+
+        Args:
+            ids: A list of IDs to get hashes for.
+
+        Returns:
+            A dictionary mapping IDs to hashes.
+        """
+        initial_dict = {id: None for id in ids}
+
+        with Session(MBDB.get_engine()) as session:
+            data_inner_join = (
+                session.query(Clusters)
+                .filter(
+                    Clusters.cluster_id.in_(
+                        bindparam(
+                            "ins_ids",
+                            ids,
+                            expanding=True,
+                        )
+                    )
+                )
+                .all()
+            )
+
+        return initial_dict | {item.cluster_id: item.hash for item in data_inner_join}
+
+    def hash_to_id(self, hashes: list[bytes]) -> dict[bytes, int | None]:
+        """Get a lookup of IDs from a list of hashes.
+
+        Args:
+            hashes: A list of hashes to get IDs for.
+
+        Returns:
+            A dictionary mapping hashes to IDs.
+        """
+        initial_dict = {hash: None for hash in hashes}
+
+        with Session(MBDB.get_engine()) as session:
+            data_inner_join = (
+                session.query(Clusters)
+                .filter(
+                    Clusters.hash.in_(
+                        bindparam(
+                            "ins_ids",
+                            hashes,
+                            expanding=True,
+                        )
+                    )
+                )
+                .all()
+            )
+
+        return initial_dict | {item.hash: item.cluster_id for item in data_inner_join}
 
     def get_dataset(self, db_schema: str, db_table: str, engine: Engine) -> Source:
         """Get a source dataset from the database.
@@ -442,8 +538,11 @@ class MatchboxPostgres(MatchboxDBAdapter):
             ):
                 if certain:
                     delete_stmt = delete(Resolutions).where(
-                        Resolutions.hash.in_(
-                            [resolution.hash, *(d.hash for d in resolution.descendants)]
+                        Resolutions.resolution_id.in_(
+                            [
+                                resolution.resolution_id,
+                                *(d.resolution_id for d in resolution.descendants),
+                            ]
                         )
                     )
                     session.execute(delete_stmt)

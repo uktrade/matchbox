@@ -3,8 +3,6 @@ from enum import StrEnum
 import rustworkx as rx
 from pydantic import BaseModel
 
-from matchbox.common.hash import hash_to_base64
-
 
 class ResolutionNodeType(StrEnum):
     DATASET = "dataset"
@@ -13,17 +11,17 @@ class ResolutionNodeType(StrEnum):
 
 
 class ResolutionNode(BaseModel):
-    hash: bytes
+    id: int
     name: str
     type: ResolutionNodeType
 
     def __hash__(self):
-        return hash(self.hash)
+        return hash(self.id)
 
 
 class ResolutionEdge(BaseModel):
-    parent: bytes
-    child: bytes
+    parent: int
+    child: int
 
     def __hash__(self):
         return hash((self.parent, self.child))
@@ -38,11 +36,11 @@ class ResolutionGraph(BaseModel):
         G = rx.PyDiGraph()
         for n in self.nodes:
             node_data = {
-                "id": hash_to_base64(n.hash),
+                "id": n.id,
                 "name": n.name,
                 "type": str(n.type),
             }
-            nodes[n.hash] = G.add_node(node_data)
+            nodes[n.id] = G.add_node(node_data)
         for e in self.edges:
             G.add_edge(nodes[e.parent], nodes[e.child], {})
         return G

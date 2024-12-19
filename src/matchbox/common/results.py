@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Callable, Generic, Hashable, TypeVar
 
 import numpy as np
+import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 import rustworkx as rx
@@ -118,25 +119,67 @@ class ProbabilityResults(ResultsBaseDataclass):
     """
 
     _expected_fields: list[str] = [
-        "hash",
+        "id",
         "left_id",
         "right_id",
         "probability",
     ]
 
-    @field_validator("dataframe")
+    @field_validator("dataframe", mode="before")
     @classmethod
-    def add_hash(cls, dataframe: DataFrame) -> DataFrame:
-        """Adds a hash column to the dataframe if it doesn't already exist."""
-        if "hash" not in dataframe.columns:
+    def results_to_hash(cls, dataframe: pd.DataFrame) -> pd.DataFrame:
+        """Adds an ID column to the dataframe if it doesn't already exist.
+
+        * Reattaches hashes from the backend
+        * Uses them to create the new ID column
+        """
+        id_exits = "id" in dataframe.columns
+        l_is_int = pd.api.types.is_integer_dtype(dataframe["left_id"])
+        r_is_int = pd.api.types.is_integer_dtype(dataframe["left_id"])
+
+        if id_exits and l_is_int and r_is_int:
+            return dataframe
+
+        @inject_backend
+        def _make_id_hasher(backend: MatchboxDBAdapter):
+            """Closure for converting int columns to hash using a lookup."""
+            lookup: dict[int, bytes] = {}
+
+            def _hash_column(df: pd.DataFrame, column_name: str) -> None:
+                hashed_column = f"{column_name}_hashed"
+                unique_ids = df[column_name].unique().tolist()
+
+                lookup.update(backend.id_to_hash(ids=unique_ids))
+
+                df[hashed_column] = (
+                    df[column_name].map(lookup).astype("binary[pyarrow]")
+                )
+                df.drop(columns=[column_name], inplace=True)
+                df.rename(columns={hashed_column: column_name}, inplace=True)
+
+            return _hash_column
+
+        hash_column = _make_id_hasher()
+
+        # Update lookup with left_id, then convert to hash
+        if l_is_int:
+            hash_column(df=dataframe, column_name="left_id")
+
+        # Update lookup with right_id, then convert to hash
+        if r_is_int:
+            hash_column(df=dataframe, column_name="right_id")
+
+        # Create ID column if it doesn't exist and hash the values
+        if not id_exits:
             dataframe[["left_id", "right_id"]] = dataframe[
                 ["left_id", "right_id"]
             ].astype("binary[pyarrow]")
-            dataframe["hash"] = columns_to_value_ordered_hash(
+            dataframe["id"] = columns_to_value_ordered_hash(
                 data=dataframe, columns=["left_id", "right_id"]
             )
-            dataframe["hash"] = dataframe["hash"].astype("binary[pyarrow]")
-        return dataframe[["hash", "left_id", "right_id", "probability"]]
+            dataframe["id"] = dataframe["id"].astype("binary[pyarrow]")
+
+        return dataframe
 
     def inspect_with_source(
         self, left_data: DataFrame, left_key: str, right_data: DataFrame, right_key: str
@@ -193,7 +236,7 @@ class ProbabilityResults(ResultsBaseDataclass):
         return {
             Probability(hash=row[0], left=row[1], right=row[2], probability=row[3])
             for row in self.dataframe[
-                ["hash", "left_id", "right_id", "probability"]
+                ["id", "left_id", "right_id", "probability"]
             ].to_numpy()
         }
 

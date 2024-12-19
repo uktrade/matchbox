@@ -3,7 +3,7 @@ from typing import NamedTuple
 import pandas as pd
 import pyarrow as pa
 import rustworkx as rx
-from sqlalchemy import Engine, and_, case, exists, func, select
+from sqlalchemy import Engine, and_, case, func, select
 from sqlalchemy.orm import Session
 
 from matchbox.common.graph import ResolutionNodeType
@@ -20,26 +20,25 @@ from matchbox.server.postgresql.orm import (
     ResolutionFrom,
     Resolutions,
 )
-from matchbox.server.postgresql.utils.query import hash_to_hex_decode
 
 
 class SourceInfo(NamedTuple):
     """Information about a model's sources."""
 
-    left: bytes
-    right: bytes | None
-    left_ancestors: set[bytes]
-    right_ancestors: set[bytes] | None
+    left: int
+    right: int | None
+    left_ancestors: set[int]
+    right_ancestors: set[int] | None
 
 
 def _get_model_parents(
-    engine: Engine, resolution_hash: bytes
+    engine: Engine, resolution_id: int
 ) -> tuple[bytes, bytes | None]:
     """Get the model's immediate parent models."""
     parent_query = (
-        select(Resolutions.hash, Resolutions.type)
-        .join(ResolutionFrom, Resolutions.hash == ResolutionFrom.parent)
-        .where(ResolutionFrom.child == resolution_hash)
+        select(Resolutions.resolution_id, Resolutions.type)
+        .join(ResolutionFrom, Resolutions.resolution_id == ResolutionFrom.parent)
+        .where(ResolutionFrom.child == resolution_id)
         .where(ResolutionFrom.level == 1)
     )
 
@@ -50,107 +49,39 @@ def _get_model_parents(
         return parents[0][0], None
     elif len(parents) == 2:
         p1, p2 = parents
-        p1_hash, p1_type = p1
-        p2_hash, p2_type = p2
+        p1_id, p1_type = p1
+        p2_id, p2_type = p2
         # Put dataset first if it exists
         if p1_type == ResolutionNodeType.DATASET:
-            return p1_hash, p2_hash
+            return p1_id, p2_id
         elif p2_type == ResolutionNodeType.DATASET:
-            return p2_hash, p1_hash
+            return p2_id, p1_id
         # Both models, maintain original order
-        return p1_hash, p2_hash
+        return p1_id, p2_id
     else:
         raise ValueError(f"Model has unexpected number of parents: {len(parents)}")
 
 
-def _get_source_info(engine: Engine, resolution_hash: bytes) -> SourceInfo:
+def _get_source_info(engine: Engine, resolution_id: int) -> SourceInfo:
     """Get source resolutions and their ancestry information."""
-    left_hash, right_hash = _get_model_parents(
-        engine=engine, resolution_hash=resolution_hash
-    )
+    left_id, right_id = _get_model_parents(engine=engine, resolution_id=resolution_id)
 
     with Session(engine) as session:
-        left = session.get(Resolutions, left_hash)
-        right = session.get(Resolutions, right_hash) if right_hash else None
+        left = session.get(Resolutions, left_id)
+        right = session.get(Resolutions, right_id) if right_id else None
 
-        left_ancestors = {left_hash} | {m.hash for m in left.ancestors}
+        left_ancestors = {left_id} | {m.resolution_id for m in left.ancestors}
         if right:
-            right_ancestors = {right_hash} | {m.hash for m in right.ancestors}
+            right_ancestors = {right_id} | {m.resolution_id for m in right.ancestors}
         else:
             right_ancestors = None
 
     return SourceInfo(
-        left=left_hash,
-        right=right_hash,
+        left=left_id,
+        right=right_id,
         left_ancestors=left_ancestors,
         right_ancestors=right_ancestors,
     )
-
-
-def _get_leaf_pair_clusters(engine: Engine, resolution_hash: bytes) -> list[tuple]:
-    """Get all clusters with exactly two leaf children."""
-    # Subquery to identify leaf nodes
-    leaf_nodes = ~exists().where(Contains.parent == Clusters.hash).correlate(Clusters)
-
-    query = (
-        select(
-            Contains.parent.label("parent_hash"),
-            Probabilities.probability,
-            func.array_agg(Clusters.hash).label("child_hashes"),
-            func.array_agg(Clusters.dataset).label("child_datasets"),
-            func.array_agg(Clusters.id).label("child_ids"),
-        )
-        .join(
-            Probabilities,
-            and_(
-                Probabilities.cluster == Contains.parent,
-                Probabilities.resolution == resolution_hash,
-            ),
-        )
-        .join(Clusters, Clusters.hash == Contains.child)
-        .where(leaf_nodes)
-        .group_by(Contains.parent, Probabilities.probability)
-        .having(func.count() == 2)
-    )
-
-    with engine.connect() as conn:
-        return conn.execute(query).fetchall()
-
-
-def _determine_hash_order(
-    engine: Engine,
-    hashes: list[bytes],
-    datasets: list[bytes],
-    left_source: Resolutions,
-    left_ancestors: set[bytes],
-) -> tuple[int, int]:
-    """Determine which child corresponds to left/right source."""
-    # Check dataset assignment first
-    if datasets[0] == left_source.hash:
-        return 0, 1
-    elif datasets[1] == left_source.hash:
-        return 1, 0
-
-    # Check probability ancestry
-    left_prob_query = (
-        select(Probabilities)
-        .where(Probabilities.cluster == hashes[0])
-        .where(Probabilities.resolution.in_(left_ancestors))
-    )
-    with engine.connect() as conn:
-        has_left_prob = conn.execute(left_prob_query).fetchone() is not None
-
-    return (0, 1) if has_left_prob else (1, 0)
-
-
-def _get_immediate_children(graph: rx.PyDiGraph, node_id: int) -> set[int]:
-    """Get immediate child node IDs of a given node in the graph."""
-    return {edge[1] for edge in graph.out_edges(node_id)}
-
-
-def _is_leaf(graph: rx.PyDiGraph, node_id: int) -> bool:
-    """Check if a node is a leaf (has no children)."""
-    return len(graph.out_edges(node_id)) == 0
 
 
 def get_model_probabilities(
@@ -175,7 +106,7 @@ def get_model_probabilities(
         raise ValueError("Expected resolution of type model")
 
     source_info: SourceInfo = _get_source_info(
-        engine=engine, resolution_hash=resolution.hash
+        engine=engine, resolution_id=resolution.resolution_id
     )
 
     with Session(engine) as session:
@@ -195,7 +126,7 @@ def get_model_probabilities(
         # First get all clusters this resolution assigned probabilities to
         resolution_clusters = (
             select(Probabilities.cluster)
-            .where(Probabilities.resolution == hash_to_hex_decode(resolution.hash))
+            .where(Probabilities.resolution == resolution.resolution_id)
             .cte("resolution_clusters")
         )
 
@@ -214,7 +145,7 @@ def get_model_probabilities(
                 Probabilities,
                 and_(
                     Probabilities.cluster == Contains.parent,
-                    Probabilities.resolution == hash_to_hex_decode(resolution.hash),
+                    Probabilities.resolution == resolution.resolution_id,
                 ),
             )
             .where(~Contains.child.in_(select(resolution_parents)))
@@ -226,7 +157,7 @@ def get_model_probabilities(
         # Join to get children and probabilities
         pairs = (
             select(
-                Contains.parent.label("hash"),
+                Contains.parent.label("id"),
                 func.array_agg(
                     case(
                         (
@@ -250,7 +181,7 @@ def get_model_probabilities(
                 Probabilities,
                 and_(
                     Probabilities.cluster == Contains.parent,
-                    Probabilities.resolution == hash_to_hex_decode(resolution.hash),
+                    Probabilities.resolution == resolution.resolution_id,
                 ),
             )
             .group_by(Contains.parent)
@@ -258,7 +189,7 @@ def get_model_probabilities(
 
         # Final select to properly split out left and right
         final_select = select(
-            pairs.c.hash,
+            pairs.c.id,
             pairs.c.children[1].label("left_id"),
             pairs.c.children[2].label("right_id"),
             pairs.c.probability,
@@ -267,12 +198,12 @@ def get_model_probabilities(
         results = session.execute(final_select).fetchall()
 
         df = pd.DataFrame(
-            results, columns=["hash", "left_id", "right_id", "probability"]
+            results, columns=["id", "left_id", "right_id", "probability"]
         ).astype(
             {
-                "hash": pd.ArrowDtype(pa.binary()),
-                "left_id": pd.ArrowDtype(pa.binary()),
-                "right_id": pd.ArrowDtype(pa.binary()),
+                "id": pd.ArrowDtype(pa.int32()),
+                "left_id": pd.ArrowDtype(pa.int32()),
+                "right_id": pd.ArrowDtype(pa.int32()),
                 "probability": pd.ArrowDtype(pa.float32()),
             }
         )
@@ -304,7 +235,7 @@ def get_model_clusters(engine: Engine, resolution: Resolutions) -> ClusterResult
     Clusters are the connected components of the model at every threshold.
 
     While they're stored in a hierarchical structure, we need to recover the
-    original components, where all child hashes are leaf Clusters.
+    original components, where all child IDs are leaf Clusters.
 
     Args:
         engine: SQLAlchemy engine
@@ -317,7 +248,7 @@ def get_model_clusters(engine: Engine, resolution: Resolutions) -> ClusterResult
         raise ValueError("Expected resolution of type model")
 
     source_info: SourceInfo = _get_source_info(
-        engine=engine, resolution_hash=resolution.hash
+        engine=engine, resolution_id=resolution.resolution_id
     )
 
     with Session(engine) as session:
@@ -342,7 +273,7 @@ def get_model_clusters(engine: Engine, resolution: Resolutions) -> ClusterResult
                 Probabilities,
                 and_(
                     Probabilities.cluster == Contains.parent,
-                    Probabilities.resolution == resolution.hash,
+                    Probabilities.resolution == resolution.resolution_id,
                 ),
             )
             .order_by(Probabilities.probability.desc())
@@ -351,18 +282,18 @@ def get_model_clusters(engine: Engine, resolution: Resolutions) -> ClusterResult
         hierarchy = session.execute(hierarchy_query).fetchall()
 
         # Get all leaf nodes (clusters with no children) and their IDs
-        leaf_query = select(Clusters.hash, Clusters.id).where(
-            ~Clusters.hash.in_(select(Contains.parent).distinct())
+        leaf_query = select(Clusters.cluster_id, Clusters.source_pk).where(
+            ~Clusters.cluster_id.in_(select(Contains.parent).distinct())
         )
         leaf_nodes = {
-            row.hash: row.id[0] if row.id else None
+            row.cluster_id: row.source_pk[0] if row.source_pk else None
             for row in session.execute(leaf_query)
         }
 
         # Get unique thresholds and components at each threshold
         threshold_query = (
             select(Probabilities.cluster, Probabilities.probability)
-            .where(Probabilities.resolution == resolution.hash)
+            .where(Probabilities.resolution == resolution.resolution_id)
             .order_by(Probabilities.probability.desc())
         )
         threshold_components = session.execute(threshold_query).fetchall()
@@ -371,10 +302,10 @@ def get_model_clusters(engine: Engine, resolution: Resolutions) -> ClusterResult
     graph = rx.PyDiGraph()
     nodes: dict[bytes, int] = {}  # node_hash -> node_id
 
-    def get_node_id(hash: bytes) -> int:
-        if hash not in nodes:
-            nodes[hash] = graph.add_node(hash)
-        return nodes[hash]
+    def get_node_id(id: bytes) -> int:
+        if id not in nodes:
+            nodes[id] = graph.add_node(id)
+        return nodes[id]
 
     for parent, child, prob in hierarchy:
         parent_id = get_node_id(parent)
@@ -413,8 +344,8 @@ def get_model_clusters(engine: Engine, resolution: Resolutions) -> ClusterResult
 
     df = pd.DataFrame(components, columns=["parent", "child", "threshold"]).astype(
         {
-            "parent": pd.ArrowDtype(pa.binary()),
-            "child": pd.ArrowDtype(pa.binary()),
+            "parent": pd.ArrowDtype(pa.int32()),
+            "child": pd.ArrowDtype(pa.int32()),
             "threshold": pd.ArrowDtype(pa.float32()),
         }
     )

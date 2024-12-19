@@ -179,7 +179,7 @@ link_data_test_params = [
 
 
 def make_naive_dd_settings(data: DedupeTestParams) -> dict[str, Any]:
-    return {"id": "hash", "unique_fields": list(data.fields.keys())}
+    return {"id": "id", "unique_fields": list(data.fields.keys())}
 
 
 dedupe_model_test_params = [
@@ -201,8 +201,8 @@ def make_deterministic_li_settings(data: LinkTestParams) -> dict[str, Any]:
         comparisons.append(f"l.{field_l} = r.{field_r}")
 
     return {
-        "left_id": "hash",
-        "right_id": "hash",
+        "left_id": "id",
+        "right_id": "id",
         "comparisons": " and ".join(comparisons),
     }
 
@@ -250,8 +250,8 @@ def make_splink_li_settings(data: LinkTestParams) -> dict[str, Any]:
     )
 
     return {
-        "left_id": "hash",
-        "right_id": "hash",
+        "left_id": "id",
+        "right_id": "id",
         "linker_training_functions": linker_training_functions,
         "linker_settings": linker_settings,
         "threshold": None,
@@ -265,8 +265,8 @@ def make_weighted_deterministic_li_settings(data: LinkTestParams) -> dict[str, A
         weighted_comparisons.append((f"l.{field_l} = r.{field_r}", 1))
 
     return {
-        "left_id": "hash",
-        "right_id": "hash",
+        "left_id": "id",
+        "right_id": "id",
         "weighted_comparisons": weighted_comparisons,
         "threshold": 1,
     }

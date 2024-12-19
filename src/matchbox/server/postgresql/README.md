@@ -14,35 +14,39 @@ There are two graph-like trees in place here.
 ```mermaid
 erDiagram
     Sources {
-        bytes resolution PK,FK
+        bigint resolution_id PK,FK
+        string alias
         string schema
         string table
         string id
+        jsonb indices
     }
     Clusters {
-        bytes hash PK,FK
-        bytes dataset FK
-        string id
+        bigint cluster_id PK,FK
+        bytes hash
+        bigint dataset FK
+        array[string] source_pk
     }
     Contains {
-        bytes parent PK,FK
-        bytes child PK,FK
+        bigint parent PK,FK
+        bigint child PK,FK
     }
     Probabilities {
-        bytes model PK,FK
-        bytes cluster PK,FK
+        bigint model PK,FK
+        bigint cluster PK,FK
         float probability
     }
     Resolutions {
-        bytes hash PK,FK
+        bigint resolution_id PK,FK
+        bytes hash
         enum type
         string name
         string description
         float truth
     }
     ResolutionFrom {
-        bytes parent PK,FK
-        bytes child PK,FK
+        bigint parent PK,FK
+        bigint child PK,FK
         int level
         float truth_cache
     }

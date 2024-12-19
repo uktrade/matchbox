@@ -69,8 +69,8 @@ def test_linkers(
         df_r_renamed = df_r.copy().rename(columns=fx_data.fields_r)
         fields_l_renamed = list(fx_data.fields_l.values())
         fields_r_renamed = list(fx_data.fields_r.values())
-        df_l_renamed = df_l_renamed.filter(["hash"] + fields_l_renamed)
-        df_r_renamed = df_r_renamed.filter(["hash"] + fields_r_renamed)
+        df_l_renamed = df_l_renamed.filter(["id"] + fields_l_renamed)
+        df_r_renamed = df_r_renamed.filter(["id"] + fields_r_renamed)
         assert set(df_l_renamed.columns) == set(df_r_renamed.columns)
         assert df_l_renamed.dtypes.equals(df_r_renamed.dtypes)
 
@@ -114,9 +114,9 @@ def test_linkers(
     linked_df = results.probabilities.to_df()
     linked_df_with_source = results.probabilities.inspect_with_source(
         left_data=df_l,
-        left_key="hash",
+        left_key="id",
         right_data=df_r,
-        right_key="hash",
+        right_key="id",
     )
 
     assert isinstance(linked_df, DataFrame)
@@ -131,9 +131,9 @@ def test_linkers(
     clusters_links_df = results.clusters.to_df()
     clusters_links_df_with_source = results.clusters.inspect_with_source(
         left_data=df_l,
-        left_key="hash",
+        left_key="id",
         right_data=df_r,
-        right_key="hash",
+        right_key="id",
     )
 
     assert isinstance(clusters_links_df, DataFrame)
@@ -142,9 +142,9 @@ def test_linkers(
     assert isinstance(clusters_links_df_with_source, DataFrame)
     for field_l, field_r in zip(fields_l, fields_r, strict=True):
         # When we enrich the ClusterResults in a deduplication job, every child
-        # hash will match something in the source data, because we're only using
+        # id will match something in the source data, because we're only using
         # one dataset. NaNs are therefore impossible.
-        # When we enrich the ClusterResults in a link job, some child hashes
+        # When we enrich the ClusterResults in a link job, some child ids
         # will match something in the left data, and others in the right data.
         # NaNs are therefore guaranteed.
         # We therefore coalesce by parent to unique joined values, which
@@ -189,7 +189,7 @@ def test_linkers(
     )
 
     assert isinstance(clusters, DataFrame)
-    assert clusters.hash.nunique() == fx_data.unique_n
+    assert clusters.id.nunique() == fx_data.unique_n
 
 
 def test_splink_training_functions():
@@ -210,18 +210,18 @@ def test_splink_training_functions():
 
 def test_splink_settings():
     valid_settings = SplinkSettings(
-        left_id="hash",
-        right_id="hash",
+        left_id="id",
+        right_id="id",
         linker_training_functions=[],
         linker_settings=SettingsCreator(link_type="link_only"),
         threshold=None,
     )
-    assert valid_settings.linker_settings.unique_id_column_name == "hash"
+    assert valid_settings.linker_settings.unique_id_column_name == "id"
     # Can only use "link_only"
     with pytest.raises(ValueError):
         valid_settings = SplinkSettings(
-            left_id="hash",
-            right_id="hash",
+            left_id="id",
+            right_id="id",
             linker_training_functions=[],
             linker_settings=SettingsCreator(link_type="dedupe_only"),
             threshold=None,
@@ -229,8 +229,8 @@ def test_splink_settings():
     # Left and right ID must coincide
     with pytest.raises(ValueError):
         valid_settings = SplinkSettings(
-            left_id="hash",
-            right_id="hash2",
+            left_id="id",
+            right_id="id2",
             linker_training_functions=[],
             linker_settings=SettingsCreator(link_type="link_only"),
             threshold=None,

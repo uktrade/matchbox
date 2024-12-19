@@ -51,7 +51,7 @@ def test_dedupers(
     if fx_deduper.rename_fields:
         df_renamed = df.copy().rename(columns=fx_data.fields)
         fields_renamed = list(fx_data.fields.values())
-        df_renamed = df_renamed.filter(["hash"] + fields_renamed)
+        df_renamed = df_renamed.filter(["id"] + fields_renamed)
 
     # 1. Input data is as expected
 
@@ -80,7 +80,7 @@ def test_dedupers(
 
     deduped_df = results.probabilities.to_df()
     deduped_df_with_source = results.probabilities.inspect_with_source(
-        left_data=df, left_key="hash", right_data=df, right_key="hash"
+        left_data=df, left_key="id", right_data=df, right_key="id"
     )
 
     assert isinstance(deduped_df, DataFrame)
@@ -96,7 +96,7 @@ def test_dedupers(
 
     clusters_dupes_df = results.clusters.to_df()
     clusters_dupes_df_with_source = results.clusters.inspect_with_source(
-        left_data=df, left_key="hash", right_data=df, right_key="hash"
+        left_data=df, left_key="id", right_data=df, right_key="id"
     )
 
     assert isinstance(clusters_dupes_df, DataFrame)
@@ -125,4 +125,4 @@ def test_dedupers(
     )
 
     assert isinstance(clusters, DataFrame)
-    assert clusters.hash.nunique() == fx_data.unique_n
+    assert clusters.id.nunique() == fx_data.unique_n

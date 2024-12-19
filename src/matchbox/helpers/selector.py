@@ -96,7 +96,7 @@ def query(
 @inject_backend
 def match(
     backend: MatchboxDBAdapter,
-    source_id: str,
+    source_pk: str,
     source: str,
     target: str | list[str],
     resolution: str,
@@ -106,7 +106,7 @@ def match(
 
     Args:
         backend: the backend to query
-        source_id: The ID of the source to match.
+        source_pk: The primary key to match from the source.
         source: The name of the source dataset.
         target: The name of the target dataset(s).
         resolution: the resolution to use for filtering results
@@ -119,7 +119,7 @@ def match(
             Will use these threshold values instead of the cached thresholds
     """
     return backend.match(
-        source_id=source_id,
+        source_pk=source_pk,
         source=source,
         target=target,
         resolution=resolution,

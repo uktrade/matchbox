@@ -4,17 +4,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import pyarrow as pa
 from pandas import ArrowDtype, DataFrame
-from sqlalchemy import (
-    Engine,
-    and_,
-    cast,
-    func,
-    literal,
-    null,
-    select,
-    union,
-)
-from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy import BIGINT, Engine, and_, cast, func, literal, null, select, union
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.selectable import CTE, Select
 
@@ -60,7 +50,7 @@ def source_to_dataset_resolution(source: Source | str, session: Session) -> Reso
 
     source_dataset = (
         session.query(Resolutions)
-        .join(Sources, Sources.resolution == Resolutions.hash)
+        .join(Sources, Sources.resolution_id == Resolutions.resolution_id)
         .filter(
             Sources.schema == source_schema,
             Sources.table == source_table,
@@ -81,7 +71,7 @@ def _resolve_thresholds(
     resolution: Resolutions,
     threshold: float | dict[str, float] | None,
     session: Session,
-) -> dict[bytes, float]:
+) -> dict[int, float]:
     """
     Resolves final thresholds for each resolution in the lineage based on user input.
 
@@ -96,26 +86,28 @@ def _resolve_thresholds(
     """
     resolved_thresholds = {}
 
-    for resolution_hash, default_truth in lineage_truths.items():
+    for resolution_id, default_truth in lineage_truths.items():
         # Dataset
         if default_truth is None:
-            resolved_thresholds[resolution_hash] = None
+            resolved_thresholds[resolution_id] = None
             continue
 
         # Model
         if threshold is None:
-            resolved_thresholds[resolution_hash] = default_truth
+            resolved_thresholds[resolution_id] = default_truth
         elif isinstance(threshold, float):
-            resolved_thresholds[resolution_hash] = (
-                threshold if resolution_hash == resolution.hash.hex() else default_truth
+            resolved_thresholds[resolution_id] = (
+                threshold
+                if resolution_id == resolution.resolution_id
+                else default_truth
             )
         elif isinstance(threshold, dict):
             resolution_obj = (
                 session.query(Resolutions)
-                .filter(Resolutions.hash == bytes.fromhex(resolution_hash))
+                .filter(Resolutions.resolution_id == resolution_id)
                 .first()
             )
-            resolved_thresholds[resolution_hash] = threshold.get(
+            resolved_thresholds[resolution_id] = threshold.get(
                 resolution_obj.name, default_truth
             )
         else:
@@ -124,35 +116,33 @@ def _resolve_thresholds(
     return resolved_thresholds
 
 
-def _get_valid_clusters_for_resolution(
-    resolution_hash: bytes, threshold: float
-) -> Select:
+def _get_valid_clusters_for_resolution(resolution_id: int, threshold: float) -> Select:
     """Get clusters that meet the threshold for a specific resolution."""
     return select(Probabilities.cluster.label("cluster")).where(
         and_(
-            Probabilities.resolution == hash_to_hex_decode(resolution_hash),
+            Probabilities.resolution == resolution_id,
             Probabilities.probability >= threshold,
         )
     )
 
 
-def _union_valid_clusters(lineage_thresholds: dict[bytes, float]) -> Select:
+def _union_valid_clusters(lineage_thresholds: dict[int, float]) -> Select:
     """Creates a CTE of clusters that are valid for any resolution in the lineage.
 
     Each resolution may have a different threshold.
     """
     valid_clusters = None
 
-    for resolution_hash, threshold in lineage_thresholds.items():
+    for resolution_id, threshold in lineage_thresholds.items():
         if threshold is None:
             # This is a dataset - get all its clusters directly
-            resolution_valid = select(Clusters.hash.label("cluster")).where(
-                Clusters.dataset == hash_to_hex_decode(resolution_hash)
+            resolution_valid = select(Clusters.cluster_id.label("cluster")).where(
+                Clusters.dataset == resolution_id
             )
         else:
             # This is a model - get clusters meeting threshold
             resolution_valid = _get_valid_clusters_for_resolution(
-                resolution_hash, threshold
+                resolution_id, threshold
             )
 
         if valid_clusters is None:
@@ -162,13 +152,13 @@ def _union_valid_clusters(lineage_thresholds: dict[bytes, float]) -> Select:
 
     if valid_clusters is None:
         # Handle empty lineage case
-        return select(cast(null(), BYTEA).label("cluster")).where(False)
+        return select(cast(null(), BIGINT).label("cluster")).where(False)
 
     return valid_clusters.cte("valid_clusters")
 
 
 def _resolve_cluster_hierarchy(
-    dataset_hash: bytes,
+    dataset_id: int,
     resolution: Resolutions,
     engine: Engine,
     threshold: float | dict[str, float] | None = None,
@@ -177,7 +167,7 @@ def _resolve_cluster_hierarchy(
     Resolves the final cluster assignments for all records in a dataset.
 
     Args:
-        dataset_hash: Hash of the dataset to query
+        dataset_id: ID of the dataset to query
         resolution: Resolution object representing the point of truth
         engine: Engine for database connection
         threshold: Optional threshold value or dict of resolution_name -> threshold
@@ -187,7 +177,7 @@ def _resolve_cluster_hierarchy(
         hash is the ultimate parent cluster hash and id is the original record ID
     """
     with Session(engine) as session:
-        dataset_resolution = session.get(Resolutions, dataset_hash)
+        dataset_resolution = session.get(Resolutions, dataset_id)
         if dataset_resolution is None:
             raise MatchboxDatasetError("Dataset not found")
 
@@ -213,14 +203,14 @@ def _resolve_cluster_hierarchy(
         # Get base mapping of IDs to clusters
         mapping_0 = (
             select(
-                Clusters.hash.label("cluster_hash"),
-                func.unnest(Clusters.id).label("id"),
+                Clusters.cluster_id.label("cluster_id"),
+                func.unnest(Clusters.source_pk).label("source_pk"),
             )
             .where(
                 and_(
-                    Clusters.hash.in_(select(valid_clusters.c.cluster)),
-                    Clusters.dataset == hash_to_hex_decode(dataset_hash),
-                    Clusters.id.isnot(None),
+                    Clusters.cluster_id.in_(select(valid_clusters.c.cluster)),
+                    Clusters.dataset == dataset_id,
+                    Clusters.source_pk.isnot(None),
                 )
             )
             .cte("mapping_0")
@@ -230,13 +220,13 @@ def _resolve_cluster_hierarchy(
         hierarchy = (
             # Base case: direct parents
             select(
-                mapping_0.c.cluster_hash.label("original_cluster"),
-                mapping_0.c.cluster_hash.label("child"),
+                mapping_0.c.cluster_id.label("original_cluster"),
+                mapping_0.c.cluster_id.label("child"),
                 Contains.parent.label("parent"),
                 literal(1).label("level"),
             )
             .select_from(mapping_0)
-            .join(Contains, Contains.child == mapping_0.c.cluster_hash)
+            .join(Contains, Contains.child == mapping_0.c.cluster_id)
             .where(Contains.parent.in_(select(valid_clusters.c.cluster)))
             .cte("hierarchy", recursive=True)
         )
@@ -271,22 +261,24 @@ def _resolve_cluster_hierarchy(
         # Final mapping with coalesced results
         final_mapping = (
             select(
-                mapping_0.c.id,
+                mapping_0.c.source_pk,
                 func.coalesce(
-                    highest_parents.c.highest_parent, mapping_0.c.cluster_hash
+                    highest_parents.c.highest_parent, mapping_0.c.cluster_id
                 ).label("final_parent"),
             )
             .select_from(mapping_0)
             .join(
                 highest_parents,
-                highest_parents.c.original_cluster == mapping_0.c.cluster_hash,
+                highest_parents.c.original_cluster == mapping_0.c.cluster_id,
                 isouter=True,
             )
             .cte("final_mapping")
         )
 
         # Final select statement
-        return select(final_mapping.c.final_parent.label("hash"), final_mapping.c.id)
+        return select(
+            final_mapping.c.final_parent.label("id"), final_mapping.c.source_pk
+        )
 
 
 def query(
@@ -351,8 +343,8 @@ def query(
                     stacklevel=2,
                 )
 
-            hash_query = _resolve_cluster_hierarchy(
-                dataset_hash=dataset_resolution.hash,
+            id_query = _resolve_cluster_hierarchy(
+                dataset_id=dataset_resolution.resolution_id,
                 resolution=point_of_truth if point_of_truth else dataset_resolution,
                 threshold=threshold,
                 engine=engine,
@@ -363,25 +355,26 @@ def query(
                 remain = 1 if limit_remainder > 0 else 0
                 if remain:
                     limit_remainder -= 1
-                hash_query = hash_query.limit(limit_base + remain)
+                id_query = id_query.limit(limit_base + remain)
 
             # Get cluster assignments
-            mb_hashes = sql_to_df(hash_query, engine, return_type="arrow")
+            mb_ids = sql_to_df(id_query, engine, return_type="arrow")
 
             # Get source data
             raw_data = source.to_arrow(
-                fields=set([source.db_pk] + fields), pks=mb_hashes["id"].to_pylist()
+                fields=set([source.db_pk] + fields),
+                pks=mb_ids["source_pk"].to_pylist(),
             )
 
             # Join and select columns
             joined_table = raw_data.join(
-                right_table=mb_hashes,
+                right_table=mb_ids,
                 keys=key_to_sqlalchemy_label(source.db_pk, source),
-                right_keys="id",
+                right_keys="source_pk",
                 join_type="inner",
             )
 
-            keep_cols = ["hash"] + [key_to_sqlalchemy_label(f, source) for f in fields]
+            keep_cols = ["id"] + [key_to_sqlalchemy_label(f, source) for f in fields]
             match_cols = [col for col in joined_table.column_names if col in keep_cols]
 
             tables.append(joined_table.select(match_cols))
@@ -406,23 +399,27 @@ def query(
 def _build_unnested_clusters() -> CTE:
     """Create CTE that unnests cluster IDs for easier joining."""
     return (
-        select(Clusters.hash, Clusters.dataset, func.unnest(Clusters.id).label("id"))
+        select(
+            Clusters.cluster_id,
+            Clusters.dataset,
+            func.unnest(Clusters.source_pk).label("source_pk"),
+        )
         .select_from(Clusters)
         .cte("unnested_clusters")
     )
 
 
 def _find_source_cluster(
-    unnested_clusters: CTE, source_dataset_hash: bytes, source_id: str
+    unnested_clusters: CTE, source_dataset_id: int, source_pk: str
 ) -> Select:
-    """Find the initial cluster containing the source ID."""
+    """Find the initial cluster containing the source primary key."""
     return (
-        select(unnested_clusters.c.hash)
+        select(unnested_clusters.c.cluster_id)
         .select_from(unnested_clusters)
         .where(
             and_(
-                unnested_clusters.c.dataset == hash_to_hex_decode(source_dataset_hash),
-                unnested_clusters.c.id == source_id,
+                unnested_clusters.c.dataset == source_dataset_id,
+                unnested_clusters.c.source_pk == source_pk,
             )
         )
         .scalar_subquery()
@@ -506,13 +503,13 @@ def _build_hierarchy_down(
             Contains.child.label("child"),
             literal(1).label("level"),
             unnested_clusters.c.dataset.label("dataset"),
-            unnested_clusters.c.id.label("id"),
+            unnested_clusters.c.source_pk.label("source_pk"),
         )
         .select_from(Contains)
         .join_from(
             Contains,
             unnested_clusters,
-            unnested_clusters.c.hash == Contains.child,
+            unnested_clusters.c.cluster_id == Contains.child,
             isouter=True,
         )
         .where(Contains.parent == highest_parent)
@@ -531,7 +528,7 @@ def _build_hierarchy_down(
             Contains.child.label("child"),
             (hierarchy_down.c.level + 1).label("level"),
             unnested_clusters.c.dataset.label("dataset"),
-            unnested_clusters.c.id.label("id"),
+            unnested_clusters.c.source_pk.label("source_pk"),
         )
         .select_from(hierarchy_down)
         .join_from(
@@ -542,10 +539,10 @@ def _build_hierarchy_down(
         .join_from(
             Contains,
             unnested_clusters,
-            unnested_clusters.c.hash == Contains.child,
+            unnested_clusters.c.cluster_id == Contains.child,
             isouter=True,
         )
-        .where(hierarchy_down.c.id.is_(None))  # Only recurse on non-leaf nodes
+        .where(hierarchy_down.c.source_pk.is_(None))  # Only recurse on non-leaf nodes
     )
 
     # Add valid clusters filter to recursive part if provided
@@ -558,7 +555,7 @@ def _build_hierarchy_down(
 
 
 def match(
-    source_id: str,
+    source_pk: str,
     source: str,
     target: str | list[str],
     resolution: str,
@@ -612,7 +609,7 @@ def match(
         # Build the query components
         unnested = _build_unnested_clusters()
         source_cluster = _find_source_cluster(
-            unnested, source_resolution.hash, source_id
+            unnested, source_resolution.resolution_id, source_pk
         )
         hierarchy_up = _build_hierarchy_up(source_cluster, valid_clusters)
         highest = _find_highest_parent(hierarchy_up)
@@ -623,7 +620,7 @@ def match(
             select(
                 hierarchy_down.c.parent.label("cluster"),
                 hierarchy_down.c.dataset,
-                hierarchy_down.c.id,
+                hierarchy_down.c.source_pk,
             )
             .distinct()
             .select_from(hierarchy_down)
@@ -632,22 +629,26 @@ def match(
 
         # Group matches by dataset
         cluster = None
-        matches_by_dataset: dict[bytes, set] = {}
-        for cluster_hash, dataset_hash, id in matches:
+        matches_by_dataset: dict[int, set] = {}
+        for cluster_id, dataset_id, id in matches:
             if cluster is None:
-                cluster = cluster_hash
-            if dataset_hash not in matches_by_dataset:
-                matches_by_dataset[dataset_hash] = set()
-            matches_by_dataset[dataset_hash].add(id)
+                cluster = cluster_id
+            if dataset_id not in matches_by_dataset:
+                matches_by_dataset[dataset_id] = set()
+            matches_by_dataset[dataset_id].add(id)
 
         result = []
         for target_resolution, target_name in target_resolutions:
             match_obj = Match(
                 cluster=cluster,
                 source=source,
-                source_id=matches_by_dataset.get(source_resolution.hash, set()),
+                source_id=matches_by_dataset.get(
+                    source_resolution.resolution_id, set()
+                ),
                 target=target_name,
-                target_id=matches_by_dataset.get(target_resolution.hash, set()),
+                target_id=matches_by_dataset.get(
+                    target_resolution.resolution_id, set()
+                ),
             )
             result.append(match_obj)
 

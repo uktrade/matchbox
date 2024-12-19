@@ -21,7 +21,7 @@ def model_metadata():
     )
 
 
-def create_results(prob_data, cluster_data, metadata):
+def create_results(prob_data: dict, cluster_data: dict, metadata: ModelMetadata):
     """Helper to create ProbabilityResults and ClusterResults from test data."""
     prob_df = DataFrame(prob_data)
     cluster_df = DataFrame(cluster_data)
@@ -95,7 +95,7 @@ def verify_hierarchy(hierarchy: list[tuple[bytes, bytes, float]]) -> None:
         # Test case 1: Equal probability components
         (
             {
-                "hash": ["ab", "bc", "cd"],
+                "id": ["ab", "bc", "cd"],
                 "left_id": ["a", "b", "c"],
                 "right_id": ["b", "c", "d"],
                 "probability": [1.0, 1.0, 1.0],
@@ -120,7 +120,7 @@ def verify_hierarchy(hierarchy: list[tuple[bytes, bytes, float]]) -> None:
         # Test case 2: Asymmetric probability components
         (
             {
-                "hash": ["wx", "xy", "yz"],
+                "id": ["wx", "xy", "yz"],
                 "left_id": ["w", "x", "y"],
                 "right_id": ["x", "y", "z"],
                 "probability": [0.9, 0.85, 0.8],
@@ -156,7 +156,7 @@ def verify_hierarchy(hierarchy: list[tuple[bytes, bytes, float]]) -> None:
         # Test case 3: Empty input
         (
             {
-                "hash": [],
+                "id": [],
                 "left_id": [],
                 "right_id": [],
                 "probability": [],
@@ -171,7 +171,7 @@ def verify_hierarchy(hierarchy: list[tuple[bytes, bytes, float]]) -> None:
         # Test case 4: Single two-item component
         (
             {
-                "hash": ["xy"],
+                "id": ["xy"],
                 "left_id": ["x"],
                 "right_id": ["y"],
                 "probability": [0.9],
@@ -198,9 +198,9 @@ def test_cluster_results_to_hierarchical(
     )
 
     hierarchy = _cluster_results_to_hierarchical(prob_results, cluster_results)
-    actual_relations = set((p, c, t) for p, c, t in hierarchy)
+    actual_relations = set((p, c, t) for p, c, t in hierarchy.itertuples(index=False))
 
     assert actual_relations == expected_relations
 
     if actual_relations:  # Skip verification for empty case
-        verify_hierarchy(hierarchy)
+        verify_hierarchy(hierarchy.itertuples(index=False))

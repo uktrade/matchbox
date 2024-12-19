@@ -44,7 +44,7 @@ T = TypeVar("T")
 class Match(BaseModel):
     """A match between primary keys in the Matchbox database."""
 
-    cluster: bytes | None
+    cluster: int | None
     source: str
     source_id: set[str] = Field(default_factory=set)
     target: str
@@ -67,9 +67,9 @@ class Probability(BaseModel):
     A probability describes the likelihood of a match between two clusters.
     """
 
-    hash: bytes
-    left: bytes
-    right: bytes
+    id: bytes
+    left: int
+    right: int
     probability: float = Field(default=None, ge=0, le=1)
 
 

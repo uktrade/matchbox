@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import Engine, and_, bindparam, delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from matchbox.client.results import ClusterResults, ProbabilityResults, Results
+from matchbox.client.results import Results
 from matchbox.common.db import Match, Source, SourceWarehouse
 from matchbox.common.exceptions import (
     MatchboxDataError,
@@ -30,10 +30,7 @@ from matchbox.server.postgresql.utils.insert import (
     insert_results,
 )
 from matchbox.server.postgresql.utils.query import match, query
-from matchbox.server.postgresql.utils.results import (
-    get_model_clusters,
-    get_model_probabilities,
-)
+from matchbox.server.postgresql.utils.results import get_model_results
 
 if TYPE_CHECKING:
     from pandas import DataFrame as PandasDataFrame
@@ -133,21 +130,9 @@ class MatchboxPostgresModel(MatchboxModelAdapter):
             return self.resolution.name
 
     @property
-    def probabilities(self) -> ProbabilityResults:
-        """Retrieve probabilities for this model."""
-        return get_model_probabilities(
-            engine=MBDB.get_engine(), resolution=self.resolution
-        )
-
-    @property
-    def clusters(self) -> ClusterResults:
-        """Retrieve clusters for this model."""
-        return get_model_clusters(engine=MBDB.get_engine(), resolution=self.resolution)
-
-    @property
     def results(self) -> Results:
         """Retrieve results for this model."""
-        return Results(probabilities=self.probabilities, clusters=self.clusters)
+        return get_model_results(engine=MBDB.get_engine(), resolution=self.resolution)
 
     @results.setter
     def results(self, results: Results) -> None:

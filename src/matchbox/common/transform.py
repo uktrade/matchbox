@@ -2,14 +2,14 @@ import logging
 import multiprocessing
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
-from typing import Callable, Generic, Hashable, TypeVar
+from typing import Callable, Generic, Hashable, Literal, TypeVar
+from uuid import uuid4
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import rustworkx as rx
 from dotenv import find_dotenv, load_dotenv
-from pandas import DataFrame
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -20,11 +20,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from matchbox.client.results import ClusterResults, ProbabilityResults
-from matchbox.common.hash import (
-    IntMap,
-    list_to_value_ordered_hash,
-)
+from matchbox.common.hash import hash_values
 
 T = TypeVar("T", bound=Hashable)
 
@@ -34,37 +30,39 @@ dotenv_path = find_dotenv(usecwd=True)
 load_dotenv(dotenv_path)
 
 
-def to_clusters(results: ProbabilityResults) -> ClusterResults:
+def to_clusters(results: pa.Table) -> pa.Table:
     """
     Converts probabilities into a list of connected components formed at each threshold.
 
     Returns:
-        ClusterResults sorted by threshold descending.
+        Arrow table of parent, child, threshold, sorted by probability descending.
     """
     G = rx.PyGraph()
     added: dict[bytes, int] = {}
     components: dict[str, list] = {"parent": [], "child": [], "threshold": []}
 
-    # Sort probabilities descending and group by probability
-    edges_df = (
-        results.dataframe.sort_values("probability", ascending=False)
-        .filter(["left_id", "right_id", "probability"])
-        .astype(
-            {"left_id": "large_binary[pyarrow]", "right_id": "large_binary[pyarrow]"}
-        )
-    )
+    # Sort probabilities descending and select relevant columns
+    results = results.sort_by([("probability", "descending")])
+    results = results.select(["left_id", "right_id", "probability"])
 
     # Get unique probability thresholds, sorted
-    thresholds = sorted(edges_df["probability"].unique())
+    thresholds = pc.unique(results.column("probability")).sort(order="descending")
 
     # Process edges grouped by probability threshold
     for prob in thresholds:
-        threshold_edges = edges_df[edges_df["probability"] == prob]
+        threshold_edges = results.filter(pc.equal(results.column("probability"), prob))
+
         # Get state before adding this batch of edges
         old_components = {frozenset(comp) for comp in rx.connected_components(G)}
 
         # Add all nodes and edges at this probability threshold
-        edge_values = threshold_edges[["left_id", "right_id"]].values
+        edge_values = list(
+            zip(
+                threshold_edges.column("left_id").to_pylist(),
+                threshold_edges.column("right_id").to_pylist(),
+                strict=True,
+            )
+        )
         for left, right in edge_values:
             for hash_val in (left, right):
                 if hash_val not in added:
@@ -79,17 +77,13 @@ def to_clusters(results: ProbabilityResults) -> ClusterResults:
         # For each changed component, add ALL members at current threshold
         for comp in changed_components:
             children = sorted([G.get_node_data(n) for n in comp])
-            parent = list_to_value_ordered_hash(children)
+            parent = hash_values(*children)
 
             components["parent"].extend([parent] * len(children))
             components["child"].extend(children)
             components["threshold"].extend([prob] * len(children))
 
-    return ClusterResults(
-        dataframe=DataFrame(components).convert_dtypes(dtype_backend="pyarrow"),
-        model=results.model,
-        metadata=results.metadata,
-    )
+    return pa.Table.from_pydict(components)
 
 
 def attach_components_to_probabilities(probabilities: pa.Table) -> pa.Table:
@@ -186,7 +180,9 @@ class DisjointSet(Generic[T]):
 
 
 def component_to_hierarchy(
-    table: pa.Table, dtype: pa.DataType = pa.uint64, salt: int = 1
+    table: pa.Table,
+    dtype: pa.DataType = pa.large_binary,
+    hash_func: Callable[[*tuple[T, ...]], T] = hash_values,
 ) -> pa.Table:
     """
     Convert pairwise probabilities into a hierarchical representation.
@@ -202,7 +198,6 @@ def component_to_hierarchy(
     probs = np.sort(pc.unique(table["probability"]).to_numpy())[::-1]
 
     djs = DisjointSet[int]()  # implements connected components
-    im = IntMap(salt=salt)  # generates IDs for new clusters
     current_roots: dict[int, set[int]] = defaultdict(set)  # tracks ultimate parents
     hierarchy: list[tuple[int, int, float]] = []  # the output of this function
 
@@ -218,7 +213,7 @@ def component_to_hierarchy(
             strict=True,
         ):
             djs.union(left, right)
-            parent = im.index(left, right)
+            parent = hash_func(left, right)
             hierarchy.extend([(parent, left, threshold), (parent, right, threshold)])
             current_roots[left].add(parent)
             current_roots[right].add(parent)
@@ -227,7 +222,7 @@ def component_to_hierarchy(
             if len(children) <= 2:
                 continue  # Skip pairs already handled by pairwise probabilities
 
-            parent = im.index(*children)
+            parent = hash_func(*children)
             prev_roots: set[int] = set()
             for child in children:
                 prev_roots.update(current_roots[child])
@@ -249,7 +244,8 @@ def component_to_hierarchy(
 def to_hierarchical_clusters(
     probabilities: pa.Table,
     proc_func: Callable[[pa.Table, pa.DataType], pa.Table] = component_to_hierarchy,
-    dtype: pa.DataType = pa.uint64,
+    hash_func: Callable[[*tuple[T, ...]], T] = hash_values,
+    dtype: pa.DataType = pa.large_binary,
     timeout: int = 300,
 ) -> pa.Table:
     """
@@ -315,8 +311,8 @@ def to_hierarchical_clusters(
 
         with ProcessPoolExecutor(max_workers=n_cores) as executor:
             futures = [
-                executor.submit(proc_func, component_table, dtype, salt)
-                for salt, component_table in enumerate(component_tables)
+                executor.submit(proc_func, component_table, dtype, hash_func)
+                for component_table in component_tables
             ]
 
             for future in futures:
@@ -347,3 +343,48 @@ def to_hierarchical_clusters(
         )
 
     return pa.concat_tables(results)
+
+
+def drop_duplicates(
+    table: pa.Table,
+    on: list[str] | None = None,
+    keep: Literal["first", "last"] = "first",
+) -> pa.Table:
+    """
+    Remove duplicate rows from a PyArrow table based on specified columns.
+
+    This function efficiently removes duplicate rows from a PyArrow table,
+    keeping either the first or last occurrence of each unique combination
+    of values in the specified columns.
+
+    Lifted with love from this gist:
+    https://gist.github.com/nmehran/57f264bd951b2f77af08f760eafea40e
+
+    An alternative:
+    https://github.com/TomScheffers/pyarrow_ops/
+    """
+    if not isinstance(table, pa.Table):
+        raise TypeError("Parameter 'table' must be a PyArrow Table")
+
+    if keep not in ["first", "last"]:
+        raise ValueError("Parameter 'keep' must be either 'first' or 'last'")
+
+    if not on:
+        on = table.column_names
+
+    # Generate a unique column name for row index
+    index_column = f"index_{uuid4().hex}"
+    index_aggregate_column = f"{index_column}_{keep}"
+
+    # Create row numbers
+    num_rows = table.num_rows
+    row_numbers = pa.array(np.arange(num_rows, dtype=np.int64))
+
+    # Append row numbers, group by specified columns, and aggregate
+    unique_indices = (
+        table.append_column(index_column, row_numbers)
+        .group_by(on, use_threads=False)
+        .aggregate([(index_column, keep)])
+    ).column(index_aggregate_column)
+
+    return pc.take(table, unique_indices, boundscheck=False)

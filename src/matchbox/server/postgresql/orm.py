@@ -2,6 +2,7 @@ from sqlalchemy import (
     BIGINT,
     FLOAT,
     INTEGER,
+    SMALLINT,
     VARCHAR,
     CheckConstraint,
     Column,
@@ -276,7 +277,7 @@ class Probabilities(CountMixin, MBDB.MatchboxBase):
     cluster = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
-    probability = Column(FLOAT, nullable=False)
+    probability = Column(SMALLINT, nullable=False)
 
     # Relationships
     proposed_by = relationship("Resolutions", back_populates="probabilities")

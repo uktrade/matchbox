@@ -194,14 +194,6 @@ class MatchboxModelAdapter(ABC):
 
     @property
     @abstractmethod
-    def probabilities(self) -> ProbabilityResults: ...
-
-    @property
-    @abstractmethod
-    def clusters(self) -> ClusterResults: ...
-
-    @property
-    @abstractmethod
     def results(self) -> Results: ...
 
     @results.setter

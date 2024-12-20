@@ -6,14 +6,11 @@ from pandas import DataFrame
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.results import (
-    ClusterResults,
     ModelMetadata,
     ModelType,
-    ProbabilityResults,
     Results,
 )
 from matchbox.common.exceptions import MatchboxResolutionError
-from matchbox.common.transform import to_clusters
 from matchbox.server import MatchboxDBAdapter, inject_backend
 from matchbox.server.base import MatchboxModelAdapter
 
@@ -76,18 +73,6 @@ class Model:
 
     @property
     @ensure_connection
-    def probabilities(self) -> ProbabilityResults:
-        """Retrieve probabilities associated with the model from the database."""
-        return self._model.probabilities
-
-    @property
-    @ensure_connection
-    def clusters(self) -> ClusterResults:
-        """Retrieve clusters associated with the model from the database."""
-        return self._model.clusters
-
-    @property
-    @ensure_connection
     def results(self) -> Results:
         """Retrieve results associated with the model from the database."""
         return self._model.results
@@ -128,8 +113,8 @@ class Model:
         """Set the ancestors cache of the model."""
         self._model.ancestors_cache = ancestors_cache
 
-    def calculate_probabilities(self) -> ProbabilityResults:
-        """Calculate probabilities for the model."""
+    def run(self) -> Results:
+        """Execute the model pipeline and return results."""
         if self.metadata.type == ModelType.LINKER:
             if self.right_data is None:
                 raise MatchboxResolutionError("Right dataset required for linking")
@@ -140,22 +125,11 @@ class Model:
         else:
             results = self.model_instance.dedupe(data=self.left_data)
 
-        return ProbabilityResults(
-            dataframe=results,
+        return Results(
+            probabilities=results,
             model=self,
             metadata=self.metadata,
         )
-
-    def calculate_clusters(self, probabilities: ProbabilityResults) -> ClusterResults:
-        """Calculate clusters for the model based on probabilities."""
-        return to_clusters(results=probabilities)
-
-    def run(self) -> Results:
-        """Execute the model pipeline and return results."""
-        probabilities = self.calculate_probabilities()
-        clusters = self.calculate_clusters(probabilities)
-
-        return Results(model=self, probabilities=probabilities, clusters=clusters)
 
 
 @inject_backend

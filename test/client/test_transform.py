@@ -1,8 +1,6 @@
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from functools import lru_cache
 from itertools import chain
-from typing import Any, Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pyarrow as pa
@@ -30,23 +28,6 @@ def _combine_strings(*n: str) -> str:
     """
     letters = set(chain.from_iterable(n))
     return "".join(sorted(letters))
-
-
-@contextmanager
-def parallel_pool_for_tests(
-    max_workers: int = 2, timeout: int = 30
-) -> Iterator[ThreadPoolExecutor]:
-    """Context manager for safe parallel execution in tests using threads.
-
-    Args:
-        max_workers: Maximum number of worker threads
-        timeout: Maximum seconds to wait for each task
-    """
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        try:
-            yield executor
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
 
 @pytest.mark.parametrize(
@@ -318,18 +299,12 @@ def test_hierarchical_clusters(input_data, expected_hierarchy):
     )
 
     # Run and compare
-    with (
-        patch(
-            "matchbox.common.transform.ProcessPoolExecutor",
-            lambda *args, **kwargs: parallel_pool_for_tests(timeout=30),
-        ),
-        patch("matchbox.common.transform.IntMap") as MockIntMap,
-    ):
-        instance = MockIntMap.return_value
-        instance.index.side_effect = _combine_strings
-        result = to_hierarchical_clusters(
-            probabilities, dtype=pa.string, proc_func=component_to_hierarchy
-        )
+    result = to_hierarchical_clusters(
+        probabilities,
+        dtype=pa.string,
+        proc_func=component_to_hierarchy,
+        hash_func=_combine_strings,
+    )
 
     result = result.sort_by(
         [

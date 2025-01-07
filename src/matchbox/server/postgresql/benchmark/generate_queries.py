@@ -1,5 +1,4 @@
-from matchbox.client.helpers.selector import match, query, selector
-from test.fixtures.data import crn_companies
+from matchbox.client.helpers.selector import query, selector
 
 
 # Generates a query that can be used for benchmarking purposes
@@ -21,7 +20,7 @@ def generate_query(crn, fields, backend, resolution, return_type):
 
 
 if __name__ == "__main__":
-    query=''
+    query = ""
     # vars: crn, fields, backend, resolution, return_type
     # query = generate_query(crn, fields, backend, resolution, return_type)
     print(query)

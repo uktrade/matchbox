@@ -355,6 +355,8 @@ def query(
             # Get cluster assignments
             mb_ids = sql_to_df(id_query, engine, return_type="arrow")
 
+            query_string = str(id_query)
+
             # Get source data
             raw_data = source.to_arrow(
                 fields=set([source.db_pk] + fields),
@@ -379,14 +381,14 @@ def query(
 
     # Return in requested format
     if return_type == "arrow":
-        return result
+        return result, query_string
     elif return_type == "pandas":
         return result.to_pandas(
             use_threads=True,
             split_blocks=True,
             self_destruct=True,
             types_mapper=ArrowDtype,
-        )
+        ), query_string
     else:
         raise ValueError(f"return_type of {return_type} not valid")
 

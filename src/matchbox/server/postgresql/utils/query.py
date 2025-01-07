@@ -62,10 +62,10 @@ def source_to_dataset_resolution(source: Source | str, session: Session) -> Reso
 
 
 def _resolve_thresholds(
-    lineage_truths: dict[str, float],
-    resolution: Resolutions,
-    threshold: float | dict[str, float] | None,
-    session: Session,
+        lineage_truths: dict[str, float],
+        resolution: Resolutions,
+        threshold: float | dict[str, float] | None,
+        session: Session,
 ) -> dict[int, float]:
     """
     Resolves final thresholds for each resolution in the lineage based on user input.
@@ -153,10 +153,10 @@ def _union_valid_clusters(lineage_thresholds: dict[int, float]) -> Select:
 
 
 def _resolve_cluster_hierarchy(
-    dataset_id: int,
-    resolution: Resolutions,
-    engine: Engine,
-    threshold: float | dict[str, float] | None = None,
+        dataset_id: int,
+        resolution: Resolutions,
+        engine: Engine,
+        threshold: float | dict[str, float] | None = None,
 ) -> Select:
     """
     Resolves the final cluster assignments for all records in a dataset.
@@ -277,12 +277,12 @@ def _resolve_cluster_hierarchy(
 
 
 def query(
-    selector: dict[Source, list[str]],
-    engine: Engine,
-    return_type: Literal["pandas", "arrow", "polars"] = "pandas",
-    resolution: str | None = None,
-    threshold: float | dict[str, float] | None = None,
-    limit: int = None,
+        selector: dict[Source, list[str]],
+        engine: Engine,
+        return_type: Literal["pandas", "arrow", "polars"] = "pandas",
+        resolution: str | None = None,
+        threshold: float | dict[str, float] | None = None,
+        limit: int = None,
 ) -> DataFrame | pa.Table | PolarsDataFrame:
     """
     Queries Matchbox and the Source warehouse to retrieve linked data.
@@ -354,6 +354,7 @@ def query(
 
             # Get cluster assignments
             mb_ids = sql_to_df(id_query, engine, return_type="arrow")
+            query_string = str(id_query)
 
             # Get source data
             raw_data = source.to_arrow(
@@ -379,14 +380,14 @@ def query(
 
     # Return in requested format
     if return_type == "arrow":
-        return result
+        return result, query_string
     elif return_type == "pandas":
         return result.to_pandas(
             use_threads=True,
             split_blocks=True,
             self_destruct=True,
             types_mapper=ArrowDtype,
-        )
+        ), query_string
     else:
         raise ValueError(f"return_type of {return_type} not valid")
 
@@ -405,7 +406,7 @@ def _build_unnested_clusters() -> CTE:
 
 
 def _find_source_cluster(
-    unnested_clusters: CTE, source_dataset_id: int, source_pk: str
+        unnested_clusters: CTE, source_dataset_id: int, source_pk: str
 ) -> Select:
     """Find the initial cluster containing the source primary key."""
     return (
@@ -422,7 +423,7 @@ def _find_source_cluster(
 
 
 def _build_hierarchy_up(
-    source_cluster: Select, valid_clusters: CTE | None = None
+        source_cluster: Select, valid_clusters: CTE | None = None
 ) -> CTE:
     """
     Build recursive CTE that finds all parent clusters.
@@ -481,7 +482,7 @@ def _find_highest_parent(hierarchy_up: CTE) -> Select:
 
 
 def _build_hierarchy_down(
-    highest_parent: Select, unnested_clusters: CTE, valid_clusters: CTE | None = None
+        highest_parent: Select, unnested_clusters: CTE, valid_clusters: CTE | None = None
 ) -> CTE:
     """
     Build recursive CTE that finds all child clusters and their IDs.
@@ -550,13 +551,13 @@ def _build_hierarchy_down(
 
 
 def match(
-    source_pk: str,
-    source: str,
-    target: str | list[str],
-    resolution: str,
-    engine: Engine,
-    threshold: float | dict[str, float] | None = None,
-) -> Match | list[Match]:
+        source_pk: str,
+        source: str,
+        target: str | list[str],
+        resolution: str,
+        engine: Engine,
+        threshold: float | dict[str, float] | None = None,
+) -> (Match | list[Match], str):
     """Matches an ID in a source dataset and returns the keys in the targets.
 
     To accomplish this, the function:
@@ -620,31 +621,34 @@ def match(
             .distinct()
             .select_from(hierarchy_down)
         )
-        matches = session.execute(final_stmt).all()
 
-        # Group matches by dataset
-        cluster = None
-        matches_by_dataset: dict[int, set] = {}
-        for cluster_id, dataset_id, id in matches:
-            if cluster is None:
-                cluster = cluster_id
-            if dataset_id not in matches_by_dataset:
-                matches_by_dataset[dataset_id] = set()
-            matches_by_dataset[dataset_id].add(id)
+        match_string = str(final_stmt)
 
-        result = []
-        for target_resolution, target_name in target_resolutions:
-            match_obj = Match(
-                cluster=cluster,
-                source=source,
-                source_id=matches_by_dataset.get(
-                    source_resolution.resolution_id, set()
-                ),
-                target=target_name,
-                target_id=matches_by_dataset.get(
-                    target_resolution.resolution_id, set()
-                ),
-            )
-            result.append(match_obj)
+    matches = session.execute(final_stmt).all()
 
-        return result[0] if isinstance(target, str) else result
+    # Group matches by dataset
+    cluster = None
+    matches_by_dataset: dict[int, set] = {}
+    for cluster_id, dataset_id, id in matches:
+        if cluster is None:
+            cluster = cluster_id
+        if dataset_id not in matches_by_dataset:
+            matches_by_dataset[dataset_id] = set()
+        matches_by_dataset[dataset_id].add(id)
+
+    result = []
+    for target_resolution, target_name in target_resolutions:
+        match_obj = Match(
+            cluster=cluster,
+            source=source,
+            source_id=matches_by_dataset.get(
+                source_resolution.resolution_id, set()
+            ),
+            target=target_name,
+            target_id=matches_by_dataset.get(
+                target_resolution.resolution_id, set()
+            ),
+        )
+        result.append(match_obj)
+
+    return result[0], match_string if isinstance(target, str) else result

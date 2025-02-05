@@ -2,7 +2,23 @@ import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import pyarrow as pa
-from sqlalchemy import BIGINT, Engine, and_, cast, func, literal, null, select, union
+from sqlalchemy import (
+    BIGINT,
+    Column,
+    Engine,
+    Index,
+    MetaData,
+    Table,
+    and_,
+    cast,
+    func,
+    insert,
+    literal,
+    null,
+    select,
+    text,
+    union,
+)
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.selectable import CTE, Select
 
@@ -54,15 +70,14 @@ def _get_dataset_resolution(
 def _resolve_thresholds(
     lineage_truths: dict[str, float],
     resolution: Resolutions,
-    threshold: float | dict[str, float] | None,
-    session: Session,
+    threshold: int | None,
 ) -> dict[int, float]:
     """Resolves final thresholds for each resolution in the lineage based on user input.
 
     Args:
         lineage_truths: Dict from with resolution hash -> cached truth
         resolution: The target resolution being used for clustering
-        threshold: User-supplied threshold value or dict
+        threshold: User-supplied threshold value
         session: SQLAlchemy session
 
     Returns:
@@ -79,20 +94,11 @@ def _resolve_thresholds(
         # Model
         if threshold is None:
             resolved_thresholds[resolution_id] = default_truth
-        elif isinstance(threshold, float):
+        elif isinstance(threshold, int):
             resolved_thresholds[resolution_id] = (
                 threshold
                 if resolution_id == resolution.resolution_id
                 else default_truth
-            )
-        elif isinstance(threshold, dict):
-            resolution_obj = (
-                session.query(Resolutions)
-                .filter(Resolutions.resolution_id == resolution_id)
-                .first()
-            )
-            resolved_thresholds[resolution_id] = threshold.get(
-                resolution_obj.name, default_truth
             )
         else:
             raise ValueError(f"Invalid threshold type: {type(threshold)}")
@@ -100,175 +106,177 @@ def _resolve_thresholds(
     return resolved_thresholds
 
 
-def _get_valid_clusters_for_resolution(resolution_id: int, threshold: float) -> Select:
-    """Get clusters that meet the threshold for a specific resolution."""
-    return select(Probabilities.cluster.label("cluster")).where(
-        and_(
-            Probabilities.resolution == resolution_id,
-            Probabilities.probability >= threshold,
-        )
+def _create_temp_valid_clusters(session: Any, lineage_thresholds: dict[int, float]):
+    """Creates a temporary table of valid clusters based on the lineage thresholds."""
+    temp_metadata = MetaData()
+
+    valid_clusters = Table(
+        "tmp_valid_clusters",
+        temp_metadata,
+        Column("cluster", BIGINT),
+        prefixes=["TEMPORARY"],
     )
-
-
-def _union_valid_clusters(lineage_thresholds: dict[int, float]) -> Select:
-    """Creates a CTE of clusters that are valid for any resolution in the lineage.
-
-    Each resolution may have a different threshold.
-    """
-    valid_clusters = None
+    valid_clusters.create(session.connection())
 
     for resolution_id, threshold in lineage_thresholds.items():
         if threshold is None:
             # This is a dataset - get all its clusters directly
-            resolution_valid = select(Clusters.cluster_id.label("cluster")).where(
-                Clusters.dataset == resolution_id
+            insert_stmt = insert(valid_clusters).from_select(
+                ["cluster"],
+                select(Clusters.cluster_id.label("cluster")).where(
+                    Clusters.dataset == resolution_id
+                ),
             )
         else:
-            # This is a model - get clusters meeting threshold
-            resolution_valid = _get_valid_clusters_for_resolution(
-                resolution_id, threshold
+            insert_stmt = insert(valid_clusters).from_select(
+                ["cluster"],
+                select(Probabilities.cluster).where(
+                    Probabilities.resolution == resolution_id,
+                    Probabilities.resolution >= threshold,
+                ),
             )
+        session.execute(insert_stmt)
 
-        if valid_clusters is None:
-            valid_clusters = resolution_valid
-        else:
-            valid_clusters = union(valid_clusters, resolution_valid)
+    # session.commit()
 
-    if valid_clusters is None:
-        # Handle empty lineage case
-        return select(cast(null(), BIGINT).label("cluster")).where(False)
-
-    return valid_clusters.cte("valid_clusters")
+    index = Index(
+        "ix_tmp_valid_clusters_cluster", valid_clusters.c.cluster, unique=True
+    )
+    index.create(session.connection())
+    session.commit()
 
 
 def _resolve_cluster_hierarchy(
     dataset_id: int,
     resolution: Resolutions,
-    engine: Engine,
-    threshold: float | dict[str, float] | None = None,
+    session: Any,
+    threshold: int | None = None,
 ) -> Select:
     """Resolves the final cluster assignments for all records in a dataset.
 
     Args:
         dataset_id: ID of the dataset to query
         resolution: Resolution object representing the point of truth
-        engine: Engine for database connection
-        threshold: Optional threshold value or dict of resolution_name -> threshold
+        session: Session for querying
+        threshold: Optional threshold value
 
     Returns:
         SQLAlchemy Select statement that will resolve to (hash, id) pairs, where
         hash is the ultimate parent cluster hash and id is the original record ID
     """
-    with Session(engine) as session:
-        dataset_resolution = session.get(Resolutions, dataset_id)
-        if dataset_resolution is None:
-            raise MatchboxSourceNotFoundError()
 
-        try:
-            lineage_truths = resolution.get_lineage_to_dataset(
-                dataset=dataset_resolution
-            )
-        except ValueError as e:
-            raise MatchboxResolutionNotFoundError(
-                f"Invalid resolution lineage: {str(e)}"
-            ) from e
+    dataset_resolution = session.get(Resolutions, dataset_id)
+    if dataset_resolution is None:
+        raise MatchboxSourceNotFoundError()
 
-        thresholds = _resolve_thresholds(
-            lineage_truths=lineage_truths,
-            resolution=resolution,
-            threshold=threshold,
-            session=session,
+    try:
+        lineage_truths = resolution.get_lineage_to_dataset(dataset=dataset_resolution)
+    except ValueError as e:
+        raise MatchboxResolutionNotFoundError(
+            f"Invalid resolution lineage: {str(e)}"
+        ) from e
+
+    thresholds = _resolve_thresholds(
+        lineage_truths=lineage_truths,
+        resolution=resolution,
+        threshold=threshold,
+    )
+
+    # Create temporary table of all clusters valid across all resolutions in lineage
+    _create_temp_valid_clusters(session, thresholds)
+
+    # Get base mapping of IDs to clusters
+    mapping_0 = (
+        select(
+            Clusters.cluster_id.label("cluster_id"),
+            Clusters.source_pk.label("source_pk"),
         )
-
-        # Get clusters valid across all resolutions in lineage
-        valid_clusters = _union_valid_clusters(thresholds)
-
-        # Get base mapping of IDs to clusters
-        mapping_0 = (
-            select(
-                Clusters.cluster_id.label("cluster_id"),
-                func.unnest(Clusters.source_pk).label("source_pk"),
+        .where(
+            and_(
+                Clusters.cluster_id.in_(
+                    select(text("cluster from tmp_valid_clusters"))
+                ),
+                Clusters.dataset == dataset_id,
+                Clusters.source_pk.isnot(None),
             )
-            .where(
-                and_(
-                    Clusters.cluster_id.in_(select(valid_clusters.c.cluster)),
-                    Clusters.dataset == dataset_id,
-                    Clusters.source_pk.isnot(None),
-                )
-            )
-            .cte("mapping_0")
         )
+        .cte("mapping_0")
+    )
 
-        # Build recursive hierarchy CTE
-        hierarchy = (
-            # Base case: direct parents
-            select(
-                mapping_0.c.cluster_id.label("original_cluster"),
-                mapping_0.c.cluster_id.label("child"),
-                Contains.parent.label("parent"),
-                literal(1).label("level"),
-            )
-            .select_from(mapping_0)
-            .join(Contains, Contains.child == mapping_0.c.cluster_id)
-            .where(Contains.parent.in_(select(valid_clusters.c.cluster)))
-            .cte("hierarchy", recursive=True)
+    # Build recursive hierarchy CTE
+    hierarchy = (
+        # Base case: direct parents
+        select(
+            mapping_0.c.cluster_id.label("original_cluster"),
+            mapping_0.c.cluster_id.label("child"),
+            Contains.parent.label("parent"),
+            literal(1).label("level"),
         )
+        .select_from(mapping_0)
+        .join(Contains, Contains.child == mapping_0.c.cluster_id)
+        .where(Contains.parent.in_(select(text("cluster from tmp_valid_clusters"))))
+        .cte("hierarchy", recursive=True)
+    )
 
-        # Recursive case
-        recursive = (
-            select(
-                hierarchy.c.original_cluster,
-                hierarchy.c.parent.label("child"),
-                Contains.parent.label("parent"),
-                (hierarchy.c.level + 1).label("level"),
-            )
-            .select_from(hierarchy)
-            .join(Contains, Contains.child == hierarchy.c.parent)
-            .where(Contains.parent.in_(select(valid_clusters.c.cluster)))
+    # Recursive case
+    recursive = (
+        select(
+            hierarchy.c.original_cluster,
+            hierarchy.c.parent.label("child"),
+            Contains.parent.label("parent"),
+            (hierarchy.c.level + 1).label("level"),
         )
+        .select_from(hierarchy)
+        .join(Contains, Contains.child == hierarchy.c.parent)
+        .where(Contains.parent.in_(select(text("cluster from tmp_valid_clusters"))))
+    )
 
-        hierarchy = hierarchy.union_all(recursive)
+    hierarchy = hierarchy.union_all(recursive)
 
-        # Get highest parents
-        highest_parents = (
-            select(
-                hierarchy.c.original_cluster,
-                hierarchy.c.parent.label("highest_parent"),
-                hierarchy.c.level,
+    # Get highest parents
+    highest_parents = (
+        select(
+            hierarchy.c.original_cluster,
+            func.first_value(hierarchy.c.parent)
+            .over(
+                partition_by=hierarchy.c.original_cluster,
+                order_by=hierarchy.c.level.desc(),
             )
-            .distinct(hierarchy.c.original_cluster)
-            .order_by(hierarchy.c.original_cluster, hierarchy.c.level.desc())
-            .cte("highest_parents")
+            .label("highest_parent"),
         )
+        .distinct(hierarchy.c.original_cluster)
+        .cte("highest_parents")
+    )
 
-        # Final mapping with coalesced results
-        final_mapping = (
-            select(
-                mapping_0.c.source_pk,
-                func.coalesce(
-                    highest_parents.c.highest_parent, mapping_0.c.cluster_id
-                ).label("final_parent"),
-            )
-            .select_from(mapping_0)
-            .join(
-                highest_parents,
-                highest_parents.c.original_cluster == mapping_0.c.cluster_id,
-                isouter=True,
-            )
-            .cte("final_mapping")
+    # Final mapping with coalesced results
+    final_mapping = (
+        select(
+            mapping_0.c.source_pk,
+            func.coalesce(
+                highest_parents.c.highest_parent, mapping_0.c.cluster_id
+            ).label("final_parent"),
         )
+        .select_from(mapping_0)
+        .join(
+            highest_parents,
+            highest_parents.c.original_cluster == mapping_0.c.cluster_id,
+            isouter=True,
+        )
+        .cte("final_mapping")
+    )
 
-        # Final select statement
-        return select(
-            final_mapping.c.final_parent.label("id"), final_mapping.c.source_pk
-        )
+    # Final select statement
+    return select(
+        final_mapping.c.final_parent.label("id"),
+        func.unnest(final_mapping.c.source_pk).label("source_pk"),
+    )
 
 
 def query(
     engine: Engine,
     source_address: SourceAddress,
     resolution_id: int | None = None,
-    threshold: float | dict[str, float] | None = None,
+    threshold: int | None = None,
     limit: int = None,
 ) -> pa.Table:
     """Queries Matchbox and the Source warehouse to retrieve linked data.
@@ -290,6 +298,7 @@ def query(
         A table containing the requested data from each table, unioned together,
         with the hash key of each row in Matchbox
     """
+    # Session used for querying
     with Session(engine) as session:
         dataset_resolution = _get_dataset_resolution(source_address, session)
 
@@ -310,7 +319,7 @@ def query(
             dataset_id=dataset_resolution.resolution_id,
             resolution=resolution,
             threshold=threshold,
-            engine=engine,
+            session=session,
         )
 
         if limit:
@@ -491,12 +500,53 @@ def _get_target_resolutions(
     return target_resolutions
 
 
+def _get_valid_clusters_for_resolution(resolution_id: int, threshold: float) -> Select:
+    """Get clusters that meet the threshold for a specific resolution."""
+    return select(Probabilities.cluster.label("cluster")).where(
+        and_(
+            Probabilities.resolution == resolution_id,
+            Probabilities.probability >= threshold,
+        )
+    )
+
+
+def _union_valid_clusters(lineage_thresholds: dict[int, float]) -> Select:
+    """Creates a CTE of clusters that are valid for any resolution in the lineage.
+
+    Each resolution may have a different threshold.
+    """
+    valid_clusters = None
+
+    for resolution_id, threshold in lineage_thresholds.items():
+        if threshold is None:
+            # This is a dataset - get all its clusters directly
+            resolution_valid = select(Clusters.cluster_id.label("cluster")).where(
+                Clusters.dataset == resolution_id
+            )
+        else:
+            # This is a model - get clusters meeting threshold
+            resolution_valid = _get_valid_clusters_for_resolution(
+                resolution_id, threshold
+            )
+
+        if valid_clusters is None:
+            valid_clusters = resolution_valid
+        else:
+            valid_clusters = union(valid_clusters, resolution_valid)
+
+    if valid_clusters is None:
+        # Handle empty lineage case
+        return select(cast(null(), BIGINT).label("cluster")).where(False)
+
+    return valid_clusters.cte("valid_clusters")
+
+
 def _build_match_query(
     source_pk: str,
     source_resolution_id: int,
     resolution: str,
     session: Session,
-    threshold: float | dict[str, float] | None = None,
+    threshold: int | None = None,
 ) -> Select:
     """Builds the SQL query that powers the match function."""
     # Get truth resolution
@@ -545,7 +595,7 @@ def match(
     target: SourceAddress | list[SourceAddress],
     resolution: str,
     engine: Engine,
-    threshold: float | dict[str, float] | None = None,
+    threshold: int | None = None,
 ) -> Match | list[Match]:
     """Matches an ID in a source dataset and returns the keys in the targets.
 

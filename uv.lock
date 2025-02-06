@@ -8,6 +8,49 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "adbc-driver-manager"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/20/2c/580f0e2024ce0c6330c5e990eaeffd2b206355b5929d19889b3eac008064/adbc_driver_manager-1.4.0.tar.gz", hash = "sha256:fb8437f3e3aad9aa119ccbdfe05b83418ae552ca7e1e3f6d46d53e1f316610b8", size = 107712 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/07/72cfaec3fb1e5090e4495bb310e4ae62d4262ea2330ee7f7395909b3505d/adbc_driver_manager-1.4.0-cp311-cp311-macosx_10_15_x86_64.whl", hash = "sha256:7bd274386c3decd52212d225cc46f934ce3503a3f9e0e823e4f8a40162d89b2b", size = 381818 },
+    { url = "https://files.pythonhosted.org/packages/20/80/efb076dd9148f903a4e96f969dd7a0cdafeeabba8e14c1db9bf21452ce31/adbc_driver_manager-1.4.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:90d1055f2557d703fa2e7073d7b26cc6394159ff4b1422d2dae05d08b774f687", size = 368704 },
+    { url = "https://files.pythonhosted.org/packages/0f/29/ed9525e46d474230a0fb310ab077a681b49c45c6e4e5a305e0c704702256/adbc_driver_manager-1.4.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:db899b18caeb9e26b99c0baf17e239f35274d6c3dc3aa0e3afc4d278ef3c6747", size = 2150204 },
+    { url = "https://files.pythonhosted.org/packages/a5/32/c00c7b5dd4c187003f0f6799090d17db42effc3396b5a6971228e0d1cbb4/adbc_driver_manager-1.4.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4c1a7079c7f254c7010afe08872c4bfab6e716a507fc343c32204e8ce6bfd898", size = 2164967 },
+    { url = "https://files.pythonhosted.org/packages/37/30/3b62800f5f7aad8c51e2e71fc8e9a87dadb007588289fddab09d180ea1ae/adbc_driver_manager-1.4.0-cp311-cp311-win_amd64.whl", hash = "sha256:27a8943ba838a4038b4ec6466e11eafe336ca5d382adb7c5d2cc9c00dd44bd10", size = 538168 },
+    { url = "https://files.pythonhosted.org/packages/59/30/e76d5bdb044b4126b4deed32ff5cf02b62d9e7eba4eec5a06c6005a3952f/adbc_driver_manager-1.4.0-cp312-cp312-macosx_10_15_x86_64.whl", hash = "sha256:3770180aa2cccc6c18ffd189d623ebbf35dccad75895f0fd4275b73d39297849", size = 381431 },
+    { url = "https://files.pythonhosted.org/packages/c8/25/a96b04c0162253ff9e014b774789cc76e84e536f9ef874c9d2af240bfa42/adbc_driver_manager-1.4.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:6ba26a0510d1e7596c827d1ef58185d32fb4f97837e463608801ec3b4850ce74", size = 365687 },
+    { url = "https://files.pythonhosted.org/packages/1e/8d/caae84fceed7e2cff414ce9a17f62eee0ceca98058bb8b1fbde1a1941904/adbc_driver_manager-1.4.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:50eedc6b173a80a0a8f46ef6352761a2c53063ac94327b1f45603db33176010d", size = 2129076 },
+    { url = "https://files.pythonhosted.org/packages/fb/8b/7d4ce1622b2930205261c5b7dae7ded7f3328033fdfe02f213f2bb41720f/adbc_driver_manager-1.4.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:168a07ce237902dd9aa0e079d7e8c131ad6f61fb20f3b43020597b2a3c29d3ea", size = 2161148 },
+    { url = "https://files.pythonhosted.org/packages/59/ab/991d5dc4d8b65adab2990f949524ce5ca504aa84727bc501fa6ba919288f/adbc_driver_manager-1.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:1c165069fe3bcffc25e593cb933958b4a0563aff317cb6a37fc390c8dd0ed26f", size = 535674 },
+    { url = "https://files.pythonhosted.org/packages/80/97/e33d558177e8dcbdaec2191bc37970e5068e46095a21dc157aaa65530e58/adbc_driver_manager-1.4.0-cp313-cp313-macosx_10_15_x86_64.whl", hash = "sha256:acfe7ca9c227a0835abc52289601337bde7a96c20befc443c9ba4eb78d673214", size = 379612 },
+    { url = "https://files.pythonhosted.org/packages/1e/4f/11aacce2421902b9bed07970d5f4565c5948f58788392962ffeceadbac21/adbc_driver_manager-1.4.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:b5fbf822e90fc6df5321067a25564cae11b404d4c9ba56fe4471c73c5b54e38f", size = 363412 },
+    { url = "https://files.pythonhosted.org/packages/0d/bd/68672ab658dbcb154500cb668e2fe630861b3ac3348c5cdb6bf501ae10ab/adbc_driver_manager-1.4.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0e1d255116003514088990cc5af5995cc7f5d2ebea96b00e5b2a1f4d922d7137", size = 2123358 },
+    { url = "https://files.pythonhosted.org/packages/f7/4a/5a966873541d580bf27711355ed9fd40cd46bea702eb092c6825306957a6/adbc_driver_manager-1.4.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:682364a252de1029fa12a2f7526d4cb9e8e03e009d8d0f64bc3530a7539a74f6", size = 2156251 },
+    { url = "https://files.pythonhosted.org/packages/ca/4b/19d32beccfcb647451db25cc2e40dbeb6b763bf274cdc85d22e68511baa4/adbc_driver_manager-1.4.0-cp313-cp313-win_amd64.whl", hash = "sha256:f01441fb8cc7859037ae0c39692bffa26f2fa0da68664589ced5b3794540f402", size = 533846 },
+]
+
+[[package]]
+name = "adbc-driver-postgresql"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "adbc-driver-manager" },
+    { name = "importlib-resources" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2a/8b/5d088a3c4d739a3a62df081a819117df924318b5044ab3214d72723591ad/adbc_driver_postgresql-1.4.0.tar.gz", hash = "sha256:0bc9c34911b8d1a2e333ee5ef3d284a6517a8f20d5509b2c183cb4cf8337efc7", size = 18402 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/69/165a7155a9514aa472beae1e16fc93c51a363c7deed0db7d2d470c28788d/adbc_driver_postgresql-1.4.0-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:ca62087f1496192c3131a30fc3e4d2710fa3b31b1982bf8374b6a05fdc446513", size = 2683068 },
+    { url = "https://files.pythonhosted.org/packages/7c/37/d991e047b931a3f005156a43c8be92ffbfd234589d5969b38adee03faa80/adbc_driver_postgresql-1.4.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:c75827a5cfdc8ea429c21292ac6bd598a64a42af53797c7ace3ad2b3044ddc71", size = 2996305 },
+    { url = "https://files.pythonhosted.org/packages/2d/5e/dc25c82cf2055e500b2f8e47093cf6037fd636866e0e6c54ccadccda1e6a/adbc_driver_postgresql-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6ce4e30ced25802acd6d0baad70e7b9c7394869043c1349206218d51d27613c1", size = 3190063 },
+    { url = "https://files.pythonhosted.org/packages/42/bd/910e7b8e0d6e91f94348fe23a2f8d3dfc4e86a0b933b26d41a4298f14772/adbc_driver_postgresql-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d04b2ea0353bacca814fb15c5da0d407888d27e86b4f3f58d66ebe71a2e8d3da", size = 2846350 },
+    { url = "https://files.pythonhosted.org/packages/7d/fc/19fb644ab228040a01971e21bb42c98c48a95d3701e68dd38fa1bfb0bc61/adbc_driver_postgresql-1.4.0-py3-none-win_amd64.whl", hash = "sha256:10ae2584e47928e15da8ca541bbf594de13d6c1afc8c1adad6af3f832cf0a5fc", size = 2656378 },
+]
+
+[[package]]
 name = "altair"
 version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -823,6 +866,15 @@ wheels = [
 ]
 
 [[package]]
+name = "importlib-resources"
+version = "6.5.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/8c/f834fbf984f691b4f7ff60f50b514cc3de5cc08abfc3295564dd89c5e2e7/importlib_resources-6.5.2.tar.gz", hash = "sha256:185f87adef5bcc288449d98fb4fba07cea78bc036455dd44c5fc4a2fe78fed2c", size = 44693 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/ed/1f1afb2e9e7f38a545d628f864d562a5ae64fe6f7a10e28ffb9b185b4e89/importlib_resources-6.5.2-py3-none-any.whl", hash = "sha256:789cfdc3ed28c78b67a06acb8126751ced69a3d5f79c095a98298cd8a760ccec", size = 37461 },
+]
+
+[[package]]
 name = "iniconfig"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1131,6 +1183,7 @@ name = "matchbox"
 version = "0.2.1"
 source = { editable = "." }
 dependencies = [
+    { name = "adbc-driver-postgresql" },
     { name = "click" },
     { name = "connectorx" },
     { name = "duckdb" },
@@ -1184,6 +1237,7 @@ typing = [
 
 [package.metadata]
 requires-dist = [
+    { name = "adbc-driver-postgresql", specifier = ">=1.4.0" },
     { name = "boto3", marker = "extra == 'server'", specifier = ">=1.35.99" },
     { name = "click", specifier = ">=8.1.7" },
     { name = "connectorx", specifier = ">=0.3.3" },

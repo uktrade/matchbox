@@ -25,7 +25,7 @@ from matchbox.server.postgresql.orm import (
     Resolutions,
     Sources,
 )
-from matchbox.server.postgresql.utils.db import batch_ingest, hash_to_hex_decode
+from matchbox.server.postgresql.utils.db import batch_ingest, hash_to_hex_decode , adbc_ingest_data
 
 logic_logger = logging.getLogger("mb_logic")
 
@@ -493,69 +493,6 @@ def insert_results(
         resolution=resolution, results=results, engine=engine
     )
 
-    with Session(engine) as session:
-        try:
-            # Clear existing probabilities for this resolution
-            session.execute(
-                delete(Probabilities).where(
-                    Probabilities.resolution == resolution.resolution_id
-                )
-            )
-
-            session.commit()
-            logic_logger.info(f"[{resolution.name}] Removed old probabilities")
-
-        except SQLAlchemyError as e:
-            session.rollback()
-            logic_logger.error(
-                f"[{resolution.name}] Failed to clear old probabilities: {str(e)}"
-            )
-            raise
-
-    with engine.connect() as conn:
-        try:
-            logic_logger.info(
-                f"[{resolution.name}] Inserting {clusters.shape[0]:,} results objects"
-            )
-
-            batch_ingest(
-                records=[tuple(c.values()) for c in clusters.to_pylist()],
-                table=Clusters,
-                conn=conn,
-                batch_size=batch_size,
-            )
-
-            logic_logger.info(
-                f"[{resolution.name}] Successfully inserted {clusters.shape[0]} "
-                "objects into Clusters table"
-            )
-
-            batch_ingest(
-                records=[tuple(c.values()) for c in contains.to_pylist()],
-                table=Contains,
-                conn=conn,
-                batch_size=batch_size,
-            )
-
-            logic_logger.info(
-                f"[{resolution.name}] Successfully inserted {contains.shape[0]} "
-                "objects into Contains table"
-            )
-
-            batch_ingest(
-                records=[tuple(c.values()) for c in probabilities.to_pylist()],
-                table=Probabilities,
-                conn=conn,
-                batch_size=batch_size,
-            )
-
-            logic_logger.info(
-                f"[{resolution.name}] Successfully inserted "
-                f"{probabilities.shape[0]} objects into Probabilities table"
-            )
-
-        except SQLAlchemyError as e:
-            logic_logger.error(f"[{resolution.name}] Failed to insert data: {str(e)}")
-            raise
+    adbc_ingest_data(clusters=clusters, contains=contains, probabilities=probabilities, engine=engine, resolution_id=resolution.resolution_id)
 
     logic_logger.info(f"[{resolution.name}] Insert operation complete!")

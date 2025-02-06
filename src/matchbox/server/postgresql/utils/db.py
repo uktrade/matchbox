@@ -1,14 +1,22 @@
 import contextlib
 import cProfile
 import io
+import os
 import pstats
 from itertools import islice
 from typing import Any, Callable, Iterable
+from datetime import datetime
+
+import pyarrow as pa
+import adbc_driver_postgresql.dbapi
+from adbc_driver_manager.dbapi import Connection as ADBCConnection
+from adbc_driver_manager import DatabaseError as ADBCDatabaseError
 
 from pg_bulk_ingest import Delete, Upsert, ingest
-from sqlalchemy import Engine, Index, MetaData, Table, func
+from sqlalchemy import Engine, Index, MetaData, Table, func, text
 from sqlalchemy.engine.base import Connection
 from sqlalchemy.orm import DeclarativeMeta, Session
+from sqlalchemy.exc import DatabaseError as AlchemyDatabaseError
 
 from matchbox.common.graph import (
     ResolutionEdge,
@@ -162,3 +170,121 @@ def batch_ingest(
         upsert=Upsert.IF_PRIMARY_KEY,
         delete=Delete.OFF,
     )
+
+
+MB__POSTGRES__PASSWORD = os.environ["MB__POSTGRES__PASSWORD"]
+MB__POSTGRES__PORT = os.environ["MB__POSTGRES__PORT"]
+MB__POSTGRES__USER = os.environ["MB__POSTGRES__USER"]
+MB__POSTGRES__DATABASE = os.environ["MB__POSTGRES__DATABASE"]
+MB__POSTGRES__HOST = os.environ["MB__POSTGRES__HOST"]
+MB__POSTGRES__SCHEMA = os.environ["MB__POSTGRES__DB_SCHEMA"]
+
+
+POSTGRESQL_URI = f"postgresql://{MB__POSTGRES__USER}:{MB__POSTGRES__PASSWORD}@{MB__POSTGRES__HOST}:{MB__POSTGRES__PORT}/{MB__POSTGRES__DATABASE}"
+
+def adbc_ingest_data(clusters:pa.Table, contains:pa.Table, probabilities:pa.Table, engine:Engine, resolution_id:int) -> bool:
+    """ Ingest data from PostgreSQL using pyarrow adbc ingest.
+    Args: clusters: pa.Table, contains: pa.Table, probabilities: pa.Table, engine: Engine
+    """
+
+    with engine.connect() as alchemy_conn:
+        suffix = datetime.now().strftime("%Y%m%d%H%M%S")
+        if _adbc_insert_data(clusters, contains, probabilities, suffix, alchemy_conn, resolution_id):
+            return _create_adbc_table_constraints(suffix, alchemy_conn)
+        else:
+            return False
+
+def _create_adbc_table_constraints(db_schema:str, sufix:str, conn:Connection) -> bool:
+    """ Creating primary and secondary keys indexes and constraints.
+    Args: db_schema: str, the name of the schema
+    """
+    # Cluster
+    _run_query(f"ALTER TABLE {db_schema}.clusters_{sufix} ADD PRIMARY KEY (cluster_id)", conn)
+    _run_query(f"""ALTER TABLE {db_schema}.probabilities_{sufix} ADD PRIMARY KEY (resolution, "cluster")""", conn)
+    _run_query(f"CREATE UNIQUE INDEX cluster_hash_index_{sufix} ON {db_schema}.clusters_{sufix} USING btree (cluster_hash)", conn)
+   # _run_query(f"CREATE UNIQUE INDEX clusters_adbc_clusters_is_{sufix} ON {db_schema}.clusters_{sufix} USING btree (cluster_id)", conn)
+    _run_query(f"CREATE INDEX ix_clusters_id_gin_{sufix} ON {db_schema}.clusters_{sufix} USING gin (source_pk)", conn)
+    _run_query(f"CREATE INDEX ix_mb_clusters_source_pk_{sufix} ON {db_schema}.clusters_{sufix} USING btree (source_pk)", conn)
+
+    # Contains
+    _run_query(f"CREATE UNIQUE INDEX ix_contains_child_parent_{sufix} ON {db_schema}.contains_{sufix} USING btree (child, parent)", conn)
+    _run_query(f"CREATE UNIQUE INDEX ix_contains_parent_child_{sufix} ON {db_schema}.contains_{sufix} USING btree (parent, child)", conn)
+
+    # Foreign keys
+    _run_query(f"ALTER TABLE {db_schema}.clusters_{sufix} ADD CONSTRAINT clusters_dataset_fkey FOREIGN KEY (dataset) REFERENCES {db_schema}.sources(resolution_id)", conn)
+    _run_query(f"""ALTER TABLE {db_schema}."contains_{sufix}" ADD CONSTRAINT contains_child_fkey FOREIGN KEY (child) REFERENCES {db_schema}.clusters_{sufix}(cluster_id) ON DELETE CASCADE""", conn)
+    _run_query(f"""ALTER TABLE {db_schema}."contains_{sufix}" ADD CONSTRAINT contains_parent_fkey FOREIGN KEY (parent) REFERENCES {db_schema}.clusters_{sufix}(cluster_id) ON DELETE CASCADE""", conn)
+    _run_query(f"""ALTER TABLE {db_schema}.probabilities_{sufix} ADD CONSTRAINT probabilities_cluster_fkey FOREIGN KEY ("cluster") REFERENCES {db_schema}.clusters_{sufix}(cluster_id) ON DELETE CASCADE""", conn)
+    _run_query(f"ALTER TABLE {db_schema}.probabilities_{sufix} ADD CONSTRAINT probabilities_resolution_fkey FOREIGN KEY (resolution) REFERENCES {db_schema}.resolutions(resolution_id) ON DELETE CASCADE", conn)
+
+    _run_queries([
+        f"""DROP TABLE IF EXISTS {db_schema}.clusters""",
+        f"""DROP TABLE IF EXISTS {db_schema}.contains""",
+        f"""DROP TABLE IF EXISTS {db_schema}.probabilities""",
+
+        f"""ALTER TABLE {db_schema}.clusters_{sufix} RENAME TO clusters""",
+        f"""ALTER TABLE {db_schema}.contains_{sufix} RENAME TO contains""",
+        f"""ALTER TABLE {db_schema}.probabilities_{sufix} RENAME TO probabilities"""
+    ], conn)
+    return True
+
+def _adbc_insert_data(clusters:pa.Table, contains:pa.Table, probabilities:pa.Table, suffix:str, alchemy_conn:Connection, resolution_id:int) -> bool:
+    # TODO: try except proper exception type from adbc
+    with adbc_driver_postgresql.dbapi.connect(POSTGRESQL_URI) as conn:
+        try:
+            _run_query(f"CREATE TABLE clusters_{suffix} AS SELECT * FROM clusters", alchemy_conn)
+            _save_to_postgresql(
+                table=clusters,
+                conn=conn,
+                schema=MB__POSTGRES__SCHEMA,
+                table_name=f"clusters_{suffix}",
+            )
+            _run_query(f"CREATE TABLE contains_{suffix} AS SELECT * FROM contains", alchemy_conn)
+            _save_to_postgresql(
+                table=contains,
+                conn=conn,
+                schema=MB__POSTGRES__SCHEMA,
+                table_name=f"contains_{suffix}",
+            )
+            _run_query(f"CREATE TABLE probabilities_{suffix} AS SELECT * FROM probabilities WHERE resolution != {resolution_id}", alchemy_conn)
+            _save_to_postgresql(
+                table=probabilities,
+                conn=conn,
+                schema=MB__POSTGRES__SCHEMA,
+                table_name=f"probabilities_{suffix}",
+            )
+            conn.commit()
+            return True
+        except ADBCConnection as e:
+            return False
+        except AlchemyDatabaseError as e:
+            return False
+
+def _run_query(query: str,conn:Connection) -> None:
+    conn.execute(text(query))
+    conn.commit()
+
+
+def _run_queries(queries: list[str], conn:Connection) -> None:
+    conn.begin()
+    for query in queries:
+        conn.execute(text(query))
+    conn.commit()
+
+def _save_to_postgresql(
+        table: pa.Table, conn: ADBCConnection, schema: str, table_name: str
+):
+    """
+    Saves a PyArrow Table to PostgreSQL using ADBC.
+    """
+    with conn.cursor() as cursor:
+        # Convert PyArrow Table to Arrow RecordBatchStream for efficient transfer
+        batch_reader = pa.RecordBatchReader.from_batches(
+            table.schema, table.to_batches()
+        )
+        cursor.adbc_ingest(
+            table_name=table_name,
+            data=batch_reader,
+            mode="append",
+            db_schema_name=schema,
+        )

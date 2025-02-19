@@ -7,16 +7,16 @@ Given a primary key and a source dataset, retrieves all primary keys that share 
 === "Example"
     ```python
     import matchbox as mb
-    from matchbox.client.helpers import selector
+    from matchbox import select
     import sqlalchemy
 
     engine = sqlalchemy.create_engine('postgresql://')
 
     mb.match(
+        select("datahub_companies", engine=engine),
+        source=select("companies_house", engine=engine),
         source_pk="8534735",
-        source="dbt.companieshouse",
-        target="hmrc.exporters",
-        resolution="companies",
+        resolution_name="last_linker",
     )
     ```
 
@@ -44,13 +44,13 @@ Retrieves entire data sources along with a unique entity identifier according to
 === "Example"
     ```python
     import matchbox as mb
-    from matchbox.client.helpers import selector
+    from matchbox import select
     import sqlalchemy
 
     engine = sqlalchemy.create_engine('postgresql://')
 
     mb.query(
-        selector(
+        select(
             {
                 "dbt.companieshouse": ["company_name"],
                 "hmrc.exporters": ["year", "commodity_codes"],

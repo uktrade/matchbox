@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# requirements:
+# - login to aws
+
+set -e
+
+# Get AWS options
+while getopts ":p:a:e:r:" opt; do
+    case "$opt" in
+        p) profile=${OPTARG};;
+        a) account_id=${OPTARG};;
+        e) environment=${OPTARG};;
+        r) region=${OPTARG};;
+        :) 
+            echo "Option -${OPTARG} requires an argument."
+            exit 1
+            ;;
+    esac
+done
+
+: ${profile:?Missing -p} 
+: ${account_id:?Missing -a}
+: ${environment:?Missing -e} 
+: ${region:?Missing -r}
+
+echo "Logging into ECR"
+aws ecr get-login-password --region $region | docker login --username AWS --password-stdin $account_id.dkr.ecr.$region.amazonaws.com
+
+echo "Done."

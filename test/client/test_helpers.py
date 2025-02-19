@@ -1,4 +1,5 @@
 import logging
+from os import environ
 from unittest.mock import Mock, patch
 
 import pyarrow as pa
@@ -72,6 +73,42 @@ def test_comparisons():
     )
 
     assert comparison_name_id is not None
+
+
+def test_select_default_engine(matchbox_api: MockRouter, warehouse_engine: Engine):
+    """We can select without explicit engine if default is set"""
+    # Set up default engine
+    environ["MB__CLIENT__DEFAULT_WAREHOUSE"] = warehouse_engine.url.render_as_string(
+        hide_password=False
+    )
+
+    # Set up mocks and test data
+    source = Source(
+        address=SourceAddress.compose(engine=warehouse_engine, full_name="test.bar"),
+        db_pk="pk",
+    )
+
+    matchbox_api.get(
+        f"/sources/{hash_to_base64(source.address.warehouse_hash)}/test.bar"
+    ).mock(return_value=Response(200, content=source.model_dump_json()))
+
+    df = DataFrame([{"pk": 0, "a": 1, "b": "2"}, {"pk": 1, "a": 10, "b": "20"}])
+    with warehouse_engine.connect() as conn:
+        df.to_sql(
+            name="bar",
+            con=conn,
+            schema="test",
+            if_exists="replace",
+            index=False,
+        )
+
+    # Select sources
+    selection = select("test.bar")
+
+    # Check they contain what we expect
+    assert selection[0].source.model_dump() == source.model_dump()
+    # Check the engine is set by the selector
+    assert selection[0].source.engine.url == warehouse_engine.url
 
 
 def test_select_mixed_style(matchbox_api: MockRouter, warehouse_engine: Engine):

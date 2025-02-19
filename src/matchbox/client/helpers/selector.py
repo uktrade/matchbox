@@ -1,13 +1,15 @@
 import itertools
+from os import getenv
 from typing import Literal
 from warnings import warn
 
 import pyarrow as pa
 from pandas import ArrowDtype, DataFrame
 from pydantic import BaseModel
-from sqlalchemy import Engine
+from sqlalchemy import Engine, create_engine
 
 from matchbox.client import _handler
+from matchbox.client._logging import client_logger
 from matchbox.common.sources import Match, Source, SourceAddress
 
 
@@ -18,7 +20,7 @@ class Selector(BaseModel):
 
 def select(
     *selection: str | dict[str, str],
-    engine: Engine,
+    engine: Engine | None = None,
 ) -> list[Selector]:
     """From one engine, builds and verifies a list of selectors.
 
@@ -37,6 +39,16 @@ def select(
         select({"companies_house": ["crn"], "hmrc_exporters": ["name"]}, engine=engine)
         ```
     """
+    if not engine:
+        if default_engine := getenv("MB__CLIENT__DEFAULT_WAREHOUSE"):
+            engine = create_engine(default_engine)
+            client_logger.warning("Using default engine")
+        else:
+            raise ValueError(
+                "An engine needs to be provided if "
+                "`MB__CLIENT__DEFAULT_WAREHOUSE` is unset"
+            )
+
     selectors = []
     for s in selection:
         if isinstance(s, str):

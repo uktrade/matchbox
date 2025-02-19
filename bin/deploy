@@ -22,23 +22,23 @@ while getopts ":p:a:e:r:" opt; do
     esac
 done
 
-: ${profile:?Missing -p} 
-: ${account_id:?Missing -a}
-: ${environment:?Missing -e} 
-: ${region:?Missing -r}
+: "${profile:?Missing -p}"
+: "${account_id:?Missing -a}"
+: "${environment:?Missing -e}"
+: "${region:?Missing -r}"
 
 
 echo "Logging into ECR"
-aws ecr get-login-password --region $region | docker login --username AWS --password-stdin $account_id.dkr.ecr.$region.amazonaws.com
+aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "$account_id".dkr.ecr."$region".amazonaws.com
 
 echo "Building docker image"
 DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -t matchbox-api:latest --target prod -f src/matchbox/server/Dockerfile .
 
 echo "Pushing docker image to ECR for $environment"
-docker tag matchbox-api:latest $account_id.dkr.ecr.$region.amazonaws.com/$environment-matchbox:master
-docker push $account_id.dkr.ecr.$region.amazonaws.com/$environment-matchbox:master
+docker tag matchbox-api:latest "$account_id".dkr.ecr."$region".amazonaws.com/"$environment"-matchbox:master
+docker push "$account_id".dkr.ecr."$region".amazonaws.com/"$environment"-matchbox:master
 
 echo "Triggering redeployment of Matchbox API for $environment"
-aws ecs update-service --cluster $environment --service $environment-matchbox --force-new-deployment > /dev/null
+aws ecs update-service --cluster "$environment" --service "$environment"-matchbox --force-new-deployment > /dev/null
 
 echo "Done. Note that the redeployment is async and will take several minutes to complete."

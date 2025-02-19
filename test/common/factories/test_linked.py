@@ -1,0 +1,317 @@
+from sqlalchemy import create_engine
+
+from matchbox.common.factories.sources import (
+    DropBaseRule,
+    FeatureConfig,
+    SourceConfig,
+    SuffixRule,
+    linked_sources_factory,
+)
+
+
+def test_linked_sources_factory_default():
+    """Test that factory generates sources with default parameters."""
+    linked = linked_sources_factory()
+
+    # Check that default sources were created
+    assert "crn" in linked.sources
+    assert "duns" in linked.sources
+    assert "cdms" in linked.sources
+
+    # Verify default entity count
+    assert len(linked.entities) == 10
+
+    # Check that entities are properly tracked across sources
+    for entity in linked.entities.values():
+        # Each entity should have source references
+        assert len(entity.source_pks) > 0
+
+        # Each reference should contain PKs
+        for ref in entity.source_pks:
+            assert len(ref.source_pks) > 0
+
+
+def test_linked_sources_custom_config():
+    """Test linked_sources_factory with custom source configurations."""
+    engine = create_engine("sqlite:///:memory:")
+
+    features = {
+        "name": FeatureConfig(
+            name="name",
+            base_generator="name",
+            variations=[SuffixRule(suffix=" Jr")],
+        ),
+        "id": FeatureConfig(
+            name="id",
+            base_generator="uuid4",
+        ),
+    }
+
+    configs = (
+        SourceConfig(
+            full_name="source_a",
+            engine=engine,
+            features=(features["name"], features["id"]),
+            n_entities=5,
+            repetition=1,
+        ),
+        SourceConfig(
+            full_name="source_b",
+            features=(features["name"],),
+            n_entities=3,
+            repetition=2,
+        ),
+    )
+
+    linked = linked_sources_factory(source_configs=configs, seed=42)
+
+    # Verify sources were created correctly
+    assert set(linked.sources.keys()) == {"source_a", "source_b"}
+    assert len(linked.entities) == 5  # Max entities from configs
+
+    # Check source A entities
+    source_a_entities = [
+        e
+        for e in linked.entities.values()
+        if any(ref.name == "source_a" for ref in e.source_pks)
+    ]
+    assert len(source_a_entities) == 5
+
+    # Check source B entities
+    source_b_entities = [
+        e
+        for e in linked.entities.values()
+        if any(ref.name == "source_b" for ref in e.source_pks)
+    ]
+    assert len(source_b_entities) == 3
+
+
+def test_linked_sources_find_entities():
+    """Test the find_entities method with different criteria."""
+    linked = linked_sources_factory(n_entities=10)
+
+    # Find entities that appear at least once in each source
+    min_appearances = {"crn": 1, "duns": 1, "cdms": 1}
+    common_entities = linked.find_entities(min_appearances=min_appearances)
+
+    # Should be subset of total entities
+    assert len(common_entities) <= len(linked.entities)
+
+    # Each entity should meet minimum appearance criteria
+    for entity in common_entities:
+        for source, min_count in min_appearances.items():
+            assert len(entity.get_source_pks(source)) >= min_count
+
+    # Find entities with maximum appearances
+    max_appearances = {"duns": 1}
+    limited_entities = linked.find_entities(max_appearances=max_appearances)
+
+    for entity in limited_entities:
+        for source, max_count in max_appearances.items():
+            assert len(entity.get_source_pks(source)) <= max_count
+
+    # Combined criteria
+    filtered_entities = linked.find_entities(
+        min_appearances={"crn": 1}, max_appearances={"duns": 2}
+    )
+
+    for entity in filtered_entities:
+        assert len(entity.get_source_pks("crn")) >= 1
+        assert len(entity.get_source_pks("duns")) <= 2
+
+
+def test_entity_value_consistency():
+    """Test that entity base values remain consistent across sources."""
+    linked = linked_sources_factory(n_entities=5)
+
+    for entity in linked.entities.values():
+        base_values = entity.base_values
+
+        # Get actual values from each source
+        for source_ref in entity.source_pks:
+            source = linked.sources[source_ref.name]
+            df = source.data.to_pandas()
+
+            # Get rows for this entity
+            entity_rows = df[df["pk"].isin(source_ref.source_pks)]
+
+            # For each feature in the source
+            for feature in source.features:
+                if feature.name in base_values:
+                    # The base value should appear in the data
+                    # (unless it was dropped by a DropBaseRule)
+                    has_drop_rule = any(
+                        isinstance(rule, DropBaseRule) for rule in feature.variations
+                    )
+                    if not has_drop_rule:
+                        assert (
+                            base_values[feature.name]
+                            in entity_rows[feature.name].values
+                        )
+
+
+def test_source_entity_equality():
+    """Test SourceEntity equality and hashing behavior."""
+    linked = linked_sources_factory(n_entities=3)
+
+    # Get a few entities
+    entities = list(linked.entities.values())
+
+    # Same entity should be equal to itself
+    assert entities[0] == entities[0]
+
+    # Different entities should not be equal
+    assert entities[0] != entities[1]
+
+    # Entities with same base values should be equal
+    entity_copy = entities[0].model_copy()
+    assert entity_copy == entities[0]
+
+    # Should work in sets (testing hash implementation)
+    entity_set = {entities[0], entity_copy, entities[1]}
+    assert len(entity_set) == 2  # Only unique entities
+
+
+def test_seed_reproducibility():
+    """Test that linked sources generation is reproducible with same seed."""
+    config = SourceConfig(
+        full_name="test_source",
+        features=(
+            FeatureConfig(
+                name="name",
+                base_generator="name",
+                variations=[SuffixRule(suffix=" Jr")],
+            ),
+        ),
+        n_entities=5,
+    )
+
+    # Generate two instances with same seed
+    linked1 = linked_sources_factory(source_configs=(config,), seed=42)
+    linked2 = linked_sources_factory(source_configs=(config,), seed=42)
+
+    # Generate one with different seed
+    linked3 = linked_sources_factory(source_configs=(config,), seed=43)
+
+    # Same seed should produce identical results
+    assert linked1.sources["test_source"].data.equals(
+        linked2.sources["test_source"].data
+    )
+    assert len(linked1.entities) == len(linked2.entities)
+
+    # Different seeds should produce different results
+    assert not linked1.sources["test_source"].data.equals(
+        linked3.sources["test_source"].data
+    )
+
+
+def test_empty_source_handling():
+    """Test handling of sources with zero entities."""
+    config = SourceConfig(
+        full_name="empty_source",
+        features=(FeatureConfig(name="name", base_generator="name"),),
+        n_entities=0,
+    )
+
+    linked = linked_sources_factory(source_configs=(config,))
+
+    # Should create source but with empty data
+    assert "empty_source" in linked.sources
+    assert len(linked.sources["empty_source"].data) == 0
+    assert len(linked.entities) == 0
+
+
+def test_large_entity_count():
+    """Test handling of sources with large number of entities."""
+    config = SourceConfig(
+        full_name="large_source",
+        features=(FeatureConfig(name="id", base_generator="uuid4"),),
+        n_entities=10_000,
+    )
+
+    linked = linked_sources_factory(source_configs=(config,))
+
+    # Should handle large entity counts
+    assert len(linked.entities) == 10_000
+    assert len(linked.sources["large_source"].data) == 10_000
+
+
+def test_feature_inheritance():
+    """Test that entities inherit all features from their source configurations."""
+    features = {
+        "name": FeatureConfig(name="name", base_generator="name"),
+        "email": FeatureConfig(name="email", base_generator="email"),
+        "phone": FeatureConfig(name="phone", base_generator="phone_number"),
+    }
+
+    configs = (
+        SourceConfig(
+            full_name="source_a", features=(features["name"], features["email"])
+        ),
+        SourceConfig(
+            full_name="source_b", features=(features["name"], features["phone"])
+        ),
+    )
+
+    linked = linked_sources_factory(source_configs=configs)
+
+    # Check that entities have all relevant features
+    for entity in linked.entities.values():
+        # All entities should have name (common feature)
+        assert "name" in entity.base_values
+
+        # Entities in source_a should have email
+        if any(ref.name == "source_a" for ref in entity.source_pks):
+            assert "email" in entity.base_values
+
+        # Entities in source_b should have phone
+        if any(ref.name == "source_b" for ref in entity.source_pks):
+            assert "phone" in entity.base_values
+
+
+def test_unique_feature_values():
+    """Test that unique features generate distinct values across entities."""
+    config = SourceConfig(
+        full_name="test_source",
+        features=(
+            FeatureConfig(name="unique_id", base_generator="uuid4", unique=True),
+            FeatureConfig(name="is_true", base_generator="boolean", unique=False),
+        ),
+        n_entities=100,
+    )
+
+    linked = linked_sources_factory(source_configs=(config,))
+
+    # Get all base values
+    unique_ids = set()
+    categories = set()
+    for entity in linked.entities.values():
+        unique_ids.add(entity.base_values["unique_id"])
+        categories.add(entity.base_values["is_true"])
+
+    # Unique feature should have same number of values as entities
+    assert len(unique_ids) == 100
+
+    # Non-unique feature should have fewer unique values
+    assert len(categories) < 100
+
+
+def test_source_references():
+    """Test adding and retrieving source references."""
+    linked = linked_sources_factory(n_entities=2)
+    entity = next(iter(linked.entities.values()))
+
+    # Add new source reference
+    new_pks = ["pk1", "pk2"]
+    entity.add_source_reference("new_source", new_pks)
+
+    # Should be able to retrieve the PKs
+    assert entity.get_source_pks("new_source") == new_pks
+
+    # Update existing reference
+    updated_pks = ["pk3"]
+    entity.add_source_reference("new_source", updated_pks)
+    assert entity.get_source_pks("new_source") == updated_pks
+
+    # Non-existent source should return empty list
+    assert entity.get_source_pks("nonexistent") == []

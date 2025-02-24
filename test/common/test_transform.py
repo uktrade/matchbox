@@ -44,8 +44,8 @@ def _combine_strings(*n: str) -> str:
     ids=["simple"],
 )
 def test_attach_components_to_probabilities(parameters: dict[str, Any]):
-    left_values = range(*parameters["left_range"])
-    right_values = range(*parameters["right_range"])
+    left_values = tuple(range(*parameters["left_range"]))
+    right_values = tuple(range(*parameters["right_range"]))
 
     probabilities = generate_dummy_probabilities(
         left_values=left_values,

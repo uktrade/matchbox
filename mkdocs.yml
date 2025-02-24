@@ -35,7 +35,11 @@ nav:
     - Overview: api/common/index.md
     - Database: api/common/db.md
     - Exceptions: api/common/exceptions.md
-    - Factories: api/common/factories.md
+    - Factories: 
+      - Overview: api/common/factories/index.md
+      - Entities: api/common/factories/entities.md
+      - Sources: api/common/factories/sources.md
+      - Models: api/common/factories/models.md
     - Graph: api/common/graph.md
     - Hashing: api/common/hash.md
     - Logging: api/common/logging.md
@@ -81,6 +85,7 @@ markdown_extensions:
   - attr_list
   - admonition
   - md_in_html
+  - smarty
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span

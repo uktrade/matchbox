@@ -83,7 +83,7 @@ def test_results_getter(matchbox_api: MockRouter):
 
     # Mock the GET /models/{name}/results endpoint
     route = matchbox_api.get(f"/models/{dummy.model.metadata.name}/results").mock(
-        return_value=Response(200, content=table_to_buffer(dummy.data).read())
+        return_value=Response(200, content=table_to_buffer(dummy.probabilities).read())
     )
 
     # Get results
@@ -155,7 +155,9 @@ def test_results_setter(matchbox_api: MockRouter):
     )
 
     # Set results
-    test_results = Results(probabilities=dummy.data, metadata=dummy.model.metadata)
+    test_results = Results(
+        probabilities=dummy.probabilities, metadata=dummy.model.metadata
+    )
     dummy.model.results = test_results
 
     # Verify API calls
@@ -197,7 +199,9 @@ def test_results_setter_upload_failure(matchbox_api: MockRouter):
     )
 
     # Attempt to set results and verify it raises an exception
-    test_results = Results(probabilities=dummy.data, metadata=dummy.model.metadata)
+    test_results = Results(
+        probabilities=dummy.probabilities, metadata=dummy.model.metadata
+    )
     with pytest.raises(MatchboxServerFileError, match="Invalid data format"):
         dummy.model.results = test_results
 

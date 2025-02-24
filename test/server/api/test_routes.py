@@ -651,7 +651,7 @@ def test_model_upload(
         files={
             "file": (
                 "data.parquet",
-                table_to_buffer(dummy.data),
+                table_to_buffer(dummy.probabilities),
                 "application/octet-stream",
             ),
         },
@@ -688,7 +688,7 @@ async def test_complete_model_upload_process(
 
     # Set up the mock to return the actual model metadata and data
     mock_backend.get_model = Mock(return_value=dummy.model.metadata)
-    mock_backend.get_model_results = Mock(return_value=dummy.data)
+    mock_backend.get_model_results = Mock(return_value=dummy.probabilities)
 
     # Step 1: Create model
     response = client.post("/models", json=dummy.model.metadata.model_dump())
@@ -708,7 +708,7 @@ async def test_complete_model_upload_process(
         files={
             "file": (
                 "results.parquet",
-                table_to_buffer(dummy.data),
+                table_to_buffer(dummy.probabilities),
                 "application/octet-stream",
             ),
         },
@@ -749,7 +749,9 @@ async def test_complete_model_upload_process(
     assert (
         call_args[1]["model"] == dummy.model.metadata.name
     )  # Check model name matches
-    assert call_args[1]["results"].equals(dummy.data)  # Check results data matches
+    assert call_args[1]["results"].equals(
+        dummy.probabilities
+    )  # Check results data matches
 
     # Step 6: Verify we can retrieve the results
     response = client.get(f"/models/{dummy.model.metadata.name}/results")
@@ -810,7 +812,7 @@ def test_set_results_model_not_found(get_backend: Mock):
 def test_get_results(get_backend: Mock):
     mock_backend = Mock()
     dummy = model_factory()
-    mock_backend.get_model_results = Mock(return_value=dummy.data)
+    mock_backend.get_model_results = Mock(return_value=dummy.probabilities)
     get_backend.return_value = mock_backend
 
     response = client.get(f"/models/{dummy.model.metadata.name}/results")

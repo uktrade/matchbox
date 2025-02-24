@@ -43,8 +43,10 @@ def timer(description: str):
 
 if __name__ == "__main__":
     config = PRESETS["l"]
-    left_ids = range(config["dedupe_components"])
-    right_ids = range(config["dedupe_components"], config["dedupe_components"] * 2)
+    left_ids = tuple(range(config["dedupe_components"]))
+    right_ids = tuple(
+        range(config["dedupe_components"], config["dedupe_components"] * 2)
+    )
     probs = generate_dummy_probabilities(
         left_ids, right_ids, [0.6, 1], config["link_components"], config["link_len"]
     )

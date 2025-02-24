@@ -1,8 +1,8 @@
-
-::: matchbox.common.factories
+::: matchbox.common.factories.models
     options:
         show_root_heading: true
         show_root_full_path: true
+        show_root_docstring: true
         members_order: source
         show_if_no_docstring: true
         docstring_style: google
@@ -13,3 +13,4 @@
             - "!^_"       # Excludes private attributes
             - "!_logger$"  # Excludes logger variables
             - "!_path$"    # Excludes path variables
+            - "!model_config" # Excludes Pydantic configuration

@@ -225,7 +225,11 @@ def generate_result_tables(
         contains and clusters, and the next ID to use for future calls
     """
     probs = generate_dummy_probabilities(
-        left_ids, right_ids, [prob_min, prob_max], n_components, n_probs
+        tuple(left_ids),
+        tuple(right_ids) if right_ids else None,
+        (prob_min, prob_max),
+        n_components,
+        n_probs,
     )
 
     # Create a lookup table for hashes

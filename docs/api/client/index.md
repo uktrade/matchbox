@@ -1,6 +1,7 @@
 # API reference
 
 `matchbox.client` is the client used to interact with the [Matchbox server](../../server/install.md).
+The `match` and `query` functions in this file are also accessible from the top-level `matchbox` module.
 
 ::: matchbox.client
     options:

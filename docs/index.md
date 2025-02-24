@@ -9,9 +9,12 @@ hide:
 
     ---
 
-    Learn how to quickly install and use Matchbox.
+    Learn how to quickly install and use Matchbox:
+    
+    * The **client** lets you query and link/dedupe data
+    * The **server** is for setting up a new Matchbox instance for your organisation.
 
-    [:octicons-download-16: Install client](./client/install.md){ .md-button .md-button--primary } [:octicons-download-16: Install server](./server/install.md){ .md-button .md-button--primary }
+    [:octicons-zap-16: Get started with the client](./client/install.md){ .md-button .md-button--primary } [:octicons-download-16: Deploy server in your org](./server/install.md){ .md-button .md-button--primary }
 
 </div>
 

@@ -200,6 +200,16 @@ def match(
             If None, uses the resolutions' default threshold
             If an integer, uses that threshold for the specified resolution, and the
             resolution's cached thresholds for its ancestors
+
+    Examples:
+        ```python
+        mb.match(
+            select("datahub_companies", engine=engine),
+            source=select("companies_house", engine=engine),
+            source_pk="8534735",
+            resolution_name="last_linker",
+        )
+        ```
     """
     if len(source) > 1:
         raise ValueError("Only one source can be matched at one time")

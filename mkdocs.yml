@@ -9,6 +9,7 @@ nav:
   - Use cases: use-cases.md
 - Client:
   - Installation: client/install.md
+  - Explore resolutions: client/explore_resolutions.md
   - Retrieve: client/query-data.md
   - Link and deduplicate: client/link-data.md
   - API: 

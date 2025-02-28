@@ -117,16 +117,8 @@ class TestE2EAnalyticalUser:
             conn.commit()
 
         # Setup code - Create tables in warehouse
-        for source_name, source_testkit in self.linked_testkit.sources.items():
-            # Use pandas to write the data to the warehouse
-            schema, table = source_name.replace('"', "").split(".")
-            source_testkit.data.to_pandas().drop("id", axis=1).to_sql(
-                name=table,
-                schema=schema,
-                con=warehouse_engine,
-                index=False,
-                if_exists="replace",
-            )
+        for source_testkit in self.linked_testkit.sources.values():
+            source_testkit.to_warehouse(engine=warehouse_engine)
 
         # Clear matchbox database before test
         response = matchbox_client.delete("/database", params={"certain": "true"})

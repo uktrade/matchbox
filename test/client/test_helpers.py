@@ -1,4 +1,5 @@
 import logging
+import tempfile
 from typing import Callable
 from unittest.mock import Mock, patch
 
@@ -7,7 +8,7 @@ import pytest
 from httpx import Response
 from pandas import DataFrame
 from respx import MockRouter
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import create_engine
 
 from matchbox import index, match, process, query
 from matchbox.client.clean import company_name, company_number
@@ -25,10 +26,13 @@ from matchbox.common.exceptions import (
     MatchboxServerFileError,
     MatchboxSourceNotFoundError,
 )
-from matchbox.common.factories.sources import source_factory
+from matchbox.common.factories.sources import (
+    linked_sources_factory,
+    source_factory,
+)
 from matchbox.common.graph import DEFAULT_RESOLUTION
 from matchbox.common.hash import hash_to_base64
-from matchbox.common.sources import Source, SourceAddress, SourceColumn
+from matchbox.common.sources import Source, SourceAddress
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,24 +47,23 @@ def test_cleaners():
     assert cleaner_name_number is not None
 
 
-@pytest.mark.docker
-def test_process(warehouse_data: list[Source]):
-    crn = warehouse_data[0].to_arrow()
+def test_process():
+    crn = source_factory().query
 
     cleaner_name = cleaner(
         function=company_name,
-        arguments={"column": "test_crn_company_name"},
+        arguments={"column": "company_name"},
     )
     cleaner_number = cleaner(
         function=company_number,
-        arguments={"column": "test_crn_crn"},
+        arguments={"column": "crn"},
     )
     cleaner_name_number = cleaners(cleaner_name, cleaner_number)
 
     df_name_cleaned = process(data=crn, pipeline=cleaner_name_number)
 
     assert isinstance(df_name_cleaned, DataFrame)
-    assert df_name_cleaned.shape[0] == 3000
+    assert df_name_cleaned.shape[0] == 10
 
 
 def test_comparisons():
@@ -73,41 +76,35 @@ def test_comparisons():
     assert comparison_name_id is not None
 
 
-@pytest.mark.docker
 def test_select_default_engine(
-    matchbox_api: MockRouter,
-    warehouse_engine: Engine,
-    env_setter: Callable[[str, str], None],
+    matchbox_api: MockRouter, env_setter: Callable[[str, str], None]
 ):
-    """We can select without explicit engine if default is set"""
-    # Overwrite temporarily env variable
-    default_engine = warehouse_engine.url.render_as_string(hide_password=False)
-    env_setter("MB__CLIENT__DEFAULT_WAREHOUSE", default_engine)
+    """We can select without explicit engine if default is set."""
+    # We use a temporary file for the SQLite database as the connection
+    # needs to be shared using the URI alone -- in-memory won't work
+    with tempfile.NamedTemporaryFile(suffix=".sqlite") as tmp:
+        # Overwrite temporarily env variable
+        warehouse_engine = create_engine(f"sqlite:///{tmp.name}")
+        default_engine = warehouse_engine.url.render_as_string(hide_password=False)
+        env_setter("MB__CLIENT__DEFAULT_WAREHOUSE", default_engine)
 
-    # Set up mocks and test data
-    testkit = source_factory(full_name="test.bar", engine=warehouse_engine)
-    source = testkit.source
+        # Set up mocks and test data
+        testkit = source_factory(full_name="bar", engine=warehouse_engine)
+        source = testkit.source
 
-    matchbox_api.get(
-        f"/sources/{hash_to_base64(source.address.warehouse_hash)}/test.bar"
-    ).mock(return_value=Response(200, content=source.model_dump_json()))
+        matchbox_api.get(
+            f"/sources/{hash_to_base64(source.address.warehouse_hash)}/bar"
+        ).mock(return_value=Response(200, content=source.model_dump_json()))
 
-    with warehouse_engine.connect() as conn:
-        testkit.data.to_pandas().to_sql(
-            name="bar",
-            con=conn,
-            schema="test",
-            if_exists="replace",
-            index=False,
-        )
+        testkit.to_warehouse(engine=warehouse_engine)
 
-    # Select sources
-    selection = select("test.bar")
+        # Select sources
+        selection = select("bar")
 
-    # Check they contain what we expect
-    assert selection[0].source.model_dump() == source.model_dump()
-    # Check the engine is set by the selector
-    assert selection[0].source.engine.url == warehouse_engine.url
+        # Check they contain what we expect
+        assert selection[0].source.model_dump() == source.model_dump()
+        # Check the engine is set by the selector
+        assert selection[0].source.engine.url == warehouse_engine.url
 
 
 def test_select_missing_engine():
@@ -116,106 +113,96 @@ def test_select_missing_engine():
         select("test.bar")
 
 
-@pytest.mark.docker
-def test_select_mixed_style(matchbox_api: MockRouter, warehouse_engine: Engine):
-    """We can select select specific columns from some of the sources"""
-    # Set up mocks and test data
-    source1 = Source(
-        address=SourceAddress.compose(engine=warehouse_engine, full_name="test.foo"),
-        db_pk="pk",
-        columns=[SourceColumn(name="a", type="BIGINT")],
-    )
-    source2 = Source(
-        address=SourceAddress.compose(engine=warehouse_engine, full_name="test.bar"),
-        db_pk="pk",
-    )
+def test_select_mixed_style(matchbox_api: MockRouter):
+    """We can select specific columns from some of the sources"""
+    engine = create_engine("sqlite:///:memory:")
+    linked = linked_sources_factory(engine=engine)
+
+    source1 = linked.sources["crn"].source
+    source2 = linked.sources["cdms"].source
 
     matchbox_api.get(
-        f"/sources/{hash_to_base64(source1.address.warehouse_hash)}/test.foo"
+        f"/sources/{hash_to_base64(source1.address.warehouse_hash)}/crn"
     ).mock(return_value=Response(200, content=source1.model_dump_json()))
     matchbox_api.get(
-        f"/sources/{hash_to_base64(source2.address.warehouse_hash)}/test.bar"
+        f"/sources/{hash_to_base64(source2.address.warehouse_hash)}/cdms"
     ).mock(return_value=Response(200, content=source2.model_dump_json()))
 
-    df = DataFrame([{"pk": 0, "a": 1, "b": "2"}, {"pk": 1, "a": 10, "b": "20"}])
-    with warehouse_engine.connect() as conn:
-        df.to_sql(
-            name="foo",
+    with engine.connect() as conn:
+        df_foo = linked.sources["crn"].data.to_pandas()
+        df_bar = linked.sources["cdms"].data.to_pandas()
+
+        df_foo.to_sql(
+            name="crn",
             con=conn,
-            schema="test",
             if_exists="replace",
             index=False,
         )
 
-        df.to_sql(
-            name="bar",
+        df_bar.to_sql(
+            name="cdms",
             con=conn,
-            schema="test",
             if_exists="replace",
             index=False,
         )
 
-    # Select sources
-    selection = select({"test.foo": ["a"]}, "test.bar", engine=warehouse_engine)
+    selection = select({"crn": ["company_name"]}, "cdms", engine=engine)
 
-    # Check they contain what we expect
-    assert selection[0].fields == ["a"]
+    assert selection[0].fields == ["company_name"]
     assert not selection[1].fields
     assert selection[0].source.model_dump() == source1.model_dump()
     assert selection[1].source.model_dump() == source2.model_dump()
-    # Check the engine is set by the selector
-    assert selection[0].source.engine == warehouse_engine
-    assert selection[1].source.engine == warehouse_engine
+    assert selection[0].source.engine == engine
+    assert selection[1].source.engine == engine
 
 
-@pytest.mark.docker
-def test_select_non_indexed_columns(matchbox_api: MockRouter, warehouse_engine: Engine):
+def test_select_non_indexed_columns(matchbox_api: MockRouter):
     """Selecting columns not declared to backend generates warning."""
-    source = Source(
-        address=SourceAddress.compose(engine=warehouse_engine, full_name="test.foo"),
-        db_pk="pk",
-    )
+    engine = create_engine("sqlite:///:memory:")
+    source_testkit = source_factory(full_name="foo", engine=engine)
+
+    source: Source = source_testkit.source
+    source.columns = source.columns[:1]  # Don't index on one columns
+
     matchbox_api.get(
-        f"/sources/{hash_to_base64(source.address.warehouse_hash)}/test.foo"
+        f"/sources/{hash_to_base64(source.address.warehouse_hash)}/foo"
     ).mock(return_value=Response(200, content=source.model_dump_json()))
 
-    df = DataFrame([{"pk": 0, "a": 1, "b": "2"}, {"pk": 1, "a": 10, "b": "20"}])
-    with warehouse_engine.connect() as conn:
+    with engine.connect() as conn:
+        df = source_testkit.data.to_pandas()
         df.to_sql(
             name="foo",
             con=conn,
-            schema="test",
             if_exists="replace",
             index=False,
         )
 
     with pytest.warns(Warning):
-        select({"test.foo": ["a", "b"]}, engine=warehouse_engine)
+        select({"foo": ["company_name", "crn"]}, engine=engine)
 
 
-@pytest.mark.docker
-def test_select_missing_columns(matchbox_api: MockRouter, warehouse_engine: Engine):
+def test_select_missing_columns(matchbox_api: MockRouter):
     """Selecting columns not in the warehouse errors."""
-    source = Source(
-        address=SourceAddress.compose(engine=warehouse_engine, full_name="test.foo"),
-        db_pk="pk",
-    )
+    engine = create_engine("sqlite:///:memory:")
+    source_testkit = source_factory(full_name="foo", engine=engine)
+
+    source = source_testkit.source
 
     matchbox_api.get(
-        f"/sources/{hash_to_base64(source.address.warehouse_hash)}/test.foo"
+        f"/sources/{hash_to_base64(source.address.warehouse_hash)}/foo"
     ).mock(return_value=Response(200, content=source.model_dump_json()))
 
-    df = DataFrame([{"pk": 0, "a": 1, "b": "2"}, {"pk": 1, "a": 10, "b": "20"}])
-    with warehouse_engine.connect() as conn:
+    with engine.connect() as conn:
+        df = source_testkit.data.to_pandas()
         df.to_sql(
             name="foo",
             con=conn,
-            schema="test",
             if_exists="replace",
             index=False,
         )
+
     with pytest.raises(ValueError):
-        select({"test.foo": ["a", "c"]}, engine=warehouse_engine)
+        select({"foo": ["company_name", "non_existent_column"]}, engine=engine)
 
 
 @patch.object(Source, "to_arrow")

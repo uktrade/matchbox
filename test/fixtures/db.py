@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 from typing import TYPE_CHECKING, Any, Callable, Generator, Literal
 
@@ -186,6 +188,27 @@ SetupDatabaseCallable = Callable[
 ]
 
 
+# Global cache for database snapshots
+_DATABASE_SNAPSHOTS = {}
+
+
+def _generate_cache_key(
+    backend: MatchboxDBAdapter,
+    warehouse_data: list[Source],
+    setup_level: Literal["index", "dedupe", "link"],
+):
+    """Generate a unique hash based on input parameters"""
+    backend_key = backend.__class__.__name__
+
+    data_str = json.dumps(
+        [source.model_dump(exclude_unset=True) for source in warehouse_data],
+        sort_keys=True,
+    )
+
+    key = f"{backend_key}_{data_str}_{setup_level}"
+    return hashlib.md5(key.encode()).hexdigest()
+
+
 @pytest.fixture(scope="function")
 def setup_database(
     request: pytest.FixtureRequest,
@@ -195,6 +218,14 @@ def setup_database(
         warehouse_data: list[Source],
         setup_level: Literal["index", "dedupe", "link"],
     ) -> None:
+        # Check cache for existing snapshot
+        cache_key = _generate_cache_key(backend, warehouse_data, setup_level)
+
+        if cache_key in _DATABASE_SNAPSHOTS:
+            backend.restore(clear=True, snapshot=_DATABASE_SNAPSHOTS[cache_key])
+            return
+
+        # Setup database
         db_add_indexed_data = request.getfixturevalue("db_add_indexed_data")
         db_add_dedupe_models_and_data = request.getfixturevalue(
             "db_add_dedupe_models_and_data"
@@ -230,6 +261,9 @@ def setup_database(
             )
         else:
             raise ValueError(f"Invalid setup level: {setup_level}")
+
+        # Save snapshot for future use
+        _DATABASE_SNAPSHOTS[cache_key] = backend.dump()
 
     return _setup_database
 

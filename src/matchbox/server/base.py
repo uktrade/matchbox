@@ -1,17 +1,16 @@
+import json
 from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
-    ParamSpec,
     Protocol,
-    TypeVar,
 )
 
 import boto3
 from botocore.exceptions import ClientError
 from pyarrow import Table
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.dtos import ModelAncestor, ModelMetadata
@@ -24,14 +23,27 @@ else:
     S3Client = Any
 
 
-R = TypeVar("R")
-P = ParamSpec("P")
-
-
 class MatchboxBackends(StrEnum):
     """The available backends for Matchbox."""
 
     POSTGRES = "postgres"
+
+
+class MatchboxSnapshot(BaseModel):
+    """A snapshot of the Matchbox database."""
+
+    backend_type: MatchboxBackends
+    data: Any
+
+    @field_validator("data")
+    @classmethod
+    def check_serializable(cls, value: Any) -> Any:
+        """Validate that the value can be serialized to JSON."""
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, OverflowError) as e:
+            raise ValueError(f"Value is not JSON serializable: {e}") from e
 
 
 class MatchboxDatastoreSettings(BaseSettings):
@@ -244,7 +256,13 @@ class MatchboxDBAdapter(ABC):
     def get_resolution_graph(self) -> ResolutionGraph: ...
 
     @abstractmethod
+    def dump(self) -> MatchboxSnapshot: ...
+
+    @abstractmethod
     def clear(self, certain: bool) -> None: ...
+
+    @abstractmethod
+    def restore(self, snapshot: MatchboxSnapshot) -> None: ...
 
     # Model management
 

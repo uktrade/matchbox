@@ -14,8 +14,12 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.graph import ResolutionGraph, ResolutionNodeType
 from matchbox.common.sources import Match, Source, SourceAddress, SourceColumn
-from matchbox.server.base import MatchboxDBAdapter
-from matchbox.server.postgresql.db import MBDB, MatchboxPostgresSettings
+from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
+from matchbox.server.postgresql.db import (
+    MBDB,
+    MatchboxBackends,
+    MatchboxPostgresSettings,
+)
 from matchbox.server.postgresql.orm import (
     Clusters,
     Contains,
@@ -24,7 +28,12 @@ from matchbox.server.postgresql.orm import (
     Resolutions,
     Sources,
 )
-from matchbox.server.postgresql.utils.db import get_resolution_graph, resolve_model_name
+from matchbox.server.postgresql.utils.db import (
+    dump,
+    get_resolution_graph,
+    resolve_model_name,
+    restore,
+)
 from matchbox.server.postgresql.utils.insert import (
     insert_dataset,
     insert_model,
@@ -344,6 +353,15 @@ class MatchboxPostgres(MatchboxDBAdapter):
         """Get the full resolution graph."""
         return get_resolution_graph(engine=MBDB.get_engine())
 
+    def dump(self) -> MatchboxSnapshot:
+        """Dumps the entire database to a snapshot.
+
+        Returns:
+            A MatchboxSnapshot object of type "postgres" with the database's
+                current state.
+        """
+        return dump(engine=MBDB.get_engine())
+
     def clear(self, certain: bool = False) -> None:
         """Clears all data from the database.
 
@@ -358,6 +376,31 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 "It's principally used for testing. \n\n"
                 "If you're sure you want to continue, rerun with certain=True"
             )
+
+    def restore(self, snapshot: MatchboxSnapshot, clear: bool = False) -> None:
+        """Restores the database from a snapshot.
+
+        Args:
+            snapshot: A MatchboxSnapshot object of type "postgres" with the
+                database's state
+            clear: Whether to clear the database before restoration
+
+        Raises:
+            TypeError: If the snapshot is not compatible with PostgreSQL
+        """
+        if snapshot.backend_type != MatchboxBackends.POSTGRES:
+            raise TypeError(
+                f"Cannot restore {snapshot.backend_type} snapshot to PostgreSQL backend"
+            )
+
+        if clear:
+            MBDB.clear_database()
+
+        restore(
+            engine=MBDB.get_engine(),
+            snapshot=snapshot,
+            batch_size=self.settings.batch_size,
+        )
 
     # Model management
 

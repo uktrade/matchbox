@@ -1,6 +1,6 @@
 """A deduplication methodology based on a deterministic set of conditions."""
 
-from typing import List, Type
+from typing import Type
 
 import duckdb
 from pandas import ArrowDtype, DataFrame
@@ -12,7 +12,7 @@ from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 class NaiveSettings(DeduperSettings):
     """A data class to enforce the Naive deduper's settings dictionary shape"""
 
-    unique_fields: List[str] = Field(
+    unique_fields: list[str] = Field(
         description="A list of columns that will form a unique, deduplicated record"
     )
 
@@ -23,7 +23,7 @@ class NaiveDeduper(Deduper):
     _id_dtype: Type = None
 
     @classmethod
-    def from_settings(cls, id: str, unique_fields: List[str]) -> "NaiveDeduper":
+    def from_settings(cls, id: str, unique_fields: list[str]) -> "NaiveDeduper":
         settings = NaiveSettings(id=id, unique_fields=unique_fields)
         return cls(settings=settings)
 

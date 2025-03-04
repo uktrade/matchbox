@@ -1,6 +1,6 @@
 """A linking methodology that applies different weights to field comparisons."""
 
-from typing import List, Type
+from typing import Any, Type
 
 import duckdb
 from pandas import ArrowDtype, DataFrame
@@ -56,7 +56,7 @@ class WeightedDeterministicSettings(LinkerSettings):
         ... }
     """
 
-    weighted_comparisons: List[WeightedComparison] = Field(
+    weighted_comparisons: list[WeightedComparison] = Field(
         description="A list of tuples in the form of a comparison, and a weight."
     )
     threshold: float = Field(
@@ -79,14 +79,18 @@ class WeightedDeterministicLinker(Linker):
 
     @classmethod
     def from_settings(
-        cls, left_id: str, right_id: str, weighted_comparisons: List, threshold: float
+        cls,
+        left_id: str,
+        right_id: str,
+        weighted_comparisons: list[dict[str, Any]],
+        threshold: float,
     ) -> "WeightedDeterministicLinker":
         settings = WeightedDeterministicSettings(
             left_id=left_id,
             right_id=right_id,
             # No change in weighted_comparisons data, just validates the input list
             weighted_comparisons=[
-                WeightedComparison(comparison=comparison[0], weight=comparison[1])
+                WeightedComparison.model_validate(comparison)
                 for comparison in weighted_comparisons
             ],
             threshold=threshold,

@@ -84,6 +84,35 @@ def sql_to_df(
     return result
 
 
+def get_schema_table_names(full_name: str) -> tuple[str, str]:
+    """Takes a string table name and returns the unquoted schema and table as a tuple.
+
+    Args:
+        full_name: A string indicating a table's full name
+
+    Returns:
+        (schema, table): A tuple of schema and table name. If schema
+            cannot be inferred, returns None.
+
+    Raises:
+        ValueError: When the function can't detect either a
+            schema.table or table format in the input
+    """
+
+    schema_name_list = full_name.replace('"', "").split(".")
+
+    if len(schema_name_list) == 1:
+        schema = None
+        table = schema_name_list[0]
+    elif len(schema_name_list) == 2:
+        schema = schema_name_list[0]
+        table = schema_name_list[1]
+    else:
+        raise ValueError(f"Could not identify schema and table in {full_name}.")
+
+    return (schema, table)
+
+
 def fullname_to_prefix(fullname: str) -> str:
     """Converts a full name to a prefix for column names."""
     return fullname.replace('"', "").replace(".", "_") + "_"

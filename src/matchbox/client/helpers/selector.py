@@ -95,7 +95,7 @@ def query(
     *selectors: list[Selector],
     resolution_name: str | None = None,
     return_type: Literal["pandas", "arrow"] = "pandas",
-    threshold: int | None = None,
+    threshold: float | None = None,
     limit: int | None = None,
 ) -> DataFrame | pa.Table:
     """Runs queries against the selected backend.
@@ -209,7 +209,7 @@ def match(
     source: list[Selector],
     source_pk: str,
     resolution_name: str = DEFAULT_RESOLUTION,
-    threshold: int | None = None,
+    threshold: float | None = None,
 ) -> list[Match]:
     """Matches IDs against the selected backend.
 

@@ -51,7 +51,7 @@ def _get_dataset_resolution(
 def _resolve_thresholds(
     lineage_truths: dict[str, float],
     resolution: Resolutions,
-    threshold: int | None,
+    threshold: float | None,
 ) -> dict[int, float]:
     """Resolves final thresholds for each resolution in the lineage based on user input.
 
@@ -131,7 +131,7 @@ def _resolve_cluster_hierarchy(
     dataset_id: int,
     resolution: Resolutions,
     engine: Engine,
-    threshold: int | None = None,
+    threshold: float | None = None,
 ) -> Select:
     """Resolves the final cluster assignments for all records in a dataset.
 
@@ -253,7 +253,7 @@ def query(
     engine: Engine,
     source_address: SourceAddress,
     resolution_name: str | None = None,
-    threshold: int | None = None,
+    threshold: float | None = None,
     limit: int = None,
 ) -> pa.Table:
     """Queries Matchbox and the Source warehouse to retrieve linked data.
@@ -477,7 +477,7 @@ def _build_match_query(
     source_resolution_id: int,
     resolution_name: str,
     session: Session,
-    threshold: int | None = None,
+    threshold: float | None = None,
 ) -> Select:
     """Builds the SQL query that powers the match function."""
     # Get truth resolution
@@ -525,7 +525,7 @@ def match(
     source: SourceAddress,
     targets: list[SourceAddress],
     resolution_name: str,
-    threshold: int | None = None,
+    threshold: float | None = None,
 ) -> list[Match]:
     """Matches an ID in a source dataset and returns the keys in the targets.
 

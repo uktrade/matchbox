@@ -220,7 +220,7 @@ class MatchboxDBAdapter(ABC):
         source: SourceAddress,
         targets: list[SourceAddress],
         resolution_name: str,
-        threshold: int | None = None,
+        threshold: float | None = None,
     ) -> list[Match]: ...
 
     # Data management

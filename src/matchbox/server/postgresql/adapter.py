@@ -132,7 +132,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
         self,
         source_address: SourceAddress,
         resolution_name: str | None = None,
-        threshold: int | None = None,
+        threshold: float | None = None,
         limit: int | None = None,
     ) -> ArrowTable:
         """Queries the database from an optional point of truth.
@@ -164,7 +164,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
         source: SourceAddress,
         targets: list[SourceAddress],
         resolution_name: str,
-        threshold: int | None = None,
+        threshold: float | None = None,
     ) -> list[Match]:
         """Matches an ID in a source dataset and returns the keys in the targets.
 

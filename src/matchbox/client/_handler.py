@@ -108,7 +108,7 @@ CLIENT = create_client(settings=settings)
 def query(
     source_address: SourceAddress,
     resolution_name: str | None = None,
-    threshold: int | None = None,
+    threshold: float | None = None,
     limit: int | None = None,
 ) -> BytesIO:
     res = CLIENT.get(
@@ -143,7 +143,7 @@ def match(
     source: SourceAddress,
     source_pk: str,
     resolution_name: str,
-    threshold: int | None = None,
+    threshold: float | None = None,
 ) -> Match:
     target_full_names = [t.full_name for t in targets]
     target_warehouse_hashes = [t.warehouse_hash for t in targets]

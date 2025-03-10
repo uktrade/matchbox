@@ -220,7 +220,7 @@ async def query(
     full_name: str,
     warehouse_hash_b64: str,
     resolution_name: str | None = None,
-    threshold: int | None = None,
+    threshold: float | None = None,
     limit: int | None = None,
 ) -> ParquetResponse:
     """Query Matchbox for matches based on a source address."""
@@ -265,7 +265,7 @@ async def match(
     source_warehouse_hash_b64: str,
     source_pk: str,
     resolution_name: str,
-    threshold: int | None = None,
+    threshold: float | None = None,
 ) -> list[Match]:
     """Match a source primary key against a list of target addresses."""
     targets = [

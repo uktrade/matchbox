@@ -75,3 +75,9 @@ def build_progress_bar(console: Console | None = None) -> Progress:
         TimeRemainingColumn(),
         console=console,
     )
+
+
+def set_log_level(level: int) -> None:
+    """Set the log level. for all loggers."""
+    for log in [logging.getLogger(name) for name in logging.root.manager.loggerDict]:
+        log.setLevel(level)

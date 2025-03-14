@@ -1,3 +1,5 @@
+"""Script to benchmark the full dummy data generation pipeline."""
+
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,6 +21,7 @@ ROOT = Path(__file__).parent.parent
 
 @contextmanager
 def timer(description: str):
+    """Context manager to time a block of code."""
     start = time.time()
     yield
     elapsed = time.time() - start

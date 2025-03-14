@@ -2,11 +2,11 @@
 
 
 def cms_original_clean_company_name_general(column):
-    """Replicates the original Company Matching Service company name cleaning
-    regex exactly. Intended to help replicate the methodology for comparison.
+    """Replicates the original Company Matching Service company name cleaning.
 
-    The _general_name_simplification version from
-    app/algorithm/sql_statements.py#L24.
+    Intended to help replicate the methodology for comparison.
+
+    The _general_name_simplification version from app/algorithm/sql_statements.py#L24.
 
     Use with any dataset except Companies House.
     """
@@ -50,8 +50,9 @@ def cms_original_clean_company_name_general(column):
 
 
 def cms_original_clean_company_name_ch(column):
-    """Replicates the original Company Matching Service company name cleaning
-    regex exactly. Intended to help replicate the methodology for comparison.
+    """Replicates the original Company Matching Service company name cleaning.
+
+    Intended to help replicate the methodology for comparison.
 
     The _ch_name_simplification version from app/algorithm/sql_statements.py#L14.
 
@@ -86,23 +87,25 @@ def cms_original_clean_company_name_ch(column):
 
 
 def cms_original_clean_postcode(column):
-    """Replicates the original Company Matching Service postcode cleaning SQL
-    exactly. Intended to help replicate the methodology for comparison.
+    """Replicates the original Company Matching Service postcode cleaning.
+
+    Intended to help replicate the methodology for comparison.
     """
     return f"lower(replace({column}, ' ', ''))"
 
 
 def cms_original_clean_email(column):
-    """Replicates the original Company Matching Service email cleaning SQL
-    exactly. Intended to help replicate the methodology for comparison.
+    """Replicates the original Company Matching Service email cleaning.
+
+    Intended to help replicate the methodology for comparison.
     """
     return f"lower(split_part({column}, '@', 2))"
 
 
 def cms_original_clean_ch_id(column):
-    """Replicates the original Company Matching Service Companies House ID
-    cleaning SQL exactly. Intended to help replicate the methodology for
-    comparison.
+    """Replicates the original Company Matching Service Companies House ID cleaning.
+
+    Intended to help replicate the methodology for comparison.
     """
     return f"""
         case when
@@ -118,7 +121,8 @@ def cms_original_clean_ch_id(column):
 
 
 def cms_original_clean_cdms_id(column):
-    """Replicates the original Company Matching Service CDMS ID cleaning SQL
-    exactly. Intended to help replicate the methodology for comparison.
+    """Replicates the original Company Matching Service CDMS ID cleaning.
+
+    Intended to help replicate the methodology for comparison.
     """
     return f"regexp_replace({column}, '\\D', '', 'g')"

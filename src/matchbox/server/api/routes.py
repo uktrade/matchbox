@@ -1,3 +1,5 @@
+"""API routes for the Matchbox server."""
+
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any, AsyncGenerator
 
@@ -47,11 +49,14 @@ else:
 
 
 class ParquetResponse(Response):
+    """A response object for returning parquet data."""
+
     media_type = "application/octet-stream"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Context manager for the FastAPI lifespan events."""
     get_backend()
     yield
 
@@ -67,11 +72,12 @@ app = FastAPI(
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc):
-    """Overwrite the default JSON schema for an `HTTPException`"""
+    """Overwrite the default JSON schema for an `HTTPException`."""
     return JSONResponse(content=exc.detail, status_code=exc.status_code)
 
 
 def get_backend() -> MatchboxDBAdapter:
+    """Get the backend adapter."""
     return BackendManager.get_backend()
 
 
@@ -337,6 +343,7 @@ async def get_source(
 async def get_resolutions(
     backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
 ) -> ResolutionGraph:
+    """Get the resolution graph."""
     return backend.get_resolution_graph()
 
 
@@ -508,6 +515,7 @@ async def get_truth(
 async def get_ancestors(
     backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
 ) -> list[ModelAncestor]:
+    """Get the ancestors for a model."""
     try:
         return backend.get_model_ancestors(model=name)
     except MatchboxResolutionNotFoundError as e:
@@ -534,6 +542,7 @@ async def set_ancestors_cache(
     name: str,
     ancestors: list[ModelAncestor],
 ):
+    """Update the cached ancestors for a model."""
     try:
         backend.set_model_ancestors_cache(model=name, ancestors_cache=ancestors)
         return ModelOperationStatus(
@@ -567,6 +576,7 @@ async def set_ancestors_cache(
 async def get_ancestors_cache(
     backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
 ) -> list[ModelAncestor]:
+    """Get the cached ancestors for a model."""
     try:
         return backend.get_model_ancestors_cache(model=name)
     except MatchboxResolutionNotFoundError as e:
@@ -652,6 +662,7 @@ async def clear_database(
         bool, Query(description="Confirm deletion of all data in the database")
     ] = False,
 ) -> OKMessage:
+    """Clear all data from the backend."""
     try:
         backend.clear(certain=certain)
         return OKMessage()

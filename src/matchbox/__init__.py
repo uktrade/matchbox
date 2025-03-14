@@ -1,3 +1,5 @@
+"""Matchbox."""
+
 from matchbox.common.exceptions import MatchboxClientSettingsException
 from matchbox.common.logging import logger
 

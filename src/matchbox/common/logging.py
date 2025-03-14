@@ -1,3 +1,5 @@
+"""Logging utilities."""
+
 import logging
 
 from rich.console import Console
@@ -29,6 +31,7 @@ logging.basicConfig(
 
 
 def get_logger(name: str, custom_format: str = None) -> logging.Logger:
+    """Get a logger instance."""
     logger = logging.getLogger(name)
 
     if custom_format:

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class DeduperSettings(BaseModel):
-    """A data class to enforce basic settings dictionary shapes"""
+    """A data class to enforce basic settings dictionary shapes."""
 
     id: str = Field(description="A unique ID column in the table to dedupe")
 
@@ -28,11 +28,14 @@ class DeduperSettings(BaseModel):
 
 
 class Deduper(BaseModel, ABC):
+    """A base class for dedupers."""
+
     settings: DeduperSettings
 
     @classmethod
     @abstractmethod
     def from_settings(cls) -> "Deduper":
+        """Create a Deduper from a settings dictionary."""
         raise NotImplementedError(
             """\
             Must implement method to instantiate from settings \
@@ -42,8 +45,10 @@ class Deduper(BaseModel, ABC):
 
     @abstractmethod
     def prepare(self, data: DataFrame) -> None:
+        """Prepare the deduper for deduplication."""
         return
 
     @abstractmethod
     def dedupe(self, data: DataFrame) -> DataFrame:
+        """Deduplicate the dataframe."""
         return

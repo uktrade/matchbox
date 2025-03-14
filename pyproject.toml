@@ -38,6 +38,7 @@ server = [
 [dependency-groups]
 dev = [
     "docker>=7.1.0",
+    "griffe-inherited-docstrings>=1.1.1",
     "ipykernel>=6.29.5",
     "ipywidgets>=8.1.5",
     "mkdocs>=1.6.1",
@@ -81,7 +82,7 @@ select = [
     "F",
     "I",
     "B",
-    # "D"
+    "D"
 ]
 ignore = []
 fixable = ["ALL"]
@@ -99,6 +100,7 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

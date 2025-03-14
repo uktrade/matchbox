@@ -1,3 +1,5 @@
+"""Classes and functions for working with data sources in Matchbox."""
+
 import json
 from copy import deepcopy
 from functools import wraps
@@ -50,6 +52,7 @@ class SourceColumn(BaseModel):
 
 
 def b64_bytes_validator(val: bytes | str) -> bytes:
+    """Ensure that a value is a base64 encoded string or bytes."""
     if isinstance(val, bytes):
         return val
     elif isinstance(val, str):
@@ -68,6 +71,8 @@ SerialisableBytes = Annotated[
 
 
 class SourceAddress(BaseModel):
+    """A unique identifier for a dataset in a warehouse."""
+
     full_name: str
     warehouse_hash: SerialisableBytes
 
@@ -114,6 +119,7 @@ class Source(BaseModel):
 
     @property
     def engine(self) -> Engine | None:
+        """The SQLAlchemy Engine used to connect to the dataset."""
         return self._engine
 
     def __deepcopy__(self, memo=None):
@@ -135,7 +141,7 @@ class Source(BaseModel):
         return obj_copy
 
     def set_engine(self, engine: Engine):
-        """Adds engine, and use it to validate current columns"""
+        """Adds engine, and use it to validate current columns."""
         self._engine = engine
         remote_columns = self._get_remote_columns()
         for col in self.columns:
@@ -230,7 +236,7 @@ class Source(BaseModel):
             fields.append(self.db_pk)
 
         def _get_column(col_name: str) -> ColumnElement:
-            """Helper to get a column with proper casting and labeling for PKs"""
+            """Helper to get a column with proper casting and labeling for PKs."""
             col = table.columns[col_name]
             if col_name == self.db_pk:
                 return cast(col, String).label(self.format_column(col_name))
@@ -317,6 +323,7 @@ class Match(BaseModel):
 
     @model_validator(mode="after")
     def found_or_none(self) -> "Match":
+        """Ensure that a match has sources and a cluster if target was found."""
         if self.target_id and not (self.source_id and self.cluster):
             raise ValueError(
                 "A match must have sources and a cluster if target was found."

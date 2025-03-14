@@ -32,6 +32,12 @@ R = TypeVar("R")
 
 
 def make_features_hashable(func: Callable[P, R]) -> Callable[P, R]:
+    """Decorator to allow configuring source_factory with dicts.
+
+    This retains the hashability of FeatureConfig while still making it simple
+    to use the factory without special objects.
+    """
+
     @wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         # Handle features in first positional arg

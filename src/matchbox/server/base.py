@@ -1,3 +1,5 @@
+"""Base classes and utilities for Matchbox database adapters."""
+
 import json
 from abc import ABC, abstractmethod
 from enum import StrEnum
@@ -69,7 +71,6 @@ class MatchboxDatastoreSettings(BaseSettings):
 
         Creates S3 buckets if they don't exist.
         """
-
         kwargs = {
             "endpoint_url": f"http://{self.host}:{self.port}"
             if self.host and self.port
@@ -127,10 +128,12 @@ class BackendManager:
 
     @classmethod
     def initialise(cls, settings: "MatchboxSettings"):
+        """Initialise the backend with the given settings."""
         cls._settings = settings
 
     @classmethod
     def get_backend(cls) -> "MatchboxDBAdapter":
+        """Get the backend instance."""
         if cls._settings is None:
             raise ValueError("BackendManager must be initialized with settings first")
 
@@ -141,6 +144,7 @@ class BackendManager:
 
     @classmethod
     def get_settings(cls) -> "MatchboxSettings":
+        """Get the backend settings."""
         if cls._settings is None:
             raise ValueError("BackendManager must be initialized with settings first")
         return cls._settings
@@ -186,13 +190,17 @@ def initialise_matchbox() -> None:
 class Countable(Protocol):
     """A protocol for objects that can be counted."""
 
-    def count(self) -> int: ...
+    def count(self) -> int:
+        """Counts the number of items in the object."""
+        ...
 
 
 class Listable(Protocol):
     """A protocol for objects that can be listed."""
 
-    def list(self) -> list[str]: ...
+    def list(self) -> list[str]:
+        """Lists the items in the object."""
+        ...
 
 
 class ListableAndCountable(Countable, Listable):
@@ -223,7 +231,23 @@ class MatchboxDBAdapter(ABC):
         resolution_name: str | None = None,
         threshold: int | None = None,
         limit: int = None,
-    ) -> Table: ...
+    ) -> Table:
+        """Queries the database from an optional point of truth.
+
+        Args:
+            source_address: the `SourceAddress` object identifying the source to query
+            resolution_name (optional): the resolution to use for filtering results
+                If not specified, will use the dataset resolution for the queried source
+            threshold (optional): the threshold to use for creating clusters
+                If None, uses the models' default threshold
+                If an integer, uses that threshold for the specified model, and the
+                model's cached thresholds for its ancestors
+            limit (optional): the number to use in a limit clause. Useful for testing
+
+        Returns:
+            The resulting matchbox IDs in Arrow format
+        """
+        ...
 
     @abstractmethod
     def match(
@@ -233,67 +257,203 @@ class MatchboxDBAdapter(ABC):
         targets: list[SourceAddress],
         resolution_name: str,
         threshold: int | None = None,
-    ) -> list[Match]: ...
+    ) -> list[Match]:
+        """Matches an ID in a source dataset and returns the keys in the targets.
+
+        Args:
+            source_pk: The primary key to match from the source.
+            source: The address of the source dataset.
+            targets: The addresses of the target datasets.
+            resolution_name: The name of the resolution to use for matching.
+            threshold (optional): the threshold to use for creating clusters
+                If None, uses the resolutions' default threshold
+                If an integer, uses that threshold for the specified resolution, and the
+                resolution's cached thresholds for its ancestors
+                Will use these threshold values instead of the cached thresholds
+        """
+        ...
 
     # Data management
 
     @abstractmethod
-    def index(self, source: Source, data_hashes: Table) -> None: ...
+    def index(self, source: Source, data_hashes: Table) -> None:
+        """Indexes to Matchbox a source dataset in your warehouse.
+
+        Args:
+            source: The source dataset to index.
+            data_hashes: The Arrow table with the hash of each data row
+        """
+        ...
 
     @abstractmethod
-    def get_source(self, address: SourceAddress) -> Source: ...
+    def get_source(self, address: SourceAddress) -> Source:
+        """Get a source from its name address.
+
+        Args:
+            address: The name address for the source
+
+        Returns:
+            A Source object
+        """
+        ...
 
     @abstractmethod
-    def validate_ids(self, ids: list[int]) -> bool: ...
+    def validate_ids(self, ids: list[int]) -> bool:
+        """Validates a list of IDs exist in the database.
+
+        Args:
+            ids: A list of IDs to validate.
+
+        Raises:
+            MatchboxDataNotFound: If some items don't exist in the target table.
+        """
+        ...
 
     @abstractmethod
-    def validate_hashes(self, hashes: list[bytes]) -> bool: ...
+    def validate_hashes(self, hashes: list[bytes]) -> bool:
+        """Validates a list of hashes exist in the database.
+
+        Args:
+            hashes: A list of hashes to validate.
+
+        Raises:
+            MatchboxDataNotFound: If some items don't exist in the target table.
+        """
+        ...
 
     @abstractmethod
-    def cluster_id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]: ...
+    def cluster_id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]:
+        """Get a lookup of Cluster hashes from a list of IDs.
+
+        Args:
+            ids: A list of IDs to get hashes for.
+
+        Returns:
+            A dictionary mapping IDs to hashes.
+        """
+        ...
 
     @abstractmethod
-    def get_resolution_graph(self) -> ResolutionGraph: ...
+    def get_resolution_graph(self) -> ResolutionGraph:
+        """Get the full resolution graph."""
+        ...
 
     @abstractmethod
-    def dump(self) -> MatchboxSnapshot: ...
+    def dump(self) -> MatchboxSnapshot:
+        """Dumps the entire database to a snapshot.
+
+        Returns:
+            A MatchboxSnapshot object of type "postgres" with the database's
+                current state.
+        """
+        ...
 
     @abstractmethod
-    def clear(self, certain: bool) -> None: ...
+    def clear(self, certain: bool) -> None:
+        """Clears all data from the database.
+
+        Args:
+            certain: Whether to clear the database without confirmation.
+        """
+        ...
 
     @abstractmethod
-    def restore(self, snapshot: MatchboxSnapshot) -> None: ...
+    def restore(self, snapshot: MatchboxSnapshot, clear: bool) -> None:
+        """Restores the database from a snapshot.
+
+        Args:
+            snapshot: A MatchboxSnapshot object of type "postgres" with the
+                database's state
+            clear: Whether to clear the database before restoration
+
+        Raises:
+            TypeError: If the snapshot is not compatible with PostgreSQL
+        """
+        ...
 
     # Model management
 
     @abstractmethod
-    def insert_model(self, model: ModelMetadata) -> None: ...
+    def insert_model(self, model: ModelMetadata) -> None:
+        """Writes a model to Matchbox.
+
+        Args:
+            model: ModelMetadata object with the model's metadata
+
+        Raises:
+            MatchboxDataNotFound: If, for a linker, the source models weren't found in
+                the database
+        """
+        ...
 
     @abstractmethod
-    def get_model(self, model: str) -> ModelMetadata: ...
+    def get_model(self, model: str) -> ModelMetadata:
+        """Get a model from the database."""
+        ...
 
     @abstractmethod
-    def set_model_results(self, model: str, results: Table) -> None: ...
+    def set_model_results(self, model: str, results: Table) -> None:
+        """Set the results for a model."""
+        ...
 
     @abstractmethod
-    def get_model_results(self, model: str) -> Table: ...
+    def get_model_results(self, model: str) -> Table:
+        """Get the results for a model."""
+        ...
 
     @abstractmethod
-    def set_model_truth(self, model: str, truth: float) -> None: ...
+    def set_model_truth(self, model: str, truth: float) -> None:
+        """Sets the truth threshold for this model, changing the default clusters."""
+        ...
 
     @abstractmethod
-    def get_model_truth(self, model: str) -> float: ...
+    def get_model_truth(self, model: str) -> float:
+        """Gets the current truth threshold for this model."""
+        ...
 
     @abstractmethod
-    def get_model_ancestors(self, model: str) -> list[ModelAncestor]: ...
+    def get_model_ancestors(self, model: str) -> list[ModelAncestor]:
+        """Gets the current truth values of all ancestors.
+
+        Returns a list of ModelAncestor objects mapping model names to their current
+        truth thresholds.
+
+        Unlike ancestors_cache which returns cached values, this property returns
+        the current truth values of all ancestor models.
+        """
+        ...
 
     @abstractmethod
     def set_model_ancestors_cache(
         self, model: str, ancestors_cache: list[ModelAncestor]
-    ) -> None: ...
+    ) -> None:
+        """Updates the cached ancestor thresholds.
+
+        Args:
+            model: The name of the model to update
+            ancestors_cache: List of ModelAncestor objects mapping model names to
+                their truth thresholds
+        """
+        ...
 
     @abstractmethod
-    def get_model_ancestors_cache(self, model: str) -> list[ModelAncestor]: ...
+    def get_model_ancestors_cache(self, model: str) -> list[ModelAncestor]:
+        """Gets the cached ancestor thresholds, converting hashes to model names.
+
+        Returns a list of ModelAncestor objects mapping model names to their cached
+        truth thresholds.
+
+        This is required because each point of truth needs to be stable, so we choose
+        when to update it, caching the ancestor's values in the model itself.
+        """
+        ...
 
     @abstractmethod
-    def delete_model(self, model: str, certain: bool) -> None: ...
+    def delete_model(self, model: str, certain: bool) -> None:
+        """Delete a model from the database.
+
+        Args:
+            model: The name of the model to delete.
+            certain: Whether to delete the model without confirmation.
+        """
+        ...

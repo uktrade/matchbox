@@ -17,6 +17,8 @@ from matchbox.common.sources import Match, Source, SourceAddress
 
 
 class Selector(BaseModel):
+    """A selector to choose a source and optionally a subset of columns to select."""
+
     source: Source
     fields: list[str] | None = None
 

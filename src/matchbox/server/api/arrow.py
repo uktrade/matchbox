@@ -1,3 +1,5 @@
+"""Arrow utility functions for the Matchbox server."""
+
 from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 import pyarrow as pa

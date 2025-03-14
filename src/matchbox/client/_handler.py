@@ -52,8 +52,7 @@ def encode_param_value(
 def url_params(
     params: dict[str, URLEncodeHandledType | Iterable[URLEncodeHandledType]],
 ) -> dict[str, str | list[str]]:
-    """Prepares a dictionary of parameters to be encoded in a URL"""
-
+    """Prepares a dictionary of parameters to be encoded in a URL."""
     non_null = {k: v for k, v in params.items() if v}
     return {k: encode_param_value(v) for k, v in non_null.items()}
 

@@ -1,3 +1,5 @@
+"""Common database utilities for Matchbox."""
+
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
 
 import connectorx as cx
@@ -56,6 +58,8 @@ def sql_to_df(
     Args:
         stmt (Select): A SQLAlchemy Select statement to be executed.
         engine (Engine): A SQLAlchemy Engine object for the database connection.
+        return_type (str): The type of the return value. One of "arrow", "pandas",
+            or "polars".
 
     Returns:
         A dataframe of the query results.
@@ -98,7 +102,6 @@ def get_schema_table_names(full_name: str) -> tuple[str, str]:
         ValueError: When the function can't detect either a
             schema.table or table format in the input
     """
-
     schema_name_list = full_name.replace('"', "").split(".")
 
     if len(schema_name_list) == 1:

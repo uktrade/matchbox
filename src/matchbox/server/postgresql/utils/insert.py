@@ -1,3 +1,5 @@
+"""Utilities for inserting data into the PostgreSQL backend."""
+
 import pyarrow as pa
 import pyarrow.compute as pc
 from sqlalchemy import Engine, delete, exists, select, union
@@ -41,6 +43,7 @@ class HashIDMap:
     """
 
     def __init__(self, start: int, lookup: pa.Table = None):
+        """Initialise the HashIDMap object."""
         self.next_int = start
         if not lookup:
             self.lookup = pa.Table.from_arrays(

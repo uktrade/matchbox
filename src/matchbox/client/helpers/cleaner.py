@@ -1,11 +1,11 @@
 """Functions to pre-process data sources."""
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 from pandas import DataFrame
 
 
-def cleaner(function: Callable, arguments: Dict) -> Dict[str, Dict[str, Any]]:
+def cleaner(function: Callable, arguments: dict) -> dict[str, dict[str, Any]]:
     """Define a function to clean a dataset.
 
     Args:
@@ -18,8 +18,8 @@ def cleaner(function: Callable, arguments: Dict) -> Dict[str, Dict[str, Any]]:
     return {function.__name__: {"function": function, "arguments": arguments}}
 
 
-def cleaners(*cleaner: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Combine multiple cleaners in a single object to pass to `process()`
+def cleaners(*cleaner: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Combine multiple cleaners in a single object to pass to `process()`.
 
     Args:
         cleaner: Output of the `cleaner()` function
@@ -44,7 +44,7 @@ def cleaners(*cleaner: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {k: v for d in cleaner for k, v in d.items()}
 
 
-def process(data: DataFrame, pipeline: Dict[str, Dict[str, Any]]) -> DataFrame:
+def process(data: DataFrame, pipeline: dict[str, dict[str, Any]]) -> DataFrame:
     """Apply cleaners to input dataframe.
 
     Args:

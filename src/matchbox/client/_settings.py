@@ -1,4 +1,4 @@
-"""Module to load client settings from env file"""
+"""Module to load client settings from env file."""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

@@ -1,3 +1,5 @@
+"""Functions to transform data between tabular and graph structures."""
+
 import multiprocessing
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
@@ -168,21 +170,26 @@ class DisjointSet(Generic[T]):
     """
 
     def __init__(self):
+        """Initialize the disjoint set."""
         self.parent: dict[T, T] = {}
         self.rank: dict[T, int] = {}
 
     def _make_set(self, x: T) -> None:
+        """Create a new set with a single element x."""
         self.parent[x] = x
         self.rank[x] = 0
 
     def add(self, x: T) -> None:
+        """Add a new element to the disjoint set."""
         if x not in self.parent:
             self._make_set(x)
 
     def union(self, x: T, y: T) -> None:
+        """Merge the sets containing elements x and y."""
         self._link(self._find(x), self._find(y))
 
     def _link(self, x: T, y: T) -> None:
+        """Merge the sets containing elements x and y."""
         if self.rank[x] > self.rank[y]:
             self.parent[y] = x
         else:
@@ -191,6 +198,7 @@ class DisjointSet(Generic[T]):
                 self.rank[y] += 1
 
     def _find(self, x: T) -> T:
+        """Return the representative element of the set containing x."""
         if x not in self.parent:
             self._make_set(x)
             return x
@@ -201,6 +209,7 @@ class DisjointSet(Generic[T]):
         return self.parent[x]
 
     def get_components(self) -> list[set[T]]:
+        """Return the connected components of the disjoint set."""
         components = defaultdict(set)
         for x in self.parent:
             root = self._find(x)

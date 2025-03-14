@@ -1,3 +1,5 @@
+"""General utilities for the PostgreSQL backend."""
+
 import base64
 import contextlib
 import cProfile
@@ -125,6 +127,7 @@ def restore(engine: Engine, snapshot: MatchboxSnapshot, batch_size: int) -> None
     """Restores the database from a snapshot.
 
     Args:
+        engine: The database engine.
         snapshot: A MatchboxSnapshot object of type "postgres" with the
             database's state
         batch_size: The number of records to insert in each batch
@@ -226,8 +229,9 @@ def data_to_batch(
     """Constructs a batches function for any dataframe and table."""
 
     def _batches(
-        high_watermark,  # noqa ARG001 required for pg_bulk_ingest
+        high_watermark,  # noqa: ARG001
     ) -> Iterable[tuple[None, None, Iterable[tuple[Table, tuple]]]]:
+        # high_watermark required for pg_bulk_ingest
         for batch in batched(records, batch_size):
             yield None, None, ((table, t) for t in batch)
 

@@ -1,22 +1,25 @@
+"""Custom exceptions for Matchbox."""
+
 from typing import Any
 
 # -- Configuration exceptions
 
 
 class MatchboxClientSettingsException(Exception):
-    """Incorrect configuration provided to client"""
+    """Incorrect configuration provided to client."""
 
 
 # -- Client-side API exceptions --
 
 
 class MatchboxUnparsedClientRequest(Exception):
-    """The API could not parse the content of the client request"""
+    """The API could not parse the content of the client request."""
 
     def __init__(
         self,
         message: str | None = None,
     ):
+        """Initialise the exception."""
         if message is None:
             message = "The API could not parse the content of the client request"
 
@@ -24,12 +27,13 @@ class MatchboxUnparsedClientRequest(Exception):
 
 
 class MatchboxUnhandledServerResponse(Exception):
-    """The API sent an unexpected response"""
+    """The API sent an unexpected response."""
 
     def __init__(
         self,
         message: str | None = None,
     ):
+        """Initialise the exception."""
         if message is None:
             message = "The API sent an unexpected response"
 
@@ -40,11 +44,11 @@ class MatchboxUnhandledServerResponse(Exception):
 
 
 class MatchboxSourceColumnError(Exception):
-    """Source columns diverge with the warehouse"""
+    """Source columns diverge with the warehouse."""
 
 
 class MatchboxSourceEngineError(Exception):
-    """Engine must be available in Source"""
+    """Engine must be available in Source."""
 
 
 class MatchboxSourceTableError(Exception):
@@ -55,6 +59,7 @@ class MatchboxSourceTableError(Exception):
         message: str | None = None,
         table_name: str | None = None,
     ):
+        """Initialise the exception."""
         if message is None:
             message = "Table doesn't exist in your source data warehouse."
             if table_name is not None:
@@ -68,6 +73,7 @@ class MatchboxServerFileError(Exception):
     """There was a problem with file upload."""
 
     def __init__(self, message: str | None = None):
+        """Initialise the exception."""
         if message is None:
             message = "There was a problem with file upload."
 
@@ -81,6 +87,7 @@ class MatchboxResolutionNotFoundError(Exception):
     """Resolution not found."""
 
     def __init__(self, message: str | None = None, resolution_name: str | None = None):
+        """Initialise the exception."""
         if message is None:
             message = "Resolution not found."
             if resolution_name is not None:
@@ -98,6 +105,7 @@ class MatchboxSourceNotFoundError(Exception):
         message: str = None,
         address: str | None = None,
     ):
+        """Initialise the exception."""
         if message is None:
             message = "Source not found on matchbox."
             if address:
@@ -116,6 +124,7 @@ class MatchboxDataNotFound(Exception):
         table: str | None = None,
         data: Any | None = None,
     ):
+        """Initialise the exception."""
         if message is None:
             message = "Data doesn't exist in Matchbox."
             if table is not None:
@@ -135,6 +144,7 @@ class MatchboxClientFileError(Exception):
     """There was a problem with file download."""
 
     def __init__(self, message: str | None = None):
+        """Initialise the exception."""
         if message is None:
             message = "There was a problem with file download."
 
@@ -149,6 +159,7 @@ class MatchboxDeletionNotConfirmed(Exception):
     """Deletion must be confirmed: if certain, rerun with certain=True."""
 
     def __init__(self, message: str | None = None, children: list[str] | None = None):
+        """Initialise the exception."""
         if message is None:
             message = "Deletion must be confirmed: if certain, rerun with certain=True."
 

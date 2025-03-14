@@ -23,6 +23,7 @@ class SplinkLinkerFunction(BaseModel):
 
     @model_validator(mode="after")
     def validate_function_and_arguments(self) -> "SplinkLinkerFunction":
+        """Ensure the function and arguments are valid."""
         if not hasattr(LinkerTraining, self.function):
             raise ValueError(
                 f"Function {self.function} not found as method of Splink Linker class"
@@ -134,6 +135,7 @@ class SplinkSettings(LinkerSettings):
 
     @model_validator(mode="after")
     def check_ids_match(self) -> "SplinkSettings":
+        """Ensure left_id and right_id match."""
         l_id = self.left_id
         r_id = self.right_id
         if l_id is not None and r_id is not None and l_id != r_id:
@@ -145,17 +147,21 @@ class SplinkSettings(LinkerSettings):
 
     @model_validator(mode="after")
     def check_link_only(self) -> "SplinkSettings":
+        """Ensure link_type is set to "link_only"."""
         if self.linker_settings.link_type != "link_only":
             raise ValueError('link_type must be set to "link_only"')
         return self
 
     @model_validator(mode="after")
     def add_enforced_settings(self) -> "SplinkSettings":
+        """Ensure ID is the only field we link on."""
         self.linker_settings.unique_id_column_name = self.left_id
         return self
 
 
 class SplinkLinker(Linker):
+    """A linker that leverages Bayesian record linkage using Splink."""
+
     settings: SplinkSettings
 
     _linker: SplinkLibLinkerClass = None
@@ -171,6 +177,7 @@ class SplinkLinker(Linker):
         linker_settings: SettingsCreator,
         threshold: float,
     ) -> "SplinkLinker":
+        """Create a SplinkLinker from a settings dictionary."""
         settings = SplinkSettings(
             left_id=left_id,
             right_id=right_id,
@@ -183,6 +190,7 @@ class SplinkLinker(Linker):
         return cls(settings=settings)
 
     def prepare(self, left: DataFrame, right: DataFrame) -> None:
+        """Prepare the linker for linking."""
         if (set(left.columns) != set(right.columns)) or not left.dtypes.equals(
             right.dtypes
         ):
@@ -216,6 +224,7 @@ class SplinkLinker(Linker):
             proc_func(**func.arguments)
 
     def link(self, left: DataFrame = None, right: DataFrame = None) -> DataFrame:
+        """Link the left and right dataframes."""
         if left is not None or right is not None:
             logger.warning(
                 "Left and right data are declared in .prepare() for SplinkLinker. "

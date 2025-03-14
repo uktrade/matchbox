@@ -1,3 +1,5 @@
+"""Matchbox PostgreSQL database connection."""
+
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine, MetaData, create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -33,6 +35,7 @@ class MatchboxDatabase:
     """Matchbox PostgreSQL database connection."""
 
     def __init__(self, settings: MatchboxPostgresSettings):
+        """Initialise the database connection."""
         self.settings = settings
         self.engine: Engine | None = None
         self.SessionLocal: sessionmaker | None = None

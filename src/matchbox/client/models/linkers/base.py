@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class LinkerSettings(BaseModel):
-    """A data class to enforce basic settings dictionary shapes"""
+    """A data class to enforce basic settings dictionary shapes."""
 
     left_id: str = Field(description="The unique ID column in the left dataset")
     right_id: str = Field(description="The unique ID column in the right dataset")
@@ -29,11 +29,14 @@ class LinkerSettings(BaseModel):
 
 
 class Linker(BaseModel, ABC):
+    """A base class for linkers."""
+
     settings: LinkerSettings
 
     @classmethod
     @abstractmethod
     def from_settings(cls) -> "Linker":
+        """Create a Linker from a settings dictionary."""
         raise NotImplementedError(
             """\
             Must implement method to instantiate from settings \
@@ -43,8 +46,10 @@ class Linker(BaseModel, ABC):
 
     @abstractmethod
     def prepare(self, left: DataFrame, right: DataFrame) -> None:
+        """Prepare the linker for linking."""
         return
 
     @abstractmethod
     def link(self, left: DataFrame, right: DataFrame) -> DataFrame:
+        """Link the left and right dataframes."""
         return

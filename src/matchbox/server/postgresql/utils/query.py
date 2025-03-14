@@ -1,3 +1,5 @@
+"""Utilities for querying and matching in the PostgreSQL backend."""
+
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import pyarrow as pa

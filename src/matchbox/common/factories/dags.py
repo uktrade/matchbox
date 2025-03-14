@@ -1,3 +1,5 @@
+"""DAG container for testkits."""
+
 from pydantic import BaseModel
 
 from matchbox.common.factories.models import ModelTestkit

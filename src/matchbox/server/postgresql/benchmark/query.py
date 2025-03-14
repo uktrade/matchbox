@@ -1,3 +1,5 @@
+"""Benchmarking utilities for the PostgreSQL backend."""
+
 from sqlalchemy.orm import Session
 
 from matchbox.common.sources import SourceAddress

@@ -50,7 +50,7 @@ def index(
             columns=[
                 {"name": "name", "alias": "person_name", "type": "TEXT"},
                 {"name": "age", "alias": "person_age", "type": "BIGINT"},
-            ]
+            ],
         )
         ```
     """

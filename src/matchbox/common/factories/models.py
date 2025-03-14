@@ -143,6 +143,7 @@ def _min_edges_component(left: int, right: int, deduplicate: bool) -> int:
 
 def _max_edges_component(left: int, right: int, deduplicate: bool) -> int:
     """Calculate max edges for component to be avoid duplication.
+
     Considers complete graph for deduping, and complete bipartite graph for linking.
 
     Args:
@@ -229,6 +230,7 @@ def generate_dummy_probabilities(
         prob_range: Tuple of (min_prob, max_prob) to constrain probabilities
         num_components: Number of distinct connected components to generate
         total_rows: Total number of rows to generate
+        seed: Random seed for reproducibility
 
     Returns:
         PyArrow Table with 'left_id', 'right_id', and 'probability' columns

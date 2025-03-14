@@ -1,3 +1,5 @@
+"""A simple in-memory cache of uploaded metadata and processing status."""
+
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
@@ -13,6 +15,8 @@ from matchbox.server.base import MatchboxDBAdapter
 
 
 class MetadataCacheEntry(BaseModel):
+    """Cache entry for uploaded metadata."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     metadata: Source | ModelMetadata
@@ -30,6 +34,7 @@ class MetadataStore:
     """
 
     def __init__(self, expiry_minutes: int = 30):
+        """Initialise the cache with an expiry time in minutes."""
         self._store: dict[str, MetadataCacheEntry] = {}
         self.expiry_minutes = expiry_minutes
 
@@ -124,8 +129,7 @@ class MetadataStore:
 async def heartbeat(
     metadata_store: MetadataStore, upload_id: str, interval_seconds: int = 300
 ):
-    """
-    Context manager that updates status with a heartbeat while the main operation runs.
+    """Context manager that updates status with a heartbeat.
 
     Args:
         metadata_store: Store for updating status

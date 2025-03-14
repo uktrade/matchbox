@@ -107,8 +107,8 @@ markdown_extensions:
       permalink: true
 
 plugins:
-  - autorefs
   - search
+  - autorefs
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -118,6 +118,8 @@ plugins:
           - https://typing-extensions.readthedocs.io/en/latest/objects.inv
           paths: [src]
           options:
+            extensions:
+              - griffe_inherited_docstrings
             docstring_options:
               ignore_init_summary: true
             preload_modules: [matchbox]
@@ -128,7 +130,9 @@ plugins:
             merge_init_into_class: true
             parameter_headings: true
             separate_signature: true
-            show_bases: false
+            show_docstring_inheritance: true
+            show_bases: true
+            show_inheritance: true
             show_inheritance_diagram: true
             show_root_heading: true
             show_root_full_path: false

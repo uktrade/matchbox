@@ -49,10 +49,12 @@ class SuffixRule(VariationRule):
     suffix: str
 
     def apply(self, value: str) -> str:
+        """Apply the suffix to the value."""
         return f"{value}{self.suffix}"
 
     @property
     def type(self) -> str:
+        """Return the type of variation."""
         return "suffix"
 
 
@@ -62,10 +64,12 @@ class PrefixRule(VariationRule):
     prefix: str
 
     def apply(self, value: str) -> str:
+        """Apply the prefix to the value."""
         return f"{self.prefix}{value}"
 
     @property
     def type(self) -> str:
+        """Return the type of variation."""
         return "prefix"
 
 
@@ -76,16 +80,17 @@ class ReplaceRule(VariationRule):
     new: str
 
     def apply(self, value: str) -> str:
+        """Apply the replacement to the value."""
         return value.replace(self.old, self.new)
 
     @property
     def type(self) -> str:
+        """Return the type of variation."""
         return "replace"
 
 
 def infer_sql_type(base: str, parameters: tuple) -> str:
-    """
-    Infer an appropriate SQL type from a Faker configuration.
+    """Infer an appropriate SQL type from a Faker configuration.
 
     Args:
         base: Faker generator type
@@ -185,10 +190,11 @@ class EntityReference(frozendict):
     """
 
     def __init__(self, mapping: dict[str, frozenset[str]] | None = None) -> None:
+        """Initialise the EntityReference."""
         super().__init__({} if mapping is None else mapping)
 
     def __add__(self, other: "EntityReference") -> "EntityReference":
-        """Merge two EntityReferences by unioning PKs for each dataset"""
+        """Merge two EntityReferences by unioning PKs for each dataset."""
         if not isinstance(other, EntityReference):
             return NotImplemented
 
@@ -200,7 +206,7 @@ class EntityReference(frozendict):
         )
 
     def __le__(self, other: "EntityReference") -> bool:
-        """Test if self is a subset of other"""
+        """Test if self is a subset of other."""
         if not isinstance(other, EntityReference):
             return NotImplemented
 

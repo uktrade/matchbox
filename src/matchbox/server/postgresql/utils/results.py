@@ -1,3 +1,5 @@
+"""Utilities for querying model results from the PostgreSQL backend."""
+
 from typing import NamedTuple
 
 from pyarrow import Table

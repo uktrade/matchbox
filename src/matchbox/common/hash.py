@@ -1,3 +1,5 @@
+"""Utilities for hashing data and creating unique identifiers."""
+
 import base64
 import hashlib
 from typing import TypeVar
@@ -12,10 +14,12 @@ HASH_FUNC = hashlib.sha256
 
 
 def hash_to_base64(hash: bytes) -> str:
+    """Converts a hash to a base64 string."""
     return base64.urlsafe_b64encode(hash).decode("utf-8")
 
 
 def base64_to_hash(b64: str) -> bytes:
+    """Converts a base64 string to a hash."""
     return base64.urlsafe_b64decode(b64)
 
 
@@ -38,6 +42,7 @@ def prep_for_hash(item: HashableItem) -> bytes:
 
 def hash_data(data: HashableItem) -> bytes:
     """Hash the given data using the globally defined hash function.
+
     This function ties into the existing hashing utilities.
     """
     return HASH_FUNC(prep_for_hash(data)).digest()
@@ -104,6 +109,7 @@ class IntMap:
     """
 
     def __init__(self, salt: int = 42):
+        """Initialise the IntMap."""
         self.mapping: dict[frozenset[int], int] = {}
         if salt < 0:
             raise ValueError("The salt must be a positive integer")
@@ -112,13 +118,16 @@ class IntMap:
     def _salt_id(self, i: int) -> int:
         """Use Cantor pairing function on the salt and a negative int ID.
 
-        It negates the Cantor pairing function to always return a negative integer."""
+        It negates the Cantor pairing function to always return a negative integer.
+        """
         if i >= 0:
             raise ValueError("ID must be a negative integer")
         return -int(0.5 * (self.salt - i) * (self.salt - i + 1) - i)
 
     def index(self, *values: int) -> int:
-        """Args:
+        """Index a set of integers.
+
+        Args:
             values: the integers in the set you want to index
 
         Returns:
@@ -135,7 +144,9 @@ class IntMap:
         return salted_id
 
     def has_mapping(self, *values: int) -> bool:
-        """Args:
+        """Check if index for values already exists.
+
+        Args:
             values: the integers in the set you want to index
 
         Returns:

@@ -1,3 +1,5 @@
+"""ORM classes for the Matchbox PostgreSQL database."""
+
 from sqlalchemy import (
     BIGINT,
     FLOAT,
@@ -198,6 +200,7 @@ class Sources(CountMixin, MBDB.MatchboxBase):
 
     @classmethod
     def list(cls) -> list["Sources"]:
+        """Returns all sources in the database."""
         with Session(MBDB.get_engine()) as session:
             return session.query(cls).all()
 

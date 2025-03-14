@@ -1,3 +1,5 @@
+"""PostgreSQL adapter for Matchbox server."""
+
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pyarrow import Table
@@ -55,11 +57,12 @@ else:
 
 
 class FilteredClusters(BaseModel):
-    """Wrapper class for filtered cluster queries"""
+    """Wrapper class for filtered cluster queries."""
 
     has_dataset: bool | None = None
 
     def count(self) -> int:
+        """Counts the number of clusters in the database."""
         with MBDB.get_session() as session:
             query = session.query(func.count()).select_from(Clusters)
             if self.has_dataset is not None:
@@ -71,11 +74,12 @@ class FilteredClusters(BaseModel):
 
 
 class FilteredProbabilities(BaseModel):
-    """Wrapper class for filtered probability queries"""
+    """Wrapper class for filtered probability queries."""
 
     over_truth: bool = False
 
     def count(self) -> int:
+        """Counts the number of probabilities in the database."""
         with MBDB.get_session() as session:
             query = session.query(func.count()).select_from(Probabilities)
 
@@ -92,13 +96,14 @@ class FilteredProbabilities(BaseModel):
 
 
 class FilteredResolutions(BaseModel):
-    """Wrapper class for filtered resolution queries"""
+    """Wrapper class for filtered resolution queries."""
 
     datasets: bool = False
     humans: bool = False
     models: bool = False
 
     def count(self) -> int:
+        """Counts the number of resolutions in the database."""
         with MBDB.get_session() as session:
             query = session.query(func.count()).select_from(Resolutions)
 
@@ -120,6 +125,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
     """A PostgreSQL adapter for Matchbox."""
 
     def __init__(self, settings: MatchboxPostgresSettings):
+        """Initialise the PostgreSQL adapter."""
         self.settings = settings
         MBDB.settings = settings
         MBDB.create_database()
@@ -137,28 +143,13 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Retrieval
 
-    def query(
+    def query(  # noqa: D102
         self,
         source_address: SourceAddress,
         resolution_name: str | None = None,
         threshold: int | None = None,
         limit: int | None = None,
     ) -> ArrowTable:
-        """Queries the database from an optional point of truth.
-
-        Args:
-            source_address: the `SourceAddress` object identifying the source to query
-            resolution_name (optional): the resolution to use for filtering results
-                If not specified, will use the dataset resolution for the queried source
-            threshold (optional): the threshold to use for creating clusters
-                If None, uses the models' default threshold
-                If an integer, uses that threshold for the specified model, and the
-                model's cached thresholds for its ancestors
-            limit (optional): the number to use in a limit clause. Useful for testing
-
-        Returns:
-            The resulting matchbox IDs in Arrow format
-        """
         return query(
             engine=MBDB.get_engine(),
             source_address=source_address,
@@ -167,7 +158,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             limit=limit,
         )
 
-    def match(
+    def match(  # noqa: D102
         self,
         source_pk: str,
         source: SourceAddress,
@@ -175,19 +166,6 @@ class MatchboxPostgres(MatchboxDBAdapter):
         resolution_name: str,
         threshold: int | None = None,
     ) -> list[Match]:
-        """Matches an ID in a source dataset and returns the keys in the targets.
-
-        Args:
-            source_pk: The primary key to match from the source.
-            source: The address of the source dataset.
-            targets: The addresses of the target datasets.
-            resolution_name: The name of the resolution to use for matching.
-            threshold (optional): the threshold to use for creating clusters
-                If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
-                resolution's cached thresholds for its ancestors
-                Will use these threshold values instead of the cached thresholds
-        """
         return match(
             engine=MBDB.get_engine(),
             source_pk=source_pk,
@@ -199,13 +177,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Data management
 
-    def index(self, source: Source, data_hashes: Table) -> None:
-        """Indexes to Matchbox a source dataset in your warehouse.
-
-        Args:
-            source: The source dataset to index.
-            data_hashes: The Arrow table with the hash of each data row
-        """
+    def index(self, source: Source, data_hashes: Table) -> None:  # noqa: D102
         insert_dataset(
             source=source,
             data_hashes=data_hashes,
@@ -213,15 +185,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             batch_size=self.settings.batch_size,
         )
 
-    def get_source(self, address: SourceAddress) -> Source:
-        """Get a source from its name address.
-
-        Args:
-            address: The name address for the source
-
-        Returns:
-            A Source object
-        """
+    def get_source(self, address: SourceAddress) -> Source:  # noqa: D102
         with Session(MBDB.get_engine()) as session:
             source = (
                 session.query(Sources)
@@ -251,15 +215,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             else:
                 raise MatchboxSourceNotFoundError(address=str(address))
 
-    def validate_ids(self, ids: list[int]) -> None:
-        """Validates a list of IDs exist in the database.
-
-        Args:
-            ids: A list of IDs to validate.
-
-        Raises:
-            MatchboxDataNotFound: If some items don't exist in the target table.
-        """
+    def validate_ids(self, ids: list[int]) -> None:  # noqa: D102
         with Session(MBDB.get_engine()) as session:
             data_inner_join = (
                 session.query(Clusters)
@@ -285,15 +241,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 data=missing_ids,
             )
 
-    def validate_hashes(self, hashes: list[bytes]) -> None:
-        """Validates a list of hashes exist in the database.
-
-        Args:
-            hashes: A list of hashes to validate.
-
-        Raises:
-            MatchboxDataNotFound: If some items don't exist in the target table.
-        """
+    def validate_hashes(self, hashes: list[bytes]) -> None:  # noqa: D102
         with Session(MBDB.get_engine()) as session:
             data_inner_join = (
                 session.query(Clusters)
@@ -319,15 +267,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 data=missing_hashes,
             )
 
-    def cluster_id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]:
-        """Get a lookup of Cluster hashes from a list of IDs.
-
-        Args:
-            ids: A list of IDs to get hashes for.
-
-        Returns:
-            A dictionary mapping IDs to hashes.
-        """
+    def cluster_id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]:  # noqa: D102
         initial_dict = {id: None for id in ids}
 
         with Session(MBDB.get_engine()) as session:
@@ -349,25 +289,13 @@ class MatchboxPostgres(MatchboxDBAdapter):
             item.cluster_id: item.cluster_hash for item in data_inner_join
         }
 
-    def get_resolution_graph(self) -> ResolutionGraph:
-        """Get the full resolution graph."""
+    def get_resolution_graph(self) -> ResolutionGraph:  # noqa: D102
         return get_resolution_graph(engine=MBDB.get_engine())
 
-    def dump(self) -> MatchboxSnapshot:
-        """Dumps the entire database to a snapshot.
-
-        Returns:
-            A MatchboxSnapshot object of type "postgres" with the database's
-                current state.
-        """
+    def dump(self) -> MatchboxSnapshot:  # noqa: D102
         return dump(engine=MBDB.get_engine())
 
-    def clear(self, certain: bool = False) -> None:
-        """Clears all data from the database.
-
-        Args:
-            certain: Whether to clear the database without confirmation.
-        """
+    def clear(self, certain: bool = False) -> None:  # noqa: D102
         if certain:
             MBDB.clear_database()
         else:
@@ -377,17 +305,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 "If you're sure you want to continue, rerun with certain=True"
             )
 
-    def restore(self, snapshot: MatchboxSnapshot, clear: bool = False) -> None:
-        """Restores the database from a snapshot.
-
-        Args:
-            snapshot: A MatchboxSnapshot object of type "postgres" with the
-                database's state
-            clear: Whether to clear the database before restoration
-
-        Raises:
-            TypeError: If the snapshot is not compatible with PostgreSQL
-        """
+    def restore(self, snapshot: MatchboxSnapshot, clear: bool = False) -> None:  # noqa: D102
         if snapshot.backend_type != MatchboxBackends.POSTGRES:
             raise TypeError(
                 f"Cannot restore {snapshot.backend_type} snapshot to PostgreSQL backend"
@@ -404,16 +322,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Model management
 
-    def insert_model(self, model: ModelMetadata) -> None:
-        """Writes a model to Matchbox.
-
-        Args:
-            model: ModelMetadata object with the model's metadata
-
-        Raises:
-            MatchboxDataNotFound: If, for a linker, the source models weren't found in
-                the database
-        """
+    def insert_model(self, model: ModelMetadata) -> None:  # noqa: D102
         with Session(MBDB.get_engine()) as session:
             left_resolution = (
                 session.query(Resolutions)
@@ -446,13 +355,11 @@ class MatchboxPostgres(MatchboxDBAdapter):
             engine=MBDB.get_engine(),
         )
 
-    def get_model(self, model: str) -> ModelMetadata:
-        """Get a model from the database."""
+    def get_model(self, model: str) -> ModelMetadata:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         return get_model_metadata(engine=MBDB.get_engine(), resolution=resolution)
 
-    def set_model_results(self, model: str, results: Table) -> None:
-        """Set the results for a model."""
+    def set_model_results(self, model: str, results: Table) -> None:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         insert_results(
             results=results,
@@ -461,50 +368,33 @@ class MatchboxPostgres(MatchboxDBAdapter):
             batch_size=self.settings.batch_size,
         )
 
-    def get_model_results(self, model: str) -> Table:
-        """Get the results for a model."""
+    def get_model_results(self, model: str) -> Table:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         return get_model_results(engine=MBDB.get_engine(), resolution=resolution)
 
-    def set_model_truth(self, model: str, truth: float) -> None:
-        """Sets the truth threshold for this model, changing the default clusters."""
+    def set_model_truth(self, model: str, truth: float) -> None:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         with Session(MBDB.get_engine()) as session:
             session.add(resolution)
             resolution.truth = truth
             session.commit()
 
-    def get_model_truth(self, model: str) -> float:
-        """Gets the current truth threshold for this model."""
+    def get_model_truth(self, model: str) -> float:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         return resolution.truth
 
-    def get_model_ancestors(self, model: str) -> list[ModelAncestor]:
-        """Gets the current truth values of all ancestors.
-
-        Returns a list of ModelAncestor objects mapping model names to their current
-        truth thresholds.
-
-        Unlike ancestors_cache which returns cached values, this property returns
-        the current truth values of all ancestor models.
-        """
+    def get_model_ancestors(self, model: str) -> list[ModelAncestor]:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         return [
             ModelAncestor(name=resolution.name, truth=resolution.truth)
             for resolution in resolution.ancestors
         ]
 
-    def set_model_ancestors_cache(
+    def set_model_ancestors_cache(  # noqa: D102
         self,
         model: str,
         ancestors_cache: list[ModelAncestor],
     ) -> None:
-        """Updates the cached ancestor thresholds.
-
-        Args:
-            ancestors_cache: List of ModelAncestor objects mapping model names to
-                their truth thresholds
-        """
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         with Session(MBDB.get_engine()) as session:
             session.add(resolution)
@@ -529,15 +419,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
             session.commit()
 
-    def get_model_ancestors_cache(self, model: str) -> list[ModelAncestor]:
-        """Gets the cached ancestor thresholds, converting hashes to model names.
-
-        Returns a list of ModelAncestor objects mapping model names to their cached
-        truth thresholds.
-
-        This is required because each point of truth needs to be stable, so we choose
-        when to update it, caching the ancestor's values in the model itself.
-        """
+    def get_model_ancestors_cache(self, model: str) -> list[ModelAncestor]:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         with Session(MBDB.get_engine()) as session:
             session.add(resolution)
@@ -553,12 +435,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 for name, truth in session.execute(query).all()
             ]
 
-    def delete_model(self, model: str, certain: bool = False) -> None:
-        """Delete a model from the database.
-
-        Args:
-            certain: Whether to delete the model without confirmation.
-        """
+    def delete_model(self, model: str, certain: bool = False) -> None:  # noqa: D102
         resolution = resolve_model_name(model=model, engine=MBDB.get_engine())
         with Session(MBDB.get_engine()) as session:
             session.add(resolution)

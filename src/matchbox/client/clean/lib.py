@@ -14,9 +14,11 @@ def company_name(
     column_secondary: str = None,
     stopwords: str = cu.STOPWORDS,
 ) -> DataFrame:
-    """Lower case, remove punctuation & tokenise the company name into an array.
-    Extract tokens into: 'unusual' and 'stopwords'. Dedupe. Sort alphabetically.
-    Untokenise the unusual words back to a string.
+    """Standard cleaning function for company names.
+
+    * Lower case, remove punctuation & tokenise the company name into an array
+    * Extract tokens into: 'unusual' and 'stopwords'. Dedupe. Sort alphabetically
+    * Untokenise the unusual words back to a string
 
     Args:
         df: a dataframe
@@ -24,6 +26,7 @@ def company_name(
         column_secondary: a column containing an array of the company's
             secondary names
         stopwords: a list of stopwords to use for this clean
+
     Returns:
         dataframe: the same as went in, but cleaned
     """
@@ -53,6 +56,7 @@ def company_number(df: DataFrame, column: str) -> DataFrame:
     Args:
         df: a dataframe
         column: a column containing a company number
+
     Returns:
         dataframe: the same as went in, but cleaned
     """
@@ -69,6 +73,7 @@ def postcode(df: DataFrame, column: str) -> DataFrame:
     Args:
         df: a dataframe
         column: a column containing a postcode
+
     Returns:
         dataframe: the same as went in, but cleaned
 
@@ -83,11 +88,12 @@ def postcode(df: DataFrame, column: str) -> DataFrame:
 
 
 def postcode_to_area(df: DataFrame, column: str) -> DataFrame:
-    """Extracts postcode area from a postcode
+    """Extracts postcode area from a postcode.
 
     Args:
         df: a dataframe
         column: a column containing a postcode
+
     Returns:
         dataframe: the same as went in, but cleaned
     """
@@ -107,6 +113,7 @@ def extract_company_number_to_new(
         df: a dataframe
         column: a column containing some company numbers
         new_column: the name of the column to add
+
     Returns:
         dataframe: the same as went in with a new column for CRNs
     """
@@ -126,13 +133,13 @@ def extract_company_number_to_new(
 def extract_duns_number_to_new(
     df: DataFrame, column: str, new_column: str
 ) -> DataFrame:
-    """Detects the Dun & Bradstreet DUNS nuber in a column and moves it to
-    a new column.
+    """Detects the Dun & Bradstreet DUNS nuber in a column and moves it to a new column.
 
     Args:
         df: a dataframe
         column: a column containing some DUNS numbers
         new_column: the name of the column to add
+
     Returns:
         dataframe: the same as went in with a new column for DUNs numbers
     """
@@ -156,6 +163,7 @@ def extract_cdms_number_to_new(
         df: a dataframe
         column: a column containing some CDMS numbers
         new_column: the name of the column to add
+
     Returns:
         dataframe: the same as went in with a new column for CDMS numbers
     """
@@ -176,6 +184,7 @@ def drop(df: DataFrame, column: str) -> DataFrame:
     Args:
         df: a dataframe
         column: a column
+
     Returns:
         dataframe: the same as went in without the column
     """

@@ -25,6 +25,7 @@ class Model:
         left_data: DataFrame,
         right_data: DataFrame | None = None,
     ):
+        """Create a new model instance."""
         self.metadata = metadata
         self.model_instance = model_instance
         self.left_data = left_data

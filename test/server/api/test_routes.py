@@ -835,8 +835,8 @@ def test_get_ancestors(get_backend: Mock):
     mock_backend = Mock()
     testkit = model_factory()
     mock_ancestors = [
-        ModelAncestor(name="parent_model", truth=0.7),
-        ModelAncestor(name="grandparent_model", truth=0.97),
+        ModelAncestor(name="parent_model", truth=70),
+        ModelAncestor(name="grandparent_model", truth=97),
     ]
     mock_backend.get_model_ancestors = Mock(return_value=mock_ancestors)
     get_backend.return_value = mock_backend
@@ -854,8 +854,8 @@ def test_get_ancestors_cache(get_backend: Mock):
     mock_backend = Mock()
     testkit = model_factory()
     mock_ancestors = [
-        ModelAncestor(name="parent_model", truth=0.7),
-        ModelAncestor(name="grandparent_model", truth=0.8),
+        ModelAncestor(name="parent_model", truth=70),
+        ModelAncestor(name="grandparent_model", truth=80),
     ]
     mock_backend.get_model_ancestors_cache = Mock(return_value=mock_ancestors)
     get_backend.return_value = mock_backend
@@ -875,8 +875,8 @@ def test_set_ancestors_cache(get_backend: Mock):
     get_backend.return_value = mock_backend
 
     ancestors_data = [
-        ModelAncestor(name="parent_model", truth=0.7),
-        ModelAncestor(name="grandparent_model", truth=0.8),
+        ModelAncestor(name="parent_model", truth=70),
+        ModelAncestor(name="grandparent_model", truth=80),
     ]
 
     response = client.patch(
@@ -924,8 +924,8 @@ def test_model_get_endpoints_404(
         (
             "ancestors_cache",
             [
-                ModelAncestor(name="parent_model", truth=0.7).model_dump(),
-                ModelAncestor(name="grandparent_model", truth=0.8).model_dump(),
+                ModelAncestor(name="parent_model", truth=70).model_dump(),
+                ModelAncestor(name="grandparent_model", truth=80).model_dump(),
             ],
         ),
     ],

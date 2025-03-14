@@ -277,8 +277,8 @@ def test_ancestors_getter(matchbox_api: MockRouter):
     testkit = model_factory(model_type="linker")
 
     ancestors_data = [
-        ModelAncestor(name="model1", truth=0.9).model_dump(),
-        ModelAncestor(name="model2", truth=0.8).model_dump(),
+        ModelAncestor(name="model1", truth=90).model_dump(),
+        ModelAncestor(name="model2", truth=80).model_dump(),
     ]
 
     # Mock the GET /models/{name}/ancestors endpoint
@@ -291,7 +291,8 @@ def test_ancestors_getter(matchbox_api: MockRouter):
 
     # Verify the API call
     assert route.called
-    assert ancestors == {"model1": 0.9, "model2": 0.8}
+    # assert ancestors == {"model1": 0.9, "model2": 0.8}
+    assert ancestors == {"model1": 90, "model2": 80}
 
 
 def test_ancestors_cache_operations(matchbox_api: MockRouter):
@@ -303,7 +304,7 @@ def test_ancestors_cache_operations(matchbox_api: MockRouter):
         f"/models/{testkit.model.metadata.name}/ancestors_cache"
     ).mock(
         return_value=Response(
-            200, json=[ModelAncestor(name="model1", truth=0.9).model_dump()]
+            200, json=[ModelAncestor(name="model1", truth=90).model_dump()]
         )
     )
 
@@ -324,13 +325,13 @@ def test_ancestors_cache_operations(matchbox_api: MockRouter):
     # Get ancestors cache
     cache = testkit.model.ancestors_cache
     assert get_route.called
-    assert cache == {"model1": 0.9}
+    assert cache == {"model1": 90}
 
     # Set ancestors cache
-    testkit.model.ancestors_cache = {"model2": 0.8}
+    testkit.model.ancestors_cache = {"model2": 80}
     assert set_route.called
     assert json.loads(set_route.calls.last.request.content.decode()) == [
-        ModelAncestor(name="model2", truth=0.8).model_dump()
+        ModelAncestor(name="model2", truth=80).model_dump()
     ]
 
 
@@ -355,7 +356,7 @@ def test_ancestors_cache_set_error(matchbox_api: MockRouter):
 
     # Attempt to set ancestors cache
     with pytest.raises(MatchboxUnhandledServerResponse, match="Database error"):
-        testkit.model.ancestors_cache = {"model1": 0.9}
+        testkit.model.ancestors_cache = {"model1": 90}
 
     assert route.called
 

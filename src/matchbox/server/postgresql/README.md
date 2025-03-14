@@ -36,7 +36,7 @@ erDiagram
     Probabilities {
         bigint resolution PK,FK
         bigint cluster PK,FK
-        float probability
+        smallint probability
     }
     Resolutions {
         bigint resolution_id PK,FK
@@ -44,13 +44,13 @@ erDiagram
         enum type
         string name
         string description
-        float truth
+        int truth
     }
     ResolutionFrom {
         bigint parent PK,FK
         bigint child PK,FK
         int level
-        float truth_cache
+        int truth_cache
     }
 
     Sources |o--|| Resolutions : ""

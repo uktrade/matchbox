@@ -1,6 +1,5 @@
 from sqlalchemy import (
     BIGINT,
-    FLOAT,
     INTEGER,
     SMALLINT,
     CheckConstraint,
@@ -36,7 +35,7 @@ class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
         primary_key=True,
     )
     level = Column(INTEGER, nullable=False)
-    truth_cache = Column(FLOAT, nullable=True)
+    truth_cache = Column(SMALLINT, nullable=True)
 
     # Constraints
     __table_args__ = (
@@ -59,7 +58,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     type = Column(TEXT, nullable=False)
     name = Column(TEXT, nullable=False)
     description = Column(TEXT)
-    truth = Column(FLOAT)
+    truth = Column(SMALLINT)
 
     # Relationships
     source = relationship("Sources", back_populates="dataset_resolution", uselist=False)

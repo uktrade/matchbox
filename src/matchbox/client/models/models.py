@@ -49,14 +49,15 @@ class Model:
             )
 
     @property
-    def truth(self) -> float:
+    def truth(self) -> int:
         """Retrieve the truth threshold for the model."""
         return _handler.get_model_truth(name=self.metadata.name)
 
     @truth.setter
     def truth(self, truth: float) -> None:
         """Set the truth threshold for the model."""
-        _handler.set_model_truth(name=self.metadata.name, truth=truth)
+        # Convert float to int
+        _handler.set_model_truth(name=self.metadata.name, truth=int(truth * 100))
 
     @property
     def ancestors(self) -> dict[str, float]:

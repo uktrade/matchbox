@@ -74,8 +74,8 @@ class ModelAncestor(BaseModel):
     """A model's ancestor and its truth value."""
 
     name: str = Field(..., description="Name of the ancestor model")
-    truth: float | None = Field(
-        default=None, description="Truth threshold value", ge=0.0, le=1.0
+    truth: int | None = Field(
+        default=None, description="Truth threshold value", ge=0, le=100
     )
 
 

@@ -101,8 +101,14 @@ class Results(BaseModel):
                 empty_arrays, names=[field.name for field in target_schema]
             )
 
-        # Process probability field if it contains floating-point values
-        if pa.types.is_floating(value["probability"].type):
+        # Process probability field if it contains floating-point or decimal values
+        probability_type = value["probability"].type
+        if any(
+            [
+                pa.types.is_floating(probability_type),
+                pa.types.is_decimal(probability_type),
+            ]
+        ):
             probability_uint8 = pc.cast(
                 pc.multiply(value["probability"], 100),
                 options=pc.CastOptions(

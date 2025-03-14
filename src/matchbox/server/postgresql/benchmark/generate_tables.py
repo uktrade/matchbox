@@ -157,14 +157,14 @@ def generate_resolution_from(dataset_start_id: int = 1) -> pa.Table:
         base_id + 4,
     ]
     resolution_level = [1, 2, 1, 1, 2, 1]
-    resolution_truth_cache = [None, None, 0.7, None, None, 0.7]
+    resolution_truth_cache = [None, None, 70, None, None, 70]
 
     return pa.table(
         {
             "parent": pa.array(resolution_parent, type=pa.uint64()),
             "child": pa.array(resolution_child, type=pa.uint64()),
             "level": pa.array(resolution_level, type=pa.uint32()),
-            "truth_cache": pa.array(resolution_truth_cache, type=pa.float64()),
+            "truth_cache": pa.array(resolution_truth_cache, type=pa.uint8()),
         }
     )
 

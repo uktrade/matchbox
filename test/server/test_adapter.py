@@ -355,7 +355,7 @@ class TestMatchboxBackend:
         # Not all ancestors have truth values, but one must
         truth_found = False
         for ancestor in linker_ancestors:
-            if isinstance(ancestor.truth, float):
+            if isinstance(ancestor.truth, int):
                 truth_found = True
 
         assert truth_found
@@ -370,7 +370,7 @@ class TestMatchboxBackend:
 
         # Set
         updated_ancestors_cache = [
-            ModelAncestor(name=ancestor.name, truth=0.5)
+            ModelAncestor(name=ancestor.name, truth=50)
             for ancestor in pre_ancestors_cache
         ]
         self.backend.set_model_ancestors_cache(

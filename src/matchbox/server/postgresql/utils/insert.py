@@ -208,7 +208,7 @@ def insert_model(
     description: str,
     engine: Engine,
 ) -> None:
-    """Writes a model to Matchbox with a default truth value of 1.0.
+    """Writes a model to Matchbox with a default truth value of 100.
 
     Args:
         model: Name of the new model
@@ -248,7 +248,7 @@ def insert_model(
                 type=ResolutionNodeType.MODEL.value,
                 name=model,
                 description=description,
-                truth=1.0,
+                truth=100,
             )
             .on_conflict_do_update(
                 index_elements=["resolution_hash"],

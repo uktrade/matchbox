@@ -116,7 +116,7 @@ class WeightedDeterministicLinker(Linker):
                     select distinct on (list_sort([raw.left_id, raw.right_id]))
                         raw.left_id,
                         raw.right_id,
-                        1 * {weighted_comparison.weight} as probability
+                        1.0 * {weighted_comparison.weight} as probability
                     from (
                         select
                             l.{self.settings.left_id} as left_id,

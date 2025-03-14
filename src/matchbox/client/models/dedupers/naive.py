@@ -50,7 +50,7 @@ class NaiveDeduper(Deduper):
             select distinct on (list_sort([raw.left_id, raw.right_id]))
                 raw.left_id,
                 raw.right_id,
-                1 as probability
+                1.0 as probability
             from (
                 select
                     l.{self.settings.id} as left_id,

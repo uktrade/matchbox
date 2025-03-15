@@ -171,8 +171,9 @@ def match(
 # Data management
 
 
-def index(source: Source, data_hashes: Table) -> UploadStatus:
+def index(source: Source) -> UploadStatus:
     """Index a Source in Matchbox."""
+    data_hashes = source.hash_data()
     buffer = table_to_buffer(table=data_hashes)
 
     # Upload metadata

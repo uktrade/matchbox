@@ -65,4 +65,4 @@ def index(
     if not columns:
         source = source.default_columns()
 
-    _handler.index(source=source, data_hashes=source.hash_data())
+    _handler.index(source=source)

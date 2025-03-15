@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 import pyarrow as pa
 import pytest
 from httpx import Response
+from numpy import ndarray
 from pandas import DataFrame
 from respx import MockRouter
 from sqlalchemy import Engine
@@ -45,16 +46,23 @@ def test_cleaners():
 
 def test_process():
     crn = source_factory().query
+    # Duplicate column
+    crn = crn.append_column("company_name_again", crn.column("company_name"))
 
     cleaner_name = cleaner(
         function=company_name,
         arguments={"column": "company_name"},
     )
+    # I can add the same function twice
+    cleaner_name_again = cleaner(
+        function=company_name,
+        arguments={"column": "company_name_again"},
+    )
     cleaner_number = cleaner(
         function=company_number,
         arguments={"column": "crn"},
     )
-    cleaner_name_number = cleaners(cleaner_name, cleaner_number)
+    cleaner_name_number = cleaners(cleaner_name, cleaner_name_again, cleaner_number)
 
     df_name_cleaned = process(data=crn, pipeline=cleaner_name_number)
 
@@ -336,6 +344,102 @@ def test_query_multiple_sources_with_limits(to_arrow: Mock, matchbox_api: MockRo
 
     # It also works with the selectors specified separately
     query([sels[0]], [sels[1]], limit=7)
+
+
+@pytest.mark.parametrize(
+    "combine_type",
+    ["list_agg", "explode"],
+)
+@patch.object(Source, "to_arrow")
+def test_query_combine_type(
+    to_arrow: Mock, combine_type: str, matchbox_api: MockRouter
+):
+    """Various ways of combining multiple sources are supported."""
+    # Mock API
+    matchbox_api.get("/query").mock(
+        side_effect=[
+            Response(
+                200,
+                content=table_to_buffer(
+                    pa.Table.from_pylist(
+                        [
+                            {"source_pk": "0", "id": 1},
+                            {"source_pk": "1", "id": 1},
+                            {"source_pk": "2", "id": 2},
+                        ],
+                        schema=SCHEMA_MB_IDS,
+                    )
+                ).read(),
+            ),
+            Response(
+                200,
+                content=table_to_buffer(
+                    pa.Table.from_pylist(
+                        [
+                            {"source_pk": "3", "id": 2},
+                            {"source_pk": "4", "id": 2},
+                            {"source_pk": "5", "id": 3},
+                        ],
+                        schema=SCHEMA_MB_IDS,
+                    )
+                ).read(),
+            ),
+        ]  # two sources to query
+    )
+
+    # Mock `Source.to_arrow`
+    to_arrow.side_effect = [
+        pa.Table.from_pylist(
+            [
+                {"foo_pk": "0", "foo_col": 20},
+                {"foo_pk": "1", "foo_col": 40},
+                {"foo_pk": "2", "foo_col": 60},
+            ]
+        ),
+        pa.Table.from_pylist(
+            [
+                {"bar_pk": "3", "bar_col": "val1"},
+                {"bar_pk": "4", "bar_col": "val2"},
+                {"bar_pk": "5", "bar_col": "val3"},
+            ]
+        ),
+    ]  # two sources to query
+
+    # Well-formed select from these mocks
+    sels = [
+        Selector(
+            source=Source(
+                address=SourceAddress(full_name="foo", warehouse_hash=b"wh"),
+                db_pk="pk",
+            ),
+        ),
+        Selector(
+            source=Source(
+                address=SourceAddress(full_name="bar", warehouse_hash=b"wh"),
+                db_pk="pk",
+            ),
+        ),
+    ]
+
+    # Validate results
+    results = query(sels, combine_type=combine_type)
+
+    if combine_type == "list_agg":
+        expected_len = 3
+        for _, row in results.drop(columns=["id"]).iterrows():
+            for cell in row.values:
+                assert isinstance(cell, ndarray)
+    else:
+        expected_len = 5
+
+    assert len(results) == expected_len
+    assert {
+        "foo_pk",
+        "foo_col",
+        "bar_pk",
+        "bar_col",
+        "id",
+    } == set(results.columns)
 
 
 def test_query_404_resolution(matchbox_api: MockRouter):

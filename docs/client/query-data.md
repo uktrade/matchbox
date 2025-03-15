@@ -56,6 +56,7 @@ Retrieves entire data sources along with a unique entity identifier according to
                 "hmrc.exporters": ["year", "commodity_codes"],
             },
             engine=engine,
+            combine_type="explode",
             resolution="companies",
         )
     )

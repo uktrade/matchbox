@@ -94,6 +94,7 @@ def select(
 def query(
     *selectors: list[Selector],
     resolution_name: str | None = None,
+    combine_type: Literal["concat", "explode", "list_agg"] = "concat",
     return_type: Literal["pandas", "arrow"] = "pandas",
     threshold: int | None = None,
     limit: int | None = None,
@@ -108,6 +109,13 @@ def query(
 
             * If querying a single source, it will use the source resolution
             * If querying 2 or more sources, it will look for a default resolution
+        combine_type: How to combine the data from different sources
+
+            * If `concat`, concatenate all sources queried without any merging
+            * If `explode`, join on Matchbox ID
+            * If `list_agg`, join on Matchbox ID, then group on Matchbox ID. All
+                columns except for the Matchbox ID will hold lists of values,
+                including nulls and duplicates
         return_type: The form to return data in, one of "pandas" or "arrow"
             Defaults to pandas for ease of use
         threshold (optional): The threshold to use for creating clusters
@@ -134,6 +142,13 @@ def query(
         )
         ```
     """
+    # Validate arguments
+    if combine_type not in ("concat", "explode", "list_agg"):
+        raise ValueError(f"combine_type of {combine_type} not valid")
+
+    if return_type not in ("pandas", "arrow"):
+        raise ValueError(f"return_type of {return_type} not valid")
+
     if not selectors:
         raise ValueError("At least one selector must be specified")
 
@@ -188,20 +203,33 @@ def query(
             tables.append(joined_table)
 
     # Combine results
-    result = pa.concat_tables(tables, promote_options="default")
+    if combine_type == "concat":
+        result = pa.concat_tables(tables, promote_options="default")
+    else:
+        result = tables[0]
+        for table in tables[1:]:
+            result = result.join(table, keys=["id"], join_type="full outer")
+
+        if combine_type == "list_agg":
+            # Aggregate into lists
+            aggregate_rule = [
+                (col, "list") for col in result.column_names if col != "id"
+            ]
+            result = result.group_by("id").aggregate(aggregate_rule)
+            # Recover original column names
+            rename_rule = {f"{col}_list": col for col, _ in aggregate_rule}
+            result = result.rename_columns(rename_rule)
 
     # Return in requested format
-    if return_type == "arrow":
-        return result
-    elif return_type == "pandas":
+    if return_type == "pandas":
         return result.to_pandas(
             use_threads=True,
             split_blocks=True,
             self_destruct=True,
             types_mapper=ArrowDtype,
         )
-    else:
-        raise ValueError(f"return_type of {return_type} not valid")
+
+    return result
 
 
 def match(

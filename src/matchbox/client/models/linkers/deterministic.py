@@ -56,6 +56,7 @@ class DeterministicLinker(Linker):
         self._id_dtype_l = type(left[self.settings.left_id][0])
         self._id_dtype_r = type(right[self.settings.right_id][0])
 
+        # Used below but ruff can't detect
         left_df = left.copy()  # NoQA: F841
         right_df = right.copy()  # NoQA: F841
 

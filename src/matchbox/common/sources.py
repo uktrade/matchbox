@@ -27,7 +27,7 @@ from sqlalchemy import (
 from sqlalchemy.sql.selectable import Select
 from typing_extensions import Annotated
 
-from matchbox.common.db import sql_to_df
+from matchbox.common.db import fullname_to_prefix, get_schema_table_names, sql_to_df
 from matchbox.common.exceptions import (
     MatchboxSourceColumnError,
     MatchboxSourceEngineError,
@@ -159,21 +159,6 @@ class Source(BaseModel):
         )
         return HASH_FUNC(schema_representation.encode("utf-8")).digest()
 
-    def _split_full_name(self) -> tuple[str | None, str]:
-        schema_name_list = self.address.full_name.replace('"', "").split(".")
-
-        if len(schema_name_list) == 1:
-            db_schema = None
-            db_table = schema_name_list[0]
-        elif len(schema_name_list) == 2:
-            db_schema = schema_name_list[0]
-            db_table = schema_name_list[1]
-        else:
-            raise ValueError(
-                f"Could not identify schema and table in {self.address.full_name}."
-            )
-        return db_schema, db_table
-
     def format_column(self, column: str) -> str:
         """Outputs a full SQLAlchemy column representation.
 
@@ -183,10 +168,7 @@ class Source(BaseModel):
         Returns:
             A string representing the table name and column
         """
-        db_schema, db_table = self._split_full_name()
-        if db_schema:
-            return f"{db_schema}_{db_table}_{column}"
-        return f"{db_table}_{column}"
+        return fullname_to_prefix(self.address.full_name) + column
 
     @needs_engine
     def _get_remote_columns(self) -> dict[str, str]:
@@ -209,7 +191,7 @@ class Source(BaseModel):
     @needs_engine
     def to_table(self) -> Table:
         """Returns the dataset as a SQLAlchemy Table object."""
-        db_schema, db_table = self._split_full_name()
+        db_schema, db_table = get_schema_table_names(self.address.full_name)
         metadata = MetaData(schema=db_schema)
         table = Table(db_table, metadata, autoload_with=self.engine)
         return table

@@ -13,11 +13,4 @@
     },
     "python.testing.pytestPath": "${workspaceFolder}/.venv/bin/pytest",
     "python.analysis.typeCheckingMode": "off",
-    "[javascript]": {
-        "editor.formatOnSave": true,
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
-        "editor.codeActionsOnSave": {
-            "source.fixAll": "explicit"
-        }
-    }
 }

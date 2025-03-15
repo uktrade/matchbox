@@ -110,9 +110,12 @@ def get_schema_table_names(full_name: str) -> tuple[str, str]:
     else:
         raise ValueError(f"Could not identify schema and table in {full_name}.")
 
-    return (schema, table)
+    return schema, table
 
 
 def fullname_to_prefix(fullname: str) -> str:
     """Converts a full name to a prefix for column names."""
-    return fullname.replace('"', "").replace(".", "_") + "_"
+    db_schema, db_table = get_schema_table_names(fullname)
+    if db_schema:
+        return f"{db_schema}_{db_table}_"
+    return f"{db_table}_"

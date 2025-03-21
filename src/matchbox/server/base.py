@@ -120,6 +120,20 @@ class MatchboxSettings(BaseSettings):
     datastore: MatchboxDatastoreSettings
 
 
+class APISettings(BaseSettings):
+    """Settings for the Matchbox API."""
+
+    api_key: str | None = None
+
+    model_config = SettingsConfigDict(
+        extra="ignore",
+        env_prefix="MB__API__",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
+
+
 class BackendManager:
     """Manages the Matchbox backend instance and settings."""
 

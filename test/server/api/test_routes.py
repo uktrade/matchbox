@@ -30,6 +30,7 @@ from matchbox.common.hash import hash_to_base64
 from matchbox.common.sources import Match, Source, SourceAddress
 from matchbox.server import app
 from matchbox.server.api.cache import MetadataStore, process_upload
+from matchbox.server.api.routes import validate_api_key
 from matchbox.server.base import MatchboxDBAdapter
 
 if TYPE_CHECKING:
@@ -37,7 +38,15 @@ if TYPE_CHECKING:
 else:
     S3Client = Any
 
-client = TestClient(app)
+
+client = TestClient(app, headers={"X-API-Key": "matchbox-api-key"})
+
+
+def override_validate_api_key(api_key: str | None = None):
+    pass
+
+
+app.dependency_overrides[validate_api_key] = override_validate_api_key
 
 
 # General

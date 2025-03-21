@@ -19,10 +19,12 @@ from matchbox.common.transform import (
 )
 from matchbox.server.postgresql.orm import (
     Clusters,
+    ClusterSourcePK,
     Contains,
     Probabilities,
     ResolutionFrom,
     Resolutions,
+    SourceColumns,
     Sources,
 )
 from matchbox.server.postgresql.utils.db import batch_ingest, hash_to_hex_decode
@@ -111,56 +113,75 @@ def insert_dataset(
 
     resolution_hash = source.signature
 
-    resolution_data = {
-        "resolution_hash": resolution_hash,
-        "type": ResolutionNodeType.DATASET.value,
-    }
-
-    source_data = {
-        "resolution_name": source.resolution_name,
-        "full_name": source.address.full_name,
-        "warehouse_hash": source.address.warehouse_hash,
-        "id": source.db_pk,
-        "column_names": [col.name for col in source.columns],
-        "column_aliases": [col.alias for col in source.columns],
-        "column_types": [col.type for col in source.columns],
-    }
-
-    with engine.connect() as conn:
+    with Session(engine) as session:
         logger.info(f"Adding {source}")
+
+        # Check if resolution already exists
+        existing_resolution = (
+            session.query(Resolutions).filter_by(name=source.resolution_name).first()
+        )
+
+        if existing_resolution:
+            resolution = existing_resolution
+        else:
+            # Create new resolution
+            resolution = Resolutions(
+                resolution_id=Resolutions.next_id(),
+                name=source.resolution_name,
+                resolution_hash=resolution_hash,
+                type=ResolutionNodeType.DATASET.value,
+            )
+            session.add(resolution)
+
+        # Check if source already exists
+        existing_source = (
+            session.query(Sources)
+            .filter_by(resolution_id=resolution.resolution_id)
+            .first()
+        )
+
+        if not existing_source:
+            # Create new source with relationship to resolution
+            source_obj = Sources(
+                resolution_id=resolution.resolution_id,
+                resolution_name=source.resolution_name,
+                full_name=source.address.full_name,
+                warehouse_hash=source.address.warehouse_hash,
+                db_pk=source.db_pk,
+            )
+
+            # Add columns directly through the relationship
+            for idx, column in enumerate(source.columns):
+                source_column = SourceColumns(
+                    source_id=resolution.resolution_id,
+                    column_index=idx,
+                    column_name=column.name,
+                    column_alias=column.alias,
+                    column_type=column.type,
+                )
+                source_obj.columns.append(source_column)
+
+            session.add(source_obj)
+
+            logger.info(
+                f"{source} added to Resolutions and Sources tables with columns"
+            )
+        else:
+            source_obj = existing_source
+            logger.info(f"{source} already exists in database")
+
+        # Commit resolution and source data
+        session.commit()
 
         # Generate existing max primary key values
         next_cluster_id = Clusters.next_id()
-        with Session(engine) as session:
-            resolution_id = (
-                session.query(Resolutions.resolution_id)
-                .filter_by(name=source.resolution_name)
-                .scalar()
-            )
+        next_pk_id = ClusterSourcePK.next_id()
 
-        resolution_data["resolution_id"] = resolution_id or Resolutions.next_id()
-        source_data["resolution_id"] = resolution_data["resolution_id"]
-        resolution_data["name"] = source_data["resolution_name"]
-
-        # Upsert into Resolutions table
-        resolution_stmt = insert(Resolutions).values([resolution_data])
-        resolution_stmt = resolution_stmt.on_conflict_do_nothing()
-        conn.execute(resolution_stmt)
-
-        logger.info(f"{source} added to Resolutions table")
-
-        # Upsert into Sources table
-        sources_stmt = insert(Sources).values([source_data])
-        sources_stmt = sources_stmt.on_conflict_do_nothing()
-        conn.execute(sources_stmt)
-
-        conn.commit()
-
-        logger.info(f"{source} added to Sources table")
-
+        # Filter out existing hashes
         existing_hashes_statement = (
             select(Clusters.cluster_hash)
-            .join(Sources)
+            .join(ClusterSourcePK, ClusterSourcePK.cluster_id == Clusters.cluster_id)
+            .join(Sources, Sources.resolution_id == ClusterSourcePK.source_id)
             .join(Resolutions)
             .where(
                 Resolutions.resolution_hash == hash_to_hex_decode(source.signature),
@@ -177,29 +198,71 @@ def insert_dataset(
                 data_hashes,
                 pc.invert(pc.is_in(data_hashes["hash"], value_set=existing_hashes)),
             )
-        try:
-            # Upsert into Clusters table
-            batch_ingest(
-                records=[
-                    (
-                        next_cluster_id + i,
-                        clus["hash"],
-                        source_data["resolution_id"],
-                        clus["source_pk"],
-                    )
-                    for i, clus in enumerate(data_hashes.to_pylist())
-                ],
-                table=Clusters,
-                conn=conn,
-                batch_size=batch_size,
-            )
 
-            conn.commit()
-        except IntegrityError as e:
-            # Some edge cases, defined in tests, are not implemented yet
-            raise NotImplementedError from e
+        # Process clusters if there are any new ones
+        if data_hashes.num_rows > 0:
+            try:
+                with engine.connect() as conn:
+                    cluster_records = []
+                    source_pk_records = []
+                    pk_id_counter = next_pk_id
 
-        logger.info(f"{source} added {len(data_hashes)} objects to Clusters table")
+                    # Prepare data for both tables
+                    for i, clus in enumerate(data_hashes.to_pylist()):
+                        cluster_id = next_cluster_id + i
+
+                        cluster_records.append(
+                            (
+                                cluster_id,  # cluster_id
+                                clus["hash"],  # cluster_hash
+                            )
+                        )
+
+                        # Add pk records with source_id (formerly dataset)
+                        for pk in clus["source_pk"]:
+                            source_pk_records.append(
+                                (
+                                    pk_id_counter,  # pk_id
+                                    cluster_id,  # cluster_id
+                                    resolution.resolution_id,  # source_id
+                                    pk,  # source_pk
+                                )
+                            )
+                            pk_id_counter += 1
+
+                    # Bulk insert into Clusters table
+                    if cluster_records:
+                        batch_ingest(
+                            records=cluster_records,
+                            table=Clusters,
+                            conn=conn,
+                            batch_size=batch_size,
+                        )
+
+                        # Bulk insert into ClusterSourcePK table
+                        batch_ingest(
+                            records=source_pk_records,
+                            table=ClusterSourcePK,
+                            conn=conn,
+                            batch_size=batch_size,
+                        )
+
+                        # Commit both inserts in a single transaction
+                        conn.commit()
+
+                        logger.info(
+                            f"{source} added {len(cluster_records)} objects to "
+                            "Clusters table"
+                        )
+                        logger.info(
+                            f"{source} added {len(source_pk_records)} primary keys to "
+                            "ClusterSourcePK table"
+                        )
+            except IntegrityError as e:
+                # Some edge cases, defined in tests, are not implemented yet
+                raise NotImplementedError from e
+        else:
+            logger.info(f"No new records to add for {source}")
 
     logger.info(f"Finished {source}")
 
@@ -355,8 +418,10 @@ def _get_resolution_related_clusters(resolution_id: int) -> Select:
     )
 
     # Subquery for source datasets
-    source_datasets = select(resolution_set.c.resolution_id).join(
-        Sources, Sources.resolution_id == resolution_set.c.resolution_id
+    source_datasets = (
+        select(ClusterSourcePK.cluster_id)
+        .join(Sources, Sources.resolution_id == ClusterSourcePK.source_id)
+        .where(Sources.resolution_id.in_(select(resolution_set.c.resolution_id)))
     )
 
     # Subquery for model resolutions
@@ -368,7 +433,7 @@ def _get_resolution_related_clusters(resolution_id: int) -> Select:
 
     # Combine conditions
     final_query = base_query.where(
-        (Clusters.dataset.in_(source_datasets))
+        (Clusters.cluster_id.in_(source_datasets))
         | (Probabilities.resolution.in_(model_resolutions))
     )
 
@@ -434,8 +499,6 @@ def _results_to_insert_tables(
         {
             "cluster_id": pc.filter(hm.lookup["id"], hm.lookup["new"]),
             "cluster_hash": new_hashes,
-            "dataset": pa.nulls(len(new_hashes), type=pa.uint64()),
-            "source_pk": pa.nulls(len(new_hashes), type=pa.list_(pa.string())),
         }
     )
 

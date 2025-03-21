@@ -62,37 +62,77 @@ def _hash_list_int(li: list[int]) -> list[bytes]:
     return [HASH_FUNC(str(i).encode("utf-8")).digest() for i in li]
 
 
-def generate_sources(dataset_start_id: int = 1) -> pa.Table:
-    """Generate sources table.
+def generate_sources(
+    dataset_start_id: int = 1,
+) -> tuple[pa.Table, pa.Table]:
+    """Generate sources and source_columns tables.
 
     Args:
         dataset_start_id: Starting ID for dataset resolution IDs
 
     Returns:
-        PyArrow sources table
+        Tuple of (sources_table, source_columns_table) as PyArrow tables
     """
+    # Sources data
     sources_resolution_id = [dataset_start_id, dataset_start_id + 1]
     sources_resolution_names = ["source1@warehouse", "source2@warehouse"]
     sources_full_names = ["dbt.companies_house", "dbt.hmrc_exporters"]
     sources_id = ["company_number", "id"]
-
-    column_names = [["col1"], ["col2"]]
-    column_aliases = [["col1"], ["col2"]]
-    column_types = [["TEXT"], ["TEXT"]]
     warehouse_hashes = [bytes("foo".encode("ascii"))] * 2
 
-    return pa.table(
+    # Create sources table without column arrays
+    sources_table = pa.table(
         {
             "resolution_id": pa.array(sources_resolution_id, type=pa.uint64()),
             "resolution_name": pa.array(sources_resolution_names, type=pa.string()),
             "full_name": pa.array(sources_full_names, type=pa.string()),
             "warehouse_hash": pa.array(warehouse_hashes, type=pa.binary()),
-            "id": pa.array(sources_id, type=pa.string()),
-            "column_names": pa.array(column_names, type=pa.list_(pa.string())),
-            "column_aliases": pa.array(column_aliases, type=pa.list_(pa.string())),
-            "column_types": pa.array(column_types, type=pa.list_(pa.string())),
+            "db_pk": pa.array(sources_id, type=pa.string()),
         }
     )
+
+    # Column data
+    column_names = [["col1"], ["col2"]]
+    column_aliases = [["col1"], ["col2"]]
+    column_types = [["TEXT"], ["TEXT"]]
+
+    # Create flattened data for source_columns table
+    column_ids = []
+    source_ids = []
+    column_indices = []
+    column_name_values = []
+    column_alias_values = []
+    column_type_values = []
+
+    # Start with column_id = 1
+    next_column_id = 1
+
+    # Process each source and its columns
+    for i, source_id in enumerate(sources_resolution_id):
+        for j, (name, alias, type_val) in enumerate(
+            zip(column_names[i], column_aliases[i], column_types[i], strict=True)
+        ):
+            column_ids.append(next_column_id)
+            next_column_id += 1
+            source_ids.append(source_id)
+            column_indices.append(j)
+            column_name_values.append(name)
+            column_alias_values.append(alias)
+            column_type_values.append(type_val)
+
+    # Create source_columns table
+    source_columns_table = pa.table(
+        {
+            "column_id": pa.array(column_ids, type=pa.uint64()),
+            "source_id": pa.array(source_ids, type=pa.uint64()),
+            "column_index": pa.array(column_indices, type=pa.int32()),
+            "column_name": pa.array(column_name_values, type=pa.string()),
+            "column_alias": pa.array(column_alias_values, type=pa.string()),
+            "column_type": pa.array(column_type_values, type=pa.string()),
+        }
+    )
+
+    return sources_table, source_columns_table
 
 
 def generate_resolutions(dataset_start_id: int = 1) -> pa.Table:
@@ -172,32 +212,58 @@ def generate_resolution_from(dataset_start_id: int = 1) -> pa.Table:
 
 
 def generate_cluster_source(
-    range_left: int, range_right: int, resolution_source: int, cluster_start_id: int = 0
-) -> pa.Table:
-    """Generate cluster table containing rows for source rows.
+    range_left: int,
+    range_right: int,
+    resolution_source: int,
+    cluster_start_id: int = 0,
+    pk_start_id: int = 0,  # Need to track the global pk_id to ensure uniqueness
+) -> tuple[pa.Table, pa.Table]:
+    """Generate both Clusters and ClusterSourcePK tables for source rows.
 
     Args:
         range_left: first ID to generate
         range_right: last ID to generate, plus one
         resolution_source: resolution ID for the source
         cluster_start_id: Starting ID for clusters
+        pk_start_id: Starting ID for primary keys
+
     Returns:
-        PyArrow cluster table
+        Tuple of (Clusters table, ClusterSourcePK table)
     """
-
-    def create_source_pk(li: list[int]) -> list[list[str]]:
-        return [[str(i)] for i in li]
-
+    # Generate cluster IDs
     source = list(range(cluster_start_id + range_left, cluster_start_id + range_right))
 
-    return pa.table(
+    # Create the Clusters table (without dataset column)
+    clusters_table = pa.table(
         {
             "cluster_id": pa.array(source, type=pa.uint64()),
             "cluster_hash": pa.array(_hash_list_int(source), type=pa.binary()),
-            "dataset": pa.array([resolution_source] * len(source), type=pa.uint64()),
-            "source_pk": pa.array(create_source_pk(source), type=pa.list_(pa.string())),
         }
     )
+
+    # Generate data and create ClusterSourcePK table
+    pk_ids = []
+    cluster_ids = []
+    source_ids = []
+    source_pks = []
+
+    for i, cluster_id in enumerate(source):
+        # Create a single source_pk entry for each cluster
+        pk_ids.append(pk_start_id + i)
+        cluster_ids.append(cluster_id)
+        source_ids.append(resolution_source)
+        source_pks.append(str(cluster_id))
+
+    cluster_source_pks_table = pa.table(
+        {
+            "pk_id": pa.array(pk_ids, type=pa.int32()),
+            "cluster_id": pa.array(cluster_ids, type=pa.uint64()),
+            "source_id": pa.array(source_ids, type=pa.uint64()),
+            "source_pk": pa.array(source_pks, type=pa.string()),
+        }
+    )
+
+    return clusters_table, cluster_source_pks_table
 
 
 def generate_result_tables(
@@ -224,7 +290,7 @@ def generate_result_tables(
 
     Returns:
         Tuple with 1 list of top-level clusters, 3 PyArrow tables, for probabilities,
-        contains and clusters, and the next ID to use for future calls
+        contains, and clusters, and the next ID to use for future calls
     """
     probs = generate_dummy_probabilities(
         tuple(left_ids),
@@ -326,10 +392,6 @@ def generate_result_tables(
         {
             "cluster_id": unique_parent_ids,
             "cluster_hash": hm.get_hashes(unique_parent_ids),
-            "dataset": pa.array([None] * len(unique_parent_ids), type=pa.uint64()),
-            "source_pk": pa.array(
-                [None] * len(unique_parent_ids), type=pa.list_(pa.string())
-            ),
         }
     )
 
@@ -364,6 +426,7 @@ def generate_all_tables(
     link_len: int,
     cluster_start_id: int = 0,
     dataset_start_id: int = 1,
+    pk_start_id: int = 0,
 ) -> dict[str, pa.Table]:
     """Make all six PostgreSQL backend tables.
 
@@ -378,6 +441,7 @@ def generate_all_tables(
         link_len: probabilities generated by each linker
         cluster_start_id: Starting ID for clusters
         dataset_start_id: Starting ID for dataset resolution IDs
+        pk_start_id: Starting ID for primary keys (globally unique)
 
     Returns:
         A dictionary where keys are table names and values are PyArrow tables
@@ -387,20 +451,27 @@ def generate_all_tables(
     console.log("Generating sources")
     resolutions = generate_resolutions(dataset_start_id)
     resolution_from = generate_resolution_from(dataset_start_id)
-    sources = generate_sources(dataset_start_id)
+    sources, columns = generate_sources(dataset_start_id)
 
-    clusters_source1 = generate_cluster_source(
+    clusters_source1, source_pks1 = generate_cluster_source(
         range_left=0,
         range_right=source_len,
         resolution_source=dataset_start_id,
         cluster_start_id=cluster_start_id,
+        pk_start_id=pk_start_id,
     )
-    clusters_source2 = generate_cluster_source(
+
+    current_pk_id = pk_start_id + len(source_pks1)
+
+    clusters_source2, source_pks2 = generate_cluster_source(
         range_left=source_len,
         range_right=source_len * 2,
         resolution_source=dataset_start_id + 1,
         cluster_start_id=cluster_start_id,
+        pk_start_id=current_pk_id,
     )
+
+    current_pk_id += len(source_pks2)
 
     initial_next_id = cluster_start_id + (source_len * 2)
 
@@ -463,16 +534,21 @@ def generate_all_tables(
         ]
     ).combine_chunks()
 
+    # Combine the source primary keys tables
+    cluster_source_pks = pa.concat_tables([source_pks1, source_pks2]).combine_chunks()
+
     console.log("Generation complete.")
     console.log(f"Next dataset id: {dataset_start_id + 5}")
     console.log(f"Next cluster id: {final_next_id}")
+    console.log(f"Next pk id: {current_pk_id}")
 
-    # Order matters
     return {
         "resolutions": resolutions,
         "resolution_from": resolution_from,
         "sources": sources,
+        "source_columns": columns,
         "clusters": clusters,
+        "cluster_source_pks": cluster_source_pks,
         "contains": contains,
         "probabilities": probabilities,
     }

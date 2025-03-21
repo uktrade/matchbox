@@ -24,10 +24,12 @@ from matchbox.server.postgresql.db import (
 )
 from matchbox.server.postgresql.orm import (
     Clusters,
+    ClusterSourcePK,
     Contains,
     Probabilities,
     ResolutionFrom,
     Resolutions,
+    SourceColumns,
     Sources,
 )
 from matchbox.server.postgresql.utils.db import (
@@ -64,12 +66,22 @@ class FilteredClusters(BaseModel):
     def count(self) -> int:
         """Counts the number of clusters in the database."""
         with MBDB.get_session() as session:
-            query = session.query(func.count()).select_from(Clusters)
+            query = session.query(
+                func.count(func.distinct(Clusters.cluster_id))
+            ).select_from(Clusters)
+
             if self.has_dataset is not None:
                 if self.has_dataset:
-                    query = query.filter(Clusters.dataset.isnot(None))
+                    query = query.join(
+                        ClusterSourcePK,
+                        ClusterSourcePK.cluster_id == Clusters.cluster_id,
+                    )
                 else:
-                    query = query.filter(Clusters.dataset.is_(None))
+                    query = query.outerjoin(
+                        ClusterSourcePK,
+                        ClusterSourcePK.cluster_id == Clusters.cluster_id,
+                    ).filter(ClusterSourcePK.cluster_id.is_(None))
+
             return query.scalar()
 
 
@@ -198,19 +210,25 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 .first()
             )
             if source:
+                columns = (
+                    session.query(SourceColumns)
+                    .filter(SourceColumns.source_id == source.resolution_id)
+                    .order_by(SourceColumns.column_index)
+                    .all()
+                )
+
                 return Source(
                     resolution_name=source.resolution_name,
                     address=address,
-                    db_pk=source.id,
-                    columns=(
-                        SourceColumn(name=name, alias=alias, type=type_)
-                        for name, alias, type_ in zip(
-                            source.column_names,
-                            source.column_aliases,
-                            source.column_types,
-                            strict=True,
+                    db_pk=source.db_pk,
+                    columns=[
+                        SourceColumn(
+                            name=column.column_name,
+                            alias=column.column_alias,
+                            type=column.column_type,
                         )
-                    ),
+                        for column in columns
+                    ],
                 )
             else:
                 raise MatchboxSourceNotFoundError(address=str(address))

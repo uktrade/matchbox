@@ -170,9 +170,13 @@ def match(
 # Data management
 
 
-def index(source: Source) -> UploadStatus:
+def index(source: Source, batch_size: int | None = None) -> UploadStatus:
     """Index a Source in Matchbox."""
-    data_hashes = source.hash_data()
+    if batch_size:
+        data_hashes = source.hash_data(iter_batches=True, batch_size=batch_size)
+    else:
+        data_hashes = source.hash_data()
+
     buffer = table_to_buffer(table=data_hashes)
 
     # Upload metadata

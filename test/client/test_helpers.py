@@ -198,11 +198,13 @@ def test_query_no_resolution_ok_various_params(
     )
 
     # Mock `Source.to_arrow`
-    to_arrow.return_value = pa.Table.from_pylist(
+    to_arrow.return_value = pa.Table.from_arrays(
         [
-            {"foo_pk": "0", "foo_a": 1, "foo_b": "2"},
-            {"foo_pk": "1", "foo_a": 10, "foo_b": "20"},
-        ]
+            pa.array(["0", "1"], type=pa.large_string()),
+            pa.array([1, 10], type=pa.int64()),
+            pa.array(["2", "20"], type=pa.string()),
+        ],
+        names=["foo_pk", "foo_a", "foo_b"],
     )
 
     # Well-formed selector for these mocks
@@ -281,17 +283,20 @@ def test_query_multiple_sources_with_limits(to_arrow: Mock, matchbox_api: MockRo
 
     # Mock `Source.to_arrow`
     to_arrow.side_effect = [
-        pa.Table.from_pylist(
+        pa.Table.from_arrays(
             [
-                {"foo_pk": "0", "foo_a": 1, "foo_b": "2"},
-                {"foo_pk": "1", "foo_a": 10, "foo_b": "20"},
-            ]
+                pa.array(["0", "1"], type=pa.large_string()),
+                pa.array([1, 10], type=pa.int64()),
+                pa.array(["2", "20"], type=pa.string()),
+            ],
+            names=["foo_pk", "foo_a", "foo_b"],
         ),
-        pa.Table.from_pylist(
+        pa.Table.from_arrays(
             [
-                {"foo2_pk": "2", "foo2_c": "val"},
-                {"foo2_pk": "3", "foo2_c": "val"},
-            ]
+                pa.array(["2", "3"], type=pa.large_string()),
+                pa.array(["val", "val"], type=pa.string()),
+            ],
+            names=["foo2_pk", "foo2_c"],
         ),
     ] * 2  # 2 calls to `query()` in this test, each dealing with 2 sources
 
@@ -390,19 +395,19 @@ def test_query_combine_type(
 
     # Mock `Source.to_arrow`
     to_arrow.side_effect = [
-        pa.Table.from_pylist(
+        pa.Table.from_arrays(
             [
-                {"foo_pk": "0", "foo_col": 20},
-                {"foo_pk": "1", "foo_col": 40},
-                {"foo_pk": "2", "foo_col": 60},
-            ]
+                pa.array(["0", "1", "2"], type=pa.large_string()),
+                pa.array([20, 40, 60], type=pa.int64()),
+            ],
+            names=["foo_pk", "foo_col"],
         ),
-        pa.Table.from_pylist(
+        pa.Table.from_arrays(
             [
-                {"bar_pk": "3", "bar_col": "val1"},
-                {"bar_pk": "4", "bar_col": "val2"},
-                {"bar_pk": "5", "bar_col": "val3"},
-            ]
+                pa.array(["3", "4", "5"], type=pa.large_string()),
+                pa.array(["val1", "val2", "val3"], type=pa.large_string()),
+            ],
+            names=["bar_pk", "bar_col"],
         ),
     ]  # two sources to query
 
@@ -505,6 +510,79 @@ def test_query_404_source(matchbox_api: MockRouter):
     # Test with no optional params
     with pytest.raises(MatchboxSourceNotFoundError, match="42"):
         query(sels)
+
+
+def test_query_with_batches(matchbox_api: MockRouter):
+    """Tests that query correctly passes batching options to to_arrow."""
+    # Mock API
+    _ = matchbox_api.get("/query").mock(
+        return_value=Response(
+            200,
+            content=table_to_buffer(
+                pa.Table.from_pylist(
+                    [
+                        {"source_pk": "0", "id": 1},
+                        {"source_pk": "1", "id": 2},
+                    ],
+                    schema=SCHEMA_MB_IDS,
+                )
+            ).read(),
+        )
+    )
+
+    # Create mock source with a mocked to_arrow method
+    source_testkit = source_factory(
+        features=[
+            {"name": "a", "base_generator": "random_int"},
+            {"name": "b", "base_generator": "random_int"},
+        ],
+        full_name="foo",
+    )
+
+    schema = pa.schema(
+        [
+            pa.field("foo_pk", pa.large_string()),
+            pa.field("foo_a", pa.int64()),
+            pa.field("foo_b", pa.string()),
+        ]
+    )
+
+    mock_batch1 = pa.Table.from_pylist(
+        [{"foo_pk": "0", "foo_a": 1, "foo_b": "2"}], schema=schema
+    )
+
+    mock_batch2 = pa.Table.from_pylist(
+        [{"foo_pk": "1", "foo_a": 10, "foo_b": "20"}], schema=schema
+    )
+    mock_source = source_testkit.mock
+    mock_source.to_arrow.return_value = iter([mock_batch1, mock_batch2])
+    mock_source.format_column.return_value = "foo_pk"
+
+    # Well-formed selector for these mocks
+    sels = [
+        Selector(
+            source=mock_source,
+            fields=["a", "b"],
+        )
+    ]
+
+    # Test with return_batches=True
+    batch_iterator = query(
+        sels, return_batches=True, batch_size=1000, return_type="arrow"
+    )
+
+    # Check first batch before verifying the call
+    first_batch = next(batch_iterator)
+    assert isinstance(first_batch, pa.Table)
+
+    # Verify to_arrow was called with iter_batches=True
+    mock_source.to_arrow.assert_called_once()
+    assert mock_source.to_arrow.call_args.kwargs["iter_batches"] is True
+    assert mock_source.to_arrow.call_args.kwargs["batch_size"] == 1000
+
+    # Verify we can get the remaining batch
+    remaining_batches = list(batch_iterator)
+    assert len(remaining_batches) == 1
 
 
 @patch("matchbox.client.helpers.index.Source")
@@ -691,6 +769,61 @@ def test_index_upload_failure(
     assert "test-upload-id" in upload_route.calls.last.request.url.path
     assert b"Content-Disposition: form-data;" in upload_route.calls.last.request.content
     assert b"PAR1" in upload_route.calls.last.request.content
+
+
+@patch("matchbox.client.helpers.index.Source")
+def test_index_with_batch_size(
+    MockSource: Mock, matchbox_api: MockRouter, sqlite_warehouse: Engine
+):
+    """Test that batch_size is passed correctly to hash_data when indexing."""
+    # Mock Source
+    source = source_factory(
+        features=[{"name": "company_name", "base_generator": "company"}],
+        engine=sqlite_warehouse,
+    )
+    mock_source_instance = source.mock
+    # Mock hash_data to capture the batch_size parameter
+    mock_source_instance.hash_data.return_value = pa.table(
+        {
+            "source_pk": [["1", "2"]],
+            "hash": pa.array([b"hash1"], type=pa.binary()),
+        }
+    )
+    MockSource.return_value = mock_source_instance
+
+    # Mock the API endpoints
+    matchbox_api.post("/sources").mock(
+        return_value=Response(
+            202,
+            json=UploadStatus(
+                id="test-upload-id",
+                status="awaiting_upload",
+                entity=BackendUploadType.INDEX,
+            ).model_dump(),
+        )
+    )
+
+    matchbox_api.post("/upload/test-upload-id").mock(
+        return_value=Response(
+            202,
+            json=UploadStatus(
+                id="test-upload-id", status="complete", entity=BackendUploadType.INDEX
+            ).model_dump(),
+        )
+    )
+
+    # Call index with batch_size
+    index(
+        full_name=source.source.address.full_name,
+        db_pk=source.source.db_pk,
+        engine=sqlite_warehouse,
+        batch_size=1000,
+    )
+
+    # Verify batch_size was passed to hash_data
+    mock_source_instance.hash_data.assert_called_once()
+    assert mock_source_instance.hash_data.call_args.kwargs["iter_batches"] is True
+    assert mock_source_instance.hash_data.call_args.kwargs["batch_size"] == 1000
 
 
 def test_match_ok(matchbox_api: MockRouter):

@@ -1,18 +1,14 @@
 """Common database utilities for Matchbox."""
 
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
+from typing import Any, Iterator, Literal, TypeVar, overload
 
-import connectorx as cx
+import polars as pl
 import pyarrow as pa
 from pandas import DataFrame
+from polars import DataFrame as PolarsDataFrame
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import URL
 from sqlalchemy.sql.selectable import Select
-
-if TYPE_CHECKING:
-    from polars import DataFrame as PolarsDataFrame
-else:
-    PolarsDataFrame = Any
 
 ReturnTypeStr = Literal["arrow", "pandas", "polars"]
 
@@ -34,58 +30,187 @@ def _convert_large_binary_to_binary(table: pa.Table) -> pa.Table:
 
 @overload
 def sql_to_df(
-    stmt: Select, engine: Engine, return_type: Literal["arrow"]
+    stmt: Select,
+    engine: Engine,
+    return_type: Literal["arrow"],
+    *,
+    iter_batches: Literal[False] = False,
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
 ) -> pa.Table: ...
 
 
 @overload
 def sql_to_df(
-    stmt: Select, engine: Engine, return_type: Literal["pandas"]
+    stmt: Select,
+    engine: Engine,
+    return_type: Literal["arrow"],
+    *,
+    iter_batches: Literal[True],
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> Iterator[pa.Table]: ...
+
+
+@overload
+def sql_to_df(
+    stmt: Select,
+    engine: Engine,
+    return_type: Literal["pandas"],
+    *,
+    iter_batches: Literal[False] = False,
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
 ) -> DataFrame: ...
 
 
 @overload
 def sql_to_df(
-    stmt: Select, engine: Engine, return_type: Literal["polars"]
+    stmt: Select,
+    engine: Engine,
+    return_type: Literal["pandas"],
+    *,
+    iter_batches: Literal[True],
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> Iterator[DataFrame]: ...
+
+
+@overload
+def sql_to_df(
+    stmt: Select,
+    engine: Engine,
+    return_type: Literal["polars"],
+    *,
+    iter_batches: Literal[False] = False,
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
 ) -> PolarsDataFrame: ...
 
 
+@overload
 def sql_to_df(
-    stmt: Select, engine: Engine, return_type: ReturnTypeStr = "pandas"
-) -> pa.Table | DataFrame | PolarsDataFrame:
-    """Executes the given SQLAlchemy statement using connectorx.
+    stmt: Select,
+    engine: Engine,
+    return_type: Literal["polars"],
+    *,
+    iter_batches: Literal[True],
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> Iterator[PolarsDataFrame]: ...
+
+
+def sql_to_df(
+    stmt: Select,
+    engine: Engine,
+    return_type: ReturnTypeStr = "pandas",
+    *,
+    iter_batches: bool = False,
+    batch_size: int | None = None,
+    schema_overrides: dict[str, Any] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> (
+    pa.Table
+    | DataFrame
+    | PolarsDataFrame
+    | Iterator[pa.Table]
+    | Iterator[DataFrame]
+    | Iterator[PolarsDataFrame]
+):
+    """Executes the given SQLAlchemy statement using Polars.
 
     Args:
         stmt (Select): A SQLAlchemy Select statement to be executed.
         engine (Engine): A SQLAlchemy Engine object for the database connection.
         return_type (str): The type of the return value. One of "arrow", "pandas",
             or "polars".
+        iter_batches (bool): If True, return an iterator that yields each batch
+            separately. If False, return a single DataFrame with all results.
+            Default is False.
+        batch_size (int | None): Indicate the size of each batch when processing
+            data in batches. Default is None.
+        schema_overrides (dict[str, Any] | None): A dictionary mapping column names
+            to dtypes. Default is None.
+        execute_options (dict[str, Any] | None): These options will be passed through
+            into the underlying query execution method as kwargs. Default is None.
 
     Returns:
-        A dataframe of the query results.
+        If iter_batches is False: A dataframe of the query results in the specified
+            format.
+        If iter_batches is True: An iterator of dataframes in the specified format.
 
     Raises:
-        ValueError: If the engine URL is not properly configured.
+        ValueError: If the engine URL is not properly configured or if an unsupported
+            return type is specified.
     """
+    # Compile the SQLAlchemy statement to SQL string
     compiled_stmt = stmt.compile(
         dialect=engine.dialect, compile_kwargs={"literal_binds": True}
     )
     sql_query = str(compiled_stmt)
 
-    url: Union[str, URL] = engine.url
-
+    # Extract the connection URL from the engine
+    url: str | URL = engine.url
     if isinstance(url, URL):
         url = url.render_as_string(hide_password=False)
-
     if not isinstance(url, str):
         raise ValueError("Unable to obtain a valid connection string from the engine.")
 
-    result = cx.read_sql(conn=url, query=sql_query, return_type=return_type)
+    if iter_batches:
+        pl_batches = pl.read_database(
+            query=sql_query,
+            connection=engine,
+            iter_batches=True,
+            batch_size=batch_size,
+            schema_overrides=schema_overrides,
+            execute_options=execute_options,
+        )
 
-    if return_type == "arrow":
-        return _convert_large_binary_to_binary(table=result)
+        if return_type == "polars":
+            return pl_batches
+        elif return_type == "arrow":
+            return (
+                _convert_large_binary_to_binary(batch.to_arrow())
+                for batch in pl_batches
+            )
+        elif return_type == "pandas":
+            return (batch.to_pandas() for batch in pl_batches)
+        else:
+            raise ValueError(f"Unsupported return_type: {return_type}")
+    else:
+        # Use the most efficient method for a single result
+        # Fall back if the URI method fails
+        try:
+            pl_result = pl.read_database_uri(
+                query=sql_query,
+                uri=url,
+                schema_overrides=schema_overrides,
+                execute_options=execute_options,
+            )
+        except Exception:
+            pl_result = pl.read_database(
+                query=sql_query,
+                connection=engine,
+                batch_size=batch_size,
+                schema_overrides=schema_overrides,
+                execute_options=execute_options,
+            )
 
-    return result
+        if return_type == "polars":
+            return pl_result
+        elif return_type == "arrow":
+            arrow_table = pl_result.to_arrow()
+            return _convert_large_binary_to_binary(table=arrow_table)
+        elif return_type == "pandas":
+            return pl_result.to_pandas()
+        else:
+            raise ValueError(f"Unsupported return_type: {return_type}")
 
 
 def get_schema_table_names(full_name: str) -> tuple[str, str]:

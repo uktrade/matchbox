@@ -3,8 +3,9 @@
 import json
 from copy import deepcopy
 from functools import wraps
-from typing import Any, Callable, ParamSpec, TypeVar
+from typing import Any, Callable, Iterator, ParamSpec, TypeVar
 
+import polars as pl
 import pyarrow as pa
 from pandas import DataFrame
 from pydantic import (
@@ -24,7 +25,6 @@ from sqlalchemy import (
     String,
     Table,
     cast,
-    func,
     select,
 )
 from sqlalchemy.sql.selectable import Select
@@ -295,10 +295,39 @@ class Source(BaseModel):
         fields: list[str] | None = None,
         pks: list[T] | None = None,
         limit: int | None = None,
-    ) -> pa.Table:
-        """Returns the dataset as a PyArrow Table."""
+        *,
+        iter_batches: bool = False,
+        batch_size: int | None = None,
+        schema_overrides: dict[str, Any] | None = None,
+        execute_options: dict[str, Any] | None = None,
+    ) -> pa.Table | Iterator[pa.Table]:
+        """Returns the dataset as a PyArrow Table or an iterator of PyArrow Tables.
+
+        Args:
+            fields: List of column names to retrieve. If None, retrieves all columns.
+            pks: List of primary keys to filter by. If None, retrieves all rows.
+            limit: Maximum number of rows to retrieve. If None, retrieves all rows.
+            iter_batches: If True, return an iterator that yields each batch separately.
+                If False, return a single Table with all results.
+            batch_size: Indicate the size of each batch when processing data in batches.
+            schema_overrides: A dictionary mapping column names to dtypes.
+            execute_options: These options will be passed through into the underlying
+                query execution method as kwargs.
+
+        Returns:
+            If iter_batches is False: A PyArrow Table containing the requested data.
+            If iter_batches is True: An iterator of PyArrow Tables.
+        """
         stmt = self._select(fields=fields, pks=pks, limit=limit)
-        return sql_to_df(stmt, self._engine, return_type="arrow")
+        return sql_to_df(
+            stmt,
+            self._engine,
+            return_type="arrow",
+            iter_batches=iter_batches,
+            batch_size=batch_size,
+            schema_overrides=schema_overrides,
+            execute_options=execute_options,
+        )
 
     @needs_engine
     def to_pandas(
@@ -306,39 +335,138 @@ class Source(BaseModel):
         fields: list[str] | None = None,
         pks: list[T] | None = None,
         limit: int | None = None,
-    ) -> DataFrame:
-        """Returns the dataset as a pandas DataFrame."""
+        *,
+        iter_batches: bool = False,
+        batch_size: int | None = None,
+        schema_overrides: dict[str, Any] | None = None,
+        execute_options: dict[str, Any] | None = None,
+    ) -> DataFrame | Iterator[DataFrame]:
+        """Returns the dataset as a pandas DataFrame or an iterator of DataFrames.
+
+        Args:
+            fields: List of column names to retrieve. If None, retrieves all columns.
+            pks: List of primary keys to filter by. If None, retrieves all rows.
+            limit: Maximum number of rows to retrieve. If None, retrieves all rows.
+            iter_batches: If True, return an iterator that yields each batch separately.
+                If False, return a single DataFrame with all results.
+            batch_size: Indicate the size of each batch when processing data in batches.
+            schema_overrides: A dictionary mapping column names to dtypes.
+            execute_options: These options will be passed through into the underlying
+                query execution method as kwargs.
+
+        Returns:
+            If iter_batches is False: A pandas DataFrame containing the requested data.
+            If iter_batches is True: An iterator of pandas DataFrames.
+        """
         stmt = self._select(fields=fields, pks=pks, limit=limit)
-        return sql_to_df(stmt, self._engine, return_type="pandas")
+        return sql_to_df(
+            stmt,
+            self._engine,
+            return_type="pandas",
+            iter_batches=iter_batches,
+            batch_size=batch_size,
+            schema_overrides=schema_overrides,
+            execute_options=execute_options,
+        )
 
     @needs_engine
-    def hash_data(self) -> pa.Table:
-        """Retrieve and hash a dataset from its warehouse, ready to be inserted."""
+    def hash_data(
+        self,
+        *,
+        iter_batches: bool = False,
+        batch_size: int | None = None,
+        schema_overrides: dict[str, Any] | None = None,
+        execute_options: dict[str, Any] | None = None,
+    ) -> pa.Table:
+        """Retrieve and hash a dataset from its warehouse, ready to be inserted.
+
+        Args:
+            iter_batches: If True, process data in batches internally.
+                This is only used for internal processing and will still return a
+                single table.
+            batch_size: Indicate the size of each batch when processing data in batches.
+            schema_overrides: A dictionary mapping column names to dtypes.
+            execute_options: These options will be passed through into the underlying
+                query execution method as kwargs.
+
+        Returns:
+            A PyArrow Table containing source primary keys and their hashes.
+        """
+        signature_hex = self.signature.hex()
         source_table = self.to_table()
         cols_to_index = tuple([col.name for col in self.columns])
 
         slct_stmt = select(
-            func.concat(*source_table.c[cols_to_index]).label("raw"),
+            *[source_table.c[col] for col in cols_to_index],
             source_table.c[self.db_pk].cast(String).label("source_pk"),
         )
 
-        raw_result = sql_to_df(slct_stmt, self._engine, "arrow")
+        def _process_batch(
+            batch: pl.DataFrame, cols_to_index: tuple, signature_hex: str
+        ) -> pl.DataFrame:
+            """Process a single batch of data using Polars.
 
-        grouped = raw_result.group_by("raw").aggregate([("source_pk", "list")])
-        grouped_data = pa.compute.binary_join_element_wise(
-            grouped["raw"], self.signature.hex(), " "
-        )
-        grouped_keys = grouped["source_pk_list"]
+            Args:
+                batch: Polars DataFrame containing the data
+                cols_to_index: Columns to include in the hash
+                signature_hex: Signature to append to values before hashing
 
-        return pa.table(
-            {
-                "source_pk": grouped_keys,
-                "hash": pa.array(
-                    [hash_data(d) for d in grouped_data.to_pylist()],
-                    type=pa.binary(),
-                ),
-            }
-        )
+            Returns:
+                Polars DataFrame with hash and source_pk columns
+            """
+            for col_name in cols_to_index:
+                batch = batch.with_columns(pl.col(col_name).cast(pl.Utf8))
+
+            batch = batch.with_columns(
+                pl.concat_str([pl.col(c) for c in cols_to_index]).alias("raw_value")
+            )
+
+            batch = batch.with_columns(
+                (pl.col("raw_value") + " " + pl.lit(signature_hex)).alias(
+                    "value_with_sig"
+                )
+            )
+
+            batch = batch.with_columns(
+                pl.col("value_with_sig")
+                .map_elements(lambda x: hash_data(x), return_dtype=pl.Binary)
+                .alias("hash")
+            )
+
+            return batch.select(["hash", "source_pk"])
+
+        if iter_batches:
+            # Process in batches
+            raw_batches = sql_to_df(
+                slct_stmt,
+                self._engine,
+                return_type="polars",
+                iter_batches=True,
+                batch_size=batch_size,
+                schema_overrides=schema_overrides,
+                execute_options=execute_options,
+            )
+
+            all_results = []
+            for batch in raw_batches:
+                batch_result = _process_batch(batch, cols_to_index, signature_hex)
+                all_results.append(batch_result)
+
+            processed_df = pl.concat(all_results)
+
+        else:
+            # Non-batched processing
+            raw_result = sql_to_df(
+                slct_stmt,
+                self._engine,
+                return_type="polars",
+                schema_overrides=schema_overrides,
+                execute_options=execute_options,
+            )
+
+            processed_df = _process_batch(raw_result, cols_to_index, signature_hex)
+
+        return processed_df.group_by("hash").agg(pl.col("source_pk")).to_arrow()
 
 
 class Match(BaseModel):

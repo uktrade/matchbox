@@ -1,3 +1,5 @@
+import pandas as pd
+import pyarrow as pa
 import pytest
 from pandas.testing import assert_frame_equal
 from sqlalchemy import Engine, Table, create_engine
@@ -349,6 +351,42 @@ def test_source_hash_data(sqlite_warehouse: Engine):
     assert len(res) == 2
     assert len(res.source_pk.iloc[0]) == 2
     assert len(res.source_pk.iloc[1]) == 2
+
+    result = source.hash_data(iter_batches=True, batch_size=3)
+    assert isinstance(result, pa.Table)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "return_type"),
+    [
+        pytest.param("to_arrow", pa.Table, id="to_arrow"),
+        pytest.param("to_pandas", pd.DataFrame, id="to_pandas"),
+    ],
+)
+def test_source_data_batching(method_name, return_type, sqlite_warehouse: Engine):
+    """Test Source data retrieval methods with batching parameters."""
+    # Create a source with multiple rows of data
+    source_testkit = source_factory(
+        features=[
+            {"name": "a", "base_generator": "random_int", "sql_type": "BIGINT"},
+            {"name": "b", "base_generator": "word", "sql_type": "TEXT"},
+        ],
+        engine=sqlite_warehouse,
+        n_true_entities=9,
+    )
+    source_testkit.to_warehouse(engine=sqlite_warehouse)
+    source = source_testkit.source.set_engine(sqlite_warehouse).default_columns()
+
+    # Call the method with batching
+    method = getattr(source, method_name)
+    batch_iterator = method(iter_batches=True, batch_size=3)
+    batches = list(batch_iterator)
+
+    # Verify we got the expected number of batches
+    assert len(batches) == 3
+    for batch in batches:
+        assert isinstance(batch, return_type)
+        assert len(batch) == 3
 
 
 def test_match_validates():

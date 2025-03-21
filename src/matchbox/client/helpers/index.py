@@ -27,6 +27,7 @@ def index(
     engine: Engine,
     resolution_name: str | None = None,
     columns: list[str] | list[dict[str, dict[str, str]]] | None = None,
+    batch_size: int | None = None,
 ) -> None:
     """Indexes data in Matchbox.
 
@@ -37,6 +38,8 @@ def index(
         resolution_name: a custom resolution name
             If missing, will use the default name for a `Source`
         columns: the columns to index
+        batch_size: the size of each batch when fetching data from the warehouse,
+            which helps reduce the load on the database. Default is None.
 
     Examples:
         ```python
@@ -55,6 +58,9 @@ def index(
                 {"name": "age", "alias": "person_age", "type": "BIGINT"},
             ],
         )
+        ```
+        ```python
+        index("mb.test_orig", "id", engine=engine, batch_size=10_000)
         ```
     """
     columns = _process_columns(columns)
@@ -78,4 +84,4 @@ def index(
     if not columns:
         source = source.default_columns()
 
-    _handler.index(source=source)
+    _handler.index(source=source, batch_size=batch_size)

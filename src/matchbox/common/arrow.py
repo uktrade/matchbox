@@ -5,8 +5,10 @@ from io import BytesIO
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-SCHEMA_MB_IDS = pa.schema([("id", pa.int64()), ("source_pk", pa.string())])
-SCHEMA_INDEX = pa.schema([("source_pk", pa.list_(pa.string())), ("hash", pa.binary())])
+SCHEMA_MB_IDS = pa.schema([("id", pa.int64()), ("source_pk", pa.large_string())])
+SCHEMA_INDEX = pa.schema(
+    [("hash", pa.large_binary()), ("source_pk", pa.large_list(pa.large_string()))]
+)
 SCHEMA_RESULTS = pa.schema(
     [
         ("left_id", pa.uint64()),

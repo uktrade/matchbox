@@ -1,7 +1,7 @@
 """Functions to select and retrieve data from the Matchbox server."""
 
 import itertools
-from typing import Literal
+from typing import Iterator, Literal
 from warnings import warn
 
 import pyarrow as pa
@@ -94,6 +94,88 @@ def select(
     return selectors
 
 
+def _query_batched(
+    selectors: list[Selector],
+    sub_limits: list[int | None],
+    resolution_name: str | None,
+    threshold: int | None,
+    return_type: Literal["pandas", "arrow"],
+    batch_size: int | None,
+) -> Iterator[DataFrame] | Iterator[pa.Table]:
+    """Helper function that implements batched query processing.
+
+    Returns an iterator yielding batches of results.
+    """
+    # Create iterators for each selector
+    selector_iters = []
+
+    for selector, sub_limit in zip(selectors, sub_limits, strict=True):
+        # Get ids from matchbox
+        mb_ids = _handler.query(
+            source_address=selector.source.address,
+            resolution_name=resolution_name,
+            threshold=threshold,
+            limit=sub_limit,
+        )
+
+        fields = None
+        if selector.fields:
+            fields = list(set(selector.fields))
+
+        # Get batched data
+        raw_batches = selector.source.to_arrow(
+            fields=fields,
+            pks=mb_ids["source_pk"].to_pylist(),
+            iter_batches=True,
+            batch_size=batch_size,
+        )
+
+        # Process and transform each batch
+        def process_batches(batches, selector, mb_ids):
+            for batch in batches:
+                # Join and select columns
+                joined_table = batch.join(
+                    right_table=mb_ids,
+                    keys=selector.source.format_column(selector.source.db_pk),
+                    right_keys="source_pk",
+                    join_type="inner",
+                )
+
+                if selector.fields:
+                    keep_cols = ["id"] + [
+                        selector.source.format_column(f) for f in selector.fields
+                    ]
+                    match_cols = [
+                        col for col in joined_table.column_names if col in keep_cols
+                    ]
+                    yield joined_table.select(match_cols)
+                else:
+                    yield joined_table
+
+        selector_iters.append(process_batches(raw_batches, selector, mb_ids))
+
+    # Chain iterators if multiple selectors
+    if len(selector_iters) == 1:
+        batches_iter = selector_iters[0]
+    else:
+        # Interleave batches from different selectors
+        batches_iter = itertools.chain(*selector_iters)
+
+    # Convert each batch to the requested return type
+    for batch in batches_iter:
+        if return_type == "arrow":
+            yield batch
+        elif return_type == "pandas":
+            yield batch.to_pandas(
+                use_threads=True,
+                split_blocks=True,
+                self_destruct=True,
+                types_mapper=ArrowDtype,
+            )
+        else:
+            raise ValueError(f"return_type of {return_type} not valid")
+
+
 def query(
     *selectors: list[Selector],
     resolution_name: str | None = None,
@@ -101,7 +183,9 @@ def query(
     return_type: Literal["pandas", "arrow"] = "pandas",
     threshold: int | None = None,
     limit: int | None = None,
-) -> DataFrame | pa.Table:
+    batch_size: int | None = None,
+    return_batches: bool = False,
+) -> DataFrame | pa.Table | Iterator[DataFrame] | Iterator[pa.Table]:
     """Runs queries against the selected backend.
 
     Args:
@@ -109,11 +193,9 @@ def query(
             This allows querying sources coming from different engines
         resolution_name (optional): The name of the resolution point to query
             If not set:
-
             * If querying a single source, it will use the source resolution
             * If querying 2 or more sources, it will look for a default resolution
-        combine_type: How to combine the data from different sources
-
+        combine_type: How to combine the data from different sources.
             * If `concat`, concatenate all sources queried without any merging.
                 Multiple rows per ID, with null values where data isn't available
             * If `explode`, outer join on Matchbox ID. Multiple rows per ID,
@@ -129,9 +211,18 @@ def query(
             If an integer, uses that threshold for the specified resolution, and the
             resolution's cached thresholds for its ancestors
         limit (optional): The number to use in a limit clause. Useful for testing
+        batch_size (optional): The size of each batch when fetching data from the
+            warehouse, which helps reduce memory usage and load on the database.
+            Default is None.
+        return_batches (optional): If True, returns an iterator of batches instead of a
+            single combined result, which is useful for processing large datasets with
+            limited memory. Default is False.
 
     Returns:
-        Data in the requested return type
+        If return_batches is False:
+            Data in the requested return type (DataFrame or pa.Table)
+        If return_batches is True:
+            An iterator yielding batches in the requested return type
 
     Examples:
         ```python
@@ -146,6 +237,16 @@ def query(
             select("datahub_companies", engine=engine2),
             resolution_name="last_linker",
         )
+        ```
+
+        ```python
+        # Process large results in batches of 5000 rows
+        for batch in query(
+            select("companies_house", engine=engine),
+            batch_size=5000,
+            return_batches=True,
+        ):
+            batch.head()
         ```
     """
     # Validate arguments
@@ -174,70 +275,87 @@ def query(
     else:
         sub_limits = [None] * len(selectors)
 
-    tables = []
-    for selector, sub_limit in zip(selectors, sub_limits, strict=True):
-        # Get ids from matchbox
-        mb_ids = _handler.query(
-            source_address=selector.source.address,
+    if return_batches:
+        # Return an iterator of batches
+        return _query_batched(
+            selectors=selectors,
+            sub_limits=sub_limits,
             resolution_name=resolution_name,
             threshold=threshold,
-            limit=sub_limit,
+            return_type=return_type,
+            batch_size=batch_size,
         )
-        fields = None
-        if selector.fields:
-            fields = list(set(selector.fields))
-        raw_data = selector.source.to_arrow(
-            fields=fields,
-            pks=mb_ids["source_pk"].to_pylist(),
-        )
-
-        # Join and select columns
-        joined_table = raw_data.join(
-            right_table=mb_ids,
-            keys=selector.source.format_column(selector.source.db_pk),
-            right_keys="source_pk",
-            join_type="inner",
-        )
-
-        if selector.fields:
-            keep_cols = ["id"] + [
-                selector.source.format_column(f) for f in selector.fields
-            ]
-            match_cols = [col for col in joined_table.column_names if col in keep_cols]
-            tables.append(joined_table.select(match_cols))
-        else:
-            tables.append(joined_table)
-
-    # Combine results
-    if combine_type == "concat":
-        result = pa.concat_tables(tables, promote_options="default")
     else:
-        result = tables[0]
-        for table in tables[1:]:
-            result = result.join(table, keys=["id"], join_type="full outer")
+        # Process all data and return a single result
+        tables = []
+        for selector, sub_limit in zip(selectors, sub_limits, strict=True):
+            # Get ids from matchbox
+            mb_ids = _handler.query(
+                source_address=selector.source.address,
+                resolution_name=resolution_name,
+                threshold=threshold,
+                limit=sub_limit,
+            )
+            fields = None
+            if selector.fields:
+                fields = list(set(selector.fields))
+            raw_data = selector.source.to_arrow(
+                fields=fields,
+                pks=mb_ids["source_pk"].to_pylist(),
+                batch_size=batch_size,
+            )
 
-        if combine_type == "set_agg":
-            # Aggregate into lists
-            aggregate_rule = [
-                (col, "distinct", pc.CountOptions(mode="only_valid"))
-                for col in result.column_names
-                if col != "id"
-            ]
-            result = result.group_by("id").aggregate(aggregate_rule)
-            # Recover original column names
-            rename_rule = {f"{col}_distinct": col for col, _, _ in aggregate_rule}
-            result = result.rename_columns(rename_rule)
+            # Join and select columns
+            joined_table = raw_data.join(
+                right_table=mb_ids,
+                keys=selector.source.format_column(selector.source.db_pk),
+                right_keys="source_pk",
+                join_type="inner",
+            )
 
-    # Return in requested format
-    if return_type == "pandas":
-        return result.to_pandas(
-            use_threads=True,
-            split_blocks=True,
-            self_destruct=True,
-            types_mapper=ArrowDtype,
-        )
+            if selector.fields:
+                keep_cols = ["id"] + [
+                    selector.source.format_column(f) for f in selector.fields
+                ]
+                match_cols = [
+                    col for col in joined_table.column_names if col in keep_cols
+                ]
+                tables.append(joined_table.select(match_cols))
+            else:
+                tables.append(joined_table)
 
-    return result
+        # Combine results based on combine_type
+        if combine_type == "concat":
+            result = pa.concat_tables(tables, promote_options="default")
+        else:
+            result = tables[0]
+            for table in tables[1:]:
+                result = result.join(table, keys=["id"], join_type="full outer")
+
+            if combine_type == "set_agg":
+                # Aggregate into lists
+                aggregate_rule = [
+                    (col, "distinct", pc.CountOptions(mode="only_valid"))
+                    for col in result.column_names
+                    if col != "id"
+                ]
+                result = result.group_by("id").aggregate(aggregate_rule)
+                # Recover original column names
+                rename_rule = {f"{col}_distinct": col for col, _, _ in aggregate_rule}
+                result = result.rename_columns(rename_rule)
+
+        # Return in requested format
+        if return_type == "arrow":
+            return result
+        elif return_type == "pandas":
+            return result.to_pandas(
+                use_threads=True,
+                split_blocks=True,
+                self_destruct=True,
+                types_mapper=ArrowDtype,
+            )
+        else:
+            raise ValueError(f"return_type of {return_type} not valid")
 
 
 def match(

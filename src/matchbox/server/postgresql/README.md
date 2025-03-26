@@ -18,16 +18,25 @@ erDiagram
         string resolution_name
         string full_name
         bytes warehouse_hash
-        string id
-        array[string] column_names
-        array[string] column_aliases
-        array[string] column_types
+        string db_pk
+    }
+    SourceColumns {
+        bigint column_id PK
+        bigint source_id FK
+        int column_index
+        string column_name
+        string column_alias
+        string column_type
     }
     Clusters {
-        bigint cluster_id PK,FK
+        bigint cluster_id PK
         bytes cluster_hash
-        bigint dataset FK
-        array[string] source_pk
+    }
+    ClusterSourcePK {
+        bigint pk_id PK
+        bigint cluster_id FK
+        bigint source_id FK
+        string source_pk
     }
     Contains {
         bigint parent PK,FK
@@ -39,9 +48,9 @@ erDiagram
         smallint probability
     }
     Resolutions {
-        bigint resolution_id PK,FK
+        bigint resolution_id PK
         bytes resolution_hash
-        enum type
+        string type
         string name
         string description
         smallint truth
@@ -54,9 +63,13 @@ erDiagram
     }
 
     Sources |o--|| Resolutions : ""
-    Sources ||--o{ Clusters : ""
-    Clusters ||--o{ Contains : "parent, child"
+    Sources ||--o{ SourceColumns : ""
+    Sources ||--o{ ClusterSourcePK : ""
+    Clusters ||--o{ ClusterSourcePK : ""
     Clusters ||--o{ Probabilities : ""
+    Clusters ||--o{ Contains : "parent"
+    Contains }o--|| Clusters : "child"
     Resolutions ||--o{ Probabilities : ""
-    Resolutions ||--o{ ResolutionFrom : "child, parent"
+    Resolutions ||--o{ ResolutionFrom : "parent"
+    ResolutionFrom }o--|| Resolutions : "child"
 ```

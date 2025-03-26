@@ -1,5 +1,4 @@
 import itertools
-from typing import Iterable
 
 import pandas as pd
 import pyarrow as pa
@@ -182,10 +181,10 @@ def test_benchmark_result_tables(left_ids, right_ids, next_id, n_components, n_p
 @pytest.mark.parametrize(
     ("cluster_start_id", "dataset_start_id", "expected_datasets"),
     [
-        (0, 1, {1, 2, None}),  # Original test case
-        (1000, 1, {1, 2, None}),  # Different cluster start
-        (0, 3, {3, 4, None}),  # Different dataset start
-        (86475, 3, {3, 4, None}),  # Both different
+        (0, 1, {1, 2}),  # Original test case
+        (1000, 1, {1, 2}),  # Different cluster start
+        (0, 3, {3, 4}),  # Different dataset start
+        (86475, 3, {3, 4}),  # Both different
     ],
 )
 @pytest.mark.docker
@@ -197,13 +196,6 @@ def test_benchmark_generate_tables_parameterized(
 ):
     schema = MBDB.MatchboxBase.metadata.schema
     matchbox_postgres.clear(certain=True)
-
-    def array_encode(array: Iterable[str]):
-        if not array:
-            return None
-        escaped_l = [f'"{s}"' for s in array]
-        list_rep = ", ".join(escaped_l)
-        return "{" + list_rep + "}"
 
     with MBDB.get_engine().connect() as con:
         results = generate_all_tables(
@@ -219,9 +211,9 @@ def test_benchmark_generate_tables_parameterized(
         # Test number of tables
         assert len(results) == len(MBDB.MatchboxBase.metadata.tables)
 
-        # Test dataset IDs
+        # Test dataset IDs in cluster_source_pks table
         assert (
-            set(pc.unique(results["clusters"]["dataset"]).to_pylist())
+            set(pc.unique(results["cluster_source_pks"]["source_id"]).to_pylist())
             == expected_datasets
         )
 
@@ -246,11 +238,6 @@ def test_benchmark_generate_tables_parameterized(
         # Write to database
         for table_name, table_arrow in results.items():
             df = table_arrow.to_pandas()
-            # Pandas' `to_sql` dislikes arrays
-            array_cols = ["source_pk", "column_types", "column_aliases", "column_names"]
-            active_array_cols = set(df.columns.tolist()).intersection(array_cols)
-            for col in active_array_cols:
-                df[col] = df[col].apply(array_encode)
             # Pandas' `to_sql` dislikes large unsigned ints
             for c in df.columns:
                 if df[c].dtype == "uint64":

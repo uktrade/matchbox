@@ -15,6 +15,7 @@ from matchbox.common.exceptions import (
 from matchbox.common.sources import Match, SourceAddress
 from matchbox.server.postgresql.orm import (
     Clusters,
+    ClusterSourcePK,
     Contains,
     Probabilities,
     Resolutions,
@@ -107,9 +108,11 @@ def _union_valid_clusters(lineage_thresholds: dict[int, float]) -> Select:
 
     for resolution_id, threshold in lineage_thresholds.items():
         if threshold is None:
-            # This is a dataset - get all its clusters directly
-            resolution_valid = select(Clusters.cluster_id.label("cluster")).where(
-                Clusters.dataset == resolution_id
+            # This is a dataset - get all its clusters through ClusterSourcePK
+            resolution_valid = (
+                select(ClusterSourcePK.cluster_id.label("cluster"))
+                .where(ClusterSourcePK.source_id == resolution_id)
+                .distinct()
             )
         else:
             # This is a model - get clusters meeting threshold
@@ -174,13 +177,13 @@ def _resolve_cluster_hierarchy(
         mapping_0 = (
             select(
                 Clusters.cluster_id.label("cluster_id"),
-                func.unnest(Clusters.source_pk).label("source_pk"),
+                ClusterSourcePK.source_pk.label("source_pk"),
             )
+            .join(ClusterSourcePK, ClusterSourcePK.cluster_id == Clusters.cluster_id)
             .where(
                 and_(
                     Clusters.cluster_id.in_(select(valid_clusters.c.cluster)),
-                    Clusters.dataset == dataset_id,
-                    Clusters.source_pk.isnot(None),
+                    ClusterSourcePK.source_id == dataset_id,
                 )
             )
             .cte("mapping_0")
@@ -311,10 +314,11 @@ def _build_unnested_clusters() -> CTE:
     return (
         select(
             Clusters.cluster_id,
-            Clusters.dataset,
-            func.unnest(Clusters.source_pk).label("source_pk"),
+            ClusterSourcePK.source_id.label("dataset"),
+            ClusterSourcePK.source_pk,
         )
         .select_from(Clusters)
+        .join(ClusterSourcePK, ClusterSourcePK.cluster_id == Clusters.cluster_id)
         .cte("unnested_clusters")
     )
 

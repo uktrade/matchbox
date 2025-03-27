@@ -112,7 +112,7 @@ def infer_sql_type(base: str, parameters: tuple) -> str:
         if all(issubclass(t, (int, float, Decimal)) for t in types_found):
             if any(issubclass(t, float) or issubclass(t, Decimal) for t in types_found):
                 return "FLOAT"
-            return "INTEGER"
+            return "BIGINT"
         # Default to TEXT for mixed types
         return "TEXT"
 
@@ -121,7 +121,7 @@ def infer_sql_type(base: str, parameters: tuple) -> str:
 
     type_map = {
         str: "TEXT",
-        int: "INTEGER",
+        int: "BIGINT",
         float: "FLOAT",
         bool: "BOOLEAN",
         datetime.datetime: "TIMESTAMP",

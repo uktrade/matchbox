@@ -44,7 +44,7 @@ class MatchboxUnhandledServerResponse(Exception):
 
 
 class MatchboxSourceColumnError(Exception):
-    """Source columns diverge with the warehouse."""
+    """Specified columns diverge with the warehouse."""
 
 
 class MatchboxSourceEngineError(Exception):

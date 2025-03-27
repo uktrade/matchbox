@@ -96,7 +96,9 @@ def test_dedupe_step_run(
         model_mock.run = Mock(return_value=results_mock)
 
         # Set up and run deduper
-        foo = source_factory(full_name="foo", engine=sqlite_warehouse).source
+        foo = source_factory(
+            full_name="foo", engine=sqlite_warehouse
+        ).source.set_engine(sqlite_warehouse)
         d_foo = DedupeStep(
             name="d_foo",
             description="",
@@ -110,10 +112,11 @@ def test_dedupe_step_run(
 
         # Right data is queried
         query_mock.assert_called_once_with(
-            [Selector(source=foo, fields=[])],
+            [Selector(engine=sqlite_warehouse, address=foo.address, fields=[])],
             return_type="pandas",
             threshold=d_foo.left.threshold,
             resolution_name=d_foo.left.name,
+            only_indexed=True,
         )
         # Data is pre-processed
         process_mock.assert_called_once_with(
@@ -155,8 +158,12 @@ def test_link_step_run(
         model_mock.run = Mock(return_value=results_mock)
 
         # Set up and run deduper
-        foo = source_factory(full_name="foo", engine=sqlite_warehouse).source
-        bar = source_factory(full_name="bar", engine=sqlite_warehouse).source
+        foo = source_factory(
+            full_name="foo", engine=sqlite_warehouse
+        ).source.set_engine(sqlite_warehouse)
+        bar = source_factory(
+            full_name="bar", engine=sqlite_warehouse
+        ).source.set_engine(sqlite_warehouse)
         foo_bar = LinkStep(
             name="foo_bar",
             description="",
@@ -172,16 +179,18 @@ def test_link_step_run(
         # Right data is queried
         assert query_mock.call_count == 2
         assert query_mock.call_args_list[0] == call(
-            [Selector(source=foo, fields=[])],
+            [Selector(engine=sqlite_warehouse, address=foo.address, fields=[])],
             return_type="pandas",
             threshold=foo_bar.left.threshold,
             resolution_name=foo_bar.left.name,
+            only_indexed=True,
         )
         assert query_mock.call_args_list[1] == call(
-            [Selector(source=bar, fields=[])],
+            [Selector(engine=sqlite_warehouse, address=bar.address, fields=[])],
             return_type="pandas",
             threshold=foo_bar.right.threshold,
             resolution_name=foo_bar.right.name,
+            only_indexed=True,
         )
 
         # Data is pre-processed

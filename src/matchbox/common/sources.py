@@ -102,14 +102,26 @@ class SourceAddress(BaseModel):
         hash = HASH_FUNC(stable_str).digest()
         return SourceAddress(full_name=full_name, warehouse_hash=hash)
 
+    def format_column(self, column: str) -> str:
+        """Outputs a full SQLAlchemy column representation.
+
+        Args:
+            column: the name of the column
+
+        Returns:
+            A string representing the table name and column
+        """
+        return fullname_to_prefix(self.full_name) + column
+
 
 def needs_engine(func: Callable[P, R]) -> Callable[P, R]:
-    """Decorator to ensure Engine is available to object."""
+    """Decorator to check that engine is set."""
 
     @wraps(func)
     def wrapper(self: "Source", *args: P.args, **kwargs: P.kwargs) -> R:
         if not self.engine:
             raise MatchboxSourceEngineError
+
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -170,40 +182,19 @@ class Source(BaseModel):
             full_name=self.address.full_name, engine=engine
         )
         if implied_address != self.address:
-            raise ValueError(
-                "The engine must be the same that was used to index the source"
-            )
+            raise ValueError("The engine does not match the source address.")
 
         self._engine = engine
-        remote_columns = self._get_remote_columns()
-        for col in self.columns:
-            if col.name not in remote_columns:
-                raise MatchboxSourceColumnError(
-                    f"Column {col.name} not available in {self.address.full_name}"
-                )
-            actual_type = str(remote_columns[col.name])
-            if actual_type != col.type:
-                raise MatchboxSourceColumnError(
-                    f"Type {actual_type} != {col.type} for {col.name}"
-                )
+
         return self
 
-    def format_column(self, column: str) -> str:
-        """Outputs a full SQLAlchemy column representation.
-
-        Args:
-            column: the name of the column
-
-        Returns:
-            A string representing the table name and column
-        """
-        return fullname_to_prefix(self.address.full_name) + column
-
     @needs_engine
-    def _get_remote_columns(self) -> dict[str, str]:
+    def _get_remote_columns(self, exclude_pk=False) -> dict[str, str]:
         table = self.to_table()
         return {
-            col.name: col.type for col in table.columns if col.name not in self.db_pk
+            col.name: col.type
+            for col in table.columns
+            if (col.name != self.db_pk) or (not exclude_pk)
         }
 
     @needs_engine
@@ -213,7 +204,7 @@ class Source(BaseModel):
         Default columns are all from the source warehouse other than `self.db_pk`.
         All other attributes are copied, and its engine (if present) is set.
         """
-        remote_columns = self._get_remote_columns()
+        remote_columns = self._get_remote_columns(exclude_pk=True)
         columns_attribute = (
             SourceColumn(name=col_name, type=str(col_type))
             for col_name, col_type in remote_columns.items()
@@ -239,6 +230,42 @@ class Source(BaseModel):
         table = Table(db_table, metadata, autoload_with=self.engine)
         return table
 
+    @needs_engine
+    def check_columns(self, columns: list[str] | None = None) -> None:
+        """Check that columns are available in the warehouse and correctly typed.
+
+        Args:
+            columns: List of column names to check. If None, it will check self.columns
+        """
+        remote_columns = self._get_remote_columns()
+
+        if self.db_pk not in remote_columns:
+            raise MatchboxSourceColumnError(
+                f"Primary key {self.db_pk} not available in {self.address}"
+            )
+
+        if columns:
+            columns = set(columns)
+            remote_names = set(remote_columns.keys())
+            if not columns <= remote_names:
+                raise MatchboxSourceColumnError(
+                    f"Columns {columns - remote_names} not in {self.address}"
+                )
+        else:
+            if not self.columns:
+                raise ValueError("No columns passed, and none set on the Source.")
+
+            for col in self.columns:
+                if col.name not in remote_columns:
+                    raise MatchboxSourceColumnError(
+                        f"Column {col.name} not available in {self.address.full_name}"
+                    )
+                actual_type = str(remote_columns[col.name])
+                if actual_type != col.type:
+                    raise MatchboxSourceColumnError(
+                        f"Type {actual_type} != {col.type} for {col.name}"
+                    )
+
     def _select(
         self,
         fields: list[str] | None = None,
@@ -248,6 +275,8 @@ class Source(BaseModel):
         """Returns a SQLAlchemy Select object to retrieve data from the dataset."""
         table = self.to_table()
 
+        # Ensure all set columns are available and the expected type
+        self.check_columns(columns=fields)
         if not fields:
             fields = [col.name for col in self.columns]
 
@@ -258,7 +287,7 @@ class Source(BaseModel):
             """Helper to get a column with proper casting and labeling for PKs."""
             col = table.columns[col_name]
             if col_name == self.db_pk:
-                return cast(col, String).label(self.format_column(col_name))
+                return cast(col, String).label(self.address.format_column(col_name))
             return col
 
         # Determine which columns to select
@@ -382,6 +411,9 @@ class Source(BaseModel):
         Returns:
             A PyArrow Table containing source primary keys and their hashes.
         """
+        # Ensure all set columns are available and the expected type
+        self.check_columns()
+
         source_table = self.to_table()
         cols_to_index = tuple([col.name for col in self.columns])
 

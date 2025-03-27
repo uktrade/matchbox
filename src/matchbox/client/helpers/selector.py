@@ -2,14 +2,13 @@
 
 import itertools
 from typing import Iterator, Literal, get_args
-from warnings import warn
 
 import polars as pl
 import pyarrow as pa
 from pandas import ArrowDtype
 from pyarrow import Table as ArrowTable
 from pyarrow import compute as pc
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Engine, create_engine
 
 from matchbox.client import _handler
@@ -23,14 +22,16 @@ from matchbox.common.sources import Match, Source, SourceAddress
 class Selector(BaseModel):
     """A selector to choose a source and optionally a subset of columns to select."""
 
-    source: Source
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    address: SourceAddress
     fields: list[str] | None = None
+    engine: Engine
 
 
 def select(
     *selection: str | dict[str, str],
     engine: Engine | None = None,
-    only_indexed: bool = True,
 ) -> list[Selector]:
     """From one engine, builds and verifies a list of selectors.
 
@@ -39,10 +40,6 @@ def select(
         engine: The engine to connect to the data warehouse hosting the source.
             If not provided, will use a connection string from the
             `MB__CLIENT__DEFAULT_WAREHOUSE` environment variable.
-        only_indexed: Whether you intend to select indexed columns only. Will raise a
-            warning if True and non-indexed columns are selected. Defaults to True.
-            Non-indexed columns should only be selected if you're querying data for
-            a purpose other than matching
 
     Returns:
         A list of Selector objects
@@ -70,27 +67,14 @@ def select(
     for s in selection:
         if isinstance(s, str):
             source_address = SourceAddress.compose(engine, s)
-            source = _handler.get_source(source_address).set_engine(engine)
-            selectors.append(Selector(source=source))
+            selectors.append(Selector(engine=engine, address=source_address))
         elif isinstance(s, dict):
             for full_name, fields in s.items():
                 source_address = SourceAddress.compose(engine, full_name)
-                source = _handler.get_source(source_address).set_engine(engine)
 
-                warehouse_cols = set(source.to_table().columns.keys())
-                selected_cols = set(fields)
-                if not selected_cols <= warehouse_cols:
-                    raise ValueError(
-                        f"{selected_cols - warehouse_cols} not in {source_address}"
-                    )
-
-                indexed_cols = set(col.name for col in source.columns)
-                if (not selected_cols <= indexed_cols) and only_indexed:
-                    warn(
-                        "You are selecting columns that are not indexed in Matchbox",
-                        stacklevel=2,
-                    )
-                selectors.append(Selector(source=source, fields=fields))
+                selectors.append(
+                    Selector(engine=engine, address=source_address, fields=fields)
+                )
         else:
             raise ValueError("Selection specified in incorrect format")
 
@@ -98,7 +82,7 @@ def select(
 
 
 def _process_query_result(
-    data: ArrowTable, selector: Selector, mb_ids: ArrowTable
+    data: ArrowTable, selector: Selector, mb_ids: ArrowTable, db_pk: str
 ) -> ArrowTable:
     """Process query results by joining with matchbox IDs and filtering fields.
 
@@ -106,6 +90,7 @@ def _process_query_result(
         data: The raw data from the source
         selector: The selector with source and fields information
         mb_ids: The matchbox IDs
+        db_pk: The primary key of the source
 
     Returns:
         The processed table with joined matchbox IDs and filtered fields
@@ -113,18 +98,72 @@ def _process_query_result(
     # Join data with matchbox IDs
     joined_table = data.join(
         right_table=mb_ids,
-        keys=selector.source.format_column(selector.source.db_pk),
+        keys=selector.address.format_column(db_pk),
         right_keys="source_pk",
         join_type="inner",
     )
 
     # Apply field filtering if needed
     if selector.fields:
-        keep_cols = ["id"] + [selector.source.format_column(f) for f in selector.fields]
+        keep_cols = ["id"] + [
+            selector.address.format_column(f) for f in selector.fields
+        ]
         match_cols = [col for col in joined_table.column_names if col in keep_cols]
         return joined_table.select(match_cols)
     else:
         return joined_table
+
+
+def _get_matchbox_ids(
+    source_address: SourceAddress,
+    resolution_name: str,
+    threshold: int | None = None,
+    limit: int | None = None,
+) -> ArrowTable:
+    """Get matchbox IDs for a source and resolution."""
+    mb_ids = _handler.query(
+        source_address=source_address,
+        resolution_name=resolution_name,
+        threshold=threshold,
+        limit=limit,
+    )
+
+    return mb_ids
+
+
+def _source_query(
+    selector: Selector,
+    mb_ids: ArrowTable,
+    batch_size: int | None = None,
+    only_indexed: bool = False,
+) -> tuple[Source, ArrowTable] | tuple[Source, Iterator[ArrowTable]]:
+    """From a Selector, query a source and join to matchbox IDs."""
+    source = _handler.get_source(selector.address).set_engine(selector.engine)
+
+    if source.columns:
+        indexed_columns = set([col.name for col in source.columns])
+    else:
+        # If only_indexed is True and source.columns is unset, we will raise
+        indexed_columns = set()
+    if only_indexed and selector.fields and not set(selector.fields) <= indexed_columns:
+        raise ValueError("Attempting to query unindexed columns.")
+
+    selected_fields = None
+    if selector.fields:
+        selected_fields = list(set(selector.fields))
+
+    iter_batches = False
+    if batch_size:
+        iter_batches = True
+
+    raw_results = source.to_arrow(
+        fields=selected_fields,
+        pks=mb_ids["source_pk"].to_pylist(),
+        iter_batches=iter_batches,
+        batch_size=batch_size,
+    )
+
+    return source, raw_results
 
 
 def _query_batched(
@@ -134,6 +173,7 @@ def _query_batched(
     threshold: int | None,
     return_type: ReturnTypeStr,
     batch_size: int | None,
+    only_indexed: bool,
 ) -> Iterator[QueryReturnType]:
     """Helper function that implements batched query processing.
 
@@ -143,32 +183,28 @@ def _query_batched(
     selector_iters = []
 
     for selector, sub_limit in zip(selectors, sub_limits, strict=True):
-        # Get ids from matchbox
-        mb_ids = _handler.query(
-            source_address=selector.source.address,
+        mb_ids = _get_matchbox_ids(
+            source_address=selector.address,
             resolution_name=resolution_name,
             threshold=threshold,
             limit=sub_limit,
         )
 
-        fields = None
-        if selector.fields:
-            fields = list(set(selector.fields))
-
-        # Get batched data
-        raw_batches = selector.source.to_arrow(
-            fields=fields,
-            pks=mb_ids["source_pk"].to_pylist(),
-            iter_batches=True,
+        source, raw_batches = _source_query(
+            selector=selector,
+            mb_ids=mb_ids,
             batch_size=batch_size,
+            only_indexed=only_indexed,
         )
 
         # Process and transform each batch
-        def process_batches(batches, selector, mb_ids):
+        def process_batches(batches, selector, mb_ids, db_pk):
             for batch in batches:
-                yield _process_query_result(batch, selector, mb_ids)
+                yield _process_query_result(batch, selector, mb_ids, db_pk=db_pk)
 
-        selector_iters.append(process_batches(raw_batches, selector, mb_ids))
+        selector_iters.append(
+            process_batches(raw_batches, selector, mb_ids, source.db_pk)
+        )
 
     # Chain iterators if multiple selectors
     if len(selector_iters) == 1:
@@ -202,6 +238,7 @@ def query(
     limit: int | None = None,
     batch_size: int | None = None,
     return_batches: bool = False,
+    only_indexed: bool = False,
 ) -> QueryReturnType | Iterator[QueryReturnType]:
     """Runs queries against the selected backend.
 
@@ -236,6 +273,9 @@ def query(
         return_batches (optional): If True, returns an iterator of batches instead of a
             single combined result, which is useful for processing large datasets with
             limited memory. Default is False.
+        only_indexed (optional): If True, it will raise an exception when attempting to
+            query un-indexed columns, which should never be done if querying for
+            subsequent matching. Default is False.
 
     Returns:
         If return_batches is False:
@@ -278,7 +318,7 @@ def query(
     if not selectors:
         raise ValueError("At least one selector must be specified")
 
-    selectors = list(itertools.chain(*selectors))
+    selectors: list[Selector] = list(itertools.chain(*selectors))
 
     if not resolution_name and len(selectors) > 1:
         resolution_name = DEFAULT_RESOLUTION
@@ -303,30 +343,27 @@ def query(
             threshold=threshold,
             return_type=return_type,
             batch_size=batch_size,
+            only_indexed=only_indexed,
         )
     else:
         # Process all data and return a single result
         tables = []
         for selector, sub_limit in zip(selectors, sub_limits, strict=True):
             # Get ids from matchbox
-            mb_ids = _handler.query(
-                source_address=selector.source.address,
+            mb_ids = _get_matchbox_ids(
+                source_address=selector.address,
                 resolution_name=resolution_name,
                 threshold=threshold,
                 limit=sub_limit,
             )
 
-            fields = None
-            if selector.fields:
-                fields = list(set(selector.fields))
-
-            raw_data = selector.source.to_arrow(
-                fields=fields,
-                pks=mb_ids["source_pk"].to_pylist(),
-                batch_size=batch_size,
+            source, raw_data = _source_query(
+                selector=selector, mb_ids=mb_ids, only_indexed=only_indexed
             )
 
-            processed_table = _process_query_result(raw_data, selector, mb_ids)
+            processed_table = _process_query_result(
+                raw_data, selector, mb_ids, db_pk=source.db_pk
+            )
             tables.append(processed_table)
 
         # Combine results based on combine_type
@@ -397,10 +434,10 @@ def match(
     """
     if len(source) > 1:
         raise ValueError("Only one source can be matched at one time")
-    source = source[0].source.address
+    source = source[0].address
 
-    targets = list(itertools.chain(*targets))
-    targets = [t.source.address for t in targets]
+    targets: list[Selector] = list(itertools.chain(*targets))
+    targets = [t.address for t in targets]
 
     return _handler.match(
         targets=targets,

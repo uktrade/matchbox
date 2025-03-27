@@ -78,8 +78,31 @@ def test_source_address_compose():
     assert len(same_table_name_str) == 1
 
 
+def test_source_address_format_columns():
+    """Column names can get a standard prefix from a table name."""
+    address1 = SourceAddress(full_name="foo", warehouse_hash=b"bar")
+    address2 = SourceAddress(full_name="foo.bar", warehouse_hash=b"bar")
+
+    assert address1.format_column("col") == "foo_col"
+    assert address2.format_column("col") == "foo_bar_col"
+
+
 def test_source_set_engine(sqlite_warehouse: Engine):
     """Engine can be set on Source."""
+    source_testkit = source_factory(engine=sqlite_warehouse)
+
+    # We can set engine with correct column specification
+    source = source_testkit.source.set_engine(sqlite_warehouse)
+    assert isinstance(source, Source)
+
+    # Error is raised with wrong engine
+    with pytest.raises(ValueError, match="engine does not match"):
+        wrong_engine = create_engine("sqlite:///:memory:")
+        source.set_engine(wrong_engine)
+
+
+def test_source_check_columns(sqlite_warehouse: Engine):
+    """Source columns are checked against the warehouse."""
     source_testkit = source_factory(
         features=[{"name": "b", "base_generator": "random_int", "sql_type": "BIGINT"}],
         engine=sqlite_warehouse,
@@ -90,24 +113,32 @@ def test_source_set_engine(sqlite_warehouse: Engine):
     source = source_testkit.source.set_engine(sqlite_warehouse)
     assert isinstance(source, Source)
 
-    # Error is raised with wrong engine
-    with pytest.raises(ValueError, match="engine must be the same"):
-        wrong_engine = create_engine("sqlite:///:memory:")
-        source.set_engine(wrong_engine)
+    # Error is raised with custom columns
+    with pytest.raises(MatchboxSourceColumnError, match="Columns {'c'} not in"):
+        source.check_columns(columns=["c"])
+
+    # Error is raised with missing primary key
+    new_source = source_testkit.source.model_copy(update={"db_pk": "typo"}).set_engine(
+        sqlite_warehouse
+    )
+    with pytest.raises(
+        MatchboxSourceColumnError, match="Primary key typo not available"
+    ):
+        new_source.check_columns()
 
     # Error is raised with missing column
+    new_source = source_testkit.source.model_copy(
+        update={"columns": (SourceColumn(name="c", type="TEXT"),)}
+    ).set_engine(sqlite_warehouse)
     with pytest.raises(MatchboxSourceColumnError, match="Column c not available in"):
-        new_source = source_testkit.source.model_copy(
-            update={"columns": (SourceColumn(name="c", type="TEXT"),)}
-        )
-        new_source.set_engine(sqlite_warehouse)
+        new_source.check_columns()
 
     # Error is raised with wrong type
+    new_source = source_testkit.source.model_copy(
+        update={"columns": (SourceColumn(name="b", type="TEXT"),)}
+    ).set_engine(sqlite_warehouse)
     with pytest.raises(MatchboxSourceColumnError, match="Type BIGINT != TEXT for b"):
-        new_source = source_testkit.source.model_copy(
-            update={"columns": (SourceColumn(name="b", type="TEXT"),)}
-        )
-        new_source.set_engine(sqlite_warehouse)
+        new_source.check_columns()
 
 
 def test_source_hash_equality(sqlite_warehouse: Engine):
@@ -123,20 +154,6 @@ def test_source_hash_equality(sqlite_warehouse: Engine):
     assert source.engine != source_eq.engine
     assert source == source_eq
     assert hash(source) == hash(source_eq)
-
-
-def test_source_format_columns():
-    """Column names can get a standard prefix from a table name."""
-    source1 = Source(
-        address=SourceAddress(full_name="foo", warehouse_hash=b"bar"), db_pk="i"
-    )
-
-    source2 = Source(
-        address=SourceAddress(full_name="foo.bar", warehouse_hash=b"bar"), db_pk="i"
-    )
-
-    assert source1.format_column("col") == "foo_col"
-    assert source2.format_column("col") == "foo_bar_col"
 
 
 def test_source_default_columns(sqlite_warehouse: Engine):

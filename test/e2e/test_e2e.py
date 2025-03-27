@@ -210,7 +210,6 @@ class TestE2EAnalyticalUser:
                     + [col.name for col in source_testkit.source.columns]
                 },
                 engine=self.warehouse_engine,
-                only_indexed=False,
             )
             raw_df = query(source_select, return_type="pandas")
             clusters = query_to_cluster_entities(
@@ -290,7 +289,6 @@ class TestE2EAnalyticalUser:
                 select(
                     {left_testkit.source.address.full_name: ["pk", common_field]},
                     engine=self.warehouse_engine,
-                    only_indexed=False,
                 ),
                 resolution_name=deduper_names[left_testkit.source.address.full_name],
                 return_type="pandas",
@@ -305,7 +303,6 @@ class TestE2EAnalyticalUser:
                 select(
                     {right_testkit.source.address.full_name: ["pk", common_field]},
                     engine=self.warehouse_engine,
-                    only_indexed=False,
                 ),
                 resolution_name=deduper_names[right_testkit.source.address.full_name],
                 return_type="pandas",
@@ -403,10 +400,10 @@ class TestE2EAnalyticalUser:
             select(
                 {crn_source: ["pk", "crn"]},
                 engine=self.warehouse_engine,
-                only_indexed=False,
             ),
             select(
-                {duns_source: ["pk"]}, engine=self.warehouse_engine, only_indexed=False
+                {duns_source: ["pk"]},
+                engine=self.warehouse_engine,
             ),
             resolution_name=linker_names[first_pair],
             return_type="pandas",
@@ -421,7 +418,6 @@ class TestE2EAnalyticalUser:
             select(
                 {cdms_source: ["pk", "crn"]},
                 engine=self.warehouse_engine,
-                only_indexed=False,
             ),
             resolution_name=deduper_names[cdms_source],
             return_type="pandas",
@@ -490,7 +486,6 @@ class TestE2EAnalyticalUser:
                     cdms_source: ["pk", "crn", "cdms"],
                 },
                 engine=self.warehouse_engine,
-                only_indexed=False,
             ),
             resolution_name=final_linker_name,
             return_type="pandas",

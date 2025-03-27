@@ -427,7 +427,7 @@ def test_source_to_results_conversion():
     ("base_generator", "expected_type"),
     [
         pytest.param("name", "TEXT", id="text_generator"),
-        pytest.param("random_int", "INTEGER", id="integer_generator"),
+        pytest.param("random_int", "BIGINT", id="integer_generator"),
         pytest.param("date_this_decade", "DATE", id="date_generator"),
     ],
 )

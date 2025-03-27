@@ -61,6 +61,18 @@ def make_features_hashable(func: Callable[P, R]) -> Callable[P, R]:
     return wrapper
 
 
+def to_warehouse(engine: Engine, data: pd.DataFrame, address: SourceAddress):
+    """Write data to the warehouse."""
+    schema, table = get_schema_table_names(address.full_name)
+    data.to_sql(
+        name=table,
+        schema=schema,
+        con=engine,
+        index=False,
+        if_exists="replace",
+    )
+
+
 class SourceConfig(BaseModel):
     """Configuration for generating a source."""
 
@@ -125,13 +137,10 @@ class SourceTestkit(BaseModel):
 
         As the Source won't have an engine set by default, can be supplied.
         """
-        schema, table = get_schema_table_names(self.source.address.full_name)
-        self.data.to_pandas().drop("id", axis=1).to_sql(
-            name=table,
-            schema=schema,
-            con=engine or self.source.engine,
-            index=False,
-            if_exists="replace",
+        to_warehouse(
+            engine or self.source.engine,
+            self.data.to_pandas().drop("id", axis=1),
+            self.source.address,
         )
 
 

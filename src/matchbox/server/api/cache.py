@@ -9,6 +9,7 @@ import pyarrow as pa
 from pydantic import BaseModel, ConfigDict
 
 from matchbox.common.dtos import BackendUploadType, ModelMetadata, UploadStatus
+from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.logging import logger
 from matchbox.common.sources import Source
 from matchbox.server.api.arrow import s3_to_recordbatch
@@ -194,8 +195,27 @@ async def process_upload(
         metadata_store.update_status(upload_id, "complete")
 
     except Exception as e:
-        metadata_store.update_status(upload_id, "failed", details=str(e))
-        raise e
+        error_context = {
+            "upload_id": upload_id,
+            "upload_type": getattr(upload, "upload_type", "unknown"),
+            "metadata": getattr(upload, "metadata", "unknown"),
+            "bucket": bucket,
+            "key": key,
+        }
+        logger.error(
+            f"Upload processing failed with context: {error_context}", exc_info=True
+        )
+        details = (
+            f"Error: {e}. Context: "
+            f"Upload type: {getattr(upload, 'upload_type', 'unknown')}, "
+            f"Source: {getattr(upload, 'metadata', 'unknown')}"
+        )
+        metadata_store.update_status(
+            upload_id,
+            "failed",
+            details=details,
+        )
+        raise MatchboxServerFileError(message=details) from e
     finally:
         try:
             client.delete_object(Bucket=bucket, Key=key)

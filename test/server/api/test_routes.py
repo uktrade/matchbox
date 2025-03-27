@@ -22,6 +22,7 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
+    MatchboxServerFileError,
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.factories.models import model_factory
@@ -260,7 +261,7 @@ async def test_process_upload_deletes_file_on_failure(s3: S3Client):
     store.update_status(upload_id, "awaiting_upload")
 
     # Run the process, expecting it to fail
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(MatchboxServerFileError) as excinfo:
         await process_upload(
             backend=mock_backend,
             upload_id=upload_id,

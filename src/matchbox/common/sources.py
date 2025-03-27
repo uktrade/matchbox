@@ -402,9 +402,15 @@ class Source(BaseModel):
 
             Returns:
                 Polars DataFrame with hash and source_pk columns
+
+            Raises:
+                ValueError: If any source_pk values are null
             """
+            if batch["source_pk"].is_null().any():
+                raise ValueError("source_pk column contains null values")
+
             for col_name in cols_to_index:
-                batch = batch.with_columns(pl.col(col_name).cast(pl.Utf8))
+                batch = batch.with_columns(pl.col(col_name).cast(pl.Utf8).fill_null(""))
 
             record_separator = "␞"
             unit_separator = "␟"

@@ -1,6 +1,7 @@
 import copy
 
 import pandas as pd
+import polars as pl
 import pyarrow as pa
 import pytest
 from pandas.testing import assert_frame_equal
@@ -9,7 +10,7 @@ from sqlalchemy import Engine, Table, create_engine
 from matchbox.client.helpers.selector import Match
 from matchbox.common.db import fullname_to_prefix
 from matchbox.common.exceptions import MatchboxSourceColumnError
-from matchbox.common.factories.sources import source_factory
+from matchbox.common.factories.sources import source_factory, to_warehouse
 from matchbox.common.sources import Source, SourceAddress, SourceColumn
 
 
@@ -294,6 +295,56 @@ def test_source_hash_data(sqlite_warehouse: Engine):
     # Column order does not matter, column names do
     assert sort_df(original_hash).equals(sort_df(reordered_hash))
     assert not sort_df(original_hash).equals(sort_df(renamed_hash))
+
+
+def test_source_hash_nulls(sqlite_warehouse: Engine):
+    """A Source can output hashed versions of rows with nulls."""
+    # Mock data and source
+    data = pd.DataFrame(
+        {
+            "source_pk": ["a", "b"],
+            "a": [1.0, None],
+        }
+    )
+    address = SourceAddress.compose(full_name="null_test", engine=sqlite_warehouse)
+    source = Source(
+        address=address,
+        db_pk="source_pk",
+        columns=[
+            SourceColumn(name="a", type="FLOAT"),
+        ],
+    )
+    to_warehouse(engine=sqlite_warehouse, data=data, address=address)
+    source.set_engine(sqlite_warehouse)
+
+    # Test hashing with nulls
+    hashed_data = pl.from_arrow(source.hash_data())
+
+    # No nulls in the hash column
+    assert hashed_data["hash"].is_null().sum() == 0
+
+    # Test hashing with null PKs
+    null_pk_data = pd.DataFrame(
+        {
+            "source_pk": ["a", None, None],
+            "a": [1, 2, 3],
+        }
+    )
+    null_pk_address = SourceAddress.compose(
+        full_name="null_pk_test", engine=sqlite_warehouse
+    )
+    to_warehouse(engine=sqlite_warehouse, data=null_pk_data, address=null_pk_address)
+
+    # Null PKs should error
+    with pytest.raises(ValueError):
+        source_with_null_pks = Source(
+            address=null_pk_address,
+            db_pk="source_pk",
+            columns=[
+                SourceColumn(name="a", type="BIGINT"),
+            ],
+        ).set_engine(sqlite_warehouse)
+        source_with_null_pks.hash_data()
 
 
 @pytest.mark.parametrize(

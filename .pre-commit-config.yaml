@@ -22,6 +22,6 @@ repos:
     - id: mkdocs
       name: mkdocs
       description: "Verify MkDocs documentation builds without errors"
-      entry: mkdocs build --strict
+      entry: uv run mkdocs build --strict
       language: system
       pass_filenames: false

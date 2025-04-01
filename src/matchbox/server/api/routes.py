@@ -43,7 +43,12 @@ from matchbox.common.graph import ResolutionGraph
 from matchbox.common.sources import Match, Source, SourceAddress
 from matchbox.server.api.arrow import table_to_s3
 from matchbox.server.api.cache import MetadataStore, process_upload
-from matchbox.server.base import APISettings, BackendManager, MatchboxDBAdapter
+from matchbox.server.base import (
+    APISettings,
+    BackendManager,
+    MatchboxDBAdapter,
+    initialise_matchbox,
+)
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -60,7 +65,7 @@ class ParquetResponse(Response):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Context manager for the FastAPI lifespan events."""
-    get_backend()
+    initialise_matchbox()
     yield
 
 

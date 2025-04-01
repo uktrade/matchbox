@@ -3,6 +3,8 @@
 Includes the API, and database adapters for various backends.
 """
 
+import os
+
 from matchbox.server.api.routes import app
 from matchbox.server.base import (
     MatchboxDBAdapter,
@@ -12,4 +14,5 @@ from matchbox.server.base import (
 
 __all__ = ["app", "MatchboxDBAdapter", "MatchboxSettings"]
 
-initialise_matchbox()
+if "PYTEST_CURRENT_TEST" not in os.environ:
+    initialise_matchbox()

@@ -49,7 +49,7 @@ services:
     build:
       context: .
       args:
-        ENV_FILE: dev_docker.env
+        ENV_FILE: dev_docker_server.env
       dockerfile: src/matchbox/server/Dockerfile
       target: dev
     environment:

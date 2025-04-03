@@ -16,11 +16,10 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.graph import ResolutionGraph, ResolutionNodeType
 from matchbox.common.sources import Match, Source, SourceAddress, SourceColumn
-from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
+from matchbox.server.base import MatchboxBackends, MatchboxDBAdapter, MatchboxSnapshot
+from matchbox.server.postgresql import MatchboxPostgresSettings
 from matchbox.server.postgresql.db import (
     MBDB,
-    MatchboxBackends,
-    MatchboxPostgresSettings,
 )
 from matchbox.server.postgresql.orm import (
     Clusters,

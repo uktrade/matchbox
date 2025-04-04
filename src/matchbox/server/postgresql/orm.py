@@ -65,7 +65,10 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     # Relationships
     source = relationship("Sources", back_populates="dataset_resolution", uselist=False)
     probabilities = relationship(
-        "Probabilities", back_populates="proposed_by", cascade="all, delete-orphan"
+        "Probabilities",
+        back_populates="proposed_by",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     children = relationship(
         "Resolutions",
@@ -250,10 +253,16 @@ class Sources(CountMixin, MBDB.MatchboxBase):
     # Relationships
     dataset_resolution = relationship("Resolutions", back_populates="source")
     columns = relationship(
-        "SourceColumns", back_populates="source", cascade="all, delete-orphan"
+        "SourceColumns",
+        back_populates="source",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     cluster_source_pks = relationship(
-        "ClusterSourcePK", back_populates="source", cascade="all, delete-orphan"
+        "ClusterSourcePK",
+        back_populates="source",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     clusters = relationship(
         "Clusters",
@@ -307,10 +316,16 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
 
     # Relationships
     source_pks = relationship(
-        "ClusterSourcePK", back_populates="cluster", cascade="all, delete-orphan"
+        "ClusterSourcePK",
+        back_populates="cluster",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     probabilities = relationship(
-        "Probabilities", back_populates="proposes", cascade="all, delete-orphan"
+        "Probabilities",
+        back_populates="proposes",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     children = relationship(
         "Clusters",

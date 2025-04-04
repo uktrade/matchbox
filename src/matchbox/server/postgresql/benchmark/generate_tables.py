@@ -155,7 +155,7 @@ def generate_resolutions(dataset_start_id: int = 1) -> pa.Table:
         HASH_FUNC(rid.encode("utf-8")).digest() for rid in resolutions_name
     ]
     resolutions_type = ["dataset", "dataset", "model", "model", "model"]
-    resolutions_float = [None, None, 0.8, 0.8, 0.9]
+    resolutions_truth = [None, None, 80, 80, 90]
 
     return pa.table(
         {
@@ -166,7 +166,7 @@ def generate_resolutions(dataset_start_id: int = 1) -> pa.Table:
             "type": pa.array(resolutions_type, type=pa.string()),
             "name": pa.array(resolutions_name, type=pa.string()),
             "description": pa.array(resolutions_name, type=pa.string()),
-            "truth": pa.array(resolutions_float, type=pa.float64()),
+            "truth": pa.array(resolutions_truth, type=pa.int8()),
         }
     )
 
@@ -205,7 +205,7 @@ def generate_resolution_from(dataset_start_id: int = 1) -> pa.Table:
         {
             "parent": pa.array(resolution_parent, type=pa.uint64()),
             "child": pa.array(resolution_child, type=pa.uint64()),
-            "level": pa.array(resolution_level, type=pa.uint32()),
+            "level": pa.array(resolution_level, type=pa.int32()),
             "truth_cache": pa.array(resolution_truth_cache, type=pa.uint8()),
         }
     )
@@ -256,7 +256,7 @@ def generate_cluster_source(
 
     cluster_source_pks_table = pa.table(
         {
-            "pk_id": pa.array(pk_ids, type=pa.int32()),
+            "pk_id": pa.array(pk_ids, type=pa.int64()),
             "cluster_id": pa.array(cluster_ids, type=pa.uint64()),
             "source_id": pa.array(source_ids, type=pa.uint64()),
             "source_pk": pa.array(source_pks, type=pa.string()),

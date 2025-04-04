@@ -33,7 +33,7 @@ def test_source_address_compose():
         "postgresql://user:fakepass2@host:1234/db"  # trufflehog:ignore
     )
     pg_dialect = create_engine(
-        "postgresql+psycopg2://user:fakepass@host:1234/db"  # trufflehog:ignore
+        "postgresql+psycopg://user:fakepass@host:1234/db"  # trufflehog:ignore
     )
 
     sqlite = create_engine("sqlite:///foo.db")

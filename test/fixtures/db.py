@@ -287,7 +287,9 @@ def postgres_warehouse() -> Generator[Engine, None, None]:
     database = "warehouse"
     port = 7654
 
-    engine = create_engine(f"postgresql://{user}:{password}@{host}:{port}/{database}")
+    engine = create_engine(
+        f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
+    )
     yield engine
     engine.dispose()
 

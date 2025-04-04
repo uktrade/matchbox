@@ -28,3 +28,14 @@ test ENV="":
 # Run a local documentation development server
 docs:
     uv run mkdocs serve
+
+# Autogenerate migrations
+migrations-generate:
+    docker compose up -d matchbox-postgres
+    uv run alembic revision --autogenerate
+    echo "Please review alembic/versions to ensure expected as autogeneration of migrations can be incomplete"
+    docker compose down
+
+# Apply latest migration
+migrations-apply:
+    uv run alembic upgrade head

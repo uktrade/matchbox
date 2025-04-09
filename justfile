@@ -39,4 +39,12 @@ migrations-generate:
 
 # Apply latest migration
 migrations-apply:
+    docker compose down
+    docker compose up -d matchbox-postgres
     uv run alembic upgrade head
+    docker compose down
+
+# Drop all tables and re-create according to the current schema - this precludes any migrations
+drop-recreate-tables:
+    uv run python -c "from matchbox.client._handler import CLIENT; CLIENT.delete('/database', params={'certain': 'true'})"
+    docker compose down

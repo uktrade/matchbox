@@ -31,6 +31,7 @@ docs:
 
 # Autogenerate migrations
 migrations-generate:
+    docker compose down
     docker compose up -d matchbox-postgres
     uv run alembic revision --autogenerate
     echo "Please review alembic/versions to ensure expected as autogeneration of migrations can be incomplete"

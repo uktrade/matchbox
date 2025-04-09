@@ -309,11 +309,21 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     def clear(self, certain: bool = False) -> None:  # noqa: D102
         if certain:
-            MBDB.clear_database()
+            MBDB.reset_database()
         else:
             raise MatchboxDeletionNotConfirmed(
-                "This operation will drop the entire database. "
-                "It's principally used for testing. \n\n"
+                "This operation will drop the entire database and recreate it."
+                "It shouldn't generally be used because it precludes migrations."
+                "If you're sure you want to continue, rerun with certain=True"
+            )
+
+    def truncate(self, certain: bool = False) -> None:  # noqa: D102
+        if certain:
+            MBDB.truncate_database()
+        else:
+            raise MatchboxDeletionNotConfirmed(
+                "This operation will drop all rows in the database but not the "
+                "tables themselves. It's primarily used to reset following tests."
                 "If you're sure you want to continue, rerun with certain=True"
             )
 
@@ -324,7 +334,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             )
 
         if clear:
-            MBDB.clear_database()
+            MBDB.reset_database()
 
         restore(
             engine=MBDB.get_engine(),

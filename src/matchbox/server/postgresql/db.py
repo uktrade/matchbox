@@ -139,8 +139,23 @@ class MatchboxDatabase:
 
         self.MatchboxBase.metadata.create_all(self.get_engine())
 
-    def clear_database(self):
-        """Clear the database."""
+    def truncate_database(self):
+        """Truncate every table in the database schema (ignoring system tables)."""
+        with self.get_engine().connect() as conn:
+            conn.execute(
+                text(
+                    "DO $$ DECLARE tablequery TEXT; BEGIN",
+                    "FOR tablequery IN (SELECT concat('TRUNCATE TABLE ',"
+                    "table_schema,'.',table_name, ' CASCADE')",
+                    "FROM information_schema.tables",
+                    f"WHERE table_schema={self.settings.postgres.db_schema}) LOOP",
+                    "EXECUTE tablequery; END LOOP; END $$;",
+                )
+            )
+            conn.commit()
+
+    def reset_database(self):
+        """Drop the database schema and recreate for a schema reset."""
         with self.get_engine().connect() as conn:
             conn.execute(
                 text(
@@ -148,9 +163,7 @@ class MatchboxDatabase:
                 )
             )
             conn.commit()
-
         self._reset_connections()
-
         self.create_database()
 
 

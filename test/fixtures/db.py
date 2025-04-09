@@ -272,8 +272,6 @@ def setup_scenario(
 
     yield dag
 
-    backend.clear(certain=True)
-
 
 # Warehouse database fixtures
 
@@ -367,13 +365,7 @@ def matchbox_postgres(
 
     adapter = MatchboxPostgres(settings=matchbox_settings)
 
-    # Clean up the Matchbox database before each test, just in case
-    adapter.clear(certain=True)
-
     yield adapter
-
-    # Clean up the Matchbox database after each test
-    adapter.clear(certain=True)
 
 
 # Mock AWS fixtures

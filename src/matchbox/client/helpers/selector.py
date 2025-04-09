@@ -1,13 +1,10 @@
 """Functions to select and retrieve data from the Matchbox server."""
 
 import itertools
-from typing import Iterator, Literal, get_args
+from typing import Generator, Iterator, Literal, get_args
 
 import polars as pl
-import pyarrow as pa
-from pandas import ArrowDtype
-from pyarrow import Table as ArrowTable
-from pyarrow import compute as pc
+from polars import DataFrame as PolarsDataFrame
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Engine, create_engine
 
@@ -82,8 +79,8 @@ def select(
 
 
 def _process_query_result(
-    data: ArrowTable, selector: Selector, mb_ids: ArrowTable, db_pk: str
-) -> ArrowTable:
+    data: PolarsDataFrame, selector: Selector, mb_ids: PolarsDataFrame, db_pk: str
+) -> PolarsDataFrame:
     """Process query results by joining with matchbox IDs and filtering fields.
 
     Args:
@@ -97,10 +94,10 @@ def _process_query_result(
     """
     # Join data with matchbox IDs
     joined_table = data.join(
-        right_table=mb_ids,
-        keys=selector.address.format_column(db_pk),
-        right_keys="source_pk",
-        join_type="inner",
+        other=mb_ids,
+        left_on=selector.address.format_column(db_pk),
+        right_on="source_pk",
+        how="inner",
     )
 
     # Apply field filtering if needed
@@ -108,7 +105,7 @@ def _process_query_result(
         keep_cols = ["id"] + [
             selector.address.format_column(f) for f in selector.fields
         ]
-        match_cols = [col for col in joined_table.column_names if col in keep_cols]
+        match_cols = [col for col in joined_table.columns if col in keep_cols]
         return joined_table.select(match_cols)
     else:
         return joined_table
@@ -116,11 +113,10 @@ def _process_query_result(
 
 def _source_query(
     selector: Selector,
-    mb_ids: ArrowTable,
     return_batches: bool = False,
     batch_size: int | None = None,
     only_indexed: bool = False,
-) -> tuple[Source, ArrowTable] | tuple[Source, Iterator[ArrowTable]]:
+) -> tuple[Source, Iterator[PolarsDataFrame]]:
     """From a Selector, query a source and join to matchbox IDs."""
     source = _handler.get_source(selector.address).set_engine(selector.engine)
 
@@ -136,55 +132,68 @@ def _source_query(
     if selector.fields:
         selected_fields = list(set(selector.fields))
 
-    raw_results = source.to_arrow(
+    raw_results = source.to_polars(
         fields=selected_fields,
-        pks=mb_ids["source_pk"].to_pylist(),
         return_batches=return_batches,
         batch_size=batch_size,
     )
 
+    if isinstance(raw_results, PolarsDataFrame):
+        raw_results = [raw_results]
+
     return source, raw_results
 
 
-def _query_batched(
+def _process_selectors(
     selectors: list[Selector],
-    sub_limits: list[int | None],
     resolution_name: str | None,
     threshold: int | None,
-    return_type: ReturnTypeStr,
     batch_size: int | None,
     only_indexed: bool,
-) -> Iterator[QueryReturnType]:
-    """Helper function that implements batched query processing.
+) -> Iterator[PolarsDataFrame]:
+    """Helper function to process selectors and return an iterator of results.
 
-    Returns an iterator yielding batches of results.
+    For non-batched queries, turn this into a list.
+
+    For batched queries, yield from it.
     """
     # Create iterators for each selector
-    selector_iters = []
+    selector_iters: list[Generator[PolarsDataFrame, None, None]] = []
 
-    for selector, sub_limit in zip(selectors, sub_limits, strict=True):
-        mb_ids = _handler.query(
-            source_address=selector.address,
-            resolution_name=resolution_name,
-            threshold=threshold,
-            limit=sub_limit,
+    def _process_batches(
+        batches: Iterator[PolarsDataFrame],
+        selector: Selector,
+        mb_ids: PolarsDataFrame,
+        db_pk: str,
+    ) -> Generator[PolarsDataFrame, None, None]:
+        """Process and transform each batch of results."""
+        for batch in batches:
+            yield _process_query_result(batch, selector, mb_ids, db_pk=db_pk)
+
+    for selector in selectors:
+        mb_ids = pl.from_arrow(
+            _handler.query(
+                source_address=selector.address,
+                resolution_name=resolution_name,
+                threshold=threshold,
+            )
         )
 
         source, raw_batches = _source_query(
             selector=selector,
-            mb_ids=mb_ids,
             return_batches=True,
             batch_size=batch_size,
             only_indexed=only_indexed,
         )
 
         # Process and transform each batch
-        def process_batches(batches, selector, mb_ids, db_pk):
-            for batch in batches:
-                yield _process_query_result(batch, selector, mb_ids, db_pk=db_pk)
-
         selector_iters.append(
-            process_batches(raw_batches, selector, mb_ids, source.db_pk)
+            _process_batches(
+                batches=raw_batches,
+                selector=selector,
+                mb_ids=mb_ids,
+                db_pk=source.db_pk,
+            )
         )
 
     # Chain iterators if multiple selectors
@@ -192,22 +201,9 @@ def _query_batched(
         batches_iter = selector_iters[0]
     else:
         # Interleave batches from different selectors
-        batches_iter = itertools.chain(*selector_iters)
+        batches_iter = itertools.chain.from_iterable(selector_iters)
 
-    # Convert each batch to the requested return type
-    for batch in batches_iter:
-        match return_type:
-            case "pandas":
-                yield batch.to_pandas(
-                    use_threads=True,
-                    split_blocks=True,
-                    self_destruct=True,
-                    types_mapper=ArrowDtype,
-                )
-            case "polars":
-                yield pl.from_arrow(batch)
-            case "arrow":
-                yield batch
+    return batches_iter
 
 
 def query(
@@ -216,7 +212,6 @@ def query(
     combine_type: Literal["concat", "explode", "set_agg"] = "concat",
     return_type: ReturnTypeStr = "pandas",
     threshold: int | None = None,
-    limit: int | None = None,
     batch_size: int | None = None,
     return_batches: bool = False,
     only_indexed: bool = False,
@@ -247,7 +242,6 @@ def query(
             If None, uses the resolutions' default threshold
             If an integer, uses that threshold for the specified resolution, and the
             resolution's cached thresholds for its ancestors
-        limit (optional): The number to use in a limit clause. Useful for testing
         batch_size (optional): The size of each batch when fetching data from the
             warehouse, which helps reduce memory usage and load on the database.
             Default is None.
@@ -299,95 +293,69 @@ def query(
     if not selectors:
         raise ValueError("At least one selector must be specified")
 
+    if return_batches and combine_type != "concat":
+        raise ValueError("Batching is only supported for `combine_type='concat'`")
+
     selectors: list[Selector] = list(itertools.chain(*selectors))
 
     if not resolution_name and len(selectors) > 1:
         resolution_name = DEFAULT_RESOLUTION
 
-    # Divide the limit among selectors
-    if limit:
-        n_selectors = len(selectors)
-        sub_limit_base = limit // n_selectors
-        sub_limit_remainder = limit % n_selectors
-        sub_limits = [sub_limit_base + 1] * sub_limit_remainder + [sub_limit_base] * (
-            n_selectors - sub_limit_remainder
-        )
-    else:
-        sub_limits = [None] * len(selectors)
-
+    res = _process_selectors(
+        selectors=selectors,
+        resolution_name=resolution_name,
+        threshold=threshold,
+        batch_size=batch_size,
+        only_indexed=only_indexed,
+    )
     if return_batches:
         # Return an iterator of batches
-        return _query_batched(
-            selectors=selectors,
-            sub_limits=sub_limits,
-            resolution_name=resolution_name,
-            threshold=threshold,
-            return_type=return_type,
-            batch_size=batch_size,
-            only_indexed=only_indexed,
-        )
+        def generate_batches() -> Iterator[Generator[PolarsDataFrame, None, None]]:
+            """Yield batches of data in the requested format."""
+            for batch in res:
+                match return_type:
+                    case "pandas":
+                        yield batch.to_pandas()
+                    case "polars":
+                        yield batch
+                    case "arrow":
+                        yield batch.to_arrow()
+
+        return generate_batches()
+
     else:
         # Process all data and return a single result
-        tables = []
-        for selector, sub_limit in zip(selectors, sub_limits, strict=True):
-            # Get ids from matchbox
-            mb_ids = _handler.query(
-                source_address=selector.address,
-                resolution_name=resolution_name,
-                threshold=threshold,
-                limit=sub_limit,
-            )
+        tables: list[PolarsDataFrame] = list(res)
 
-            source, raw_data = _source_query(
-                selector=selector,
-                mb_ids=mb_ids,
-                only_indexed=only_indexed,
-                return_batches=False,
-                batch_size=batch_size,
-            )
-
-            processed_table = _process_query_result(
-                data=raw_data,
-                selector=selector,
-                mb_ids=mb_ids,
-                db_pk=source.db_pk,
-            )
-
-            tables.append(processed_table)
-
-        # Combine results based on combine_type
-        if combine_type == "concat":
-            result = pa.concat_tables(tables, promote_options="default")
+        # Make sure we have some results
+        if not tables:
+            result = pl.DataFrame()
         else:
-            result = tables[0]
-            for table in tables[1:]:
-                result = result.join(table, keys=["id"], join_type="full outer")
+            # Combine results based on combine_type
+            if combine_type == "concat":
+                result = pl.concat(tables, how="diagonal")
+            else:
+                result = tables[0]
+                for table in tables[1:]:
+                    result = result.join(table, on="id", how="full", coalesce=True)
 
-            if combine_type == "set_agg":
-                # Aggregate into lists
-                aggregate_rule = [
-                    (col, "distinct", pc.CountOptions(mode="only_valid"))
-                    for col in result.column_names
-                    if col != "id"
-                ]
-                result = result.group_by("id").aggregate(aggregate_rule)
-                # Recover original column names
-                rename_rule = {f"{col}_distinct": col for col, _, _ in aggregate_rule}
-                result = result.rename_columns(rename_rule)
+                result = result.select(["id", pl.all().exclude("id")])
+
+                if combine_type == "set_agg":
+                    # Aggregate into lists
+                    agg_expressions = [
+                        pl.col(col).unique() for col in result.columns if col != "id"
+                    ]
+                    result = result.group_by("id").agg(agg_expressions)
 
         # Return in requested format
         match return_type:
             case "pandas":
-                return result.to_pandas(
-                    use_threads=True,
-                    split_blocks=True,
-                    self_destruct=True,
-                    types_mapper=ArrowDtype,
-                )
+                return result.to_pandas()
             case "polars":
-                return pl.from_arrow(result)
-            case "arrow":
                 return result
+            case "arrow":
+                return result.to_arrow()
 
 
 def match(

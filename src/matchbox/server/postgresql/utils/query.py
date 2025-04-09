@@ -13,6 +13,7 @@ from matchbox.common.exceptions import (
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.sources import Match, SourceAddress
+from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourcePK,
@@ -21,6 +22,7 @@ from matchbox.server.postgresql.orm import (
     Resolutions,
     Sources,
 )
+from matchbox.server.postgresql.utils.db import compile_sql
 
 T = TypeVar("T")
 
@@ -250,7 +252,6 @@ def _resolve_cluster_hierarchy(
 
 
 def query(
-    engine: Engine,
     source_address: SourceAddress,
     resolution_name: str | None = None,
     threshold: int | None = None,
@@ -275,6 +276,7 @@ def query(
         A table containing the requested data from each table, unioned together,
         with the hash key of each row in Matchbox
     """
+    engine = MBDB.get_engine()
     with Session(engine) as session:
         dataset_resolution = _get_dataset_resolution(source_address, session)
 
@@ -299,7 +301,12 @@ def query(
         if limit:
             id_query = id_query.limit(limit)
 
-        mb_ids = sql_to_df(id_query, engine, return_type="arrow")
+        with MBDB.get_adbc_connection() as conn:
+            mb_ids = sql_to_df(
+                stmt=compile_sql(id_query),
+                connection=conn,
+                return_type="arrow",
+            )
 
         return mb_ids
 

@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelMetadata, ModelType
 from matchbox.common.graph import ResolutionNodeType
+from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Contains,
     Probabilities,
     ResolutionFrom,
     Resolutions,
 )
+from matchbox.server.postgresql.utils.db import compile_sql
 
 
 class SourceInfo(NamedTuple):
@@ -103,7 +105,7 @@ def get_model_metadata(engine: Engine, resolution: Resolutions) -> ModelMetadata
         )
 
 
-def get_model_results(engine: Engine, resolution: Resolutions) -> Table:
+def get_model_results(resolution: Resolutions) -> Table:
     """Recover the model's pairwise probabilities and return as a PyArrow table.
 
     For each probability this model assigned:
@@ -112,12 +114,12 @@ def get_model_results(engine: Engine, resolution: Resolutions) -> Table:
     - Determine left/right by tracing ancestry to source resolutions using query helpers
 
     Args:
-        engine: SQLAlchemy engine
         resolution: Resolution of type model to query
 
     Returns:
         Table containing the original pairwise probabilities
     """
+    engine = MBDB.get_engine()
     if resolution.type != ResolutionNodeType.MODEL:
         raise ValueError("Expected resolution of type model")
 
@@ -195,4 +197,9 @@ def get_model_results(engine: Engine, resolution: Resolutions) -> Table:
         pairs.c.probability,
     )
 
-    return sql_to_df(stmt=final_select, engine=engine, return_type="arrow")
+    with MBDB.get_adbc_connection() as conn:
+        return sql_to_df(
+            stmt=compile_sql(final_select),
+            connection=conn,
+            return_type="arrow",
+        )

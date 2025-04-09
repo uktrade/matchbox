@@ -1,5 +1,4 @@
-# connectorx won't work on ARM or python-alpine
-FROM --platform=amd64 python:3.11 AS base
+FROM python:3.11 AS base
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 

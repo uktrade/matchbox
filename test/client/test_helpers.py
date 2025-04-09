@@ -180,7 +180,7 @@ def test_query_no_resolution_ok_various_params(
     }
 
     # Tests with optional params
-    results = query(selectors, return_type="arrow", threshold=50, limit=2).to_pandas()
+    results = query(selectors, return_type="arrow", threshold=50).to_pandas()
     assert len(results) == 2
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
@@ -188,14 +188,11 @@ def test_query_no_resolution_ok_various_params(
         "full_name": address.full_name,
         "warehouse_hash_b64": address.warehouse_hash_b64,
         "threshold": "50",
-        "limit": "2",
     }
 
 
-def test_query_multiple_sources_with_limits(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
-):
-    """Tests that we can query multiple sources and distribute the limit among them."""
+def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engine):
+    """Tests that we can query multiple sources."""
     # Dummy data and source
     testkit1 = source_from_tuple(
         data_tuple=({"a": 1, "b": "2"}, {"a": 10, "b": "20"}),
@@ -259,7 +256,7 @@ def test_query_multiple_sources_with_limits(
     sels = select("foo", {"foo2": ["c"]}, engine=sqlite_warehouse)
 
     # Validate results
-    results = query(sels, limit=7)
+    results = query(sels)
     assert len(results) == 4
     assert {
         # All columns automatically selected for `foo`
@@ -276,17 +273,15 @@ def test_query_multiple_sources_with_limits(
         "full_name": address1.full_name,
         "warehouse_hash_b64": address1.warehouse_hash_b64,
         "resolution_name": DEFAULT_RESOLUTION,
-        "limit": "4",
     }
     assert dict(query_route.calls[-1].request.url.params) == {
         "full_name": address2.full_name,
         "warehouse_hash_b64": address2.warehouse_hash_b64,
         "resolution_name": DEFAULT_RESOLUTION,
-        "limit": "3",
     }
 
     # It also works with the selectors specified separately
-    query([sels[0]], [sels[1]], limit=7)
+    query([sels[0]], [sels[1]])
 
 
 @pytest.mark.parametrize(

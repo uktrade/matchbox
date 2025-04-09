@@ -1,14 +1,17 @@
 """Common database utilities for Matchbox."""
 
-from typing import Any, Iterator, Literal, TypeVar, get_args, overload
+from typing import TYPE_CHECKING, Any, Iterator, Literal, TypeVar, get_args, overload
 
 import polars as pl
 from pandas import DataFrame as PandasDataFrame
 from polars import DataFrame as PolarsDataFrame
 from pyarrow import Table as ArrowTable
 from sqlalchemy.engine import Engine
-from sqlalchemy.engine.url import URL
-from sqlalchemy.sql.selectable import Select
+
+if TYPE_CHECKING:
+    from adbc_driver_postgresql.dbapi import Connection as ADBCConnection
+else:
+    ADBCConnection = Any
 
 ReturnTypeStr = Literal["arrow", "pandas", "polars"]
 QueryReturnType = ArrowTable | PandasDataFrame | PolarsDataFrame
@@ -18,8 +21,8 @@ T = TypeVar("T")
 
 @overload
 def sql_to_df(
-    stmt: Select,
-    engine: Engine,
+    stmt: str,
+    connection: Engine | ADBCConnection,
     return_type: Literal["arrow", "pandas", "polars"],
     *,
     return_batches: Literal[False] = False,
@@ -31,8 +34,8 @@ def sql_to_df(
 
 @overload
 def sql_to_df(
-    stmt: Select,
-    engine: Engine,
+    stmt: str,
+    connection: Engine | ADBCConnection,
     return_type: Literal["arrow", "pandas", "polars"],
     *,
     return_batches: Literal[True],
@@ -43,8 +46,8 @@ def sql_to_df(
 
 
 def sql_to_df(
-    stmt: Select,
-    engine: Engine,
+    stmt: str,
+    connection: Engine | ADBCConnection,
     return_type: ReturnTypeStr = "pandas",
     *,
     return_batches: bool = False,
@@ -52,11 +55,12 @@ def sql_to_df(
     schema_overrides: dict[str, Any] | None = None,
     execute_options: dict[str, Any] | None = None,
 ) -> QueryReturnType | Iterator[QueryReturnType]:
-    """Executes the given SQLAlchemy statement using Polars.
+    """Executes the given SQLAlchemy statement or SQL string using Polars.
 
     Args:
-        stmt (Select): A SQLAlchemy Select statement to be executed.
-        engine (Engine): A SQLAlchemy Engine object for the database connection.
+        stmt (str): A SQL string to be executed.
+        connection (Engine | ADBCConnection): A SQLAlchemy Engine object or
+            ADBC connection.
         return_type (str): The type of the return value. One of "arrow", "pandas",
             or "polars".
         return_batches (bool): If True, return an iterator that yields each batch
@@ -75,24 +79,11 @@ def sql_to_df(
         If return_batches is True: An iterator of dataframes in the specified format.
 
     Raises:
-        ValueError: If the engine URL is not properly configured or if an unsupported
+        ValueError: If the connection is not properly configured or if an unsupported
             return type is specified.
     """
     if return_type not in get_args(ReturnTypeStr):
         raise ValueError(f"return_type of {return_type} not valid")
-
-    # Compile the SQLAlchemy statement to SQL string
-    compiled_stmt = stmt.compile(
-        dialect=engine.dialect, compile_kwargs={"literal_binds": True}
-    )
-    sql_query = str(compiled_stmt)
-
-    # Extract the connection URL from the engine
-    url: str | URL = engine.url
-    if isinstance(url, URL):
-        url = url.render_as_string(hide_password=False)
-    if not isinstance(url, str):
-        raise ValueError("Unable to obtain a valid connection string from the engine.")
 
     def to_format(results: PolarsDataFrame) -> QueryReturnType:
         if return_type == "polars":
@@ -102,29 +93,22 @@ def sql_to_df(
         elif return_type == "pandas":
             return results.to_pandas()
 
-    if bool(batch_size):
-        batches = pl.read_database(
-            query=sql_query,
-            connection=engine,
-            iter_batches=True,
-            batch_size=batch_size,
-            schema_overrides=schema_overrides,
-            execute_options=execute_options,
-        )
-
-        if not return_batches:
-            return to_format(pl.concat(batches))
-
-        return (to_format(batch) for batch in batches)
-
-    results = pl.read_database_uri(
-        query=sql_query,
-        uri=url,
+    res = pl.read_database(
+        query=stmt,
+        connection=connection,
+        iter_batches=bool(batch_size),
+        batch_size=batch_size,
         schema_overrides=schema_overrides,
         execute_options=execute_options,
     )
 
-    return to_format(results)
+    if not bool(batch_size):
+        return to_format(res)
+
+    if not return_batches:
+        return to_format(pl.concat(res))
+
+    return (to_format(batch) for batch in res)
 
 
 def get_schema_table_names(full_name: str) -> tuple[str, str]:

@@ -381,6 +381,19 @@ def test_dag_runs(
     assert dedupe_run.call_count == 1
     assert link_run.call_count == 2
 
+    # Reset mocks to test the start argument
+    handler_index.reset_mock()
+    dedupe_run.reset_mock()
+    link_run.reset_mock()
+
+    # Run DAG again, starting from foo_bar step
+    dag.run(start="foo_bar")
+
+    # Verify only steps from foo_bar onward were executed
+    assert handler_index.call_count == 0
+    assert dedupe_run.call_count == 0
+    assert link_run.call_count == 2
+
 
 def test_dag_missing_dependency(sqlite_warehouse: Engine):
     """Steps cannot be added before their dependencies."""

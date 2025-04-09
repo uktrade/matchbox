@@ -28,7 +28,6 @@ from sqlalchemy import (
     cast,
     select,
 )
-from sqlalchemy.sql.selectable import Select
 from typing_extensions import Annotated
 
 from matchbox.common.db import fullname_to_prefix, get_schema_table_names, sql_to_df
@@ -282,8 +281,8 @@ class Source(BaseModel):
         fields: list[str] | None = None,
         pks: list[T] | None = None,
         limit: int | None = None,
-    ) -> Select:
-        """Returns a SQLAlchemy Select object to retrieve data from the dataset."""
+    ) -> str:
+        """Returns a SQL query to retrieve data from the dataset."""
         table = self.to_table()
 
         # Ensure all set columns are available and the expected type
@@ -317,7 +316,11 @@ class Source(BaseModel):
         if limit:
             stmt = stmt.limit(limit)
 
-        return stmt.set_label_style(LABEL_STYLE_TABLENAME_PLUS_COL)
+        stmt = stmt.set_label_style(LABEL_STYLE_TABLENAME_PLUS_COL)
+
+        return stmt.compile(
+            dialect=self.engine.dialect, compile_kwargs={"literal_binds": True}
+        )
 
     @needs_engine
     def to_arrow(

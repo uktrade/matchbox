@@ -17,6 +17,7 @@ from matchbox.common.transform import (
     attach_components_to_probabilities,
     to_hierarchical_clusters,
 )
+from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourcePK,
@@ -27,7 +28,7 @@ from matchbox.server.postgresql.orm import (
     SourceColumns,
     Sources,
 )
-from matchbox.server.postgresql.utils.db import batch_ingest
+from matchbox.server.postgresql.utils.db import batch_ingest, compile_sql
 
 
 class HashIDMap:
@@ -104,13 +105,11 @@ class HashIDMap:
         return pc.take(self.lookup["id"], indices)
 
 
-def insert_dataset(
-    source: Source, data_hashes: pa.Table, engine: Engine, batch_size: int
-) -> None:
+def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> None:
     """Indexes a dataset from your data warehouse within Matchbox."""
     log_prefix = f"Index {source.address.pretty}"
     resolution_hash = hash_data(str(source.address))
-
+    engine = MBDB.get_engine()
     with Session(engine) as session:
         logger.info("Begin", prefix=log_prefix)
 
@@ -173,11 +172,12 @@ def insert_dataset(
         next_pk_id = ClusterSourcePK.next_id()
 
     # Don't insert new hashes, but new PKs need existing hash IDs
-    existing_hash_lookup = sql_to_df(
-        stmt=select(Clusters.cluster_id, Clusters.cluster_hash),
-        engine=engine,
-        return_type="arrow",
-    )
+    with MBDB.get_adbc_connection() as conn:
+        existing_hash_lookup = sql_to_df(
+            stmt=compile_sql(select(Clusters.cluster_id, Clusters.cluster_hash)),
+            connection=conn,
+            return_type="arrow",
+        )
 
     # Create a dictionary for faster lookups
     hash_to_id = {}
@@ -228,7 +228,7 @@ def insert_dataset(
                     batch_size=batch_size,
                 )
                 logger.info(
-                    f"Added {len(cluster_records)} objects to Clusters table",
+                    f"Added {len(cluster_records):,} objects to Clusters table",
                     prefix=log_prefix,
                 )
 
@@ -241,7 +241,7 @@ def insert_dataset(
                     batch_size=batch_size,
                 )
                 logger.info(
-                    f"Added {len(source_pk_records)} primary keys to "
+                    f"Added {len(source_pk_records):,} primary keys to "
                     "ClusterSourcePK table",
                     prefix=log_prefix,
                 )
@@ -449,11 +449,14 @@ def _results_to_insert_tables(
     logger.info("Wrangling data to insert tables", prefix=log_prefix)
 
     # Create ID-Hash lookup for existing probabilities
-    lookup = sql_to_df(
-        stmt=_get_resolution_related_clusters(resolution.resolution_id),
-        engine=engine,
-        return_type="arrow",
-    )
+    with MBDB.get_adbc_connection() as conn:
+        lookup = sql_to_df(
+            stmt=compile_sql(
+                _get_resolution_related_clusters(resolution.resolution_id)
+            ),
+            connection=conn,
+            return_type="arrow",
+        )
     lookup = lookup.cast(pa.schema([("hash", pa.large_binary()), ("id", pa.uint64())]))
 
     hm = HashIDMap(start=Clusters.next_id(), lookup=lookup)
@@ -582,7 +585,7 @@ def insert_results(
             )
 
             logger.info(
-                f"Successfully inserted {clusters.shape[0]} "
+                f"Successfully inserted {clusters.shape[0]:,} "
                 "objects into Clusters table",
                 prefix=log_prefix,
             )
@@ -595,7 +598,7 @@ def insert_results(
             )
 
             logger.info(
-                f"Successfully inserted {contains.shape[0]} "
+                f"Successfully inserted {contains.shape[0]:,} "
                 "objects into Contains table",
                 prefix=log_prefix,
             )
@@ -609,7 +612,7 @@ def insert_results(
 
             logger.info(
                 f"Successfully inserted "
-                f"{probabilities.shape[0]} objects into Probabilities table",
+                f"{probabilities.shape[0]:,} objects into Probabilities table",
                 prefix=log_prefix,
             )
 

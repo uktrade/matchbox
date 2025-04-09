@@ -237,11 +237,18 @@ class DAG:
         depth_first(apex, inverse_sequence)
         self.sequence = list(reversed(inverse_sequence))
 
-    def run(self):
+    def run(self, start: str | None = None):
         """Run entire DAG."""
         self.prepare()
 
-        for step_name in self.sequence:
+        start_index = 0
+        if start:
+            try:
+                start_index = self.sequence.index(start)
+            except ValueError as e:
+                raise ValueError(f"Step {start} not in DAG") from e
+
+        for step_name in self.sequence[start_index:]:
             node = self.nodes[step_name]
             if isinstance(node, Source):
                 _handler.index(

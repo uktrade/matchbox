@@ -32,6 +32,7 @@ server = [
     "boto3>=1.35.99",
     "ddtrace>=3.2.1",
     "fastapi[standard]>=0.115.0,<0.116.0",
+    "procrastinate>=3.1.0",
     "python-multipart>=0.0.18",
     "tomli>=2.0.1",
 ]

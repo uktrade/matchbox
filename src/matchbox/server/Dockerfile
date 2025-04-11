@@ -49,3 +49,11 @@ FROM base AS prod
 
 # Uses `--host 0.0.0.0` to allow access from outside the container
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/matchbox/server/api"]
+
+# Worker stage: optimised for CPU-intensive background tasks
+
+FROM base AS worker
+
+ENV PYTHONOPTIMIZE=1
+
+CMD ["python", "-m", "src.matchbox.server.worker.run"]

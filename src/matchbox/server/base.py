@@ -109,6 +109,7 @@ class MatchboxServerSettings(BaseSettings):
     datastore: MatchboxDatastoreSettings
     api_key: SecretStr | None = Field(default=None)
     log_level: LogLevelType = "INFO"
+    log_sql: bool = False
 
 
 class BackendManager:

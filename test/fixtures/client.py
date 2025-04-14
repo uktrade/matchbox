@@ -1,5 +1,6 @@
 from os import environ
 from typing import Callable, Generator
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,9 +31,9 @@ def env_setter() -> Generator[Callable[[str, str], None], None, None]:
 
 
 @pytest.fixture(scope="function")
+@patch("matchbox.server.api.routes.backend")
 def test_client(
-    env_setter: Callable[[str, str], None],
+    _: Mock, env_setter: Callable[[str, str], None]
 ) -> Generator[TestClient, None, None]:
     env_setter("MB__SERVER__API_KEY", "test-api-key")
-    client = TestClient(app, headers={"X-API-Key": "test-api-key"})
-    return client
+    return TestClient(app, headers={"X-API-Key": "test-api-key"})

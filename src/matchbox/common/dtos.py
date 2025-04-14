@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
+from matchbox.common.logging import LogLevelType
 
 
 class OKMessage(BaseModel):
@@ -225,3 +226,11 @@ class NotFoundError(BaseModel):
 
     details: str
     entity: BackendRetrievableType
+
+
+class APISettings(BaseModel):
+    """User-facing API settings."""
+
+    batch_size: int | None = Field(default=None)
+    log_level: LogLevelType | None = Field(default=None)
+    log_sql: bool | None = Field(default=None)

@@ -4,7 +4,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 from importlib.metadata import version
-from typing import TYPE_CHECKING, Annotated, Any, AsyncGenerator
+from typing import Annotated, AsyncGenerator
 
 from fastapi import (
     BackgroundTasks,
@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
+    APISettings,
     BackendCountableType,
     BackendRetrievableType,
     BackendUploadType,
@@ -52,11 +53,6 @@ from matchbox.server.base import (
     settings_to_backend,
 )
 
-if TYPE_CHECKING:
-    from mypy_boto3_s3.client import S3Client
-else:
-    S3Client = Any
-
 
 class ParquetResponse(Response):
     """A response object for returning parquet data."""
@@ -64,11 +60,22 @@ class ParquetResponse(Response):
     media_type = "application/octet-stream"
 
 
+settings: MatchboxServerSettings | None = None
+backend: MatchboxDBAdapter | None = None
+metadata_store = MetadataStore(expiry_minutes=30)
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Context manager for the FastAPI lifespan events."""
     # Set up the backend
-    backend = get_backend(get_settings())
+    global settings
+    global backend
+
+    SettingsClass = get_backend_settings(MatchboxServerSettings().backend_type)
+    settings = SettingsClass()
+    backend = settings_to_backend(settings)
 
     # Define common formatter
     formatter = logging.Formatter("[%(name)s %(levelname)s] %(message)s")
@@ -102,11 +109,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-
-metadata_store = MetadataStore(expiry_minutes=30)
-
-
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key")
+    del settings
+    del backend
 
 
 app = FastAPI(
@@ -122,24 +126,7 @@ async def http_exception_handler(request, exc):
     return JSONResponse(content=exc.detail, status_code=exc.status_code)
 
 
-def get_settings() -> MatchboxServerSettings:
-    """Get server settings."""
-    base_settings = MatchboxServerSettings()
-    SettingsClass = get_backend_settings(base_settings.backend_type)
-    return SettingsClass()
-
-
-def get_backend(
-    settings: Annotated[MatchboxServerSettings, Depends(get_settings)],
-) -> MatchboxDBAdapter:
-    """Get the backend adapter with injected settings."""
-    return settings_to_backend(settings)
-
-
-def validate_api_key(
-    settings: Annotated[MatchboxServerSettings, Depends(get_settings)],
-    api_key: str = Security(API_KEY_HEADER),
-) -> None:
+def validate_api_key(api_key: str = Security(api_key_header)) -> None:
     """Validate client API Key against settings."""
     if not settings.api_key:
         raise HTTPException(
@@ -171,6 +158,37 @@ async def healthcheck() -> OKMessage:
     return OKMessage()
 
 
+@app.get("/admin/settings", dependencies=[Depends(validate_api_key)])
+async def get_user_settings() -> APISettings:
+    """Get user-facing server settings."""
+    return APISettings(
+        batch_size=settings.batch_size,
+        log_level=settings.log_level,
+        log_sql=settings.log_sql,
+    )
+
+
+@app.post("/admin/settings", dependencies=[Depends(validate_api_key)])
+async def update_settings(
+    updated_settings: APISettings,
+) -> APISettings:
+    """Update user-facing server settings."""
+    global settings
+
+    if updated_settings.batch_size is not None:
+        settings.batch_size = updated_settings.batch_size
+    if updated_settings.log_level is not None:
+        settings.log_level = updated_settings.log_level
+    if updated_settings.log_sql is not None:
+        settings.log_sql = updated_settings.log_sql
+
+    return APISettings(
+        batch_size=settings.batch_size,
+        log_level=settings.log_level,
+        log_sql=settings.log_sql,
+    )
+
+
 @app.post(
     "/upload/{upload_id}",
     responses={
@@ -180,7 +198,6 @@ async def healthcheck() -> OKMessage:
     dependencies=[Depends(validate_api_key)],
 )
 async def upload_file(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     background_tasks: BackgroundTasks,
     upload_id: str,
     file: UploadFile,
@@ -305,7 +322,6 @@ async def get_upload_status(
     responses={404: {"model": NotFoundError}},
 )
 def query(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     full_name: str,
     warehouse_hash_b64: str,
     resolution_name: str | None = None,
@@ -347,7 +363,6 @@ def query(
     responses={404: {"model": NotFoundError}},
 )
 def match(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     target_full_names: Annotated[list[str], Query()],
     target_warehouse_hashes_b64: Annotated[list[str], Query()],
     source_full_name: str,
@@ -409,7 +424,6 @@ async def add_source(source: Source) -> UploadStatus:
     responses={404: {"model": NotFoundError}},
 )
 async def get_source(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     warehouse_hash_b64: str,
     full_name: str,
 ) -> Source:
@@ -427,9 +441,7 @@ async def get_source(
 
 
 @app.get("/report/resolutions")
-async def get_resolutions(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
-) -> ResolutionGraph:
+async def get_resolutions() -> ResolutionGraph:
     """Get the resolution graph."""
     return backend.get_resolution_graph()
 
@@ -448,9 +460,7 @@ async def get_resolutions(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(validate_api_key)],
 )
-async def insert_model(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], model: ModelMetadata
-) -> ModelOperationStatus:
+async def insert_model(model: ModelMetadata) -> ModelOperationStatus:
     """Insert a model into the backend."""
     try:
         backend.insert_model(model)
@@ -475,9 +485,7 @@ async def insert_model(
     "/models/{name}",
     responses={404: {"model": NotFoundError}},
 )
-async def get_model(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
-) -> ModelMetadata:
+async def get_model(name: str) -> ModelMetadata:
     """Get a model from the backend."""
     try:
         return backend.get_model(model=name)
@@ -496,9 +504,7 @@ async def get_model(
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(validate_api_key)],
 )
-async def set_results(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
-) -> UploadStatus:
+async def set_results(name: str) -> UploadStatus:
     """Create an upload task for model results."""
     try:
         metadata = backend.get_model(model=name)
@@ -518,9 +524,7 @@ async def set_results(
     "/models/{name}/results",
     responses={404: {"model": NotFoundError}},
 )
-async def get_results(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
-) -> ParquetResponse:
+async def get_results(name: str) -> ParquetResponse:
     """Download results for a model as a parquet file."""
     try:
         res = backend.get_model_results(model=name)
@@ -548,7 +552,6 @@ async def get_results(
     dependencies=[Depends(validate_api_key)],
 )
 async def set_truth(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     name: str,
     truth: Annotated[float, Body(ge=0.0, le=1.0)],
 ) -> ModelOperationStatus:
@@ -583,9 +586,7 @@ async def set_truth(
     "/models/{name}/truth",
     responses={404: {"model": NotFoundError}},
 )
-async def get_truth(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
-) -> float:
+async def get_truth(name: str) -> float:
     """Get truth data for a model."""
     try:
         return backend.get_model_truth(model=name)
@@ -602,9 +603,7 @@ async def get_truth(
     "/models/{name}/ancestors",
     responses={404: {"model": NotFoundError}},
 )
-async def get_ancestors(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
-) -> list[ModelAncestor]:
+async def get_ancestors(name: str) -> list[ModelAncestor]:
     """Get the ancestors for a model."""
     try:
         return backend.get_model_ancestors(model=name)
@@ -629,7 +628,6 @@ async def get_ancestors(
     dependencies=[Depends(validate_api_key)],
 )
 async def set_ancestors_cache(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     name: str,
     ancestors: list[ModelAncestor],
 ):
@@ -664,9 +662,7 @@ async def set_ancestors_cache(
     "/models/{name}/ancestors_cache",
     responses={404: {"model": NotFoundError}},
 )
-async def get_ancestors_cache(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)], name: str
-) -> list[ModelAncestor]:
+async def get_ancestors_cache(name: str) -> list[ModelAncestor]:
     """Get the cached ancestors for a model."""
     try:
         return backend.get_model_ancestors_cache(model=name)
@@ -691,7 +687,6 @@ async def get_ancestors_cache(
     dependencies=[Depends(validate_api_key)],
 )
 async def delete_model(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     name: str,
     certain: Annotated[
         bool, Query(description="Confirm deletion of the model")
@@ -729,7 +724,6 @@ async def delete_model(
 
 @app.get("/database/count")
 async def count_backend_items(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     entity: BackendCountableType | None = None,
 ) -> CountResult:
     """Count the number of various entities in the backend."""
@@ -750,7 +744,6 @@ async def count_backend_items(
     dependencies=[Depends(validate_api_key)],
 )
 async def clear_database(
-    backend: Annotated[MatchboxDBAdapter, Depends(get_backend)],
     certain: Annotated[
         bool, Query(description="Confirm deletion of all data in the database")
     ] = False,

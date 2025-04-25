@@ -40,10 +40,10 @@ def test_sql_interface(
     # Because of FULL OUTER JOIN, we expect some values to be null, and some explosions
     df_expected = pl.DataFrame(
         [
-            {"foo_pk": 1, "bar_pk": "a", "foo_col": 0, "bar_col": 10},
-            {"foo_pk": 2, "bar_pk": None, "foo_col": 1, "bar_col": None},
-            {"foo_pk": 3, "bar_pk": "b", "foo_col": 2, "bar_col": 11},
-            {"foo_pk": 3, "bar_pk": "c", "foo_col": 2, "bar_col": 12},
+            {"id": 1, "foo_pk": 1, "bar_pk": "a", "foo_col": 0, "bar_col": 10},
+            {"id": 2, "foo_pk": 2, "bar_pk": None, "foo_col": 1, "bar_col": None},
+            {"id": 3, "foo_pk": 3, "bar_pk": "b", "foo_col": 2, "bar_col": 11},
+            {"id": 3, "foo_pk": 3, "bar_pk": "c", "foo_col": 2, "bar_col": 12},
         ]
     )
 

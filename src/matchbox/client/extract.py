@@ -13,7 +13,7 @@ def _create_view_definition(
     mapping_table: str,
     engine: Engine,
 ) -> str:
-    selection = []
+    selection = [text("id")]
 
     for cn in column_names:
         selection.append(

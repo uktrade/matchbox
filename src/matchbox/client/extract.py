@@ -28,6 +28,7 @@ def _create_view_definition(
             func.cast(text(f"{table_name}.{db_pk}"), String)
             == func.cast(text(f"{mapping_table}.{table_name}_{db_pk}"), String),
             isouter=True,
+            full=True,
         )
 
     return str(query.compile(dialect=engine.dialect))

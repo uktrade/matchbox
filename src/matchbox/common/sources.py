@@ -707,6 +707,18 @@ class Source(BaseModel):
             if batch["source_pk"].is_null().any():
                 raise ValueError("source_pk column contains null values")
 
+            for col_name in cols_to_index:
+                batch = batch.with_columns(
+                    pl.col(col_name).cast(pl.Utf8).fill_null("\x00")
+                )
+            unit_separator = "␟"
+            str_concatenation = [
+                f"{c}{unit_separator}" + pl.col(c) for c in sorted(cols_to_index)
+            ]
+
+            batch = batch.with_columns(
+                pl.concat_str(str_concatenation).alias("value_concat")
+            )
             row_hashes = hash_rows(
                 df=batch,
                 columns=list(sorted(cols_to_index)),

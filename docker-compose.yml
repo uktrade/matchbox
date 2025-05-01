@@ -38,13 +38,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-  datadog-agent:
-    image: datadog/agent:7
-    profiles:
-      - monitoring
-    env_file:
-      - environments/datadog-agent-public.env
-      - environments/.datadog-agent-private.env
   api:
     build:
       context: .

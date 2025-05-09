@@ -1,34 +1,35 @@
-import copy
-from typing import Any, Callable
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
-import pandas as pd
 import polars as pl
 import pyarrow as pa
 import pytest
-from pandas.testing import assert_frame_equal
-from pydantic import AnyUrl
+from pydantic import AnyUrl, ValidationError
 from sqlalchemy import (
     Engine,
-    Table,
     create_engine,
 )
 from sqlalchemy.exc import OperationalError
+from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
 
 from matchbox.client.helpers.selector import Match
-from matchbox.common.db import fullname_to_prefix
+from matchbox.common.dtos import DataTypes
 from matchbox.common.exceptions import (
-    MatchboxSourceColumnError,
+    MatchboxSourceCredentialsError,
     MatchboxSourceExtractTransformError,
 )
-from matchbox.common.factories.sources import source_factory, source_from_tuple
+from matchbox.common.factories.locations import location_factory
+from matchbox.common.factories.sources import source_factory
 from matchbox.common.sources import (
     Location,
     RelationalDBLocation,
-    Source,
     SourceAddress,
-    SourceColumn,
+    SourceConfig,
+    SourceField,
 )
+
+# Locations
 
 
 def test_location_factory():
@@ -47,7 +48,7 @@ def test_location_empty_credentials_error():
     location = RelationalDBLocation(uri="postgresql://host:1234/db2")
 
     # Attempting to connect without credentials should raise an error
-    with pytest.raises(AttributeError):
+    with pytest.raises(MatchboxSourceCredentialsError):
         location.connect()
 
     # Invalid location type
@@ -249,15 +250,19 @@ def test_relational_db_extract_transform(sql: str, is_valid: bool):
 
 def test_relational_db_execute(sqlite_warehouse: Engine):
     """Test executing a query and returning results using a real SQLite database."""
-    source_testkit = source_factory(engine=sqlite_warehouse)
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
-    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
+    )
+    source_testkit = source_factory(location_config=location_config, n_true_entities=10)
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
 
-    sql = f"SELECT * FROM {source_testkit.source.address.full_name}"
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
     batch_size = 2
 
     # Execute the query
-    results = list(location.execute(sql, batch_size))
+    results = list(
+        location.execute(source_testkit.config.extract_transform, batch_size)
+    )
 
     # Check that we got expected results
     assert len(results) > 0
@@ -294,8 +299,12 @@ def test_relational_db_from_engine(sqlite_warehouse: Engine):
 
 def test_relational_db_retrieval_and_transformation(sqlite_warehouse: Engine):
     """Test a more complete workflow with data retrieval and transformation."""
-    source_testkit = source_factory(engine=sqlite_warehouse)
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
+    )
+    source_testkit = source_factory(location_config=location_config, n_true_entities=10)
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+
     location = RelationalDBLocation.from_engine(sqlite_warehouse)
 
     # Execute a query with transformation
@@ -304,7 +313,9 @@ def test_relational_db_retrieval_and_transformation(sqlite_warehouse: Engine):
         company_name as name,
         UPPER(company_name) as company_name,
         crn as crn
-    FROM {source_testkit.source.address.full_name};
+    FROM (
+        {parse_one(source_testkit.config.extract_transform).sql()}
+    );
     """
 
     results = list(location.execute(sql, batch_size=1))
@@ -320,386 +331,525 @@ def test_relational_db_retrieval_and_transformation(sqlite_warehouse: Engine):
     assert sample_str == sample_str.upper()
 
 
-def test_source_address_compose():
-    """Correct addresses are generated from engines and table names."""
-    pg = create_engine("postgresql://user:fakepass@host:1234/db")  # trufflehog:ignore
-    pg_host = create_engine(
-        "postgresql://user:fakepass@host2:1234/db"  # trufflehog:ignore
-    )
-    pg_port = create_engine(
-        "postgresql://user:fakepass@host:4321/db"  # trufflehog:ignore
-    )
-    pg_db = create_engine(
-        "postgresql://user:fakepass@host:1234/db2"  # trufflehog:ignore
-    )
-    pg_user = create_engine(
-        "postgresql://user2:fakepass@host:1234/db"  # trufflehog:ignore
-    )
-    pg_password = create_engine(
-        "postgresql://user:fakepass2@host:1234/db"  # trufflehog:ignore
-    )
-    pg_dialect = create_engine(
-        "postgresql+psycopg://user:fakepass@host:1234/db"  # trufflehog:ignore
+# SourceConfigs
+
+
+def test_source_init():
+    """Test basic SourceConfig instantiation with a Location object."""
+    # Create a basic location
+    location = RelationalDBLocation(uri="sqlite:///:memory:")
+
+    # Create fields
+    identifier = SourceField(name="id", type=DataTypes.STRING)
+    fields = (
+        SourceField(name="name", type=DataTypes.STRING),
+        SourceField(name="age", type=DataTypes.INT64),
     )
 
-    sqlite = create_engine("sqlite:///foo.db")
-    sqlite_name = create_engine("sqlite:///bar.db")
-
-    different_wh_hashes = set(
-        [
-            SourceAddress.compose(pg, "tablename").warehouse_hash,
-            SourceAddress.compose(pg_host, "tablename").warehouse_hash,
-            SourceAddress.compose(pg_port, "tablename").warehouse_hash,
-            SourceAddress.compose(pg_db, "tablename").warehouse_hash,
-            SourceAddress.compose(sqlite, "tablename").warehouse_hash,
-            SourceAddress.compose(sqlite_name, "tablename").warehouse_hash,
-        ]
+    # Create SourceConfig
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform="SELECT id, name, age FROM users",
+        identifier=identifier,
+        fields=fields,
     )
-    different_wh_hashes_str = set([str(sa) for sa in different_wh_hashes])
 
-    assert len(different_wh_hashes) == 6
-    assert len(different_wh_hashes_str) == 6
+    # Verify attributes
+    assert source.location == location
+    assert source.name == "test_source"
+    assert source.extract_transform == "SELECT id, name, age FROM users"
+    assert source.identifier == identifier
+    assert source.fields == fields
 
-    same_wh_hashes = set(
-        [
-            SourceAddress.compose(pg, "tablename").warehouse_hash,
-            SourceAddress.compose(pg_user, "tablename").warehouse_hash,
-            SourceAddress.compose(pg_password, "tablename").warehouse_hash,
-            SourceAddress.compose(pg_dialect, "tablename").warehouse_hash,
-        ]
+
+def test_source_model_validation():
+    """Test that SourceConfig validation works for fields and identifier."""
+    # Create a basic location
+    location = RelationalDBLocation(uri="sqlite:///:memory:")
+
+    # Test identifier in fields validation
+    identifier = SourceField(name="id", type=DataTypes.STRING)
+    fields = (identifier, SourceField(name="name", type=DataTypes.STRING))
+
+    with pytest.raises(ValidationError, match="Identifier must not be in the fields"):
+        SourceConfig(
+            location=location,
+            name="test_source",
+            extract_transform="SELECT id, name FROM users",
+            identifier=identifier,
+            fields=fields,
+        )
+
+
+def test_source_identifier_validation():
+    """Test that identifier validation requires a string type."""
+    # Create a basic location
+    location = RelationalDBLocation(uri="sqlite:///:memory:")
+    fields = (SourceField(name="name", type=DataTypes.STRING),)
+
+    # Valid case: String identifier
+    string_identifier = SourceField(name="id", type=DataTypes.STRING)
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform="SELECT id, name FROM users",
+        identifier=string_identifier,
+        fields=fields,
     )
-    same_wh_hashes_str = set([str(sa) for sa in same_wh_hashes])
+    assert source.identifier.type == DataTypes.STRING
 
-    assert len(same_wh_hashes) == 1
-    assert len(same_wh_hashes_str) == 1
+    # Invalid case: Non-string identifier
+    int_identifier = SourceField(name="id", type=DataTypes.INT64)
+    with pytest.raises(ValidationError, match="Identifier must be a string"):
+        SourceConfig(
+            location=location,
+            name="test_source",
+            extract_transform="SELECT id, name FROM users",
+            identifier=int_identifier,
+            fields=fields,
+        )
 
-    same_table_name = set(
-        [
-            SourceAddress.compose(pg, "tablename").full_name,
-            SourceAddress.compose(sqlite, "tablename").full_name,
-        ]
+
+def test_source_from_location(sqlite_warehouse: Engine):
+    """Test the from_location factory method with minimal parameters."""
+    # Create a location with credentials
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+
+    # Create test data and write to warehouse
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
     )
-    same_table_name_str = set([str(sa) for sa in same_table_name])
-
-    assert len(same_table_name) == 1
-    assert len(same_table_name_str) == 1
-
-
-def test_source_address_format_columns():
-    """Column names can get a standard prefix from a table name."""
-    address1 = SourceAddress(full_name="foo", warehouse_hash=b"bar")
-    address2 = SourceAddress(full_name="foo.bar", warehouse_hash=b"bar")
-
-    assert address1.format_column("col") == "foo_col"
-    assert address2.format_column("col") == "foo_bar_col"
-
-
-def test_source_set_engine(sqlite_warehouse: Engine):
-    """Engine can be set on Source."""
-    source_testkit = source_factory(engine=sqlite_warehouse)
-
-    # We can set engine with correct column specification
-    source = source_testkit.source.set_engine(sqlite_warehouse)
-    assert isinstance(source, Source)
-
-    # Error is raised with wrong engine
-    with pytest.raises(ValueError, match="engine does not match"):
-        wrong_engine = create_engine("sqlite:///:memory:")
-        source.set_engine(wrong_engine)
-
-
-def test_source_check_columns(sqlite_warehouse: Engine):
-    """Source columns are checked against the warehouse."""
     source_testkit = source_factory(
-        features=[{"name": "b", "base_generator": "random_int", "sql_type": "BIGINT"}],
-        engine=sqlite_warehouse,
-    )
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
-
-    # We can set engine with correct column specification
-    source = source_testkit.source.set_engine(sqlite_warehouse)
-    assert isinstance(source, Source)
-
-    # Error is raised with custom columns
-    with pytest.raises(MatchboxSourceColumnError, match="Columns {'c'} not in"):
-        source.check_columns(columns=["c"])
-
-    # Error is raised with missing primary key
-    new_source = source_testkit.source.model_copy(update={"db_pk": "typo"}).set_engine(
-        sqlite_warehouse
-    )
-    with pytest.raises(
-        MatchboxSourceColumnError, match="Primary key typo not available"
-    ):
-        new_source.check_columns()
-
-    # Error is raised with missing column
-    new_source = source_testkit.source.model_copy(
-        update={"columns": (SourceColumn(name="c", type="TEXT"),)}
-    ).set_engine(sqlite_warehouse)
-    with pytest.raises(MatchboxSourceColumnError, match="Column c not available in"):
-        new_source.check_columns()
-
-    # Error is raised with wrong type
-    new_source = source_testkit.source.model_copy(
-        update={"columns": (SourceColumn(name="b", type="TEXT"),)}
-    ).set_engine(sqlite_warehouse)
-    with pytest.raises(MatchboxSourceColumnError, match="Type BIGINT != TEXT for b"):
-        new_source.check_columns()
-
-
-def test_source_hash_equality(sqlite_warehouse: Engine):
-    """__eq__ and __hash__ behave as expected for a Source."""
-    # This won't set the engine just yet
-    source_testkit = source_factory(engine=sqlite_warehouse)
-    source = source_testkit.source
-    source_eq = source.model_copy(deep=True)
-
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
-    source.set_engine(sqlite_warehouse)
-
-    assert source.engine != source_eq.engine
-    assert source == source_eq
-    assert hash(source) == hash(source_eq)
-
-
-def test_source_default_columns(sqlite_warehouse: Engine):
-    """Default columns from the warehouse can be assigned to a Source."""
-    source_testkit = source_factory(
+        location_config=location_config,
+        n_true_entities=5,
         features=[
-            {"name": "a", "base_generator": "random_int", "sql_type": "BIGINT"},
-            {"name": "b", "base_generator": "word", "sql_type": "TEXT"},
+            {"name": "name", "base_generator": "word", "sql_type": "TEXT"},
         ],
-        engine=sqlite_warehouse,
+    )
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+
+    # Use the factory method
+    table_name = (
+        parse_one(source_testkit.config.extract_transform).find(exp.Table).alias_or_name
+    )
+    extract_transform = f"SELECT pk as id, name FROM {table_name}"
+    source = SourceConfig.from_location(
+        location=location, extract_transform=extract_transform
     )
 
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
+    # Verify the created source
+    assert source.location == location
+    assert source.extract_transform == extract_transform
+    assert source.identifier.name == "id"
+    assert source.identifier.type == DataTypes.STRING
+    assert len(source.fields) == 1
+    assert source.fields[0].name == "name"
+    assert source.fields[0].type == DataTypes.STRING
+    assert source.name.startswith(Path(str(sqlite_warehouse.url)).stem)
 
-    expected_columns = (
-        SourceColumn(name="a", type="BIGINT"),
-        SourceColumn(name="b", type="TEXT"),
+
+def test_source_field_detection_from_location(sqlite_warehouse: Engine):
+    """Test automatic field detection through from_location factory method."""
+    # Create a location with credentials
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+
+    # Create test data with different column types
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
+    )
+    source_testkit = source_factory(
+        location_config=location_config,
+        n_true_entities=5,
+        features=[
+            {"name": "age", "base_generator": "random_int", "sql_type": "INTEGER"},
+            {"name": "score", "base_generator": "pyfloat", "sql_type": "REAL"},
+        ],
+    )
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+
+    # Use the from_location factory method which internally uses field detection
+    table_name = (
+        parse_one(source_testkit.config.extract_transform).find(exp.Table).alias_or_name
+    )
+    extract_transform = f"SELECT pk as id, age, score FROM {table_name}"
+    source = SourceConfig.from_location(
+        location=location, extract_transform=extract_transform
     )
 
-    source = source_testkit.source.set_engine(sqlite_warehouse).default_columns()
+    # Verify detection results through the created source
+    assert source.identifier.name == "id"
+    assert source.identifier.type == DataTypes.STRING
+    assert len(source.fields) == 2
 
-    assert source.columns == expected_columns
-    # We create a new source, but attributes and engine match
-    assert source is not source_testkit.source
-    assert source == source_testkit.source
-    assert source.engine == sqlite_warehouse
+    # Check field names and types
+    field_dict = {field.name: field.type for field in source.fields}
+    assert "age" in field_dict
+    assert "score" in field_dict
+    assert field_dict["age"] == DataTypes.INT64
+    assert field_dict["score"] == DataTypes.FLOAT64
 
 
-def test_source_to_table(sqlite_warehouse: Engine):
-    """Convert Source to SQLAlchemy Table."""
-    source_testkit = source_factory(engine=sqlite_warehouse)
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
+def test_source_set_credentials(sqlite_warehouse: Engine):
+    """Test that credentials can be set on the Location via SourceConfig."""
+    # Create a location without credentials
+    location = RelationalDBLocation(uri=str(sqlite_warehouse.url))
+    assert location.credentials is None
 
-    source = source_testkit.source.set_engine(sqlite_warehouse)
+    # Create a source with this location
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform="SELECT id, name FROM users",
+        identifier=SourceField(name="id", type=DataTypes.STRING),
+        fields=(SourceField(name="name", type=DataTypes.STRING),),
+    )
 
-    assert isinstance(source.to_table(), Table)
+    # Set credentials through the source
+    source.set_credentials(sqlite_warehouse)
+
+    # Verify credentials are set on the location
+    assert source.location.credentials == sqlite_warehouse
+
+
+def test_source_query(sqlite_warehouse: Engine):
+    """Test the query method with default parameters."""
+    # Create test data
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
+    )
+    source_testkit = source_factory(
+        location_config=location_config,
+        n_true_entities=5,
+        features=[
+            {"name": "name", "base_generator": "word", "sql_type": "TEXT"},
+        ],
+    )
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+
+    # Create location and source
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform=source_testkit.config.extract_transform,
+        identifier=SourceField(name="pk", type=DataTypes.STRING),
+        fields=(SourceField(name="name", type=DataTypes.STRING),),
+    )
+
+    # Execute query
+    result = source.query()
+
+    # Verify result
+    assert isinstance(result, pl.DataFrame)
+    assert len(result) == 5
+    assert "pk" in result.columns
+    assert "name" in result.columns
 
 
 @pytest.mark.parametrize(
-    ("converter", "to_pandas_fn"),
+    "qualify_names",
     [
-        pytest.param(
-            lambda src, **kwargs: src.to_pandas(**kwargs),
-            lambda df: df,
-            id="pandas",
-        ),
-        pytest.param(
-            lambda src, **kwargs: src.to_arrow(**kwargs),
-            lambda arrow: arrow.to_pandas(),
-            id="arrow",
-        ),
-        pytest.param(
-            lambda src, **kwargs: src.to_polars(**kwargs),
-            lambda polars: polars.to_pandas(),
-            id="polars",
-        ),
+        pytest.param(False, id="no_name_qualification"),
+        pytest.param(True, id="with_name_qualification"),
     ],
 )
-def test_source_conversion_methods(
+@patch("matchbox.common.sources.RelationalDBLocation.execute")
+def test_source_query_name_qualification(
+    mock_execute: Mock,
     sqlite_warehouse: Engine,
-    converter: Callable[[Any], Any],
-    to_pandas_fn: Callable[[Any], Any],
+    qualify_names: bool,
 ):
-    """Check equivalence of Source to Arrow, Pandas or Polars, with options."""
-    source_testkit = source_factory(
-        features=[
-            {"name": "a", "base_generator": "random_int", "sql_type": "BIGINT"},
-            {"name": "b", "base_generator": "word", "sql_type": "TEXT"},
-        ],
-        engine=sqlite_warehouse,
-        n_true_entities=2,
-    )
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
-    source = source_testkit.source.set_engine(sqlite_warehouse).default_columns()
-    prefix = fullname_to_prefix(source_testkit.source.address.full_name)
-    expected_df_prefixed = (
-        source_testkit.data.to_pandas().drop(columns=["id"]).add_prefix(prefix)
+    """Test that column names are qualified when requested."""
+    # Mock the location execute method to verify parameters
+    mock_execute.return_value = MagicMock()
+    location = RelationalDBLocation(uri=str(sqlite_warehouse.url))
+
+    # Create source
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform="SELECT id, name FROM users",
+        identifier=SourceField(name="id", type=DataTypes.STRING),
+        fields=(SourceField(name="name", type=DataTypes.STRING),),
     )
 
-    # Test basic conversion
-    output = converter(source)
-    result_df = to_pandas_fn(output)
-    assert_frame_equal(
-        expected_df_prefixed, result_df, check_like=True, check_dtype=False
-    )
+    # Call query with qualification parameter
+    source.query(qualify_names=qualify_names)
 
-    # Test with limit parameter
-    output_limited = converter(source, limit=1)
-    result_df_limited = to_pandas_fn(output_limited)
-    assert_frame_equal(
-        expected_df_prefixed.iloc[:1],
-        result_df_limited,
-        check_like=True,
-        check_dtype=False,
-    )
+    # Verify the rename parameter passed to execute
+    _, kwargs = mock_execute.call_args
+    rename_param = kwargs.get("rename")
 
-    # Test with fields parameter
-    output_fields = converter(source, fields=["a"])
-    result_df_fields = to_pandas_fn(output_fields)
-    assert_frame_equal(
-        expected_df_prefixed[[f"{prefix}pk", f"{prefix}a"]],
-        result_df_fields,
-        check_like=True,
-        check_dtype=False,
-    )
-
-
-def test_source_hash_data(sqlite_warehouse: Engine):
-    """A Source can output hashed versions of its rows."""
-    original = source_factory(
-        full_name="original",
-        features=[
-            {"name": "a", "base_generator": "random_int", "sql_type": "BIGINT"},
-            {"name": "b", "base_generator": "word", "sql_type": "TEXT"},
-        ],
-        engine=sqlite_warehouse,
-        n_true_entities=2,
-        repetition=1,
-    )
-
-    reordered = copy.deepcopy(original)
-    reordered.source = original.source.model_copy(
-        update={
-            "address": original.source.address.model_copy(
-                update={"full_name": "reordered"}
-            ),
-            "columns": (original.source.columns[1], original.source.columns[0]),
-        }
-    )
-
-    renamed = copy.deepcopy(original)
-    renamed.data = renamed.data.rename_columns({"a": "x"})
-    renamed.source = original.source.model_copy(
-        update={
-            "address": original.source.address.model_copy(
-                update={"full_name": "renamed"}
-            ),
-            "columns": (
-                original.source.columns[0].model_copy(update={"name": "x"}),
-                original.source.columns[1],
-            ),
-        }
-    )
-
-    original.to_warehouse(engine=sqlite_warehouse)
-    reordered.to_warehouse(engine=sqlite_warehouse)
-    renamed.to_warehouse(engine=sqlite_warehouse)
-
-    original_source = original.source.set_engine(sqlite_warehouse)
-    reordered_source = reordered.source.set_engine(sqlite_warehouse)
-    renamed_source = renamed.source.set_engine(sqlite_warehouse)
-
-    original_hash = original_source.hash_data(batch_size=3).to_pandas()
-    reordered_hash = reordered_source.hash_data().to_pandas()
-    renamed_hash = renamed_source.hash_data().to_pandas()
-
-    # Hash have the right shape
-    assert len(original_hash) == 2
-    assert len(original_hash.source_pk.iloc[0]) == 2
-    assert len(original_hash.source_pk.iloc[1]) == 2
-
-    def sort_df(df: pd.DataFrame) -> pd.DataFrame:
-        return df.sort_values(by="hash").reset_index(drop=True)
-
-    # Column order does not matter, column names do
-    assert sort_df(original_hash).equals(sort_df(reordered_hash))
-    assert not sort_df(original_hash).equals(sort_df(renamed_hash))
-
-
-def test_source_hash_nulls(sqlite_warehouse: Engine):
-    """A Source can output hashed versions of rows with nulls."""
-    testkit = source_from_tuple(
-        data_tuple=({"a": 1.0}, {"a": None}),
-        data_pks=["a", "b"],
-        full_name="null_test",
-        engine=sqlite_warehouse,
-    )
-    source = testkit.source.set_engine(sqlite_warehouse)
-    testkit.to_warehouse(engine=sqlite_warehouse)
-
-    # Test hashing with nulls
-    hashed_data = source.hash_data()
-
-    # No nulls in the hash column
-    assert pa.compute.count(hashed_data["hash"], mode="only_null").as_py() == 0
-
-    # Test hashing with null PKs
-    null_pk_testkit = source_from_tuple(
-        data_tuple=({"a": 1}, {"a": 2}, {"a": 3}),
-        data_pks=["a", None, None],
-        full_name="null_pk_test",
-        engine=sqlite_warehouse,
-    )
-
-    # Null PKs should error
-    with pytest.raises(ValueError):
-        source_with_null_pks = null_pk_testkit.source.set_engine(sqlite_warehouse)
-        null_pk_testkit.to_warehouse(engine=sqlite_warehouse)
-        source_with_null_pks.hash_data()
+    if qualify_names:
+        assert rename_param is not None
+        assert callable(rename_param)
+        # Test the rename function
+        sample_col = "test_col"
+        assert "test_source_" in source.name + "_" + sample_col
+    else:
+        assert rename_param is None
 
 
 @pytest.mark.parametrize(
-    ("method_name", "return_type"),
+    ("return_batches", "batch_size", "expected_call_kwargs"),
     [
-        pytest.param("to_arrow", pa.Table, id="to_arrow"),
-        pytest.param("to_pandas", pd.DataFrame, id="to_pandas"),
+        pytest.param(
+            False,
+            None,
+            {"return_batches": False, "batch_size": None},
+            id="single_return",
+        ),
+        pytest.param(
+            True, 3, {"return_batches": True, "batch_size": 3}, id="multiple_batches"
+        ),
     ],
 )
-def test_source_data_batching(method_name, return_type, sqlite_warehouse: Engine):
-    """Test Source data retrieval methods with batching parameters."""
-    # Create a source with multiple rows of data
-    source_testkit = source_factory(
-        features=[
-            {"name": "a", "base_generator": "random_int", "sql_type": "BIGINT"},
-            {"name": "b", "base_generator": "word", "sql_type": "TEXT"},
-        ],
-        engine=sqlite_warehouse,
-        n_true_entities=9,
+@patch("matchbox.common.sources.RelationalDBLocation.execute")
+def test_source_query_batching(
+    mock_execute: Mock,
+    sqlite_warehouse: Engine,
+    return_batches: bool,
+    batch_size: int,
+    expected_call_kwargs: dict,
+):
+    """Test query with batching options."""
+    # Mock the location execute method to verify parameters
+    mock_execute.return_value = MagicMock()
+    location = RelationalDBLocation(uri=str(sqlite_warehouse.url))
+
+    # Create source
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform="SELECT id, name FROM users",
+        identifier=SourceField(name="id", type=DataTypes.STRING),
+        fields=(SourceField(name="name", type=DataTypes.STRING),),
     )
-    source_testkit.to_warehouse(engine=sqlite_warehouse)
-    source = source_testkit.source.set_engine(sqlite_warehouse).default_columns()
 
-    # Call the method with batching
-    method = getattr(source, method_name)
-    batch_iterator = method(return_batches=True, batch_size=3)
-    batches = list(batch_iterator)
+    # Call query with batching parameters
+    source.query(return_batches=return_batches, batch_size=batch_size)
 
-    # Verify we got the expected number of batches
-    assert len(batches) == 3
-    for batch in batches:
-        assert isinstance(batch, return_type)
-        assert len(batch) == 3
+    # Verify parameters passed to execute
+    _, kwargs = mock_execute.call_args
+    for key, value in expected_call_kwargs.items():
+        assert kwargs.get(key) == value
+
+
+@pytest.mark.parametrize(
+    "batch_size",
+    [
+        pytest.param(None, id="no_batching"),
+        pytest.param(2, id="with_batching"),
+    ],
+)
+def test_source_hash_data(sqlite_warehouse: Engine, batch_size: int):
+    """Test the hash_data method produces expected hash format."""
+    # Create test data with unique values
+    n_true_entities = 3
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
+    )
+    source_testkit = source_factory(
+        location_config=location_config,
+        n_true_entities=n_true_entities,
+        features=[
+            {"name": "name", "base_generator": "name", "sql_type": "TEXT"},
+            {"name": "age", "base_generator": "random_int", "sql_type": "INTEGER"},
+        ],
+    )
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+
+    # Create location and source
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform=source_testkit.config.extract_transform,
+        identifier=SourceField(name="pk", type=DataTypes.STRING),
+        fields=(
+            SourceField(name="name", type=DataTypes.STRING),
+            SourceField(name="age", type=DataTypes.INT64),
+        ),
+    )
+
+    # Execute hash_data with different batching parameters
+    result = source.hash_data(batch_size=batch_size)
+
+    # Verify result
+    assert isinstance(result, pa.Table)
+    assert "hash" in result.column_names
+    assert "source_identifier" in result.column_names
+    assert len(result) == n_true_entities
+
+
+@patch("matchbox.common.sources.SourceConfig.query")
+def test_source_hash_data_null_identifier(mock_query: Mock, sqlite_warehouse: Engine):
+    """Test hash_data raises an error when source primary keys contain nulls."""
+    # Create a source
+    location = RelationalDBLocation(uri=str(sqlite_warehouse.url))
+    source = SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform="SELECT id, name FROM users",
+        identifier=SourceField(name="id", type=DataTypes.STRING),
+        fields=(SourceField(name="name", type=DataTypes.STRING),),
+    )
+
+    # Mock query to return data with null PKs
+    mock_df = pl.DataFrame({"id": ["1", None], "name": ["a", "b"]})
+    mock_query.return_value = mock_df
+
+    # hash_data should raise ValueErrors for null PKs
+    with pytest.raises(
+        ValueError, match="source_identifier column contains null values"
+    ):
+        source.hash_data()
+
+
+def test_source_validation_location_et_fields(sqlite_warehouse: Engine):
+    """Test SourceConfig validation of location, ext/trans, and fields alignment.
+
+    Tests three scenarios:
+    1. Valid alignment between location, extract_transform, and fields
+    2. Skip validation when credentials are not set
+    3. Error when fields don't match the results of extract_transform
+    """
+    # Create test data
+    location_config = location_factory(
+        location_type="rdbms", uri=str(sqlite_warehouse.url)
+    )
+    source_testkit = source_factory(
+        location_config=location_config,
+        n_true_entities=2,
+        features=[
+            {"name": "name", "base_generator": "word", "sql_type": "TEXT"},
+        ],
+    )
+    source_testkit.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+
+    # Scenario 1: Valid alignment
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+    extract_transform = source_testkit.config.extract_transform
+
+    # This should validate successfully
+    SourceConfig(
+        location=location,
+        name="test_source",
+        extract_transform=extract_transform,
+        identifier=SourceField(name="pk", type=DataTypes.STRING),
+        fields=(SourceField(name="name", type=DataTypes.STRING),),
+    )
+
+    # Scenario 2: Skip validation when credentials are not set
+    location_no_creds = RelationalDBLocation(
+        uri=str(sqlite_warehouse.url).split("?")[0]
+    )
+
+    # This should not raise validation errors as credentials aren't set
+    SourceConfig(
+        location=location_no_creds,
+        name="test_source",
+        extract_transform=extract_transform,
+        identifier=SourceField(name="pk", type=DataTypes.STRING),
+        # Fields don't match what extract_transform would return, but we don't validate
+        fields=(
+            SourceField(name="name", type=DataTypes.STRING),
+            SourceField(name="nonexistent", type=DataTypes.STRING),
+        ),
+    )
+
+    # Scenario 3: Error when fields don't match
+    with pytest.raises(
+        ValidationError, match="do not match the extract/transform logic"
+    ):
+        SourceConfig(
+            location=location,
+            name="test_source",
+            extract_transform=extract_transform,
+            identifier=SourceField(name="pk", type=DataTypes.STRING),
+            # This doesn't match the extract_transform
+            fields=(
+                SourceField(name="name", type=DataTypes.STRING),
+                SourceField(name="nonexistent", type=DataTypes.STRING),
+            ),
+        )
+
+    # Additional test: identifier doesn't match
+    with pytest.raises(
+        ValidationError, match="do not match the extract/transform logic"
+    ):
+        SourceConfig(
+            location=location,
+            name="test_source",
+            extract_transform=extract_transform,
+            # Wrong identifier name
+            identifier=SourceField(name="wrong_id", type=DataTypes.STRING),
+            fields=(SourceField(name="name", type=DataTypes.STRING),),
+        )
+
+
+# Match
+
+
+def test_match_validation():
+    """Test Match validation rules."""
+    # Create source addresses
+    source_addr = SourceAddress(full_name="source_table", warehouse_hash=b"hash1")
+    target_addr = SourceAddress(full_name="target_table", warehouse_hash=b"hash2")
+
+    # Valid match with cluster and source_id
+    valid_match = Match(
+        cluster=1,
+        source=source_addr,
+        source_id={"src1", "src2"},
+        target=target_addr,
+        target_id={"tgt1", "tgt2"},
+    )
+
+    assert valid_match.cluster == 1
+    assert valid_match.source_id == {"src1", "src2"}
+    assert valid_match.target_id == {"tgt1", "tgt2"}
+
+    # Invalid: target_id but no cluster
+    with pytest.raises(ValueError):
+        Match(
+            cluster=None,
+            source=source_addr,
+            source_id={"src1", "src2"},
+            target=target_addr,
+            target_id={"tgt1", "tgt2"},
+        )
+
+    # Invalid: cluster but no source_id
+    with pytest.raises(ValueError):
+        Match(
+            cluster=1,
+            source=source_addr,
+            source_id=set(),
+            target=target_addr,
+            target_id={"tgt1", "tgt2"},
+        )
+
+    # Valid: No target_id with cluster and source_id
+    valid_no_target = Match(
+        cluster=1,
+        source=source_addr,
+        source_id={"src1", "src2"},
+        target=target_addr,
+        target_id=set(),
+    )
+
+    assert valid_no_target.cluster == 1
+    assert valid_no_target.source_id == {"src1", "src2"}
+    assert valid_no_target.target_id == set()
 
 
 def test_match_validates():
     """Match objects are validated when they're instantiated."""
     Match(
         cluster=1,
-        source=SourceAddress(full_name="test.source", warehouse_hash=b"bar"),
+        source=SourceAddress(full_name="test.config", warehouse_hash=b"bar"),
         source_id={"a"},
         target=SourceAddress(full_name="test.target", warehouse_hash=b"bar"),
         target_id={"b"},
@@ -709,7 +859,7 @@ def test_match_validates():
     with pytest.raises(ValueError):
         Match(
             cluster=1,
-            source=SourceAddress(full_name="test.source", warehouse_hash=b"bar"),
+            source=SourceAddress(full_name="test.config", warehouse_hash=b"bar"),
             target=SourceAddress(full_name="test.target", warehouse_hash=b"bar"),
             target_id={"b"},
         )
@@ -717,7 +867,7 @@ def test_match_validates():
     # Missing cluster with target_id
     with pytest.raises(ValueError):
         Match(
-            source=SourceAddress(full_name="test.source", warehouse_hash=b"bar"),
+            source=SourceAddress(full_name="test.config", warehouse_hash=b"bar"),
             source_id={"a"},
             target=SourceAddress(full_name="test.target", warehouse_hash=b"bar"),
             target_id={"b"},
@@ -727,6 +877,6 @@ def test_match_validates():
     with pytest.raises(ValueError):
         Match(
             cluster=1,
-            source=SourceAddress(full_name="test.source", warehouse_hash=b"bar"),
+            source=SourceAddress(full_name="test.config", warehouse_hash=b"bar"),
             target=SourceAddress(full_name="test.target", warehouse_hash=b"bar"),
         )

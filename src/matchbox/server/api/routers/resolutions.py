@@ -45,7 +45,7 @@ async def delete_resolution(
         backend.delete_resolution(resolution=name, certain=certain)
         return ResolutionOperationStatus(
             success=True,
-            resolution_name=name,
+            name=name,
             operation=CRUDOperation.DELETE,
         )
     except MatchboxResolutionNotFoundError as e:
@@ -60,7 +60,7 @@ async def delete_resolution(
             status_code=409,
             detail=ResolutionOperationStatus(
                 success=False,
-                resolution_name=name,
+                name=name,
                 operation=CRUDOperation.DELETE,
                 details=str(e),
             ).model_dump(),

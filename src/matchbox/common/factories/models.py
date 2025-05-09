@@ -14,14 +14,18 @@ import rustworkx as rx
 from faker import Faker
 from pandas import DataFrame
 from pydantic import BaseModel, ConfigDict, model_validator
-from sqlalchemy import create_engine
 
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.models.models import Model
 from matchbox.client.results import Results
 from matchbox.common.arrow import SCHEMA_RESULTS
-from matchbox.common.dtos import ModelMetadata, ModelType
+from matchbox.common.dtos import (
+    ModelMetadata,
+    ModelResolutionName,
+    ModelType,
+    ResolutionName,
+)
 from matchbox.common.factories.entities import (
     ClusterEntity,
     FeatureConfig,
@@ -30,9 +34,10 @@ from matchbox.common.factories.entities import (
     probabilities_to_results_entities,
     query_to_cluster_entities,
 )
+from matchbox.common.factories.locations import location_factory
 from matchbox.common.factories.sources import (
-    SourceConfig,
     SourceTestkit,
+    SourceTestkitConfig,
     linked_sources_factory,
 )
 from matchbox.common.transform import DisjointSet, graph_results
@@ -643,7 +648,7 @@ class ModelTestkit(BaseModel):
 
 
 def model_factory(
-    name: str | None = None,
+    name: ModelResolutionName | None = None,
     description: str | None = None,
     left_testkit: SourceTestkit | ModelTestkit | None = None,
     right_testkit: SourceTestkit | ModelTestkit | None = None,
@@ -724,7 +729,7 @@ def model_factory(
             right_resolution = right_query = right_entities = None
     else:
         # Create default sources
-        engine = create_engine("sqlite:///:memory:")
+        location_config = location_factory()
         resolved_model_type = ModelType(model_type.lower() if model_type else "deduper")
 
         # Define common features
@@ -746,9 +751,9 @@ def model_factory(
 
         # Configure left source
         left_resolution = generator.unique.word()
-        left_config = SourceConfig(
-            full_name="crn",
-            engine=engine,
+        left_config = SourceTestkitConfig(
+            name="crn",
+            location_config=location_config,
             features=(
                 features["company_name"].add_variations(
                     SuffixRule(suffix=" Limited"),
@@ -766,8 +771,9 @@ def model_factory(
         if resolved_model_type == ModelType.LINKER:
             right_resolution = generator.unique.word()
             source_configs.append(
-                SourceConfig(
-                    full_name="cdms",
+                SourceTestkitConfig(
+                    name="cdms",
+                    location_config=location_config,
                     features=(features["crn"], features["cdms"]),
                     repetition=1,
                 )
@@ -777,7 +783,7 @@ def model_factory(
 
         # Generate linked sources
         linked = linked_sources_factory(
-            source_configs=tuple(source_configs),
+            source_testkit_configs=tuple(source_configs),
             n_true_entities=n_true_entities,
             seed=seed,
         )
@@ -844,15 +850,15 @@ def model_factory(
 
 
 def query_to_model_factory(
-    left_resolution: str,
+    left_resolution: ResolutionName,
     left_query: pa.Table,
-    left_source_pks: dict[str, str],
+    left_source_identifiers: dict[str, str],
     true_entities: tuple[SourceEntity, ...],
-    name: str | None = None,
+    name: ModelResolutionName | None = None,
     description: str | None = None,
     right_resolution: str | None = None,
     right_query: pa.Table | None = None,
-    right_source_pks: dict[str, str] | None = None,
+    right_source_identifiers: dict[str, str] | None = None,
     prob_range: tuple[float, float] = (0.8, 1.0),
     seed: int = 42,
 ) -> ModelTestkit:
@@ -861,16 +867,16 @@ def query_to_model_factory(
     Args:
         left_resolution: Name of the resolution used for the left query
         left_query: PyArrow table with left query data
-        left_source_pks: Dictionary mapping source names to primary key column names
-            in left query
+        left_source_identifiers: Dictionary mapping source names to identifiers
+            in the left query
         true_entities: Ground truth SourceEntity objects to use for generating
             probabilities
         name: Name of the model
         description: Description of the model
         right_resolution: Name of the resolution used for the right query
         right_query: PyArrow table with right query data, if creating a linker
-        right_source_pks: Dictionary mapping source names to primary key column names
-            in right query
+        right_source_identifiers: Dictionary mapping source names to identifiers in the
+            right query
         prob_range: Range of probabilities to generate
         seed: Random seed for reproducibility
 
@@ -882,13 +888,13 @@ def query_to_model_factory(
         raise ValueError("Probabilities must be increasing values between 0 and 1")
 
     # Check if right-side arguments are consistently provided
-    right_args = [right_resolution, right_query, right_source_pks]
+    right_args = [right_resolution, right_query, right_source_identifiers]
     if any(arg is not None for arg in right_args) and not all(
         arg is not None for arg in right_args
     ):
         raise ValueError(
             "When providing right-side arguments, all of right_resolution, "
-            "right_query, and right_source_pks must be provided"
+            "right_query, and right_source_identifiers must be provided"
         )
 
     # Create a Faker instance with the seed
@@ -899,10 +905,12 @@ def query_to_model_factory(
     model_type = ModelType.LINKER if right_query is not None else ModelType.DEDUPER
 
     # Create left and right ClusterEntity sets
-    left_clusters = query_to_cluster_entities(left_query, left_source_pks)
+    left_clusters = query_to_cluster_entities(left_query, left_source_identifiers)
 
-    if right_query is not None and right_source_pks is not None:
-        right_clusters = query_to_cluster_entities(right_query, right_source_pks)
+    if right_query is not None and right_source_identifiers is not None:
+        right_clusters = query_to_cluster_entities(
+            right_query, right_source_identifiers
+        )
     else:
         right_clusters = None
 

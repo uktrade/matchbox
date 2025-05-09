@@ -1,6 +1,15 @@
 """Common database utilities for Matchbox."""
 
-from typing import TYPE_CHECKING, Any, Iterator, Literal, TypeVar, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterator,
+    Literal,
+    TypeVar,
+    get_args,
+    overload,
+)
 
 import polars as pl
 import sqlglot
@@ -28,6 +37,7 @@ def sql_to_df(
     connection: Engine | ADBCConnection,
     return_type: Literal["arrow", "pandas", "polars"],
     *,
+    rename: dict[str, str] | Callable | None = None,
     return_batches: Literal[False] = False,
     batch_size: int | None = None,
     schema_overrides: dict[str, Any] | None = None,
@@ -41,6 +51,7 @@ def sql_to_df(
     connection: Engine | ADBCConnection,
     return_type: Literal["arrow", "pandas", "polars"],
     *,
+    rename: dict[str, str] | Callable | None = None,
     return_batches: Literal[True],
     batch_size: int | None = None,
     schema_overrides: dict[str, Any] | None = None,
@@ -53,6 +64,7 @@ def sql_to_df(
     connection: Engine | ADBCConnection,
     return_type: ReturnTypeStr = "pandas",
     *,
+    rename: dict[str, str] | Callable | None = None,
     return_batches: bool = False,
     batch_size: int | None = None,
     schema_overrides: dict[str, Any] | None = None,
@@ -66,6 +78,9 @@ def sql_to_df(
             ADBC connection.
         return_type (str): The type of the return value. One of "arrow", "pandas",
             or "polars".
+        rename (dict[str, str] | Callable | None): A dictionary mapping old column
+            names to new column names, or a callable that takes a DataFrame and
+            returns a DataFrame with renamed columns. Default is None.
         return_batches (bool): If True, return an iterator that yields each batch
             separately. If False, return a single DataFrame with all results.
             Default is False.
@@ -88,7 +103,11 @@ def sql_to_df(
     if return_type not in get_args(ReturnTypeStr):
         raise ValueError(f"return_type of {return_type} not valid")
 
-    def to_format(results: PolarsDataFrame) -> QueryReturnType:
+    def _to_format(results: PolarsDataFrame) -> QueryReturnType:
+        """Convert the results to the specified format."""
+        if rename:
+            results = results.rename(rename)
+
         if return_type == "polars":
             return results
         elif return_type == "arrow":
@@ -106,12 +125,12 @@ def sql_to_df(
     )
 
     if not bool(batch_size):
-        return to_format(res)
+        return _to_format(res)
 
     if not return_batches:
-        return to_format(pl.concat(res))
+        return _to_format(pl.concat(res))
 
-    return (to_format(batch) for batch in res)
+    return (_to_format(batch) for batch in res)
 
 
 def get_schema_table_names(full_name: str) -> tuple[str, str]:

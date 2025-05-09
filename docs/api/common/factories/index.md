@@ -22,13 +22,13 @@
 
 The factory system aims to provide `*Testkit` objects that facilitate three groups of testing scenarios:
 
-* Realistic mock `Source` and `Model` objects to test client-side connectivity functions
+* Realistic mock `SourceConfig` and `Model` objects to test client-side connectivity functions
 * Realistic mock data to test server-side adapter functions
 * Realistic mock pipelines with controlled completeness to test client-side methodologies
 
 Three broad functions are provided:
 
-* [`source_factory()`][matchbox.common.factories.sources.source_factory] generates [`SourceTestkit`][matchbox.common.factories.sources.SourceTestkit] objects, which contain dummy `Source`s and associated data
+* [`source_factory()`][matchbox.common.factories.sources.source_factory] generates [`SourceTestkit`][matchbox.common.factories.sources.SourceTestkit] objects, which contain dummy `SourceConfig`s and associated data
 * [`linked_sources_factory()`][matchbox.common.factories.sources.linked_sources_factory] generates [`LinkedSourcesTestkit`][matchbox.common.factories.sources.LinkedSourcesTestkit] objects, which contain a collection of interconnected `SourceTestkit` objects, and the true entities this data describes
 * [`model_factory()`][matchbox.common.factories.models.model_factory] generates [`ModelTestkit`][matchbox.common.factories.models.ModelTestkit] objects, which mock probabilities that can connect both `SourceTestkit` and other `ModelTestkit` objects in ways that fail and succeed predictably
 
@@ -42,22 +42,22 @@ There are some common patterns you might consider using when editing or extendin
 
 ## Client-side connectivity
 
-We can use the factories to test inserting or retrieving isolated `Source` or `Model` objects.
+We can use the factories to test inserting or retrieving isolated `SourceConfig` or `Model` objects.
 
-Perhaps you're testing the API and want to put a realistic `Source` in the ingestion pipeline.
+Perhaps you're testing the API and want to put a realistic `SourceConfig` in the ingestion pipeline.
 
 ```python
 source_testkit = source_factory()
 
 # Setup store
 store = MetadataStore()
-update_id = store.cache_source(source_testkit.source)
+update_id = store.cache_source(source_testkit.config)
 ```
 
 Or you're testing the client handler and want to mock the API.
 
 ```python
-@patch("matchbox.client.helpers.index.Source")
+@patch("matchbox.client.helpers.index.SourceConfig")
 def test_my_api(MockSource: Mock, matchbox_api: MockRouter):
     source_testkit = source_factory(
         features=[{"name": "company_name", "base_generator": "company"}]
@@ -94,12 +94,12 @@ source_factory(
 
 The factories can generate data suitable for `MatchboxDBAdapter.index()`, `MatchboxDBAdapter.insert_model()`, or `MatchboxDBAdapter.set_model_results()`. Between these functions, we can set up any backend in any configuration we need to test the other adapter methods.
 
-Adding a `Source`.
+Adding a `SourceConfig`.
 
 ```python
 source_testkit = source_factory()
 backend.index(
-    source=source_testkit.source
+    source=source_testkit.config
     data_hashes=source_testkit.data_hashes
 )
 ```
@@ -128,7 +128,7 @@ linked_testkit = linked_sources_factory()
 
 for source_testkit in linked_testkit.sources.values():
     backend.index(
-        source=source_testkit.source
+        source=source_testkit.config
         data_hashes=source_testkit.data_hashes
     )
 

@@ -20,8 +20,8 @@ from matchbox.common.factories.entities import (
     SuffixRule,
 )
 from matchbox.common.factories.sources import (
-    SourceConfig,
     SourceTestkit,
+    SourceTestkitConfig,
     linked_sources_factory,
 )
 
@@ -44,10 +44,10 @@ def configure_weighted_probabilistic(
     """
 
     left_fields = [
-        c.name for c in left_testkit.source.columns if c.name not in ("pk", "id")
+        c.name for c in left_testkit.config.columns if c.name not in ("pk", "id")
     ]
     right_fields = [
-        c.name for c in right_testkit.source.columns if c.name not in ("pk", "id")
+        c.name for c in right_testkit.config.columns if c.name not in ("pk", "id")
     ]
 
     # Generate geometric series of weights
@@ -93,10 +93,10 @@ def configure_splink_probabilistic(
 
     # Extract column names excluding pk and id
     left_fields = [
-        c.name for c in left_testkit.source.columns if c.name not in ("pk", "id")
+        c.name for c in left_testkit.config.columns if c.name not in ("pk", "id")
     ]
     right_fields = [
-        c.name for c in right_testkit.source.columns if c.name not in ("pk", "id")
+        c.name for c in right_testkit.config.columns if c.name not in ("pk", "id")
     ]
 
     # Create comparison functions based on field type
@@ -110,7 +110,7 @@ def configure_splink_probabilistic(
 
         field = l_field  # Use common field name after checking they match
         field_type = next(
-            (c.type for c in left_testkit.source.columns if c.name == field), "TEXT"
+            (c.type for c in left_testkit.config.columns if c.name == field), "TEXT"
         )
 
         # Create deterministic matching rule for each field
@@ -206,17 +206,21 @@ def test_probabilistic_scores_generation(Linker, configure_linker):
     )
 
     configs = (
-        SourceConfig(full_name="source_left", features=features, n_true_entities=10),
-        SourceConfig(full_name="source_right", features=features, n_true_entities=10),
+        SourceTestkitConfig(
+            full_name="source_left", features=features, n_true_entities=10
+        ),
+        SourceTestkitConfig(
+            full_name="source_right", features=features, n_true_entities=10
+        ),
     )
 
-    linked = linked_sources_factory(source_configs=configs, seed=42)
+    linked = linked_sources_factory(source_testkit_configs=configs, seed=42)
     left_source = linked.sources["source_left"]
     right_source = linked.sources["source_right"]
 
     # Configure and run the linker
     linker = make_model(
-        model_name="prob_test_linker",
+        name="prob_test_linker",
         description="Testing probability generation",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),

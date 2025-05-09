@@ -16,8 +16,7 @@ from matchbox.common.exceptions import (
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.factories.sources import source_factory
-from matchbox.common.hash import hash_to_base64
-from matchbox.common.sources import Source, SourceAddress
+from matchbox.common.sources import RelationalDBLocation, SourceConfig
 from matchbox.server.api.dependencies import backend
 from matchbox.server.api.main import app
 
@@ -28,19 +27,22 @@ else:
 
 
 def test_get_source(test_client: TestClient):
-    address = SourceAddress(full_name="foo", warehouse_hash=b"bar")
-    source = Source(address=address, db_pk="pk")
+    source = SourceConfig(
+        location=RelationalDBLocation(uri="foo:///"),
+        name="foo",
+        extract_transform="",
+        identifier={"name": "id", "type": "STRING"},
+        fields=({"name": "age", "type": "INT64"},),
+    )
     mock_backend = Mock()
     mock_backend.get_source = Mock(return_value=source)
 
     # Override app dependencies with mocks
     app.dependency_overrides[backend] = lambda: mock_backend
 
-    response = test_client.get(
-        f"/sources/{address.warehouse_hash_b64}/{address.full_name}"
-    )
+    response = test_client.get("/sources/foo/")
     assert response.status_code == 200
-    assert Source.model_validate(response.json())
+    assert SourceConfig.model_validate(response.json())
 
 
 def test_get_source_404(test_client: TestClient):
@@ -50,13 +52,13 @@ def test_get_source_404(test_client: TestClient):
     # Override app dependencies with mocks
     app.dependency_overrides[backend] = lambda: mock_backend
 
-    response = test_client.get(f"/sources/{hash_to_base64(b'bar')}/foo")
+    response = test_client.get("/sources/foo")
     assert response.status_code == 404
     assert response.json()["entity"] == BackendRetrievableType.SOURCE
 
 
 def test_get_resolution_sources(test_client: TestClient):
-    source = source_factory().source
+    source = source_factory().config
 
     mock_backend = Mock()
     mock_backend.get_resolution_sources = Mock(return_value=[source])
@@ -64,10 +66,10 @@ def test_get_resolution_sources(test_client: TestClient):
     # Override app dependencies with mocks
     app.dependency_overrides[backend] = lambda: mock_backend
 
-    response = test_client.get("/sources", params={"resolution_name": "foo"})
+    response = test_client.get("/sources", params={"name": "foo"})
     assert response.status_code == 200
     for s in response.json():
-        assert Source.model_validate(s)
+        assert SourceConfig.model_validate(s)
 
 
 def test_get_resolution_sources_404(test_client: TestClient):
@@ -79,7 +81,7 @@ def test_get_resolution_sources_404(test_client: TestClient):
     # Override app dependencies with mocks
     app.dependency_overrides[backend] = lambda: mock_backend
 
-    response = test_client.get("/sources", params={"resolution_name": "foo"})
+    response = test_client.get("/sources", params={"name": "foo"})
     assert response.status_code == 404
     assert response.json()["entity"] == BackendRetrievableType.RESOLUTION
 
@@ -97,7 +99,7 @@ def test_add_source(test_client: TestClient):
     # Make request
     response = test_client.post(
         "/sources",
-        json=source_testkit.source.model_dump(),
+        json=source_testkit.config.model_dump(),
     )
 
     # Validate response
@@ -130,7 +132,7 @@ async def test_complete_source_upload_process(s3: S3Client, test_client: TestCli
     source_testkit = source_factory()
 
     # Step 1: Add source
-    response = test_client.post("/sources", json=source_testkit.source.model_dump())
+    response = test_client.post("/sources", json=source_testkit.config.model_dump())
     assert response.status_code == 202
     upload_id = response.json()["id"]
     assert response.json()["status"] == "awaiting_upload"
@@ -177,7 +179,7 @@ async def test_complete_source_upload_process(s3: S3Client, test_client: TestCli
     # Verify backend.index was called with correct arguments
     mock_backend.index.assert_called_once()
     call_args = mock_backend.index.call_args
-    assert call_args[1]["source"] == source_testkit.source  # Check source matches
+    assert call_args[1]["source"] == source_testkit.config  # Check source matches
     assert call_args[1]["data_hashes"].equals(source_testkit.data_hashes)  # Check data
 
     # Verify file is deleted from S3 after processing

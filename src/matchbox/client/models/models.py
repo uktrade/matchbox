@@ -8,7 +8,12 @@ from matchbox.client import _handler
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.results import Results
-from matchbox.common.dtos import ModelAncestor, ModelMetadata, ModelType
+from matchbox.common.dtos import (
+    ModelAncestor,
+    ModelMetadata,
+    ModelResolutionName,
+    ModelType,
+)
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 
 P = ParamSpec("P")
@@ -116,7 +121,7 @@ class Model:
 
 
 def make_model(
-    model_name: str,
+    name: ModelResolutionName,
     description: str,
     model_class: type[Linker] | type[Deduper],
     model_settings: dict[str, Any],
@@ -128,7 +133,7 @@ def make_model(
     """Create a unified model instance for either linking or deduping operations.
 
     Args:
-        model_name: Your unique identifier for the model
+        name: Your unique identifier for the model
         description: Description of the model run
         model_class: Either Linker or Deduper class
         model_settings: Configuration settings for the model
@@ -157,7 +162,7 @@ def make_model(
         model_instance.prepare(data=left_data)
 
     metadata = ModelMetadata(
-        name=model_name,
+        name=name,
         description=description,
         type=model_type.value,
         left_resolution=left_resolution,

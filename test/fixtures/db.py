@@ -18,8 +18,12 @@ from matchbox.client._handler import create_client
 from matchbox.client._settings import ClientSettings, settings
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import FeatureConfig, SuffixRule
+from matchbox.common.factories.locations import location_factory
 from matchbox.common.factories.models import query_to_model_factory
-from matchbox.common.factories.sources import SourceConfig, linked_sources_factory
+from matchbox.common.factories.sources import (
+    SourceTestkitConfig,
+    linked_sources_factory,
+)
 from matchbox.server.base import (
     MatchboxDatastoreSettings,
     MatchboxDBAdapter,
@@ -76,7 +80,7 @@ def _testkitdag_to_warehouse(warehouse_engine: Engine, dag: TestkitDAG) -> None:
     """
     for source_testkit in dag.sources.values():
         source_testkit.to_warehouse(warehouse_engine)
-        source_testkit.source.set_engine(warehouse_engine)
+        source_testkit.config.set_engine(warehouse_engine)
 
 
 @register_scenario("bare")
@@ -115,7 +119,7 @@ def create_index_scenario(
     # Index sources in backend
     for source_testkit in dag.sources.values():
         backend.index(
-            source=source_testkit.source, data_hashes=source_testkit.data_hashes
+            source=source_testkit.config, data_hashes=source_testkit.data_hashes
         )
 
     return dag
@@ -138,29 +142,29 @@ def create_dedupe_scenario(
 
     # Create and add deduplication models
     for testkit in dag.sources.values():
-        source = testkit.source
-        model_name = f"naive_test.{source.address.full_name}"
+        source = testkit.config
+        name = f"naive_test.{source.name}"
 
         # Query the raw data
         source_query = backend.query(
-            source_address=linked.sources[source.address.full_name].source.address,
+            source_address=linked.sources[source.name].config.name,
         )
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=source.resolution_name,
+            left_resolution=source.name,
             left_query=source_query,
-            left_source_pks={source.address.full_name: "source_pk"},
+            left_source_identifiers={source.name: "source_identifier"},
             true_entities=tuple(linked.true_entities),
-            name=model_name,
-            description=f"Deduplication of {source.address.full_name}",
+            name=name,
+            description=f"Deduplication of {source.name}",
             prob_range=(1.0, 1.0),
             seed=seed,
         )
 
         # Add to backend and DAG
         backend.insert_model(model=model_testkit.model.metadata)
-        backend.set_model_results(model=model_name, results=model_testkit.probabilities)
+        backend.set_model_results(model=name, results=model_testkit.probabilities)
         dag.add_model(model_testkit)
 
     return dag
@@ -188,18 +192,18 @@ def create_link_scenario(
 
     # Query data for each resolution
     crn_query = backend.query(
-        source_address=linked.sources["crn"].source.address,
-        resolution_name=crn_model.name,
+        source=linked.sources["crn"].config.name,
+        resolution=crn_model.name,
     )
 
     duns_query = backend.query(
-        source_address=linked.sources["duns"].source.address,
-        resolution_name=duns_model.name,
+        source=linked.sources["duns"].config.name,
+        resolution=duns_model.name,
     )
 
     cdms_query = backend.query(
-        source_address=linked.sources["cdms"].source.address,
-        resolution_name=cdms_model.name,
+        source=linked.sources["cdms"].config.name,
+        resolution=cdms_model.name,
     )
 
     # Create CRN-DUNS link
@@ -207,10 +211,10 @@ def create_link_scenario(
     crn_duns_model = query_to_model_factory(
         left_resolution=crn_model.name,
         left_query=crn_query,
-        left_source_pks={"crn": "source_pk"},
+        left_source_identifiers={"crn": "source_identifier"},
         right_resolution=duns_model.name,
         right_query=duns_query,
-        right_source_pks={"duns": "source_pk"},
+        right_source_identifiers={"duns": "source_identifier"},
         true_entities=tuple(linked.true_entities),
         name=crn_duns_name,
         description="Link between CRN and DUNS",
@@ -228,10 +232,10 @@ def create_link_scenario(
     crn_cdms_model = query_to_model_factory(
         left_resolution=crn_model.name,
         left_query=crn_query,
-        left_source_pks={"crn": "source_pk"},
+        left_source_identifiers={"crn": "source_identifier"},
         right_resolution=cdms_model.name,
         right_query=cdms_query,
-        right_source_pks={"cdms": "source_pk"},
+        right_source_identifiers={"cdms": "source_identifier"},
         true_entities=tuple(linked.true_entities),
         name=crn_cdms_name,
         description="Link between CRN and CDMS",
@@ -246,31 +250,34 @@ def create_link_scenario(
     # Create final join
     # Query the previous link's results
     crn_cdms_query_crn_only = backend.query(
-        source_address=linked.sources["crn"].source.address,
-        resolution_name=crn_cdms_name,
-    ).rename_columns(["id", "source_pk_crn"])
+        source_address=linked.sources["crn"].config.address,
+        resolution=crn_cdms_name,
+    ).rename_columns(["id", "source_identifier_crn"])
     crn_cdms_query_cdms_only = backend.query(
-        source_address=linked.sources["cdms"].source.address,
-        resolution_name=crn_cdms_name,
-    ).rename_columns(["id", "source_pk_cdms"])
+        source_address=linked.sources["cdms"].config.address,
+        resolution=crn_cdms_name,
+    ).rename_columns(["id", "source_identifier_cdms"])
     crn_cdms_query = pa.concat_tables(
         [crn_cdms_query_crn_only, crn_cdms_query_cdms_only],
         promote_options="default",
     ).combine_chunks()
 
     duns_query_linked = backend.query(
-        source_address=linked.sources["duns"].source.address,
-        resolution_name=crn_duns_name,
+        source_address=linked.sources["duns"].config.address,
+        resolution=crn_duns_name,
     )
 
     final_join_name = "final_join"
     final_join_model = query_to_model_factory(
         left_resolution=crn_cdms_name,
         left_query=crn_cdms_query,
-        left_source_pks={"crn": "source_pk_crn", "cdms": "source_pk_cdms"},
+        left_source_identifiers={
+            "crn": "source_identifier_crn",
+            "cdms": "source_identifier_cdms",
+        },
         right_resolution=duns_model.name,
         right_query=duns_query_linked,
-        right_source_pks={"duns": "source_pk"},
+        right_source_identifiers={"duns": "source_identifier"},
         true_entities=tuple(linked.true_entities),
         name=final_join_name,
         description="Final join of all entities",
@@ -295,7 +302,7 @@ def create_convergent_scenario(
 ) -> TestkitDAG:
     """Create a convergent TestkitDAG scenario.
 
-    This is where two Sources index almost identically. TestkitDAG contains two
+    This is where two SourceConfigs index almost identically. TestkitDAG contains two
     indexed sources with repetition, and two naive dedupe models that haven't yet
     had their results inserted.
     """
@@ -306,17 +313,20 @@ def create_convergent_scenario(
         name="company_name", base_generator="company"
     ).add_variations(SuffixRule(suffix=" UK"))
 
-    foo_a_source = SourceConfig(
-        full_name="foo_a",
-        engine=warehouse_engine,
+    location_config = location_factory(
+        location_type="rdbms", uri=str(warehouse_engine.url)
+    )
+
+    foo_a_source = SourceTestkitConfig(
+        name="foo_a",
         features=(company_name_feature,),
-        drop_base=False,
+        location_config=location_config,
         n_true_entities=n_entities,
         repetition=1,
     )
 
     linked = linked_sources_factory(
-        source_configs=(
+        source_testkit_configs=(
             foo_a_source,
             foo_a_source.model_copy(update={"full_name": "foo_b"}),
         )
@@ -330,26 +340,26 @@ def create_convergent_scenario(
     # Index sources in backend
     for source_testkit in dag.sources.values():
         backend.index(
-            source=source_testkit.source, data_hashes=source_testkit.data_hashes
+            source=source_testkit.config, data_hashes=source_testkit.data_hashes
         )
 
     # Create and add deduplication models
     for testkit in dag.sources.values():
-        source = testkit.source
-        model_name = f"naive_test.{source.address.full_name}"
+        source = testkit.config
+        name = f"naive_test.{source.address.full_name}"
 
         # Query the raw data
         source_query = backend.query(
-            source_address=linked.sources[source.address.full_name].source.address,
+            source_address=linked.sources[source.address.full_name].config.address,
         )
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=source.resolution_name,
+            left_resolution=source.name,
             left_query=source_query,
-            left_source_pks={source.address.full_name: "source_pk"},
+            left_source_identifiers={source.address.full_name: "source_identifier"},
             true_entities=tuple(linked.true_entities),
-            name=model_name,
+            name=name,
             description=f"Deduplication of {source.address.full_name}",
             prob_range=(1.0, 1.0),
             seed=seed,

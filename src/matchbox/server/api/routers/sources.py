@@ -1,4 +1,4 @@
-"""Source API routes for the Matchbox server."""
+"""SourceConfig API routes for the Matchbox server."""
 
 from fastapi import (
     APIRouter,
@@ -9,14 +9,16 @@ from fastapi import (
 
 from matchbox.common.dtos import (
     BackendRetrievableType,
+    ModelResolutionName,
     NotFoundError,
+    SourceResolutionName,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
     MatchboxSourceNotFoundError,
 )
-from matchbox.common.sources import Source, SourceAddress
+from matchbox.common.sources import SourceConfig
 from matchbox.server.api.dependencies import (
     BackendDependency,
     MetadataStoreDependency,
@@ -32,7 +34,7 @@ router = APIRouter(prefix="/sources", tags=["sources"])
     dependencies=[Depends(validate_api_key)],
 )
 async def add_source(
-    metadata_store: MetadataStoreDependency, source: Source
+    metadata_store: MetadataStoreDependency, source: SourceConfig
 ) -> UploadStatus:
     """Create an upload and insert task for indexed source data."""
     upload_id = metadata_store.cache_source(metadata=source)
@@ -40,18 +42,16 @@ async def add_source(
 
 
 @router.get(
-    "/{warehouse_hash_b64}/{full_name}",
+    "/{name}",
     responses={404: {"model": NotFoundError}},
 )
 async def get_source(
     backend: BackendDependency,
-    warehouse_hash_b64: str,
-    full_name: str,
-) -> Source:
+    name: SourceResolutionName,
+) -> SourceConfig:
     """Get a source from the backend."""
-    address = SourceAddress(full_name=full_name, warehouse_hash=warehouse_hash_b64)
     try:
-        return backend.get_source(address)
+        return backend.get_source(name=name)
     except MatchboxSourceNotFoundError as e:
         raise HTTPException(
             status_code=404,
@@ -67,11 +67,11 @@ async def get_source(
 )
 async def get_resolution_sources(
     backend: BackendDependency,
-    resolution_name: str,
-) -> list[Source]:
+    name: ModelResolutionName,
+) -> list[SourceConfig]:
     """Get all sources in scope for a resolution."""
     try:
-        return backend.get_resolution_sources(resolution_name=resolution_name)
+        return backend.get_resolution_sources(name=name)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,

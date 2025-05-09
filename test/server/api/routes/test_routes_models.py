@@ -43,7 +43,7 @@ def test_insert_model(test_client: TestClient):
         response.json()
         == ResolutionOperationStatus(
             success=True,
-            resolution_name="test_model",
+            name="test_model",
             operation=CRUDOperation.CREATE,
             details=None,
         ).model_dump()
@@ -178,7 +178,7 @@ async def test_complete_model_upload_process(
     response = test_client.post("/models", json=testkit.model.metadata.model_dump())
     assert response.status_code == 201
     assert response.json()["success"] is True
-    assert response.json()["resolution_name"] == testkit.model.metadata.name
+    assert response.json()["name"] == testkit.model.metadata.name
 
     # Step 2: Initialize results upload
     response = test_client.post(f"/models/{testkit.model.metadata.name}/results")
@@ -499,7 +499,7 @@ def test_delete_resolution(test_client: TestClient):
         response.json()
         == ResolutionOperationStatus(
             success=True,
-            resolution_name=testkit.model.metadata.name,
+            name=testkit.model.metadata.name,
             operation=CRUDOperation.DELETE,
             details=None,
         ).model_dump()

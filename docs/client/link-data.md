@@ -23,7 +23,7 @@ from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
 from matchbox.client.helpers.cleaner import cleaner, cleaners
 from matchbox.client.models.dedupers.naive import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.common.sources import Source, SourceAddress
+from matchbox.common.sources import SourceConfig, SourceAddress
 
 # Configure logging
 logging.basicConfig(
@@ -51,37 +51,37 @@ The `columns` are what Matchbox will use to store a reference to your data, and 
 
 === "Example"
     ```python
-    from matchbox.common.sources import Source, SourceAddress
+    from matchbox.common.sources import SourceConfig, SourceAddress
     
     # Companies House data
-    companies_house = Source(
+    companies_house = SourceConfig(
         address=SourceAddress.compose(full_name="companieshouse.companies", engine=engine),
         columns=[
             {"name": "company_name", "type": "VARCHAR"},
             {"name": "company_number", "type": "VARCHAR"},
             {"name": "postcode", "type": "VARCHAR"},
         ],
-        db_pk="id",
+        db_identifier="id",
     ).set_engine(engine)
     
     # Exporters data
-    exporters = Source(
+    exporters = SourceConfig(
         address=SourceAddress.compose(full_name="hmrc.trade__exporters", engine=engine),
         columns=[
             {"name": "company_name", "type": "VARCHAR(500)"},
             {"name": "postcode", "type": "VARCHAR(8)"},
         ],
-        db_pk="id",
+        db_identifier="id",
     ).set_engine(engine)
     ```
 
-Each [`Source`][matchbox.common.sources.Source] object requires:
+Each [`SourceConfig`][matchbox.common.sources.SourceConfig] object requires:
 
 - An `address` created with [`SourceAddress.compose()`][matchbox.common.sources.SourceAddress], comprised of
     - The schema-qualified `full_name` of the dataset
     - The `engine` used to connect
 - A list of `columns` that will be used for matching
-- A primary key (`db_pk`) that uniquely identifies each record
+- A primary key (`db_identifier`) that uniquely identifies each record
 - A database engine
 
 ## 2. Defining data cleaners

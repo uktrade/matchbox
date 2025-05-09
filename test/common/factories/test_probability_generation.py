@@ -573,7 +573,7 @@ def test_complex_entity_recovery():
     # Create a source entity spanning multiple datasets
     source = SourceEntity(
         base_values={"name": "Complex Entity"},
-        source_pks=EntityReference(
+        source_identifiers=EntityReference(
             {
                 "dataset1": frozenset(["1", "2"]),
                 "dataset2": frozenset(["A", "B"]),
@@ -585,11 +585,21 @@ def test_complex_entity_recovery():
     # Create fragmented ClusterEntity objects
     clusters = frozenset(
         [
-            ClusterEntity(source_pks=EntityReference({"dataset1": frozenset(["1"])})),
-            ClusterEntity(source_pks=EntityReference({"dataset1": frozenset(["2"])})),
-            ClusterEntity(source_pks=EntityReference({"dataset2": frozenset(["A"])})),
-            ClusterEntity(source_pks=EntityReference({"dataset2": frozenset(["B"])})),
-            ClusterEntity(source_pks=EntityReference({"dataset3": frozenset(["X"])})),
+            ClusterEntity(
+                source_identifiers=EntityReference({"dataset1": frozenset(["1"])})
+            ),
+            ClusterEntity(
+                source_identifiers=EntityReference({"dataset1": frozenset(["2"])})
+            ),
+            ClusterEntity(
+                source_identifiers=EntityReference({"dataset2": frozenset(["A"])})
+            ),
+            ClusterEntity(
+                source_identifiers=EntityReference({"dataset2": frozenset(["B"])})
+            ),
+            ClusterEntity(
+                source_identifiers=EntityReference({"dataset3": frozenset(["X"])})
+            ),
         ]
     )
 

@@ -14,10 +14,11 @@ from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.common.db import fullname_to_prefix
 from matchbox.common.factories.entities import query_to_cluster_entities
+from matchbox.common.factories.locations import location_factory
 from matchbox.common.factories.sources import (
     FeatureConfig,
     LinkedSourcesTestkit,
-    SourceConfig,
+    SourceTestkitConfig,
     SuffixRule,
     linked_sources_factory,
 )
@@ -69,11 +70,17 @@ class TestE2EAnalyticalUser:
             ),
         }
 
+        # Create location
+        postgres_location = location_factory(
+            location_type="rdbms",
+            uri=str(postgres_warehouse.url),
+        )
+
         # Create source configurations that match our test fixtures
         source_configs = (
-            SourceConfig(
-                full_name="e2e.crn",
-                engine=postgres_warehouse,
+            SourceTestkitConfig(
+                name="e2e.crn",
+                location_config=postgres_location,
                 features=(
                     features["company_name"].add_variations(
                         SuffixRule(suffix=" Limited"),
@@ -82,13 +89,12 @@ class TestE2EAnalyticalUser:
                     ),
                     features["crn"],
                 ),
-                drop_base=True,
                 n_true_entities=n_true_entities,
                 repetition=0,  # No duplicates within the variations
             ),
-            SourceConfig(
-                full_name="e2e.duns",
-                engine=postgres_warehouse,
+            SourceTestkitConfig(
+                name="e2e.duns",
+                location_config=postgres_location,
                 features=(
                     features["company_name"],
                     features["duns"],
@@ -96,9 +102,9 @@ class TestE2EAnalyticalUser:
                 n_true_entities=n_true_entities // 2,  # Half the companies
                 repetition=0,
             ),
-            SourceConfig(
-                full_name="e2e.cdms",
-                engine=postgres_warehouse,
+            SourceTestkitConfig(
+                name="e2e.cdms",
+                location_config=postgres_location,
                 features=(
                     features["crn"],
                     features["cdms"],
@@ -110,7 +116,7 @@ class TestE2EAnalyticalUser:
 
         # Create linked sources testkit with our configurations
         self.__class__.linked_testkit = linked_sources_factory(
-            source_configs=source_configs,
+            source_testkit_configs=source_configs,
             seed=42,  # For reproducibility
         )
 
@@ -122,7 +128,9 @@ class TestE2EAnalyticalUser:
 
         # Setup code - Create tables in warehouse
         for source_testkit in self.linked_testkit.sources.values():
-            source_testkit.to_warehouse(engine=postgres_warehouse)
+            source_testkit.write_to_location(
+                credentials=postgres_warehouse, set_credentials=True
+            )
 
         # Clear matchbox database before test
         response = matchbox_client.delete("/database", params={"certain": "true"})
@@ -162,14 +170,9 @@ class TestE2EAnalyticalUser:
 
         # Index all sources in the PostgreSQL database
         for source_testkit in self.linked_testkit.sources.values():
-            source = source_testkit.source
-            index(
-                full_name=source.address.full_name,
-                db_pk="pk",  # Primary key in our test data
-                engine=self.warehouse_engine,
-                columns=[col.model_dump() for col in source.columns],
-            )
-            logging.debug(f"Indexed source: {source.address.full_name}")
+            source = source_testkit.config
+            index(source=source)
+            logging.debug(f"Indexed source: {source.name}")
 
         # Helper functions
         # Define custom company name cleaner, mirroring the FeatureConfig
@@ -207,14 +210,14 @@ class TestE2EAnalyticalUser:
             source_select = select(
                 {
                     source_name: ["pk"]
-                    + [col.name for col in source_testkit.source.columns]
+                    + [field.name for field in source_testkit.config.fields]
                 },
-                engine=self.warehouse_engine,
+                credentials=self.warehouse_engine,
             )
             raw_df = query(source_select, return_type="pandas")
             clusters = query_to_cluster_entities(
                 query=raw_df,
-                source_pks={source_name: f"{prefix}pk"},
+                identifiers={source_name: f"{prefix}pk"},
             )
             df = raw_df.drop(f"{prefix}pk", axis=1)
 
@@ -229,7 +232,7 @@ class TestE2EAnalyticalUser:
             # Create and run a deduper model
             deduper_name = f"deduper_{source_name}"
             deduper = make_model(
-                model_name=deduper_name,
+                name=deduper_name,
                 description=f"Deduplication of {source_name}",
                 model_class=NaiveDeduper,
                 model_settings={
@@ -237,7 +240,7 @@ class TestE2EAnalyticalUser:
                     "unique_fields": feature_names,
                 },
                 left_data=cleaned,
-                left_resolution=source_testkit.source.resolution_name,
+                left_resolution=source_testkit.config.name,
             )
 
             # Run the deduper and store results
@@ -281,38 +284,36 @@ class TestE2EAnalyticalUser:
 
         for left_testkit, right_testkit, common_field in linking_pairs:
             # Get prefixes for column names
-            left_prefix = fullname_to_prefix(left_testkit.source.address.full_name)
-            right_prefix = fullname_to_prefix(right_testkit.source.address.full_name)
+            left_prefix = left_testkit.config.name + "_"
+            right_prefix = right_testkit.config.name + "_"
 
             # Query deduplicated data
             # PK included then dropped to create ClusterEntity objects for later diff
             left_raw_df = query(
                 select(
-                    {left_testkit.source.address.full_name: ["pk", common_field]},
-                    engine=self.warehouse_engine,
+                    {left_testkit.config.name: ["pk", common_field]},
+                    credentials=self.warehouse_engine,
                 ),
-                resolution_name=deduper_names[left_testkit.source.address.full_name],
+                resolution=deduper_names[left_testkit.config.name],
                 return_type="pandas",
             )
             left_clusters = query_to_cluster_entities(
                 query=left_raw_df,
-                source_pks={left_testkit.source.address.full_name: f"{left_prefix}pk"},
+                identifiers={left_testkit.config.name: f"{left_prefix}pk"},
             )
             left_df = left_raw_df.drop(f"{left_prefix}pk", axis=1)
 
             right_raw_df = query(
                 select(
-                    {right_testkit.source.address.full_name: ["pk", common_field]},
+                    {right_testkit.config.name: ["pk", common_field]},
                     engine=self.warehouse_engine,
                 ),
-                resolution_name=deduper_names[right_testkit.source.address.full_name],
+                resolution=deduper_names[right_testkit.config.name],
                 return_type="pandas",
             )
             right_clusters = query_to_cluster_entities(
                 query=right_raw_df,
-                source_pks={
-                    right_testkit.source.address.full_name: f"{right_prefix}pk"
-                },
+                identifiers={right_testkit.config.name: f"{right_prefix}pk"},
             )
             right_df = right_raw_df.drop(f"{right_prefix}pk", axis=1)
 
@@ -327,11 +328,10 @@ class TestE2EAnalyticalUser:
 
             # Create and run linker model
             linker_name = (
-                f"linker_{left_testkit.source.address.full_name}"
-                f"_{right_testkit.source.address.full_name}"
+                f"linker_{left_testkit.config.name}_{right_testkit.config.name}"
             )
             linker = make_model(
-                model_name=linker_name,
+                name=linker_name,
                 description=f"Linking {left_testkit.name} and {right_testkit.name}",
                 model_class=DeterministicLinker,
                 model_settings={
@@ -340,9 +340,9 @@ class TestE2EAnalyticalUser:
                     "comparisons": comparison_clause,
                 },
                 left_data=left_cleaned,
-                left_resolution=deduper_names[left_testkit.source.address.full_name],
+                left_resolution=deduper_names[left_testkit.config.name],
                 right_data=right_cleaned,
-                right_resolution=deduper_names[right_testkit.source.address.full_name],
+                right_resolution=deduper_names[right_testkit.config.name],
             )
 
             # Run the linker and store results
@@ -354,8 +354,8 @@ class TestE2EAnalyticalUser:
                 left_clusters=left_clusters,
                 right_clusters=right_clusters,
                 sources=[
-                    left_testkit.source.address.full_name,
-                    right_testkit.source.address.full_name,
+                    left_testkit.config.name,
+                    right_testkit.config.name,
                 ],
                 threshold=0,
             )
@@ -379,8 +379,8 @@ class TestE2EAnalyticalUser:
             # Store the linker resolution name for later use
             linker_names[
                 (
-                    left_testkit.source.address.full_name,
-                    right_testkit.source.address.full_name,
+                    left_testkit.config.name,
+                    right_testkit.config.name,
                 )
             ] = linker_name
 
@@ -401,22 +401,25 @@ class TestE2EAnalyticalUser:
         left_raw_df = query(
             select({crn_source: ["pk", "crn"]}, engine=self.warehouse_engine),
             select({duns_source: ["pk"]}, engine=self.warehouse_engine),
-            resolution_name=linker_names[first_pair],
+            resolution=linker_names[first_pair],
             return_type="pandas",
         )
         left_clusters = query_to_cluster_entities(
             query=left_raw_df,
-            source_pks={crn_source: f"{crn_prefix}pk", duns_source: f"{duns_prefix}pk"},
+            identifiers={
+                crn_source: f"{crn_prefix}pk",
+                duns_source: f"{duns_prefix}pk",
+            },
         )
         left_df = left_raw_df.drop(f"{left_prefix}pk", axis=1)
 
         right_raw_df = query(
             select({cdms_source: ["pk", "crn"]}, engine=self.warehouse_engine),
-            resolution_name=deduper_names[cdms_source],
+            resolution=deduper_names[cdms_source],
             return_type="pandas",
         )
         right_clusters = query_to_cluster_entities(
-            query=right_raw_df, source_pks={cdms_source: f"{cdms_prefix}pk"}
+            query=right_raw_df, identifiers={cdms_source: f"{cdms_prefix}pk"}
         )
         right_df = right_raw_df.drop(f"{right_prefix}pk", axis=1)
 
@@ -427,7 +430,7 @@ class TestE2EAnalyticalUser:
         # Create and run final linker with the common "crn" field
         final_linker_name = "__DEFAULT__"
         final_linker = make_model(
-            model_name=final_linker_name,
+            name=final_linker_name,
             description="Final linking of all sources",
             model_class=DeterministicLinker,
             model_settings={
@@ -480,13 +483,13 @@ class TestE2EAnalyticalUser:
                 },
                 engine=self.warehouse_engine,
             ),
-            resolution_name=final_linker_name,
+            resolution=final_linker_name,
             return_type="pandas",
         )
 
         final_clusters = query_to_cluster_entities(
             query=final_df,
-            source_pks={
+            identifiers={
                 crn_source: f"{crn_prefix}pk",
                 duns_source: f"{duns_prefix}pk",
                 cdms_source: f"{cdms_prefix}pk",

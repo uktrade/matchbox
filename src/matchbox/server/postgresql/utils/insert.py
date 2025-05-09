@@ -11,7 +11,7 @@ from matchbox.common.db import sql_to_df
 from matchbox.common.graph import ResolutionNodeType
 from matchbox.common.hash import hash_arrow_table, hash_data, hash_values
 from matchbox.common.logging import logger
-from matchbox.common.sources import Source
+from matchbox.common.sources import SourceConfig
 from matchbox.common.transform import (
     attach_components_to_probabilities,
     to_hierarchical_clusters,
@@ -19,14 +19,13 @@ from matchbox.common.transform import (
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
-    ClusterSourcePK,
+    ClusterSourceIdentifiers,
     Contains,
     PKSpace,
     Probabilities,
     ResolutionFrom,
     Resolutions,
-    SourceColumns,
-    Sources,
+    SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import compile_sql, large_ingest
 
@@ -108,7 +107,9 @@ class HashIDMap:
         return pc.take(self.lookup["id"], indices)
 
 
-def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> None:
+def insert_dataset(
+    source: SourceConfig, data_hashes: pa.Table, batch_size: int
+) -> None:
     """Indexes a dataset from your data warehouse within Matchbox."""
     log_prefix = f"Index {source.address.pretty}"
     resolution_hash = hash_data(str(source.address))
@@ -119,7 +120,7 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
 
         # Check if resolution already exists
         existing_resolution = (
-            session.query(Resolutions).filter_by(name=source.resolution_name).first()
+            session.query(Resolutions).filter_by(name=source.name).first()
         )
 
         if existing_resolution:
@@ -131,7 +132,7 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
         else:
             # Create new resolution
             resolution = Resolutions(
-                name=source.resolution_name,
+                name=source.name,
                 resolution_hash=resolution_hash,
                 type=ResolutionNodeType.DATASET.value,
             )
@@ -143,7 +144,7 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
 
         # Check if source already exists
         existing_source = (
-            session.query(Sources)
+            session.query(SourceConfigs)
             .filter_by(resolution_id=resolution.resolution_id)
             .first()
         )
@@ -154,26 +155,12 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
             session.flush()
 
         # Create new source with relationship to resolution
-        source_obj = Sources(
-            resolution_id=resolution.resolution_id,
-            resolution_name=source.resolution_name,
-            full_name=source.address.full_name,
-            warehouse_hash=source.address.warehouse_hash,
-            db_pk=source.db_pk,
-            columns=[
-                SourceColumns(
-                    column_index=idx,
-                    column_name=column.name,
-                    column_type=column.type,
-                )
-                for idx, column in enumerate(source.columns)
-            ],
-        )
-
-        session.add(source_obj)
+        source_obj = SourceConfigs.from_common_source(session, resolution, source)
         session.commit()
 
-        logger.info("Added to Resolutions, Sources, SourceColumns", prefix=log_prefix)
+        logger.info(
+            "Added to Resolutions, SourceConfigs, SourceFields", prefix=log_prefix
+        )
 
         # Store source_id and max primary keys for later use
         source_id = source_obj.source_id
@@ -225,21 +212,25 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
     # Add cluster_id values to data hashes
     hashes_with_ids = data_hashes.join(lookup, left_on="hash", right_on="cluster_hash")
 
-    # Explode source_pk
-    source_pk_records = hashes_with_ids.select(["cluster_id", "source_pk"]).explode(
-        "source_pk"
-    )
+    # Explode source_identifier
+    source_identifier_records = hashes_with_ids.select(
+        ["cluster_id", "source_identifier"]
+    ).explode("source_identifier")
 
-    if source_pk_records.shape[0] > 0:
-        next_pk_id = PKSpace.reserve_block("cluster_source_pks", len(source_pk_records))
+    if source_identifier_records.shape[0] > 0:
+        next_identifier_id = PKSpace.reserve_block(
+            "cluster_source_ids", len(source_identifier_records)
+        )
     else:
-        # The next_pk_id is irrelevant if we don't write any PK records
-        next_pk_id = 0
+        # The next_identifier_id is irrelevant if we don't write any PK records
+        next_identifier_id = 0
 
     # Add required columns
-    source_pk_records = source_pk_records.with_row_index("pk_id").with_columns(
+    source_identifier_records = source_identifier_records.with_row_index(
+        "pk_id"
+    ).with_columns(
         [
-            (pl.col("pk_id") + next_pk_id).alias("pk_id"),
+            (pl.col("pk_id") + next_identifier_id).alias("pk_id"),
             pl.lit(source_id, dtype=pl.Int64).alias("source_id"),
         ]
     )
@@ -258,16 +249,16 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
                 prefix=log_prefix,
             )
 
-        # Bulk insert into ClusterSourcePK table (all links)
-        if not source_pk_records.is_empty():
+        # Bulk insert into ClusterSourceIdentifiers table (all links)
+        if not source_identifier_records.is_empty():
             large_ingest(
-                data=source_pk_records.to_arrow(),
-                table_class=ClusterSourcePK,
+                data=source_identifier_records.to_arrow(),
+                table_class=ClusterSourceIdentifiers,
                 max_chunksize=batch_size,
             )
             logger.info(
-                f"Added {len(source_pk_records):,} primary keys to "
-                "ClusterSourcePK table",
+                f"Added {len(source_identifier_records):,} primary keys to "
+                "ClusterSourceIdentifiers table",
                 prefix=log_prefix,
             )
     except IntegrityError as e:
@@ -277,7 +268,7 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
 
     # Insert successful, safe to update the resolution's content hash
     with MBDB.get_session() as session:
-        if not source_pk_records.is_empty():
+        if not source_identifier_records.is_empty():
             stmt = (
                 update(Resolutions)
                 .where(Resolutions.resolution_id == resolution_id)
@@ -285,7 +276,7 @@ def insert_dataset(source: Source, data_hashes: pa.Table, batch_size: int) -> No
             )
             session.execute(stmt)
 
-    if cluster_records.is_empty() and source_pk_records.is_empty():
+    if cluster_records.is_empty() and source_identifier_records.is_empty():
         logger.info("No new records to add", prefix=log_prefix)
 
     logger.info("Finished", prefix=log_prefix)

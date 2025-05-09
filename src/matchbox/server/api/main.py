@@ -21,8 +21,11 @@ from matchbox.common.dtos import (
     BackendRetrievableType,
     BackendUploadType,
     CountResult,
+    ModelResolutionName,
     NotFoundError,
     OKMessage,
+    ResolutionName,
+    SourceResolutionName,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -32,7 +35,7 @@ from matchbox.common.exceptions import (
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.graph import ResolutionGraph
-from matchbox.common.sources import Match, SourceAddress
+from matchbox.common.sources import Match
 from matchbox.server.api.arrow import table_to_s3
 from matchbox.server.api.cache import process_upload
 from matchbox.server.api.dependencies import (
@@ -206,20 +209,16 @@ async def get_upload_status(
 )
 def query(
     backend: BackendDependency,
-    full_name: str,
-    warehouse_hash_b64: str,
-    resolution_name: str | None = None,
+    source: SourceResolutionName,
+    resolution: ResolutionName | None = None,
     threshold: int | None = None,
     limit: int | None = None,
 ) -> ParquetResponse:
-    """Query Matchbox for matches based on a source address."""
-    source_address = SourceAddress(
-        full_name=full_name, warehouse_hash=warehouse_hash_b64
-    )
+    """Query Matchbox for matches based on a source resolution name."""
     try:
         res = backend.query(
-            source_address=source_address,
-            resolution_name=resolution_name,
+            source=source,
+            resolution=resolution,
             threshold=threshold,
             limit=limit,
         )
@@ -248,28 +247,19 @@ def query(
 )
 def match(
     backend: BackendDependency,
-    target_full_names: Annotated[list[str], Query()],
-    target_warehouse_hashes_b64: Annotated[list[str], Query()],
-    source_full_name: str,
-    source_warehouse_hash_b64: str,
-    source_pk: str,
-    resolution_name: str,
+    targets: Annotated[list[SourceResolutionName], Query()],
+    source: SourceResolutionName,
+    identifier: str,
+    resolution: ModelResolutionName,
     threshold: int | None = None,
 ) -> list[Match]:
     """Match a source primary key against a list of target addresses."""
-    targets = [
-        SourceAddress(full_name=n, warehouse_hash=w)
-        for n, w in zip(target_full_names, target_warehouse_hashes_b64, strict=True)
-    ]
-    source = SourceAddress(
-        full_name=source_full_name, warehouse_hash=source_warehouse_hash_b64
-    )
     try:
         res = backend.match(
-            source_pk=source_pk,
-            source=source,
             targets=targets,
-            resolution_name=resolution_name,
+            source=source,
+            identifier=identifier,
+            resolution=resolution,
             threshold=threshold,
         )
     except MatchboxResolutionNotFoundError as e:

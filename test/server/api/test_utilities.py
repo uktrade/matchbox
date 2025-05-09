@@ -107,7 +107,7 @@ async def test_file_to_s3(s3: S3Client):
 def test_basic_cache_and_retrieve():
     """Test basic caching and retrieval functionality."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Cache the source
     cache_id = store.cache_source(source)
@@ -130,7 +130,7 @@ def test_basic_cache_and_retrieve():
 def test_expiration(mock_datetime: Mock):
     """Test that entries expire correctly after period of inactivity."""
     store = MetadataStore(expiry_minutes=30)
-    source = source_factory().source
+    source = source_factory().config
 
     # Cache the source
     mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0)
@@ -158,7 +158,7 @@ def test_expiration(mock_datetime: Mock):
 async def test_cleanup(mock_datetime: Mock):
     """Test that cleanup removes expired entries."""
     store = MetadataStore(expiry_minutes=30)
-    source = source_factory().source
+    source = source_factory().config
 
     # Create two entries
     mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0)
@@ -184,7 +184,7 @@ async def test_cleanup(mock_datetime: Mock):
 def test_remove():
     """Test manual removal of cache entries."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Cache and remove
     cache_id = store.cache_source(source)
@@ -199,7 +199,7 @@ def test_remove():
 async def test_status_management():
     """Test status update functionality."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Create entry and verify initial status
     cache_id = store.cache_source(source)
@@ -227,7 +227,7 @@ async def test_status_management():
 async def test_timestamp_updates(mock_datetime: Mock):
     """Test that timestamps update correctly on different operations."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Initial creation
     mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0)
@@ -251,7 +251,7 @@ async def test_timestamp_updates(mock_datetime: Mock):
 async def test_heartbeat_updates_status():
     """Test that heartbeat updates status periodically."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Create initial entry
     upload_id = store.cache_source(source)
@@ -271,7 +271,7 @@ async def test_heartbeat_updates_status():
 async def test_heartbeat_timestamp_updates(mock_datetime: Mock):
     """Test that heartbeat updates timestamps correctly."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Create initial entry
     mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0)
@@ -292,7 +292,7 @@ async def test_heartbeat_timestamp_updates(mock_datetime: Mock):
 async def test_heartbeat_with_expiry(mock_datetime: Mock):
     """Test heartbeat behavior with cache expiry."""
     store = MetadataStore(expiry_minutes=30)
-    source = source_factory().source
+    source = source_factory().config
 
     # Create entry
     mock_datetime.now.return_value = datetime(2024, 1, 1, 12, 0)
@@ -317,7 +317,7 @@ async def test_heartbeat_with_expiry(mock_datetime: Mock):
 async def test_heartbeat_errors_on_removed_entry():
     """Test heartbeat behavior when entry is removed during processing."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Create entry
     upload_id = store.cache_source(source)
@@ -333,7 +333,7 @@ async def test_heartbeat_errors_on_removed_entry():
 async def test_multiple_heartbeats():
     """Test multiple concurrent heartbeats on different entries."""
     store = MetadataStore()
-    source = source_factory().source
+    source = source_factory().config
 
     # Create two entries
     id1 = store.cache_source(source)

@@ -23,8 +23,7 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.factories.sources import source_factory
 from matchbox.common.graph import ResolutionGraph
-from matchbox.common.hash import hash_to_base64
-from matchbox.common.sources import Match, SourceAddress
+from matchbox.common.sources import Match
 from matchbox.server.api.cache import MetadataStore, process_upload
 from matchbox.server.api.dependencies import backend, metadata_store
 from matchbox.server.api.main import app
@@ -69,7 +68,7 @@ def test_upload(
     # Mock the metadata store
     mock_metadata_store = Mock()
     store = MetadataStore()
-    update_id = store.cache_source(source_testkit.source)
+    update_id = store.cache_source(source_testkit.config)
     mock_metadata_store.get.side_effect = store.get
     mock_metadata_store.update_status.side_effect = store.update_status
 
@@ -119,7 +118,7 @@ def test_upload_wrong_schema(
     # Setup store
     mock_metadata_store = Mock()
     store = MetadataStore()
-    update_id = store.cache_source(source_testkit.source)
+    update_id = store.cache_source(source_testkit.config)
     mock_metadata_store.get.side_effect = store.get
     mock_metadata_store.update_status.side_effect = store.update_status
 
@@ -155,7 +154,7 @@ def test_upload_status_check(test_client: TestClient):
     mock_metadata_store = Mock()
     store = MetadataStore()
     source_testkit = source_factory()
-    update_id = store.cache_source(source_testkit.source)
+    update_id = store.cache_source(source_testkit.config)
     store.update_status(update_id, "processing")
 
     mock_metadata_store.get.side_effect = store.get
@@ -179,7 +178,7 @@ def test_upload_already_processing(test_client: TestClient):
     mock_metadata_store = Mock()
     store = MetadataStore()
     source_testkit = source_factory()
-    update_id = store.cache_source(source_testkit.source)
+    update_id = store.cache_source(source_testkit.config)
     store.update_status(update_id, "processing")
 
     mock_metadata_store.get.side_effect = store.get
@@ -204,7 +203,7 @@ def test_upload_already_queued(test_client: TestClient):
     mock_metadata_store = Mock()
     store = MetadataStore()
     source_testkit = source_factory()
-    update_id = store.cache_source(source_testkit.source)
+    update_id = store.cache_source(source_testkit.config)
     store.update_status(update_id, "queued")
 
     mock_metadata_store.get.side_effect = store.get
@@ -261,7 +260,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
 
     # Setup metadata store with test data
     store = MetadataStore()
-    upload_id = store.cache_source(source_testkit.source)
+    upload_id = store.cache_source(source_testkit.config)
     store.update_status(upload_id, "awaiting_upload")
 
     # Run the process, expecting it to fail
@@ -297,8 +296,8 @@ def test_query(test_client: TestClient):
     mock_backend.query = Mock(
         return_value=pa.Table.from_pylist(
             [
-                {"source_pk": "a", "id": 1},
-                {"source_pk": "b", "id": 2},
+                {"source_identifier": "a", "id": 1},
+                {"source_identifier": "b", "id": 2},
             ],
             schema=SCHEMA_MB_IDS,
         )
@@ -310,10 +309,7 @@ def test_query(test_client: TestClient):
     # Hit endpoint
     response = test_client.get(
         "/query",
-        params={
-            "full_name": "foo",
-            "warehouse_hash_b64": hash_to_base64(b"bar"),
-        },
+        params={"source": "foo"},
     )
 
     # Process response
@@ -335,10 +331,7 @@ def test_query_404_resolution(test_client: TestClient):
     # Hit endpoint
     response = test_client.get(
         "/query",
-        params={
-            "full_name": "foo",
-            "warehouse_hash_b64": hash_to_base64(b"bar"),
-        },
+        params={"source": "foo"},
     )
 
     # Check response
@@ -355,10 +348,7 @@ def test_query_404_source(test_client: TestClient):
     # Hit endpoint
     response = test_client.get(
         "/query",
-        params={
-            "full_name": "foo",
-            "warehouse_hash_b64": hash_to_base64(b"bar"),
-        },
+        params={"source": "foo"},
     )
 
     # Check response
@@ -367,15 +357,13 @@ def test_query_404_source(test_client: TestClient):
 
 def test_match(test_client: TestClient):
     mock_backend = Mock()
-    foo_address = SourceAddress(full_name="foo", warehouse_hash=b"foo")
-    bar_address = SourceAddress(full_name="bar", warehouse_hash=b"bar")
 
     mock_matches = [
         Match(
             cluster=1,
-            source=foo_address,
+            source="foo",
             source_id={"1"},
-            target=bar_address,
+            target="bar",
             target_id={"a"},
         )
     ]
@@ -388,12 +376,10 @@ def test_match(test_client: TestClient):
     response = test_client.get(
         "/match",
         params={
-            "target_full_names": [foo_address.full_name],
-            "target_warehouse_hashes_b64": [foo_address.warehouse_hash_b64],
-            "source_full_name": bar_address.full_name,
-            "source_warehouse_hash_b64": bar_address.warehouse_hash_b64,
-            "source_pk": 1,
-            "resolution_name": "res",
+            "target": ["foo"],
+            "source": "bar",
+            "identifier": 1,
+            "resolution": "res",
             "threshold": 50,
         },
     )
@@ -414,12 +400,10 @@ def test_match_404_resolution(test_client: TestClient):
     response = test_client.get(
         "/match",
         params={
-            "target_full_names": ["foo"],
-            "target_warehouse_hashes_b64": [hash_to_base64(b"foo")],
-            "source_full_name": "bar",
-            "source_warehouse_hash_b64": hash_to_base64(b"bar"),
-            "source_pk": 1,
-            "resolution_name": "res",
+            "target": ["foo"],
+            "source": "bar",
+            "identifier": 1,
+            "resolution": "res",
         },
     )
 
@@ -439,12 +423,10 @@ def test_match_404_source(test_client: TestClient):
     response = test_client.get(
         "/match",
         params={
-            "target_full_names": ["foo"],
-            "target_warehouse_hashes_b64": [hash_to_base64(b"foo")],
-            "source_full_name": "bar",
-            "source_warehouse_hash_b64": hash_to_base64(b"bar"),
-            "source_pk": 1,
-            "resolution_name": "res",
+            "target": ["foo"],
+            "source": "bar",
+            "identifier": 1,
+            "resolution": "res",
         },
     )
 
@@ -524,8 +506,8 @@ def test_api_key_authorisation(test_client: TestClient):
         (test_client.post, "/upload/upload_id"),
         (test_client.post, "/sources"),
         (test_client.post, "/models"),
-        (test_client.patch, "/models/model_name/truth"),
-        (test_client.delete, "/resolutions/model_name"),
+        (test_client.patch, "/models/name/truth"),
+        (test_client.delete, "/resolutions/name"),
         (test_client.delete, "/database"),
     ]
 

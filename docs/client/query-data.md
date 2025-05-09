@@ -15,8 +15,8 @@ Given a primary key and a source dataset, retrieves all primary keys that share 
     mb.match(
         select("datahub_companies", engine=engine),
         source=select("companies_house", engine=engine),
-        source_pk="8534735",
-        resolution_name="last_linker",
+        source_identifier="8534735",
+        resolution="last_linker",
     )
     ```
 

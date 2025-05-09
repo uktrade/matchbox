@@ -4,7 +4,7 @@ from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import (
-    SourceConfig,
+    SourceTestkitConfig,
     linked_sources_factory,
     source_factory,
 )
@@ -136,7 +136,7 @@ def test_testkit_dag_model_chain(
     # Setup: Create sources and DAG
     linked = linked_sources_factory(seed=hash(str(chain_config)))
     standalone = source_factory(
-        full_name="standalone_source",
+        name="standalone_source",
         features=[
             {"name": "name", "base_generator": "name"},
             {"name": "age", "base_generator": "random_int"},
@@ -154,7 +154,7 @@ def test_testkit_dag_model_chain(
     # Build model chain
     for config in chain_config:
         # Extract config values
-        model_name = config["name"]
+        name = config["name"]
         source_names = config["sources"]
         prev_models = config["previous_models"]
         is_standalone = config.get("standalone", False)
@@ -189,29 +189,28 @@ def test_testkit_dag_model_chain(
 
         # Create and add model
         model = model_factory(
-            name=model_name,
+            name=name,
             left_testkit=left_testkit,
             right_testkit=right_testkit,
             true_entities=all_true_sources,
         )
         dag.add_model(model)
-        models[model_name] = model
+        models[name] = model
 
     # Test: Verify sources for each model
-    for model_name, expected_sources in expected_sources_by_model.items():
-        sources_dict = dag.get_sources_for_model(model_name)
+    for name, expected_sources in expected_sources_by_model.items():
+        sources_dict = dag.get_sources_for_model(name)
 
         if not expected_sources:  # Standalone case
-            assert None in sources_dict, f"{model_name} should have standalone sources"
+            assert None in sources_dict, f"{name} should have standalone sources"
             assert linked_key not in sources_dict, (
-                f"{model_name} should not use linked sources"
+                f"{name} should not use linked sources"
             )
         else:  # Linked sources case
-            assert linked_key in sources_dict, f"{model_name} should use linked sources"
-            actual_sources = {s.split("@")[0] for s in sources_dict[linked_key]}
+            assert linked_key in sources_dict, f"{name} should use linked sources"
+            actual_sources = set(sources_dict[linked_key])
             assert actual_sources == set(expected_sources), (
-                f"{model_name} expected sources {expected_sources}, "
-                f"got {actual_sources}"
+                f"{name} expected sources {expected_sources}, got {actual_sources}"
             )
 
 
@@ -226,16 +225,20 @@ def test_testkit_dag_multiple_linked_sources():
 
     # Create two linked source testkits
     configs1 = (
-        SourceConfig(full_name="foo1", features=tuple(features[:1])),
-        SourceConfig(full_name="foo2", features=tuple(features[:1])),
+        SourceTestkitConfig(name="foo1", features=tuple(features[:1])),
+        SourceTestkitConfig(name="foo2", features=tuple(features[:1])),
     )
     configs2 = (
-        SourceConfig(full_name="bar1", features=tuple(features[1:])),
-        SourceConfig(full_name="bar2", features=tuple(features[1:])),
+        SourceTestkitConfig(name="bar1", features=tuple(features[1:])),
+        SourceTestkitConfig(name="bar2", features=tuple(features[1:])),
     )
 
-    linked1 = linked_sources_factory(source_configs=configs1, n_true_entities=10)
-    linked2 = linked_sources_factory(source_configs=configs2, n_true_entities=10)
+    linked1 = linked_sources_factory(
+        source_testkit_configs=configs1, n_true_entities=10
+    )
+    linked2 = linked_sources_factory(
+        source_testkit_configs=configs2, n_true_entities=10
+    )
 
     # Expected linked keys
     linked1_key = "linked_foo1_foo2"

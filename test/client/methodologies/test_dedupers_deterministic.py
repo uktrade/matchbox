@@ -10,13 +10,13 @@ from matchbox.client.models.dedupers.naive import NaiveDeduper, NaiveSettings
 from matchbox.client.results import Results
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.sources import (
-    SourceConfig,
     SourceTestkit,
+    SourceTestkitConfig,
     linked_sources_factory,
 )
-from matchbox.common.sources import Source
+from matchbox.common.sources import SourceConfig
 
-DeduperConfigurator = Callable[[Source], dict[str, Any]]
+DeduperConfigurator = Callable[[SourceConfig], dict[str, Any]]
 
 # Methodology configuration adapters
 
@@ -31,7 +31,7 @@ def configure_naive_deduper(testkit: SourceTestkit) -> dict[str, Any]:
         A dictionary with validated settings for NaiveDeduper
     """
     # Extract column names excluding pk and id
-    fields = [c.name for c in testkit.source.columns if c.name not in ("pk", "id")]
+    fields = [c.name for c in testkit.config.columns if c.name not in ("pk", "id")]
 
     settings_dict = {
         "id": "id",
@@ -67,19 +67,19 @@ def test_no_deduplication(Deduper: Deduper, configure_deduper: DeduperConfigurat
         ),
     )
 
-    source_config = SourceConfig(
-        full_name="source_exact",
+    source_config = SourceTestkitConfig(
+        name="source_exact",
         features=features,
         n_true_entities=10,
         repetition=0,  # Each entity appears once
     )
 
-    linked = linked_sources_factory(source_configs=(source_config,), seed=42)
+    linked = linked_sources_factory(source_testkit_configs=(source_config,), seed=42)
     source = linked.sources["source_exact"]
 
     # Configure and run the deduper
     deduper = make_model(
-        model_name="exact_deduper",
+        name="exact_deduper",
         description="Deduplication of exact duplicates",
         model_class=Deduper,
         model_settings=configure_deduper(source),
@@ -117,19 +117,19 @@ def test_exact_duplicate_deduplication(
         ),
     )
 
-    source_config = SourceConfig(
-        full_name="source_exact",
+    source_config = SourceTestkitConfig(
+        name="source_exact",
         features=features,
         n_true_entities=10,
         repetition=2,  # Each entity appears 3 times (base + 2 repetitions)
     )
 
-    linked = linked_sources_factory(source_configs=(source_config,), seed=42)
+    linked = linked_sources_factory(source_testkit_configs=(source_config,), seed=42)
     source = linked.sources["source_exact"]
 
     # Configure and run the deduper
     deduper = make_model(
-        model_name="exact_deduper",
+        name="exact_deduper",
         description="Deduplication of exact duplicates",
         model_class=Deduper,
         model_settings=configure_deduper(source),

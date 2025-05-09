@@ -22,9 +22,8 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.graph import ResolutionNodeType
-from matchbox.common.sources import Source as CommonSource
-from matchbox.common.sources import SourceAddress
-from matchbox.common.sources import SourceColumn as CommonSourceCoulmn
+from matchbox.common.sources import Location, SourceField
+from matchbox.common.sources import SourceConfig as CommonSource
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
 
@@ -73,7 +72,9 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     truth = Column(SMALLINT, nullable=True)
 
     # Relationships
-    source = relationship("Sources", back_populates="dataset_resolution", uselist=False)
+    source = relationship(
+        "SourceConfigs", back_populates="dataset_resolution", uselist=False
+    )
     probabilities = relationship(
         "Probabilities",
         back_populates="proposed_by",
@@ -214,7 +215,7 @@ class PKSpace(MBDB.MatchboxBase):
 
     id = Column(BIGINT, primary_key=True)
     next_cluster_id = Column(BIGINT, nullable=False)
-    next_cluster_source_pk_id = Column(BIGINT, nullable=False)
+    next_cluster_source_identifier_id = Column(BIGINT, nullable=False)
 
     @classmethod
     def initialise(cls) -> None:
@@ -222,7 +223,7 @@ class PKSpace(MBDB.MatchboxBase):
         with MBDB.get_session() as session:
             init_statement = (
                 insert(cls)
-                .values(id=1, next_cluster_id=1, next_cluster_source_pk_id=1)
+                .values(id=1, next_cluster_id=1, next_cluster_source_identifier_id=1)
                 .on_conflict_do_nothing()
             )
 
@@ -231,7 +232,7 @@ class PKSpace(MBDB.MatchboxBase):
 
     @classmethod
     def reserve_block(
-        cls, table: Literal["clusters", "cluster_source_pks"], block_size: int
+        cls, table: Literal["clusters", "cluster_source_ids"], block_size: int
     ) -> int:
         """Atomically get next available ID for table, and increment it."""
         if block_size < 1:
@@ -240,8 +241,8 @@ class PKSpace(MBDB.MatchboxBase):
         match table:
             case "clusters":
                 next_id_col = "next_cluster_id"
-            case "cluster_source_pks":
-                next_id_col = "next_cluster_source_pk_id"
+            case "cluster_source_ids":
+                next_id_col = "next_cluster_source_identifier_id"
 
         with MBDB.get_session() as session:
             try:
@@ -258,60 +259,60 @@ class PKSpace(MBDB.MatchboxBase):
             return next_id
 
 
-class SourceColumns(CountMixin, MBDB.MatchboxBase):
-    """Table for storing column details for Sources."""
+class SourceFields(CountMixin, MBDB.MatchboxBase):
+    """Table for storing field maps for SourceConfigs."""
 
-    __tablename__ = "source_columns"
+    __tablename__ = "source_fields"
 
     # Columns
-    column_id = Column(BIGINT, primary_key=True)
+    field_id = Column(BIGINT, primary_key=True)
     source_id = Column(
         BIGINT,
         ForeignKey("sources.source_id", ondelete="CASCADE"),
         nullable=False,
     )
-    column_index = Column(INTEGER, nullable=False)
-    column_name = Column(TEXT, nullable=False)
-    column_type = Column(TEXT, nullable=False)
+    field_index = Column(INTEGER, nullable=False)
+    field_name = Column(TEXT, nullable=False)
+    field_type = Column(TEXT, nullable=False)
 
     # Relationships
-    source = relationship("Sources", back_populates="columns")
+    source = relationship("SourceConfigs", back_populates="all_fields")
 
     # Constraints and indices
     __table_args__ = (
-        UniqueConstraint("source_id", "column_index", name="unique_column_index"),
-        Index("ix_source_columns_source_id", "source_id"),
+        UniqueConstraint("source_id", "field_index", name="unique_field_index"),
+        Index("ix_source_fields_source_id", "source_id"),
     )
 
 
-class ClusterSourcePK(CountMixin, MBDB.MatchboxBase):
+class ClusterSourceIdentifiers(CountMixin, MBDB.MatchboxBase):
     """Table for storing source primary keys for clusters."""
 
-    __tablename__ = "cluster_source_pks"
+    __tablename__ = "cluster_source_ids"
 
     # Columns
-    pk_id = Column(BIGINT, primary_key=True)
+    identifier_id = Column(BIGINT, primary_key=True)
     cluster_id = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
     source_id = Column(
         BIGINT, ForeignKey("sources.source_id", ondelete="CASCADE"), nullable=False
     )
-    source_pk = Column(TEXT, nullable=False)
+    identifier = Column(TEXT, nullable=False)
 
     # Relationships
-    cluster = relationship("Clusters", back_populates="source_pks")
-    source = relationship("Sources", back_populates="cluster_source_pks")
+    cluster = relationship("Clusters", back_populates="source_identifiers")
+    source = relationship("SourceConfigs", back_populates="cluster_source_ids")
 
     # Constraints and indices
     __table_args__ = (
-        Index("ix_cluster_source_pks_cluster_id", "cluster_id"),
-        Index("ix_cluster_source_pks_source_pk", "source_pk"),
-        UniqueConstraint("pk_id", "source_id", name="unique_pk_source"),
+        Index("ix_cluster_source_ids_cluster_id", "cluster_id"),
+        Index("ix_cluster_source_ids_identifier", "identifier"),
+        UniqueConstraint("identifier_id", "identifier", name="unique_id_source"),
     )
 
 
-class Sources(CountMixin, MBDB.MatchboxBase):
+class SourceConfigs(CountMixin, MBDB.MatchboxBase):
     """Table of sources of data for Matchbox."""
 
     __tablename__ = "sources"
@@ -323,64 +324,126 @@ class Sources(CountMixin, MBDB.MatchboxBase):
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         nullable=False,
     )
-    resolution_name = Column(TEXT, nullable=False)
-    full_name = Column(TEXT, nullable=False)
-    warehouse_hash = Column(BYTEA, nullable=False)
-    db_pk = Column(TEXT, nullable=False)
+    location_type = Column(TEXT, nullable=False)
+    location_uri = Column(TEXT, nullable=False)
+    extract_transform = Column(TEXT, nullable=False)
+    identifier_id = Column(
+        BIGINT,
+        ForeignKey("source_fields.field_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    @property
+    def name(self) -> str:
+        """Get the name of the related resolution."""
+        return self.resolution.name
 
     # Relationships
-    dataset_resolution = relationship("Resolutions", back_populates="source")
-    columns = relationship(
-        "SourceColumns",
+    resolution = relationship("Resolutions", back_populates="source")
+    all_fields = relationship(
+        "SourceFields",
+        primaryjoin="SourceConfigs.source_id == SourceFields.source_id",
         back_populates="source",
         passive_deletes=True,
     )
-    cluster_source_pks = relationship(
-        "ClusterSourcePK",
+    indexed_fields = relationship(
+        "SourceFields",
+        primaryjoin="and_(SourceConfigs.source_id == SourceFields.source_id, "
+        "SourceFields.field_id != SourceConfigs.identifier_id)",
+        viewonly=True,
+        order_by="SourceFields.field_index",
+        collection_class=list,
+    )
+    cluster_source_ids = relationship(
+        "ClusterSourceIdentifiers",
         back_populates="source",
         passive_deletes=True,
     )
     clusters = relationship(
         "Clusters",
-        secondary=ClusterSourcePK.__table__,
-        primaryjoin="Sources.source_id == ClusterSourcePK.source_id",
-        secondaryjoin="ClusterSourcePK.cluster_id == Clusters.cluster_id",
+        secondary=ClusterSourceIdentifiers.__table__,
+        primaryjoin="SourceConfigs.source_id == ClusterSourceIdentifiers.source_id",
+        secondaryjoin="ClusterSourceIdentifiers.cluster_id == Clusters.cluster_id",
         viewonly=True,
     )
-
-    # Constraints
-    __table_args__ = (
-        UniqueConstraint("full_name", "warehouse_hash", name="unique_source_address"),
+    identifier = relationship(
+        "SourceFields",
+        primaryjoin="and_(SourceConfigs.source_id == SourceFields.source_id, "
+        "SourceFields.field_id == SourceConfigs.identifier_id)",
+        viewonly=True,
+        uselist=False,
+        backref="source_identifier",
     )
 
     @classmethod
-    def list_all(cls) -> list["Sources"]:
+    def list_all(cls) -> list["SourceConfigs"]:
         """Returns all sources in the database."""
         with MBDB.get_session() as session:
             return session.query(cls).all()
 
-    def to_common_source(self) -> list[CommonSource]:
-        """Convert ORM source to a matchbox.common Source object."""
-        with MBDB.get_session() as session:
-            columns: list[SourceColumns] = (
-                session.query(SourceColumns)
-                .filter(SourceColumns.source_id == self.source_id)
-                .order_by(SourceColumns.column_index)
-                .all()
-            )
+    @classmethod
+    def from_common_source(
+        cls, session: Session, resolution: "Resolutions", source: CommonSource
+    ) -> "SourceConfigs":
+        """Create a SourceConfigs instance from a CommonSource object."""
+        # Create the identifier field and get its ID
+        identifier_field = SourceFields(
+            field_index=0,
+            field_name=source.identifier.name,
+            field_type=source.identifier.type.value,
+        )
 
+        session.add(identifier_field)
+        session.flush()
+
+        # Create the source with the known identifier_id and get its ID
+        source_obj = cls(
+            resolution_id=resolution.resolution_id,
+            location_type=source.location.type,
+            location_uri=source.location.uri,
+            extract_transform=source.extract_transform,
+            identifier_id=identifier_field.field_id,
+        )
+
+        session.add(source_obj)
+        session.flush()
+
+        # Set the source_id on the identifier field
+        identifier_field.source_id = source_obj.source_id
+
+        # Create and add all other fields
+        for idx, field in enumerate(source.fields):
+            other_field = SourceFields(
+                source_id=source_obj.source_id,
+                field_index=idx + 1,
+                field_name=field.name,
+                field_type=field.type.value,
+            )
+            session.add(other_field)
+
+        return source_obj
+
+    def to_common_source(self) -> CommonSource:
+        """Convert ORM source to a matchbox.common SourceConfig object."""
         return CommonSource(
-            resolution_name=self.resolution_name,
-            address=SourceAddress(
-                full_name=self.full_name, warehouse_hash=self.warehouse_hash
+            location=Location.create(
+                {
+                    "type": self.location_type,
+                    "uri": self.location_uri,
+                }
             ),
-            db_pk=self.db_pk,
-            columns=[
-                CommonSourceCoulmn(
-                    name=column.column_name,
-                    type=column.column_type,
+            name=self.name,
+            extract_transform=self.extract_transform,
+            identifier=SourceField(
+                name=self.identifier.field_name,
+                type=self.identifier.field_type,
+            ),
+            fields=[
+                SourceField(
+                    name=field.field_name,
+                    type=field.field_type,
                 )
-                for column in columns
+                for field in self.indexed_fields
             ],
         )
 
@@ -416,8 +479,8 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
     cluster_hash = Column(BYTEA, nullable=False)
 
     # Relationships
-    source_pks = relationship(
-        "ClusterSourcePK",
+    source_identifiers = relationship(
+        "ClusterSourceIdentifiers",
         back_populates="cluster",
         passive_deletes=True,
     )
@@ -433,12 +496,12 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
         secondaryjoin="Clusters.cluster_id == Contains.child",
         backref="parents",
     )
-    # Add relationship to Sources through ClusterSourcePK
+    # Add relationship to SourceConfigs through ClusterSourceIdentifiers
     sources = relationship(
-        "Sources",
-        secondary=ClusterSourcePK.__table__,
-        primaryjoin="Clusters.cluster_id == ClusterSourcePK.cluster_id",
-        secondaryjoin="ClusterSourcePK.source_id == Sources.source_id",
+        "SourceConfigs",
+        secondary=ClusterSourceIdentifiers.__table__,
+        primaryjoin="Clusters.cluster_id == ClusterSourceIdentifiers.cluster_id",
+        secondaryjoin="ClusterSourceIdentifiers.source_id == SourceConfigs.source_id",
         viewonly=True,
     )
 

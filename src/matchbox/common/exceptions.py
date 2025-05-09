@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from matchbox.common.dtos import ResolutionName, SourceResolutionName
+
 # -- Configuration exceptions
 
 
@@ -40,15 +42,18 @@ class MatchboxUnhandledServerResponse(Exception):
         super().__init__(message)
 
 
-# -- Source exceptions --
+# -- SourceConfig exceptions --
 
 
-class MatchboxSourceColumnError(Exception):
-    """Specified columns diverge with the warehouse."""
+class MatchboxSourceFieldError(Exception):
+    """Specified fields diverge with the location."""
 
 
-class MatchboxSourceEngineError(Exception):
-    """Engine must be available in Source."""
+class MatchboxSourceCredentialsError(Exception):
+    """Location credentials must be set.
+
+    Use Location.add_credentials() to set appropriate credentials for the location type.
+    """
 
 
 class MatchboxSourceExtractTransformError(Exception):
@@ -101,33 +106,33 @@ class MatchboxServerFileError(Exception):
 class MatchboxResolutionNotFoundError(Exception):
     """Resolution not found."""
 
-    def __init__(self, message: str | None = None, resolution_name: str | None = None):
+    def __init__(self, message: str | None = None, name: ResolutionName | None = None):
         """Initialise the exception."""
         if message is None:
             message = "Resolution not found."
-            if resolution_name is not None:
-                message = f"Resolution {resolution_name} not found."
+            if name is not None:
+                message = f"Resolution {name} not found."
 
         super().__init__(message)
-        self.resolution_name = resolution_name
+        self.name = name
 
 
 class MatchboxSourceNotFoundError(Exception):
-    """Source not found on the server."""
+    """SourceConfig not found on the server."""
 
     def __init__(
         self,
         message: str = None,
-        address: str | None = None,
+        name: SourceResolutionName | None = None,
     ):
         """Initialise the exception."""
         if message is None:
-            message = "Source not found on matchbox."
-            if address:
-                message = f"Source ({address}) not found."
+            message = "SourceConfig not found on matchbox."
+            if name:
+                message = f"SourceConfig ({name}) not found."
 
         super().__init__(message)
-        self.address = address
+        self.name = name
 
 
 class MatchboxDataNotFound(Exception):

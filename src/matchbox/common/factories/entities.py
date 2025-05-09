@@ -4,20 +4,20 @@ These underpin the entity resolution process, which is the core of the
 source and model testkit factory system.
 """
 
-import datetime
 from abc import ABC, abstractmethod
 from collections import Counter
-from decimal import Decimal
 from functools import cache
 from random import getrandbits
 from typing import TYPE_CHECKING, Any, Type
 
 import pandas as pd
+import polars as pl
 import pyarrow as pa
 from faker import Faker
 from frozendict import frozendict
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from matchbox.common.dtos import DataTypes
 from matchbox.common.transform import DisjointSet
 
 if TYPE_CHECKING:
@@ -89,54 +89,34 @@ class ReplaceRule(VariationRule):
         return "replace"
 
 
-def infer_sql_type_from_type(type_: Type) -> str:
-    """Infer an appropriate SQL type from a single type."""
-    type_map = {
-        str: "TEXT",
-        int: "BIGINT",
-        float: "FLOAT",
-        bool: "BOOLEAN",
-        datetime.datetime: "TIMESTAMP",
-        datetime.date: "DATE",
-        datetime.time: "TIME",
-        Decimal: "DECIMAL(10,2)",
-    }
-
-    return type_map.get(type_, "TEXT")
-
-
-def infer_sql_type(base: str, parameters: tuple | None) -> str:
-    """Infer an appropriate SQL type from a Faker configuration.
+def infer_data_type(base: str, parameters: tuple | None) -> str:
+    """Infer an appropriate Matchbox type from a Faker configuration.
 
     Args:
         base: Faker generator type
         parameters: Parameters for the generator
 
     Returns:
-        A SQL type string
+        A Matchbox DataType
     """
     generator = Faker()
     value_generator = getattr(generator, base)
     parameters = {} if not parameters else dict(parameters)
     examples = [value_generator(**dict(parameters)) for _ in range(5)]
+    series = pl.Series(examples)
+    return DataTypes.from_dtype(series.dtype)
 
-    # Get the types of all non-None examples
-    types_found = {type(x) for x in examples}
 
-    # If multiple types, use the most general one
-    if len(types_found) > 1:
-        # Check for numeric types
-        if all(issubclass(t, (int, float, Decimal)) for t in types_found):
-            if any(issubclass(t, float) or issubclass(t, Decimal) for t in types_found):
-                return "FLOAT"
-            return "BIGINT"
-        # Default to TEXT for mixed types
-        return "TEXT"
+def convert_data_type(py_type: Type) -> DataTypes:
+    """Convert a Python type to a Matchbox type.
 
-    # Single type case
-    python_type = next(iter(types_found))
+    Args:
+        py_type: Python type
 
-    return infer_sql_type_from_type(python_type)
+    Returns:
+        A Matchbox DataType
+    """
+    return DataTypes.from_dtype(pl.DataType.from_python(py_type))
 
 
 class FeatureConfig(BaseModel):
@@ -164,8 +144,8 @@ class FeatureConfig(BaseModel):
         default=False, description="Whether the base case is dropped."
     )
     variations: tuple[VariationRule, ...] = Field(default_factory=tuple)
-    sql_type: str = Field(
-        default_factory=lambda data: infer_sql_type(
+    datatype: DataTypes = Field(
+        default_factory=lambda data: infer_data_type(
             data["base_generator"], data["parameters"]
         )
     )
@@ -271,9 +251,9 @@ class SourcePKMixin:
     Implements methods for accessing and retrieving source primary keys.
     """
 
-    source_pks: EntityReference
+    source_identifiers: EntityReference
 
-    def get_source_pks(self, source_name: str) -> set[str]:
+    def get_source_identifiers(self, source_name: str) -> set[str]:
         """Get PKs for a specific source.
 
         Args:
@@ -282,7 +262,7 @@ class SourcePKMixin:
         Returns:
             Set of primary keys, empty if dataset not found
         """
-        return set(self.source_pks.get(source_name, frozenset()))
+        return set(self.source_identifiers.get(source_name, frozenset()))
 
     def get_values(
         self, sources: dict[str, "SourceTestkit"]
@@ -304,11 +284,11 @@ class SourcePKMixin:
         values: dict[str, dict[str, list[str]]] = {}
 
         # For each dataset we have PKs for
-        for dataset_name, pks in self.source_pks.items():
+        for dataset_name, pks in self.source_identifiers.items():
             source = sources.get(dataset_name)
 
             if source is None:
-                raise ValueError(f"Source not found: {dataset_name}")
+                raise ValueError(f"SourceConfig not found: {dataset_name}")
 
             # Get rows for this entity in this source
             df = source.data.to_pandas()
@@ -329,15 +309,17 @@ class ClusterEntity(BaseModel, EntityIDMixin, SourcePKMixin):
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     id: int = Field(default_factory=lambda: getrandbits(63))  # 64 gives OverflowError
-    source_pks: EntityReference
+    source_identifiers: EntityReference
 
     def __add__(self, other: "ClusterEntity") -> "ClusterEntity":
-        """Combine two ClusterEntity objects by combining the source_pks."""
+        """Combine two ClusterEntity objects by combining the source_identifiers."""
         if other is None:
             return self
         if not isinstance(other, ClusterEntity):
             return NotImplemented
-        return ClusterEntity(source_pks=self.source_pks + other.source_pks)
+        return ClusterEntity(
+            source_identifiers=self.source_identifiers + other.source_identifiers
+        )
 
     def __radd__(self, other: Any) -> "ClusterEntity":
         """Handle sum() by treating 0 as an empty ClusterEntity."""
@@ -354,9 +336,9 @@ class ClusterEntity(BaseModel, EntityIDMixin, SourcePKMixin):
             return NotImplemented
 
         diff = {}
-        for name, our_pks in self.source_pks.items():
-            their_pks = other.source_pks.get(name, frozenset())
-            if remaining := our_pks - their_pks:
+        for name, our_identifiers in self.source_identifiers.items():
+            their_identifiers = other.source_identifiers.get(name, frozenset())
+            if remaining := our_identifiers - their_identifiers:
                 diff[name] = remaining
 
         return diff
@@ -368,39 +350,41 @@ class ClusterEntity(BaseModel, EntityIDMixin, SourcePKMixin):
         return other - self
 
     def __eq__(self, other: Any) -> bool:
-        """Compare based on source_pks."""
+        """Compare based on source_identifiers."""
         if not isinstance(other, ClusterEntity):
             return NotImplemented
-        return self.source_pks == other.source_pks
+        return self.source_identifiers == other.source_identifiers
 
     def __contains__(self, other: "ClusterEntity") -> bool:
         """Check if this entity contains all PKs from other entity."""
-        return other.source_pks <= self.source_pks
+        return other.source_identifiers <= self.source_identifiers
 
     def __hash__(self) -> int:
         """Hash based on EntityReference which is itself hashable."""
-        return hash(self.source_pks)
+        return hash(self.source_identifiers)
 
     def is_subset_of_source_entity(self, source_entity: "SourceEntity") -> bool:
         """Check if this ClusterEntity's references are a subset of a SourceEntity's."""
-        return self.source_pks <= source_entity.source_pks
+        return self.source_identifiers <= source_entity.source_identifiers
 
     def similarity_ratio(self, other: "ClusterEntity") -> float:
         """Return ratio of shared PKs to total PKs across all datasets."""
-        total_pks = 0
-        shared_pks = 0
+        total_identifiers = 0
+        shared_identifiers = 0
 
         # Get all dataset names
-        all_datasets = set(self.source_pks.keys()) | set(other.source_pks.keys())
+        all_datasets = set(self.source_identifiers.keys()) | set(
+            other.source_identifiers.keys()
+        )
 
         for name in all_datasets:
-            our_pks = self.source_pks.get(name, frozenset())
-            their_pks = other.source_pks.get(name, frozenset())
+            our_identifiers = self.source_identifiers.get(name, frozenset())
+            their_identifiers = other.source_identifiers.get(name, frozenset())
 
-            total_pks += len(our_pks | their_pks)
-            shared_pks += len(our_pks & their_pks)
+            total_identifiers += len(our_identifiers | their_identifiers)
+            shared_identifiers += len(our_identifiers & their_identifiers)
 
-        return shared_pks / total_pks if total_pks > 0 else 0.0
+        return shared_identifiers / total_identifiers if total_identifiers > 0 else 0.0
 
 
 class SourceEntity(BaseModel, EntityIDMixin, SourcePKMixin):
@@ -410,7 +394,7 @@ class SourceEntity(BaseModel, EntityIDMixin, SourcePKMixin):
 
     id: int = Field(default_factory=lambda: getrandbits(63))  # 64 gives OverflowError
     base_values: dict[str, Any] = Field(description="Feature name -> base value")
-    source_pks: EntityReference = Field(
+    source_identifiers: EntityReference = Field(
         description="Dataset to PKs mapping",
         default=EntityReference(mapping=frozenset()),
     )
@@ -435,9 +419,9 @@ class SourceEntity(BaseModel, EntityIDMixin, SourcePKMixin):
             name: Dataset name
             pks: List of primary keys for this dataset
         """
-        mapping = dict(self.source_pks)
+        mapping = dict(self.source_identifiers)
         mapping[name] = frozenset(pks)
-        self.source_pks = EntityReference(mapping)
+        self.source_identifiers = EntityReference(mapping)
 
     def to_cluster_entity(self, *names: str) -> ClusterEntity | None:
         """Convert this SourceEntity to a ClusterEntity with the specified datasets.
@@ -467,19 +451,19 @@ class SourceEntity(BaseModel, EntityIDMixin, SourcePKMixin):
             if none of the specified datasets are present in this entity.
         """
         filtered = {
-            name: self.source_pks.get(name)
+            name: self.source_identifiers.get(name)
             for name in names
-            if self.source_pks.get(name) is not None
+            if self.source_identifiers.get(name) is not None
         }
 
         if len(filtered) == 0:
             return None
 
-        return ClusterEntity(source_pks=EntityReference(filtered))
+        return ClusterEntity(source_identifiers=EntityReference(filtered))
 
 
 def query_to_cluster_entities(
-    query: pa.Table | pd.DataFrame, source_pks: dict[str, str]
+    query: pa.Table | pd.DataFrame, identifiers: dict[str, str]
 ) -> set[ClusterEntity]:
     """Convert a query result to a set of ClusterEntities.
 
@@ -488,7 +472,7 @@ def query_to_cluster_entities(
 
     Args:
         query: A PyArrow table or DataFrame representing a query result
-        source_pks: Mapping of source names to primary key column names
+        identifiers: Mapping of source names to identifier column names
 
     Returns:
         A set of ClusterEntity objects
@@ -496,23 +480,23 @@ def query_to_cluster_entities(
     if isinstance(query, pa.Table):
         query = query.to_pandas()
 
-    must_have_columns = set(["id"] + list(source_pks.values()))
-    if not must_have_columns.issubset(query.columns):
+    must_have_fields = set(["id"] + list(identifiers.values()))
+    if not must_have_fields.issubset(query.columns):
         raise ValueError(
-            f"Columms {must_have_columns.difference(query.columns)} must be included "
+            f"Feilds {must_have_fields.difference(query.columns)} must be included "
             "in the query and are missing."
         )
 
     def _create_cluster_entity(group: pd.DataFrame) -> ClusterEntity:
         entity_refs = {
-            source: frozenset(group[pk_column].dropna().values)
-            for source, pk_column in source_pks.items()
-            if not group[pk_column].dropna().empty
+            source: frozenset(group[id_field].dropna().values)
+            for source, id_field in identifiers.items()
+            if not group[id_field].dropna().empty
         }
 
         return ClusterEntity(
             id=group.name,
-            source_pks=EntityReference(entity_refs),
+            source_identifiers=EntityReference(entity_refs),
         )
 
     result = query.groupby("id").apply(_create_cluster_entity, include_groups=False)
@@ -536,7 +520,7 @@ def generate_entities(
             base_values[feature.name] = value_generator(**parameters)
 
         entities.append(
-            SourceEntity(base_values=base_values, source_pks=EntityReference())
+            SourceEntity(base_values=base_values, source_identifiers=EntityReference())
         )
     return tuple(entities)
 
@@ -603,7 +587,7 @@ def diff_results(
             - 'subset': Are a subset of an expected entity
             - 'superset': Are a superset of an expected entity
             - 'wrong': Don't match any expected entity
-            - 'invalid': Contain source_pks not present in any expected entity
+            - 'invalid': Contain source_identifiers not present in any expected entity
     """
     expected_set, actual_set = set(expected), set(actual)
     if expected_set == actual_set:

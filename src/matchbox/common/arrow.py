@@ -7,12 +7,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 SCHEMA_MB_IDS: Final[pa.Schema] = pa.schema(
-    [("id", pa.int64()), ("source_pk", pa.large_string())]
+    [("id", pa.int64()), ("source_identifier", pa.large_string())]
 )
 """Data transfer schema for Matchbox IDs keyed to primary keys."""
 
 SCHEMA_INDEX: Final[pa.Schema] = pa.schema(
-    [("hash", pa.large_binary()), ("source_pk", pa.large_list(pa.large_string()))]
+    [
+        ("hash", pa.large_binary()),
+        ("source_identifier", pa.large_list(pa.large_string())),
+    ]
 )
 """Data transfer schema for data to be indexed in Matchbox."""
 

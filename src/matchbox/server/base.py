@@ -11,10 +11,16 @@ from pyarrow import Table
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from matchbox.common.dtos import ModelAncestor, ModelMetadata
+from matchbox.common.dtos import (
+    ModelAncestor,
+    ModelMetadata,
+    ModelResolutionName,
+    ResolutionName,
+    SourceResolutionName,
+)
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.logging import LogLevelType
-from matchbox.common.sources import Match, Source, SourceAddress
+from matchbox.common.sources import Match, SourceConfig
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -222,16 +228,16 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def query(
         self,
-        source_address: SourceAddress,
-        resolution_name: str | None = None,
+        source: SourceResolutionName,
+        resolution: ResolutionName | None = None,
         threshold: int | None = None,
         limit: int = None,
     ) -> Table:
         """Queries the database from an optional point of truth.
 
         Args:
-            source_address: the `SourceAddress` object identifying the source to query
-            resolution_name (optional): the resolution to use for filtering results
+            source: A source resolution name identifying the source resolution to query
+            resolution (optional): the resolution to use for filtering results
                 If not specified, will use the dataset resolution for the queried source
             threshold (optional): the threshold to use for creating clusters
                 If None, uses the models' default threshold
@@ -247,31 +253,31 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def match(
         self,
-        source_pk: str,
-        source: SourceAddress,
-        targets: list[SourceAddress],
-        resolution_name: str,
+        targets: list[SourceResolutionName],
+        source: SourceResolutionName,
+        identifier: str,
+        resolution: ModelResolutionName,
         threshold: int | None = None,
     ) -> list[Match]:
         """Matches an ID in a source dataset and returns the keys in the targets.
 
         Args:
-            source_pk: The primary key to match from the source.
-            source: The address of the source dataset.
-            targets: The addresses of the target datasets.
-            resolution_name: The name of the resolution to use for matching.
-            threshold (optional): the threshold to use for creating clusters
+            targets: A list of source resolutions to find identifiers in
+            source: The source resolution the provided identifier belongs to
+            identifier: The value to match from the source. Usually a primary key
+            resolution: The resolution to use to resolve matches against
+                If not set, it will look for a default resolution.
+            threshold (optional): The threshold to use for creating clusters.
                 If None, uses the resolutions' default threshold
                 If an integer, uses that threshold for the specified resolution, and the
                 resolution's cached thresholds for its ancestors
-                Will use these threshold values instead of the cached thresholds
         """
         ...
 
     # Data management
 
     @abstractmethod
-    def index(self, source: Source, data_hashes: Table) -> None:
+    def index(self, source: SourceConfig, data_hashes: Table) -> None:
         """Indexes to Matchbox a source dataset in your warehouse.
 
         Args:
@@ -281,29 +287,29 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_source(self, address: SourceAddress) -> Source:
-        """Get a source from its address.
+    def get_source(self, name: SourceResolutionName) -> SourceConfig:
+        """Get a source from its name.
 
         Args:
-            address: The name address for the source
+            name: The source's resolution name.
 
         Returns:
-            A Source object
+            A SourceConfig object
         """
         ...
 
     @abstractmethod
     def get_resolution_sources(
         self,
-        resolution_name: str,
-    ) -> list[Source]:
+        name: ModelResolutionName,
+    ) -> list[SourceConfig]:
         """Get a list of sources queriable from a resolution.
 
         Args:
-            resolution_name: Name of the resolution to query.
+            name: Name of the resolution to query.
 
         Returns:
-            List of relevant Source objects.
+            List of relevant SourceConfig objects.
         """
         ...
 
@@ -405,32 +411,32 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_model(self, model: str) -> ModelMetadata:
+    def get_model(self, name: ModelResolutionName) -> ModelMetadata:
         """Get a model from the database."""
         ...
 
     @abstractmethod
-    def set_model_results(self, model: str, results: Table) -> None:
+    def set_model_results(self, name: ModelResolutionName, results: Table) -> None:
         """Set the results for a model."""
         ...
 
     @abstractmethod
-    def get_model_results(self, model: str) -> Table:
+    def get_model_results(self, name: ModelResolutionName) -> Table:
         """Get the results for a model."""
         ...
 
     @abstractmethod
-    def set_model_truth(self, model: str, truth: float) -> None:
+    def set_model_truth(self, name: ModelResolutionName, truth: float) -> None:
         """Sets the truth threshold for this model, changing the default clusters."""
         ...
 
     @abstractmethod
-    def get_model_truth(self, model: str) -> float:
+    def get_model_truth(self, name: ModelResolutionName) -> float:
         """Gets the current truth threshold for this model."""
         ...
 
     @abstractmethod
-    def get_model_ancestors(self, model: str) -> list[ModelAncestor]:
+    def get_model_ancestors(self, name: ModelResolutionName) -> list[ModelAncestor]:
         """Gets the current truth values of all ancestors.
 
         Returns a list of ModelAncestor objects mapping model names to their current
@@ -443,19 +449,21 @@ class MatchboxDBAdapter(ABC):
 
     @abstractmethod
     def set_model_ancestors_cache(
-        self, model: str, ancestors_cache: list[ModelAncestor]
+        self, name: ModelResolutionName, ancestors_cache: list[ModelAncestor]
     ) -> None:
         """Updates the cached ancestor thresholds.
 
         Args:
-            model: The name of the model to update
+            name: The name of the model to update
             ancestors_cache: List of ModelAncestor objects mapping model names to
                 their truth thresholds
         """
         ...
 
     @abstractmethod
-    def get_model_ancestors_cache(self, model: str) -> list[ModelAncestor]:
+    def get_model_ancestors_cache(
+        self, name: ModelResolutionName
+    ) -> list[ModelAncestor]:
         """Gets the cached ancestor thresholds, converting hashes to model names.
 
         Returns a list of ModelAncestor objects mapping model names to their cached
@@ -467,11 +475,11 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def delete_resolution(self, resolution: str, certain: bool) -> None:
+    def delete_resolution(self, name: ModelResolutionName, certain: bool) -> None:
         """Delete a resolution from the database.
 
         Args:
-            resolution: The name of the resolution to delete.
-            certain: Whether to delete the model without confirmation.
+            name: The name of the resolution to delete.
+            certain: Whether to delete the resolution without confirmation.
         """
         ...

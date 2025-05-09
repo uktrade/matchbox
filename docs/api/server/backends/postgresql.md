@@ -9,29 +9,30 @@ There are two graph-like trees in place here.
 
 ```mermaid
 erDiagram
-    Sources {
-        bigint resolution_id PK,FK
-        string resolution_name
-        string full_name
-        bytes warehouse_hash
-        string db_pk
+    SourceConfigs {
+        bigint source_id PK
+        bigint resolution_id FK
+        string location_type
+        string location_uri
+        string extract_transform
+        bigint identifier_id FK
     }
-    SourceColumns {
-        bigint column_id PK
+    SourceFields {
+        bigint field_id PK
         bigint source_id FK
-        int column_index
-        string column_name
-        string column_type
+        int field_index
+        string field_name
+        string field_type
     }
     Clusters {
         bigint cluster_id PK
         bytes cluster_hash
     }
-    ClusterSourcePK {
-        bigint pk_id PK
+    ClusterSourceIdentifiers {
+        bigint identifier_id PK
         bigint cluster_id FK
         bigint source_id FK
-        string source_pk
+        string identifier
     }
     Contains {
         bigint parent PK,FK
@@ -45,6 +46,7 @@ erDiagram
     Resolutions {
         bigint resolution_id PK
         bytes resolution_hash
+        bytes content_hash
         string type
         string name
         string description
@@ -56,11 +58,17 @@ erDiagram
         int level
         smallint truth_cache
     }
+    PKSpace {
+        bigint id PK
+        bigint next_cluster_id
+        bigint next_cluster_source_identifier_id
+    }
 
-    Sources |o--|| Resolutions : ""
-    Sources ||--o{ SourceColumns : ""
-    Sources ||--o{ ClusterSourcePK : ""
-    Clusters ||--o{ ClusterSourcePK : ""
+    SourceConfigs |o--|| Resolutions : ""
+    SourceConfigs ||--o{ SourceFields : ""
+    SourceConfigs ||--|| SourceFields : ""
+    SourceConfigs ||--o{ ClusterSourceIdentifiers : ""
+    Clusters ||--o{ ClusterSourceIdentifiers : ""
     Clusters ||--o{ Probabilities : ""
     Clusters ||--o{ Contains : "parent"
     Contains }o--|| Clusters : "child"

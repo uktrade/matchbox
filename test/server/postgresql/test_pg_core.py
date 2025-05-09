@@ -22,10 +22,10 @@ def test_reserve_id_block(
 
     assert first_cluster_id == second_cluster_id - 42
 
-    first_source_pk_id = PKSpace.reserve_block("cluster_source_pks", 42)
-    second_source_pk_id = PKSpace.reserve_block("cluster_source_pks", 42)
+    first_source_identifier_id = PKSpace.reserve_block("cluster_source_ids", 42)
+    second_source_identifier_id = PKSpace.reserve_block("cluster_source_ids", 42)
 
-    assert first_source_pk_id == second_source_pk_id - 42
+    assert first_source_identifier_id == second_source_identifier_id - 42
 
     with pytest.raises(ValueError):
         PKSpace.reserve_block("clusters", 0)
@@ -257,13 +257,13 @@ def test_large_ingest_upsert_custom_key(
         new_foo = (
             session.query(DummyTable.foo).filter(DummyTable.other_key == "a").scalar()
         )
-        new_pk = (
+        new_identifier = (
             session.query(DummyTable.pk).filter(DummyTable.other_key == "a").scalar()
         )
 
     # We can update standard columns and primary keys
     assert "new" in new_foo
-    assert new_pk == 2
+    assert new_identifier == 2
 
     # No lingering temp tables
     metadata.clear()  # clear all Table objects from this MetaData, doesn't touch DB

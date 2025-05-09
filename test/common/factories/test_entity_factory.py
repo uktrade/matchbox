@@ -4,6 +4,7 @@ import pyarrow as pa
 import pytest
 from faker import Faker
 
+from matchbox.common.dtos import DataTypes
 from matchbox.common.factories.entities import (
     ClusterEntity,
     EntityReference,
@@ -29,7 +30,7 @@ def make_cluster_entity(id: int, *args) -> ClusterEntity:
     if len(args) % 2 != 0:
         raise ValueError("Arguments must be pairs of dataset name and PKs list")
 
-    source_pks = {}
+    source_identifiers = {}
     for i in range(0, len(args), 2):
         dataset = args[i]
         pks = args[i + 1]
@@ -37,9 +38,9 @@ def make_cluster_entity(id: int, *args) -> ClusterEntity:
             raise TypeError(f"Dataset name must be a string, got {type(dataset)}")
         if not isinstance(pks, list):
             raise TypeError(f"PKs must be a list, got {type(pks)}")
-        source_pks[dataset] = frozenset(pks)
+        source_identifiers[dataset] = frozenset(pks)
 
-    return ClusterEntity(id=id, source_pks=EntityReference(source_pks))
+    return ClusterEntity(id=id, source_identifiers=EntityReference(source_identifiers))
 
 
 def make_source_entity(dataset: str, pks: list[str], base_val: str) -> SourceEntity:
@@ -90,19 +91,23 @@ def test_entity_reference_subset():
 def test_cluster_entity_creation():
     """Test basic ClusterEntity functionality."""
     ref = EntityReference({"dataset1": frozenset({"1", "2"})})
-    entity = ClusterEntity(source_pks=ref)
+    entity = ClusterEntity(source_identifiers=ref)
 
-    assert entity.source_pks == ref
+    assert entity.source_identifiers == ref
     assert isinstance(entity.id, int)
 
 
 def test_cluster_entity_addition():
     """Test combining ClusterEntity objects."""
-    entity1 = ClusterEntity(source_pks=EntityReference({"dataset1": frozenset({"1"})}))
-    entity2 = ClusterEntity(source_pks=EntityReference({"dataset1": frozenset({"2"})}))
+    entity1 = ClusterEntity(
+        source_identifiers=EntityReference({"dataset1": frozenset({"1"})})
+    )
+    entity2 = ClusterEntity(
+        source_identifiers=EntityReference({"dataset1": frozenset({"2"})})
+    )
 
     combined = entity1 + entity2
-    assert combined.source_pks["dataset1"] == frozenset({"1", "2"})
+    assert combined.source_identifiers["dataset1"] == frozenset({"1", "2"})
 
 
 def test_source_entity_creation():
@@ -110,10 +115,10 @@ def test_source_entity_creation():
     base_values = {"name": "John", "age": 30}
     ref = EntityReference({"dataset1": frozenset({"1", "2"})})
 
-    entity = SourceEntity(base_values=base_values, source_pks=ref)
+    entity = SourceEntity(base_values=base_values, source_identifiers=ref)
 
     assert entity.base_values == base_values
-    assert entity.source_pks == ref
+    assert entity.source_identifiers == ref
     assert isinstance(entity.id, int)
 
 
@@ -394,7 +399,7 @@ def test_source_to_results_conversion():
     # Create source entity present in multiple datasets
     source = SourceEntity(
         base_values={"name": "Test"},
-        source_pks=EntityReference(
+        source_identifiers=EntityReference(
             {"dataset1": frozenset({"1", "2"}), "dataset2": frozenset({"A", "B"})}
         ),
     )
@@ -426,9 +431,9 @@ def test_source_to_results_conversion():
 @pytest.mark.parametrize(
     ("base_generator", "expected_type"),
     [
-        pytest.param("name", "TEXT", id="text_generator"),
-        pytest.param("random_int", "BIGINT", id="integer_generator"),
-        pytest.param("date_this_decade", "DATE", id="date_generator"),
+        pytest.param("name", DataTypes.STRING, id="text_generator"),
+        pytest.param("random_int", DataTypes.INT64, id="integer_generator"),
+        pytest.param("date_this_decade", DataTypes.DATE, id="date_generator"),
     ],
 )
 def test_feature_config_sql_type_inference(
@@ -436,4 +441,4 @@ def test_feature_config_sql_type_inference(
 ) -> None:
     """Test that SQL types are correctly inferred from feature configurations."""
     feature_config = FeatureConfig(name=base_generator, base_generator=base_generator)
-    assert feature_config.sql_type == expected_type
+    assert feature_config.datatype == expected_type

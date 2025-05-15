@@ -38,17 +38,20 @@ ENV PATH="/code/.venv/bin:$PATH"
 ENTRYPOINT ["ddtrace-run"]
 
 
-# Local development stage: with locally-specified environment variables and hot reloading
-
-FROM base AS dev
-
-COPY ./environments/$ENV_FILE /code/.env
-CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/matchbox/server/api"]
-
-
 # Production stage: no environment variables (they come from the infrastructure) and no hot reloading
-
 FROM base AS prod
 
 # Uses `--host 0.0.0.0` to allow access from outside the container
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/matchbox/server/api"]
+
+
+# Local development stage: with locally-specified environment variables and hot reloading and dev dependencies
+FROM base AS dev
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=source=.git,target=/code/.git,type=bind \
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MATCHBOX_DB=$(uv run python -m setuptools_scm) \
+    uv sync --frozen --all-extras --dev
+
+COPY ./environments/$ENV_FILE /code/.env
+CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/matchbox/server/api"]

@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: warehouse_password
       POSTGRES_DB: warehouse
     ports:
-      - "${MB__DEV__WAREHOUSE_PORT:-7654}:5432"
+      - "7654:5432"
     volumes:
       - warehouse_data:/var/lib/postgresql/data
   matchbox-postgres:
@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: matchbox_password
       POSTGRES_DB: matchbox
     ports:
-      - "${MB__SERVER__POSTGRES__PORT:-5432}:5432"
+      - "5432:5432"
     volumes:
       - matchbox_data:/var/lib/postgresql/data
   matchbox-storage:
@@ -29,7 +29,7 @@ services:
     command: server --console-address ":9001" /data
     ports:
       - "${MB__SERVER__DATASTORE__PORT:-9000}:9000"
-      - "${MB__DEV__DATASTORE_CONSOLE_PORT-9001}:9001"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MB__SERVER__DATASTORE__ACCESS_KEY_ID}
       MINIO_ROOT_PASSWORD: ${MB__SERVER__DATASTORE__SECRET_ACCESS_KEY}
@@ -55,7 +55,14 @@ services:
     environment:
       DD_AGENT_HOST: datadog-agent
     ports:
-      - "${MB__DEV__API_PORT-8000}:8000"
+      - "8000:8000"
+      - "5678:5678"
+    command:
+      [
+        "sh",
+        "-c",
+        "python -m debugpy --listen 0.0.0.0:5678 -m fastapi dev --host 0.0.0.0 src/matchbox/server/api",
+      ]
     depends_on:
       matchbox-postgres:
         condition: service_started

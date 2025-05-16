@@ -5,6 +5,7 @@ from faker import Faker
 from sqlalchemy import create_engine
 
 from matchbox.common.arrow import SCHEMA_INDEX
+from matchbox.common.dtos import DataTypes
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -16,7 +17,7 @@ from matchbox.common.factories.sources import (
     source_factory,
     source_from_tuple,
 )
-from matchbox.common.sources import SourceAddress
+from matchbox.common.sources import RelationalDBLocation
 
 
 def test_source_factory_default():
@@ -136,42 +137,45 @@ def test_source_testkit_to_mock():
     ]
 
     source_testkit = source_factory(
-        features=features, full_name="test.source_config", n_true_entities=2, seed=42
+        features=features, name="test.config", n_true_entities=2, seed=42
     )
 
     # Create the mock
-    mock_source_config = source_testkit.mock
+    mock_source = source_testkit.mock
 
     # Test that method calls are tracked
-    mock_source_config.set_engine("test_engine")
-    mock_source_config.default_fields()
-    mock_source_config.hash_data()
+    mock_source.set_credentials(credentials="test_engine")
+    mock_source.from_location(location="test_location", extract_transform="test_et")
+    mock_source.hash_data()
 
-    mock_source_config.set_engine.assert_called_once_with("test_engine")
-    mock_source_config.default_fields.assert_called_once()
-    mock_source_config.hash_data.assert_called_once()
+    mock_source.set_credentials.assert_called_once_with("test_engine")
+    mock_source.from_location.assert_called_once_with("test_location", "test_et")
+    mock_source.hash_data.assert_called_once()
 
     # Test method return values
-    assert mock_source_config.set_engine("test_engine") == mock_source_config
-    assert mock_source_config.default_fields() == mock_source_config
-    assert mock_source_config.hash_data() == source_testkit.data_hashes
+    assert mock_source.set_credentials(credentials="test_engine") == mock_source
+    assert (
+        mock_source.from_location(location="test_location", extract_transform="test_et")
+        == mock_source
+    )
+    assert mock_source.hash_data() == source_testkit.data_hashes
 
     # Test model dump methods
     original_dump = source_testkit.source_config.model_dump()
-    mock_dump = mock_source_config.model_dump()
+    mock_dump = mock_source.model_dump()
     assert mock_dump == original_dump
 
     original_json = source_testkit.source_config.model_dump_json()
-    mock_json = mock_source_config.model_dump_json()
+    mock_json = mock_source.model_dump_json()
     assert mock_json == original_json
 
     # Verify side effect functions were set correctly
-    mock_source_config.model_dump.assert_called_once()
-    mock_source_config.model_dump_json.assert_called_once()
+    mock_source.model_dump.assert_called_once()
+    mock_source.model_dump_json.assert_called_once()
 
 
 def test_source_factory_mock_properties():
-    """Test that source properties set in source_factory match generated config."""
+    """Test that properties set in source_factory match generated SourceConfig."""
     # Create source with specific features and name
     features = [
         FeatureConfig(
@@ -186,33 +190,34 @@ def test_source_factory_mock_properties():
         ),
     ]
 
-    full_name = "companies"
+    name = "companies"
     engine = create_engine("sqlite:///:memory:")
 
     source_config = source_factory(
-        features=features, full_name=full_name, engine=engine
+        features=features,
+        name=name,
+        engine=engine,
     ).source_config
 
-    # Check source address properties
-    assert source_config.address.full_name == full_name
+    # Location should be consistent
+    expected_location = RelationalDBLocation(uri=str(engine.url))
+    assert source_config.location == expected_location
 
-    # Warehouse hash should be consistent for same engine config
-    expected_address = SourceAddress.compose(engine=engine, full_name=full_name)
-    assert source_config.address.warehouse_hash == expected_address.warehouse_hash
-
-    # Check field configuration
+    # Check indexed fields configuration
     assert len(source_config.index_fields) == len(features)
-    for feature, field in zip(features, source_config.index_fields, strict=False):
-        assert field.name == feature.name
-        assert field.type == feature.datatype
+    for feature, index_field in zip(features, source_config.index_fields, strict=True):
+        assert index_field.name == feature.name
+        assert index_field.type == feature.datatype
 
-    # Check default resolution name and default key
-    assert source_config.name == str(expected_address)
+    # Check default resolution name and default key field
+    assert source_config.name == name
     assert source_config.key_field.name == "key"
 
     # Verify source properties are preserved through model_dump
     dump = source_config.model_dump()
-    assert dump["address"]["full_name"] == full_name
+    assert dump["name"] == name
+    assert str(dump["location"]["uri"]) == str(engine.url)
+    assert dump["key_field"] == {"name": "key", "type": DataTypes.STRING}
     assert dump["index_fields"] == tuple(
         {"name": f.name, "type": f.datatype} for f in features
     )
@@ -235,13 +240,12 @@ def test_entity_variations_tracking():
         )
     ]
 
-    source = source_factory(features=features, n_true_entities=2, seed=42)
-    source_name = source.source_config.address.full_name
+    source_testkit = source_factory(features=features, n_true_entities=2, seed=42)
 
     # Process each ClusterEntity group
-    for cluster_entity in source.entities:
+    for cluster_entity in source_testkit.entities:
         # Get the values for this entity
-        entity_values = cluster_entity.get_values({source_name: source})
+        entity_values = cluster_entity.get_values({source_testkit.name: source_testkit})
 
         # Calculate total unique variations (equivalent to total_unique_variations)
         unique_variations = 0
@@ -254,10 +258,10 @@ def test_entity_variations_tracking():
         assert unique_variations == 1
 
         # Verify the data values match expectations
-        data_df = source.data.to_pandas()
+        data_df = source_testkit.data.to_pandas()
 
         # Get keys for this cluster entity
-        result_keys = cluster_entity.get_keys(source_name)
+        result_keys = cluster_entity.get_keys(source_testkit.name)
         assert result_keys is not None
 
         # All rows for a given cluster entity should share the same company value
@@ -282,14 +286,13 @@ def test_base_and_variation_entities():
         )
     ]
 
-    source = source_factory(features=features, n_true_entities=1, seed=42)
-    source_name = source.source_config.address.full_name
+    source_testkit = source_factory(features=features, n_true_entities=1, seed=42)
 
     # Should have two ClusterEntity objects - one for base, one for variation
-    assert len(source.entities) == 2
+    assert len(source_testkit.entities) == 2
 
     # Get the base and variation entities
-    data_df = source.data.to_pandas()
+    data_df = source_testkit.data.to_pandas()
 
     # We'll need to find the base value by examining the data
     # Get all unique company values
@@ -306,8 +309,8 @@ def test_base_and_variation_entities():
     base_entity = None
     variation_entity = None
 
-    for entity in source.entities:
-        entity_keys = entity.get_keys(source_name)
+    for entity in source_testkit.entities:
+        entity_keys = entity.get_keys(source_testkit.name)
         rows = data_df[data_df["key"].isin(entity_keys)]
         values = rows["company"]
         assert len(values.unique()) == 1
@@ -322,33 +325,39 @@ def test_base_and_variation_entities():
     assert variation_entity is not None, "No ClusterEntity found for variation"
 
     # Verify that each entity only contains its own variation
-    base_values = base_entity.get_values({source_name: source})
-    assert base_values[source_name]["company"] == [base_value]
+    base_values = base_entity.get_values({source_testkit.name: source_testkit})
+    assert base_values[source_testkit.name]["company"] == [base_value]
 
-    variation_values = variation_entity.get_values({source_name: source})
-    assert variation_values[source_name]["company"] == [variation_value]
+    variation_values = variation_entity.get_values(
+        {source_testkit.name: source_testkit}
+    )
+    assert variation_values[source_testkit.name]["company"] == [variation_value]
 
     # Together they should compose the full set of entity data
     combined = base_entity + variation_entity
 
     # Verify that the combined entity contains both variations
-    combined_values = combined.get_values({source_name: source})
-    assert sorted(combined_values[source_name]["company"]) == sorted(
+    combined_values = combined.get_values({source_testkit.name: source_testkit})
+    assert sorted(combined_values[source_testkit.name]["company"]) == sorted(
         [base_value, variation_value]
     )
 
     # Verify that adding the entities produces the same result as having all keys
     assert (
-        combined.keys[source_name]
-        == base_entity.keys[source_name] | variation_entity.keys[source_name]
+        combined.keys[source_testkit.name]
+        == base_entity.keys[source_testkit.name]
+        | variation_entity.keys[source_testkit.name]
     )
 
     # The diff between entities should match their respective keys
     base_diff = base_entity - variation_entity
-    assert base_diff.get(source_name) == base_entity.keys[source_name]
+    assert base_diff.get(source_testkit.name) == base_entity.keys[source_testkit.name]
 
     variation_diff = variation_entity - base_entity
-    assert variation_diff.get(source_name) == variation_entity.keys[source_name]
+    assert (
+        variation_diff.get(source_testkit.name)
+        == variation_entity.keys[source_testkit.name]
+    )
 
 
 def test_source_factory_id_generation():
@@ -389,9 +398,7 @@ def test_source_from_tuple():
     """Test that source_factory can create a source from a tuple of values."""
     # Create a source from a tuple of values
     data_tuple = ({"a": 1, "b": "val"}, {"a": 2, "b": "val"})
-    testkit = source_from_tuple(
-        data_tuple=data_tuple, data_keys=["0", "1"], full_name="foo"
-    )
+    testkit = source_from_tuple(data_tuple=data_tuple, data_keys=["0", "1"], name="foo")
 
     # Verify the generated testkit has the expected properties
     assert len(testkit.entities) == 2

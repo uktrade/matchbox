@@ -11,9 +11,10 @@ import pyarrow as pa
 from faker import Faker
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, create_engine
+from sqlglot import select
+from sqlglot.expressions import column
 
 from matchbox.common.arrow import SCHEMA_INDEX
-from matchbox.common.db import get_schema_table_names
 from matchbox.common.dtos import DataTypes, SourceResolutionName
 from matchbox.common.factories.entities import (
     ClusterEntity,
@@ -26,7 +27,12 @@ from matchbox.common.factories.entities import (
     probabilities_to_results_entities,
 )
 from matchbox.common.hash import hash_values
-from matchbox.common.sources import SourceAddress, SourceConfig, SourceField
+from matchbox.common.sources import (
+    Location,
+    RelationalDBLocation,
+    SourceConfig,
+    SourceField,
+)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -62,13 +68,56 @@ def make_features_hashable(func: Callable[P, R]) -> Callable[P, R]:
     return wrapper
 
 
+def create_single_table_location_resources(
+    key_field: SourceField,
+    index_fields: list[SourceField],
+    table_name: str,
+) -> tuple[str, Callable[[pa.Table, RelationalDBLocation, Engine], None]]:
+    """Create SQL and writer function for a single table.
+
+    A helper function to generate SQL and a writer for a RelationalDBLocation.
+    All fields are written to a single table with the specified name.
+
+    Args:
+        key_field: The identifier field (typically 'pk').
+        index_fields: List of SourceField objects to use as index fields.
+        table_name: Name of the table to create.
+
+    Returns:
+        A tuple containing:
+        - SQL query string to retrieve data from the single table
+        - Writer function that takes a PyArrow table, location, and credentials
+    """
+    all_field_names = [key_field.name] + [field.name for field in index_fields]
+
+    sql = select(*[column(name) for name in all_field_names]).from_(table_name).sql()
+
+    def _write_single_table(
+        data: pa.Table, location: RelationalDBLocation, credentials: Engine
+    ) -> None:
+        """Write all data to a single table."""
+        if str(credentials.url) != str(location.uri):
+            raise ValueError("The credentials provided do not match the location URI.")
+
+        df = data.to_pandas()
+
+        df[all_field_names].to_sql(
+            name=table_name,
+            con=credentials,
+            index=False,
+            if_exists="replace",
+        )
+
+    return sql, _write_single_table
+
+
 class SourceTestkitParameters(BaseModel):
     """Configuration for generating a source."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     features: tuple[FeatureConfig, ...] = Field(default_factory=tuple)
-    full_name: str
+    name: str
     engine: Engine = Field(default=create_engine("sqlite:///:memory:"))
     n_true_entities: int | None = Field(default=None)
     repetition: int = Field(default=0)
@@ -94,6 +143,12 @@ class SourceTestkit(BaseModel):
     entities: tuple[ClusterEntity, ...] = Field(
         description="ClusterEntities that were generated from the source."
     )
+    location_writer: Callable[[pa.Table, Location], None] = Field(
+        description=(
+            "A function that takes the data and location and writes the data to "
+            "the location."
+        )
+    )
 
     @property
     def name(self) -> str:
@@ -105,8 +160,8 @@ class SourceTestkit(BaseModel):
         """Create a mock SourceConfig object with this testkit's configuration."""
         mock_source_config = create_autospec(self.source_config)
 
-        mock_source_config.set_engine.return_value = mock_source_config
-        mock_source_config.default_fields.return_value = mock_source_config
+        mock_source_config.set_credentials.return_value = mock_source_config
+        mock_source_config.from_location.return_value = mock_source_config
         mock_source_config.hash_data.return_value = self.data_hashes
 
         mock_source_config.model_dump.side_effect = self.source_config.model_dump
@@ -128,19 +183,25 @@ class SourceTestkit(BaseModel):
             [self.data["id"], self.data["key"]], names=["id", "key"]
         )
 
-    def to_warehouse(self, engine: Engine | None) -> None:
-        """Write the data to the SourceConfig's engine.
+    def set_credentials(self, credentials: Any) -> None:
+        """Set the credentials for the SourceConfig."""
+        self.source_config.set_credentials(credentials)
 
-        As the SourceConfig won't have an engine set by default, can be supplied.
+    def write_to_location(
+        self, credentials: Any, set_credentials: bool = False
+    ) -> None:
+        """Write the data to the SourceConfig's location.
+
+        Credentials aren't set in testkits, so they must be provided here.
+
+        Args:
+            credentials: Credentials to use for the location.
+            set_credentials: Whether to set the credentials on the SourceConfig.
+                Offered here for convenience as it's often the next step.
         """
-        schema, table = get_schema_table_names(self.source_config.address.full_name)
-        self.data.to_pandas().drop("id", axis=1).to_sql(
-            name=table,
-            schema=schema,
-            con=engine or self.source_config.engine,
-            index=False,
-            if_exists="replace",
-        )
+        self.location_writer(self.data, self.source_config.location, credentials)
+        if set_credentials:
+            self.set_credentials(credentials)
 
 
 class LinkedSourcesTestkit(BaseModel):
@@ -443,13 +504,29 @@ def generate_source(
 @cache
 def source_factory(
     features: list[FeatureConfig] | list[dict] | None = None,
-    full_name: str | None = None,
+    name: SourceResolutionName | None = None,
     engine: Engine | None = None,
     n_true_entities: int = 10,
     repetition: int = 0,
     seed: int = 42,
 ) -> SourceTestkit:
-    """Generate a complete source testkit from configured features."""
+    """Generate a complete source testkit from configured features.
+
+    SourceConfigs created with the factory system can only use a RelationalDBLocation,
+    and the data at that location will be stored in a single table.
+
+    Args:
+        features: List of FeatureConfig objects or dictionaries to use for generating
+            the source data. If None, defaults to a set of common features.
+        name: Name of the source. If None, a unique name is generated. This will be
+            used as the name of the table in the RelationalDBLocation, but also as
+            the SourceResolutionName for the source.
+        engine: SQLAlchemy engine to use for the source's RelationalDBLocation. If
+            None, an in-memory SQLite engine is created.
+        n_true_entities: Number of true entities to generate. Defaults to 10.
+        repetition: Number of times to repeat the generated data. Defaults to 0.
+        seed: Random seed for reproducibility. Defaults to 42.
+    """
     generator = Faker()
     generator.seed_instance(seed)
 
@@ -466,8 +543,8 @@ def source_factory(
             ),
         )
 
-    if full_name is None:
-        full_name = generator.unique.word()
+    if name is None:
+        name = generator.unique.word()
 
     if engine is None:
         engine = create_engine("sqlite:///:memory:")
@@ -493,25 +570,39 @@ def source_factory(
     for entity in base_entities:
         keys = entity_keys.get(entity.id, [])
         if keys:
-            entity.add_source_reference(full_name, keys)
+            entity.add_source_reference(name, keys)
             source_entities.append(entity)
 
     # Create ClusterEntity objects from row_keys
     results_entities = [
         ClusterEntity(
             id=row_id,
-            keys=EntityReference({full_name: frozenset(keys)}),
+            keys=EntityReference({name: frozenset(keys)}),
         )
         for row_id, keys in row_keys.items()
     ]
 
+    # Create fields
+    key_field = SourceField(name="key", type=DataTypes.STRING)
+    index_fields = tuple(
+        SourceField(name=feature.name, type=feature.datatype) for feature in features
+    )
+
+    # Create location, extract transform logic, and location writer function
+    location = RelationalDBLocation(uri=str(engine.url))
+    extract_transform, location_writer = create_single_table_location_resources(
+        key_field=key_field,
+        index_fields=index_fields,
+        table_name=name,
+    )
+
+    # Create source config
     source_config = SourceConfig(
-        address=SourceAddress.compose(full_name=full_name, engine=engine),
-        key_field=SourceField(name="key", type=DataTypes.STRING),
-        index_fields=(
-            SourceField(name=feature.name, type=feature.datatype)
-            for feature in features
-        ),
+        location=location,
+        name=name,
+        extract_transform=extract_transform,
+        key_field=key_field,
+        index_fields=index_fields,
     )
 
     return SourceTestkit(
@@ -520,13 +611,14 @@ def source_factory(
         data=data,
         data_hashes=data_hashes,
         entities=tuple(sorted(results_entities)),
+        location_writer=location_writer,
     )
 
 
 def source_from_tuple(
     data_tuple: tuple[dict[str, Any], ...],
     data_keys: tuple[Any],
-    full_name: str | None = None,
+    name: str | None = None,
     engine: Engine | None = None,
     seed: int = 42,
 ) -> SourceTestkit:
@@ -534,8 +626,8 @@ def source_from_tuple(
     generator = Faker()
     generator.seed_instance(seed)
 
-    if full_name is None:
-        full_name = generator.unique.word()
+    if name is None:
+        name = generator.unique.word()
 
     if engine is None:
         engine = create_engine("sqlite:///:memory:")
@@ -545,7 +637,7 @@ def source_from_tuple(
     # Create source entities with references
     source_entities: list[SourceEntity] = []
     for entity, key in zip(base_entities, data_keys, strict=True):
-        entity.add_source_reference(full_name, [key])
+        entity.add_source_reference(name, [key])
         source_entities.append(entity)
     entity_ids = {entity.id for entity in source_entities}
 
@@ -553,18 +645,33 @@ def source_from_tuple(
     results_entities = [
         ClusterEntity(
             id=entity_id,
-            keys=EntityReference({full_name: frozenset([key])}),
+            keys=EntityReference({name: frozenset([key])}),
         )
         for key, entity_id in zip(data_keys, entity_ids, strict=True)
     ]
 
+    # Create fields
+    key_field = SourceField(name="key", type=DataTypes.STRING)
+    index_fields = tuple(
+        SourceField(name=k, type=DataTypes.from_pytype(type(v)))
+        for k, v in data_tuple[0].items()
+    )
+
+    # Create location, extract transform logic, and location writer function
+    location = RelationalDBLocation(uri=str(engine.url))
+    extract_transform, location_writer = create_single_table_location_resources(
+        key_field=key_field,
+        index_fields=index_fields,
+        table_name=name,
+    )
+
+    # Create source config
     source_config = SourceConfig(
-        address=SourceAddress.compose(full_name=full_name, engine=engine),
-        key_field=SourceField(name="key", type=DataTypes.STRING),
-        index_fields=(
-            SourceField(name=k, type=DataTypes.from_pytype(type(v)))
-            for k, v in data_tuple[0].items()
-        ),
+        location=location,
+        name=name,
+        extract_transform=extract_transform,
+        key_field=key_field,
+        index_fields=index_fields,
     )
 
     hashes = [hash_values(*row) for row in data_tuple]
@@ -588,6 +695,7 @@ def source_from_tuple(
         data=data,
         data_hashes=data_hashes,
         entities=tuple(sorted(results_entities)),
+        location_writer=location_writer,
     )
 
 
@@ -646,7 +754,7 @@ def linked_sources_factory(
 
         source_parameters = (
             SourceTestkitParameters(
-                full_name="crn",
+                name="crn",
                 engine=engine or default_engine,
                 features=(
                     features["company_name"].add_variations(
@@ -656,12 +764,11 @@ def linked_sources_factory(
                     ),
                     features["crn"],
                 ),
-                drop_base=True,
                 n_true_entities=n_true_entities,
                 repetition=0,
             ),
             SourceTestkitParameters(
-                full_name="duns",
+                name="duns",
                 engine=engine or default_engine,
                 features=(
                     features["company_name"],
@@ -671,7 +778,7 @@ def linked_sources_factory(
                 repetition=0,
             ),
             SourceTestkitParameters(
-                full_name="cdms",
+                name="cdms",
                 engine=engine or default_engine,
                 features=(
                     features["crn"],
@@ -696,19 +803,18 @@ def linked_sources_factory(
                 )
             # Override all configs with factory parameter
             source_parameters = tuple(
-                SourceTestkitParameters(
-                    full_name=parameters.full_name,
-                    engine=engine or parameters.engine,
-                    features=parameters.features,
-                    repetition=parameters.repetition,
-                    n_true_entities=n_true_entities,
+                parameters.model_copy(
+                    update={
+                        "engine": engine or parameters.engine,
+                        "n_true_entities": n_true_entities,
+                    }
                 )
                 for parameters in source_parameters
             )
         else:
             # No factory parameter - check all configs have n_true_entities set
             missing_counts = [
-                parameters.full_name
+                parameters.name
                 for parameters in source_parameters
                 if parameters.n_true_entities is None
             ]
@@ -755,35 +861,48 @@ def linked_sources_factory(
         results_entities = [
             ClusterEntity(
                 id=row_id,
-                keys=EntityReference({parameters.full_name: frozenset(keys)}),
+                keys=EntityReference({parameters.name: frozenset(keys)}),
             )
             for row_id, keys in row_keys.items()
         ]
 
-        # Create source
+        # Create fields
+        key_field = SourceField(name="key", type=DataTypes.STRING)
+        index_fields = tuple(
+            SourceField(name=feature.name, type=feature.datatype)
+            for feature in parameters.features
+        )
+
+        # Create location, extract transform logic, and location writer function
+        location = RelationalDBLocation(uri=str(parameters.engine.url))
+        extract_transform, location_writer = create_single_table_location_resources(
+            key_field=key_field,
+            index_fields=index_fields,
+            table_name=parameters.name,
+        )
+
+        # Create source config
         source_config = SourceConfig(
-            address=SourceAddress.compose(
-                full_name=parameters.full_name, engine=parameters.engine
-            ),
-            key_field=SourceField(name="key", type=DataTypes.STRING),
-            index_fields=(
-                SourceField(name=feature.name, type=feature.datatype)
-                for feature in parameters.features
-            ),
+            location=location,
+            name=parameters.name,
+            extract_transform=extract_transform,
+            key_field=key_field,
+            index_fields=index_fields,
         )
 
         # Add source to linked.sources
-        linked.sources[parameters.full_name] = SourceTestkit(
+        linked.sources[parameters.name] = SourceTestkit(
             source_config=source_config,
             features=tuple(parameters.features),
             data=data,
             data_hashes=data_hashes,
             entities=tuple(sorted(results_entities)),
+            location_writer=location_writer,
         )
 
         # Update entities with source references
         for entity_id, keys in entity_keys.items():
             entity = true_entity_lookup[entity_id]
-            entity.add_source_reference(parameters.full_name, keys)
+            entity.add_source_reference(parameters.name, keys)
 
     return linked

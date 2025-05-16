@@ -71,15 +71,14 @@ def _generate_cache_key(
     )
 
 
-def _testkitdag_to_warehouse(warehouse_engine: Engine, dag: TestkitDAG) -> None:
-    """Upload a TestkitDAG to a warehouse.
+def _testkitdag_to_location(credentials: Engine, dag: TestkitDAG) -> None:
+    """Upload a TestkitDAG to a location warehouse.
 
-    * Writes all data to the warehouse, replacing existing data
-    * Updates the engine of all sources in the DAG
+    * Writes all data to the location warehouse, replacing existing data
+    * Updates the credentials of all sources in the DAG
     """
     for source_testkit in dag.sources.values():
-        source_testkit.to_warehouse(warehouse_engine)
-        source_testkit.source_config.set_engine(warehouse_engine)
+        source_testkit.write_to_location(credentials=credentials, set_credentials=True)
 
 
 @register_scenario("bare")
@@ -99,7 +98,7 @@ def create_bare_scenario(
     dag.add_source(linked)
 
     # Write sources to warehouse
-    _testkitdag_to_warehouse(warehouse_engine, dag)
+    _testkitdag_to_location(warehouse_engine, dag)
 
     return dag
 
@@ -329,7 +328,7 @@ def create_convergent_scenario(
     dag.add_source(linked)
 
     # Write sources to warehouse
-    _testkitdag_to_warehouse(warehouse_engine, dag)
+    _testkitdag_to_location(warehouse_engine, dag)
 
     # Index sources in backend
     for source_testkit in dag.sources.values():
@@ -397,7 +396,7 @@ def setup_scenario(
 
         # Restore backend and write sources to warehouse
         backend.restore(snapshot=snapshot)
-        _testkitdag_to_warehouse(warehouse, dag)
+        _testkitdag_to_location(warehouse, dag)
     else:
         # Create new TestkitDAG with proper backend integration
         scenario_builder = SCENARIO_REGISTRY[scenario_type]

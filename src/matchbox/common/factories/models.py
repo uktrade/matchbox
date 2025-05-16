@@ -753,7 +753,7 @@ def model_factory(
         # Configure left source
         left_resolution = generator.unique.word()
         left_parameters = SourceTestkitParameters(
-            full_name="crn",
+            name="crn",
             engine=engine,
             features=(
                 features["company_name"].add_variations(
@@ -773,7 +773,7 @@ def model_factory(
             right_resolution = generator.unique.word()
             source_parameters.append(
                 SourceTestkitParameters(
-                    full_name="cdms",
+                    name="cdms",
                     features=(features["crn"], features["cdms"]),
                     repetition=1,
                 )

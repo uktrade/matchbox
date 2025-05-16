@@ -1,9 +1,11 @@
 """Classes and functions for working with data sources in Matchbox."""
 
 import json
+import textwrap
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from functools import wraps
+from pathlib import Path
 from typing import (
     Annotated,
     Any,
@@ -17,7 +19,6 @@ from typing import (
 )
 
 import polars as pl
-from pandas import DataFrame as PandasDataframe
 from polars import DataFrame as PolarsDataFrame
 from pyarrow import Table as ArrowTable
 from pydantic import (
@@ -31,30 +32,19 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import (
-    LABEL_STYLE_TABLENAME_PLUS_COL,
-    ColumnElement,
-    Engine,
-    MetaData,
-    String,
-    Table,
-    cast,
-    select,
-)
+from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
 from matchbox.common.db import (
     QueryReturnType,
     ReturnTypeStr,
     fullname_to_prefix,
-    get_schema_table_names,
     sql_to_df,
     validate_sql_for_data_extraction,
 )
 from matchbox.common.dtos import DataTypes, SourceResolutionName
 from matchbox.common.exceptions import (
     MatchboxSourceCredentialsError,
-    MatchboxSourceFieldError,
 )
 from matchbox.common.hash import (
     HASH_FUNC,
@@ -68,6 +58,9 @@ T = TypeVar("T")
 P = ParamSpec("P")
 R = TypeVar("R")
 
+
+LocationType = Union["RelationalDBLocation"]
+"""Type for Location class. Currently only supports RelationalDBLocation."""
 
 LocationTypeStr = Union[Literal["rdbms"]]
 """String literal type for Location class. Currently only supports "rdbms"."""
@@ -185,7 +178,7 @@ class Location(ABC, BaseModel):
             isinstance(loc, RelationalDBLocation)  # True
             ```
         """
-        location_type = data.get("type")
+        location_type = data["type"]
 
         if location_type == "rdbms":
             return RelationalDBLocation.model_validate(data)
@@ -396,403 +389,268 @@ def needs_engine(func: Callable[P, R]) -> Callable[P, R]:
 
 
 class SourceConfig(BaseModel):
-    """Data that can, or has been indexed on the backend.
+    """Configuration of a source that can, or has been, indexed in the backend.
 
-    The configuration produces a source that maps to a "noun" of the business,
-    such as a "customer" or "product". It contains fields that are attributes of
-    the noun, and the unique key that identifies it in the source system.
+    SourceConfigs are used to configure source resolutions. They are foundational
+    processes on top of which linking and deduplication models can build new
+    resolutions.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    address: SourceAddress
-    name: SourceResolutionName = Field(
-        default_factory=lambda data: str(data["address"])
+    location: LocationType = Field(
+        discriminator="type",
+        description=(
+            "The location of the source. Used to run the extract/tansform logic."
+        ),
     )
-    key_field: SourceField
-    # Index fields need to be set at creation, or initialised with `.default_fields()`
-    index_fields: tuple[SourceField, ...] | None = None
+    name: SourceResolutionName = Field(
+        description=(
+            "A unique, human-readable name of the source resolution this "
+            "object configures."
+        )
+    )
+    extract_transform: str = Field(
+        description=(
+            "Logic to extract and transform data from the source. "
+            "Language is location dependent."
+        )
+    )
+    # Fields can to be set at creation, or initialised with `.default_columns()`
+    key_field: SourceField = Field(
+        description=textwrap.dedent("""
+            The key field. This is the source's key for unique
+            entities, such as a primary key in a relational database.
 
-    _engine: Engine | None = None
+            Keys must ALWAYS be a string.
 
-    @field_validator("key_field", mode="before")
-    @classmethod
-    def validate_key_field(
-        cls: type[Self], key_field: str | dict[str, str] | SourceField
-    ) -> SourceField:
-        """Validate key field as valid SourceField."""
-        if isinstance(key_field, str):
-            return SourceField(name=key_field, type=DataTypes.STRING)
-        elif isinstance(key_field, dict):
-            key_field = SourceField.model_validate(key_field)
-        elif not isinstance(key_field, SourceField):
+            For example, if the source describes companies, it may have used
+            a Companies House number as its key.
+
+            This key is ALWAYS correct. It should be something generated and
+            owned by the source being indexed.
+            
+            For example, your organisation's CRM ID is a key field within the CRM.
+            
+            A CRM ID entered by hand in another dataset shouldn't be used 
+            as a key field.
+        """),
+    )
+    index_fields: tuple[SourceField, ...] = Field(
+        default=None,
+        description=textwrap.dedent(
+            """
+            The fields to index in this source, after the extract/transform logic 
+            has been applied. 
+
+            This is usually set manually, and should map onto the columns that the
+            extract/transform logic returns.
+            """
+        ),
+    )
+
+    def _detect_fields(
+        self, location: Location, extract_transform: str, key_field: str | None = None
+    ) -> tuple[SourceField, tuple[SourceField, ...]]:
+        """A helper method to detect the fields from the extract/transform logic.
+
+        Return a tuple of the key_field, and the index fields, as SourceFields.
+        """
+        id = key_field or "id"
+        df: pl.DataFrame = next(
+            location.execute(extract_transform=extract_transform, batch_size=100)
+        )
+
+        key_field: SourceField
+        index_fields: list[SourceField] = []
+
+        for col in df.iter_columns():
+            if col.name == id:
+                key_field = SourceField(
+                    name=col.name,
+                    type=DataTypes.STRING,
+                )
+            else:
+                index_fields.append(
+                    SourceField(
+                        name=col.name,
+                        type=DataTypes.from_dtype(col.dtype),
+                    )
+                )
+
+        if not key_field:
             raise ValueError(
-                f"Key field must be a string, dict, or SourceField, but got {key_field}"
+                "No key field found in the extract/transform logic. "
+                "Please set the key field manually."
             )
 
-        if key_field.type != DataTypes.STRING:
-            raise ValueError(
-                f"Key field must be a string type, but got {key_field.type}"
-            )
+        return key_field, tuple(index_fields)
 
-        return key_field
+    @model_validator(mode="after")
+    def validate_key_field(self) -> Self:
+        """Ensure that the key field is a string."""
+        if self.key_field in self.index_fields:
+            raise ValueError("Key field must not be in the index fields. ")
 
-    @property
-    def engine(self) -> Engine | None:
-        """The SQLAlchemy Engine used to connect to the data."""
-        return self._engine
-
-    def __eq__(self, other: Any) -> bool:
-        """Custom equality which ignores engine."""
-        return (self.address, self.name, self.key_field, self.index_fields) == (
-            other.address,
-            other.name,
-            other.key_field,
-            other.index_fields,
-        )
-
-    def __hash__(self) -> int:
-        """Custom hash which ignores engine."""
-        return hash((self.address, self.name, self.key_field, self.index_fields))
-
-    def __deepcopy__(self, memo=None):
-        """Create a deep copy of the SourceConfig object."""
-        if memo is None:
-            memo = {}
-
-        obj_copy = SourceConfig(
-            address=deepcopy(self.address, memo),
-            name=deepcopy(self.name, memo),
-            key_field=deepcopy(self.key_field, memo),
-            index_fields=deepcopy(self.index_fields, memo),
-        )
-
-        # Both objects should share the same engine
-        if self._engine is not None:
-            obj_copy._engine = self._engine
-
-        return obj_copy
-
-    def set_engine(self, engine: Engine):
-        """Adds engine, and use it to validate current fields."""
-        implied_address = SourceAddress.compose(
-            full_name=self.address.full_name, engine=engine
-        )
-        if implied_address != self.address:
-            raise ValueError("The engine does not match the source address.")
-
-        self._engine = engine
+        if self.key_field.type != DataTypes.STRING:
+            raise ValueError("Key field must be a string. ")
 
         return self
 
-    @needs_engine
-    def get_remote_fields(self, exclude_key=False) -> dict[str, DataTypes]:
-        """Returns a dictionary of field names and Matchbox DataTypes."""
-        table = self.to_table()
-        return {
-            field.name: DataTypes.from_pytype(field.type.python_type)
-            for field in table.columns
-            if (field.name != self.key_field.name) or (not exclude_key)
-        }
+    @model_validator(mode="after")
+    def validate_location_et_fields(self) -> "SourceConfig":
+        """Ensure that the location, extract_transform, and fields are aligned."""
+        if self.location.credentials is None:
+            # We can't validate
+            return self
 
-    @needs_engine
-    def default_fields(self) -> "SourceConfig":
-        """Returns a new source with default fields.
-
-        Default fields are all from the source warehouse other than `self.key_field`.
-        All other attributes are copied, and its engine (if present) is set.
-        """
-        remote_fields = self.get_remote_fields(exclude_key=True)
-        index_fields = (
-            SourceField(name=field_name, type=field_type)
-            for field_name, field_type in remote_fields.items()
+        key_field, index_fields = self._detect_fields(
+            location=self.location,
+            extract_transform=self.extract_transform,
+            key_field=self.key_field.name,
         )
 
-        new_source = SourceConfig(
-            address=self.address,
-            name=self.name,
-            key_field=self.key_field,
+        if (set(self.index_fields) != set(index_fields)) or (
+            self.key_field != key_field
+        ):
+            raise ValueError(
+                "The index fields or key field do not match the "
+                "extract/transform logic. "
+                "Please check the index fields, key field and logic. \n"
+                f"Declared index fields: {self.index_fields} \n"
+                f"Index fields from logic: {index_fields} \n"
+                f"Declared key field: {self.key_field} \n"
+                f"Key field from logic: {key_field} \n"
+            )
+
+        return self
+
+    @classmethod
+    def from_location(
+        cls, location: Location, extract_transform: str
+    ) -> "SourceConfig":
+        """Create a SourceConfig from a Location.
+
+        A convenience method to create a SourceConfig from minimal options.
+
+        * Assumes a column aliasesed as "id" is the key field
+        * Autodetects datatypes from a small sample
+        * Uses the location's URI host and truncated ETL hash as the resolution name
+
+        Args:
+            location: The location of the source.
+            extract_transform: The logic to extract and transform data from the source.
+
+        Returns:
+            A SourceConfig object with the location set.
+        """
+        et_hash = HASH_FUNC(extract_transform.encode("utf-8")).hexdigest()[:6]
+        key_field, index_fields = cls._detect_fields(
+            cls,
+            location=location,
+            extract_transform=extract_transform,
+            key_field="id",
+        )
+        default_name: str | None = (
+            location.uri.host or Path(location.uri.path).stem or None
+        )
+        if default_name is None:
+            raise ValueError(
+                "Could not detect a default name for the source. "
+                "Please create the source manually."
+            )
+        return cls(
+            name=default_name + "_" + et_hash,
+            location=location,
+            extract_transform=extract_transform,
+            key_field=key_field,
             index_fields=index_fields,
         )
 
-        if self.engine:
-            new_source.set_engine(self.engine)
-
-        return new_source
-
-    @needs_engine
-    def to_table(self) -> Table:
-        """Returns the source as a SQLAlchemy Table object."""
-        db_schema, db_table = get_schema_table_names(self.address.full_name)
-        metadata = MetaData(schema=db_schema)
-        table = Table(db_table, metadata, autoload_with=self.engine)
-        return table
-
-    @needs_engine
-    def check_fields(self, fields: list[str] | None = None) -> None:
-        """Check that fields are available in the warehouse and correctly typed.
+    def set_credentials(self, credentials: Any) -> None:
+        """Set the credentials for the location.
 
         Args:
-            fields: List of field names to check. If None, it will check
-                self.index_fields
+            credentials: The credentials to set.
         """
-        remote_fields = self.get_remote_fields()
+        self.location.add_credentials(credentials)
 
-        if self.key_field.name not in remote_fields:
-            raise MatchboxSourceFieldError(
-                f"Key field {self.key_field.name} not available in {self.address}"
-            )
-
-        if fields:
-            fields = set(fields)
-            remote_names = set(remote_fields.keys())
-            if not fields <= remote_names:
-                raise MatchboxSourceFieldError(
-                    f"Fields {fields - remote_names} not in {self.address}"
-                )
-        else:
-            if not self.index_fields:
-                raise ValueError("No fields passed, and none set on the SourceConfig.")
-
-            for field in self.index_fields:
-                if field.name not in remote_fields:
-                    raise MatchboxSourceFieldError(
-                        f"Field {field.name} not available in {self.address.full_name}"
-                    )
-                actual_type = remote_fields[field.name]
-                if actual_type != field.type:
-                    raise MatchboxSourceFieldError(
-                        f"Type {actual_type} != {field.type} for {field.name}"
-                    )
-
-    def _select(
+    def query(
         self,
-        fields: list[str] | None = None,
-        keys: list[T] | None = None,
-        limit: int | None = None,
-    ) -> str:
-        """Returns a SQL query to retrieve data from the source."""
-        table = self.to_table()
-
-        # Ensure all set fields are available and the expected type
-        self.check_fields(fields=fields)
-        if not fields:
-            fields = [field.name for field in self.index_fields]
-
-        if self.key_field.name not in fields:
-            fields.append(self.key_field.name)
-
-        def _get_field(field_name: str) -> ColumnElement:
-            """Helper to get a field with proper casting and labeling for keys."""
-            field = table.columns[field_name]
-            if field_name == self.key_field:
-                return cast(field, String).label(self.address.format_field(field_name))
-            return field
-
-        # Determine which fields to select
-        if fields:
-            select_fields = [_get_field(field) for field in fields]
-        else:
-            select_fields = [_get_field(field.name) for field in table.columns]
-
-        stmt = select(*select_fields)
-
-        if keys:
-            string_keys = [str(key) for key in keys]
-            key_field = table.columns[self.key_field]
-            stmt = stmt.where(cast(key_field, String).in_(string_keys))
-
-        if limit:
-            stmt = stmt.limit(limit)
-
-        stmt = stmt.set_label_style(LABEL_STYLE_TABLENAME_PLUS_COL)
-
-        return stmt.compile(
-            dialect=self.engine.dialect, compile_kwargs={"literal_binds": True}
-        )
-
-    @needs_engine
-    def to_arrow(
-        self,
-        fields: list[str] | None = None,
-        keys: list[T] | None = None,
-        limit: int | None = None,
-        *,
+        qualify_names: bool = False,
         return_batches: bool = False,
         batch_size: int | None = None,
-        schema_overrides: dict[str, Any] | None = None,
-        execute_options: dict[str, Any] | None = None,
-    ) -> ArrowTable | Iterator[ArrowTable]:
-        """Returns the source as a PyArrow Table or an iterator of PyArrow Tables.
+        return_type: ReturnTypeStr = "polars",
+    ) -> Iterator[QueryReturnType] | QueryReturnType:
+        """Applies the extract/transform logic to the source and returns the results.
 
         Args:
-            fields: List of field names to retrieve. If None, retrieves all fields.
-            keys: List of primary keys to filter by. If None, retrieves all rows.
-            limit: Maximum number of rows to retrieve. If None, retrieves all rows.
+            qualify_names: If True, qualify the names of the columns with the
+                source name.
             return_batches:
                 * If True, return an iterator that yields each batch separately
                 * If False, return a single Table with all results
             batch_size: Indicate the size of each batch when processing data in batches.
-            schema_overrides: A dictionary mapping field names to dtypes.
-            execute_options: These options will be passed through into the underlying
-                query execution method as kwargs.
+            return_type: The type of data to return. Defaults to "polars".
 
         Returns:
-            The requested data in PyArrow format.
+            The requested data in the specified format.
 
-                * If return_batches is False: a PyArrow Table
-                * If return_batches is True: an iterator of PyArrow Tables
+                * If return_batches is False: a single table
+                * If return_batches is True: an iterator of tables
         """
-        stmt = self._select(fields=fields, keys=keys, limit=limit)
-        return sql_to_df(
-            stmt,
-            self._engine,
-            return_type="arrow",
-            return_batches=return_batches,
+        _rename: Callable | None = None
+        if qualify_names:
+
+            def _rename(c: str) -> str:
+                self.name + "_" + c
+
+        return self.location.execute(
+            extract_transform=self.extract_transform,
+            rename=_rename,
             batch_size=batch_size,
-            schema_overrides=schema_overrides,
-            execute_options=execute_options,
+            return_batches=return_batches,
+            return_type=return_type,
         )
 
-    @needs_engine
-    def to_polars(
-        self,
-        fields: list[str] | None = None,
-        keys: list[T] | None = None,
-        limit: int | None = None,
-        *,
-        return_batches: bool = False,
-        batch_size: int | None = None,
-        schema_overrides: dict[str, Any] | None = None,
-        execute_options: dict[str, Any] | None = None,
-    ) -> PolarsDataFrame | Iterator[PolarsDataFrame]:
-        """Returns the source as a PyArrow Table or an iterator of PyArrow Tables.
+    def hash_data(self, batch_size: int | None = None) -> ArrowTable:
+        """Retrieve and hash a dataset from its warehouse, ready to be inserted.
 
-        Args:
-            fields: List of field names to retrieve. If None, retrieves all fields.
-            keys: List of primary keys to filter by. If None, retrieves all rows.
-            limit: Maximum number of rows to retrieve. If None, retrieves all rows.
-            return_batches:
-                * If True, return an iterator that yields each batch separately
-                * If False, return a single Table with all results
-            batch_size: Indicate the size of each batch when processing data in batches.
-            schema_overrides: A dictionary mapping field names to dtypes.
-            execute_options: These options will be passed through into the underlying
-                query execution method as kwargs.
+        Hashes the index fields defined in the source based on the
+        extract/transform logic.
 
-        Returns:
-            The requested data in Polars format.
-
-                * If return_batches is False: a Polars DataFrame
-                * If return_batches is True: an iterator of Polars DataFrames
-        """
-        stmt = self._select(fields=fields, keys=keys, limit=limit)
-        return sql_to_df(
-            stmt,
-            self._engine,
-            return_type="polars",
-            return_batches=return_batches,
-            batch_size=batch_size,
-            schema_overrides=schema_overrides,
-            execute_options=execute_options,
-        )
-
-    @needs_engine
-    def to_pandas(
-        self,
-        fields: list[str] | None = None,
-        keys: list[T] | None = None,
-        limit: int | None = None,
-        *,
-        return_batches: bool = False,
-        batch_size: int | None = None,
-        schema_overrides: dict[str, Any] | None = None,
-        execute_options: dict[str, Any] | None = None,
-    ) -> PandasDataframe | Iterator[PandasDataframe]:
-        """Returns the source as a pandas DataFrame or an iterator of DataFrames.
-
-        Args:
-            fields: List of field names to retrieve. If None, retrieves all fields.
-            keys: List of primary keys to filter by. If None, retrieves all rows.
-            limit: Maximum number of rows to retrieve. If None, retrieves all rows.
-            return_batches:
-                * If True, return an iterator that yields each batch separately
-                * If False, return a single Table with all results
-            batch_size: Indicate the size of each batch when processing data in batches.
-            schema_overrides: A dictionary mapping field names to dtypes.
-            execute_options: These options will be passed through into the underlying
-                query execution method as kwargs.
-
-        Returns:
-            The requested data in Pandas format.
-
-                * If return_batches is False: a Pandas DataFrame
-                * If return_batches is True: an iterator of Pandas DataFrames
-        """
-        stmt = self._select(fields=fields, keys=keys, limit=limit)
-        return sql_to_df(
-            stmt,
-            self._engine,
-            return_type="pandas",
-            return_batches=return_batches,
-            batch_size=batch_size,
-            schema_overrides=schema_overrides,
-            execute_options=execute_options,
-        )
-
-    @needs_engine
-    def hash_data(
-        self,
-        *,
-        batch_size: int | None = None,
-        schema_overrides: dict[str, Any] | None = None,
-        execute_options: dict[str, Any] | None = None,
-    ) -> ArrowTable:
-        """Retrieve and hash the source from its warehouse, ready to be inserted.
+        Does not hash the key field.
 
         Args:
             batch_size: If set, process data in batches internally. Indicates the
                 size of each batch.
-            schema_overrides: A dictionary mapping field names to dtypes.
-            execute_options: These options will be passed through into the underlying
-                query execution method as kwargs.
 
         Returns:
-            A PyArrow Table containing source primary keys and their hashes.
+            A PyArrow Table containing source keys and their hashes.
         """
-        # Ensure all set fields are available and the expected type
-        self.check_fields()
+        key_field: str = self.key_field.name
+        index_fields: list[str] = [field.name for field in self.index_fields]
 
-        source_table = self.to_table()
-        fields_to_index = tuple([field.name for field in self.index_fields])
-
-        slct_stmt = select(
-            *[source_table.c[field] for field in fields_to_index],
-            source_table.c[self.key_field.name].cast(String).label("keys"),
-        )
-
-        def _process_batch(
-            batch: PolarsDataFrame,
-            fields_to_index: tuple,
-        ) -> PolarsDataFrame:
+        def _process_batch(batch: PolarsDataFrame) -> PolarsDataFrame:
             """Process a single batch of data using Polars.
 
             Args:
                 batch: Polars DataFrame containing the data
-                fields_to_index: fields to include in the hash
 
             Returns:
-                Polars DataFrame with hash and key fields
+                Polars DataFrame with hash and keys columns
 
             Raises:
-                ValueError: If any key values are null
+                ValueError: If any keys values are null
             """
-            if batch["keys"].is_null().any():
-                raise ValueError("key field contains null values")
+            batch: pl.DataFrame = batch.rename({key_field: "keys"})
 
-            row_hashes = hash_rows(
+            if batch["keys"].is_null().any():
+                raise ValueError("keys column contains null values")
+
+            row_hashes: pl.Series = hash_rows(
                 df=batch,
-                columns=list(sorted(fields_to_index)),
+                columns=list(sorted(index_fields)),
                 method=HashMethod.SHA256,
             )
 
@@ -804,34 +662,20 @@ class SourceConfig(BaseModel):
 
         if bool(batch_size):
             # Process in batches
-            raw_batches = sql_to_df(
-                slct_stmt,
-                self._engine,
-                return_type="polars",
+            all_results: list[pl.DataFrame] = []
+            for batch in self.query(
                 return_batches=True,
                 batch_size=batch_size,
-                schema_overrides=schema_overrides,
-                execute_options=execute_options,
-            )
-
-            all_results = []
-            for batch in raw_batches:
-                batch_result = _process_batch(batch, fields_to_index)
+                return_type="polars",
+            ):
+                batch_result = _process_batch(batch)
                 all_results.append(batch_result)
 
             processed_df = pl.concat(all_results)
 
         else:
             # Non-batched processing
-            raw_result = sql_to_df(
-                slct_stmt,
-                self._engine,
-                return_type="polars",
-                schema_overrides=schema_overrides,
-                execute_options=execute_options,
-            )
-
-            processed_df = _process_batch(raw_result, fields_to_index)
+            processed_df = _process_batch(self.query())
 
         return processed_df.group_by("hash").agg(pl.col("keys")).to_arrow()
 

@@ -17,21 +17,23 @@ def test_key_field_map(
     matchbox_api: MockRouter,
 ):
     # Make dummy data
+    sqlite_memory_warehouse = create_engine("sqlite:///:memory:")
+
     foo = source_from_tuple(
-        full_name="foo",
+        name="foo",
         engine=sqlite_warehouse,
         data_keys=[1, 2, 3],
         data_tuple=({"col": 0}, {"col": 1}, {"col": 2}),
     )
     bar = source_from_tuple(
-        full_name="bar",
-        engine=create_engine("sqlite:///:memory:"),
+        name="bar",
+        engine=sqlite_memory_warehouse,
         data_keys=["a", "b", "c"],
         data_tuple=({"col": 10}, {"col": 11}, {"col": 12}),
     )
 
-    foo.to_warehouse(sqlite_warehouse)
-    bar.to_warehouse(sqlite_warehouse)
+    foo.write_to_location(credentials=sqlite_warehouse, set_credentials=True)
+    bar.write_to_location(credentials=sqlite_memory_warehouse, set_credentials=True)
 
     # Because of FULL OUTER JOIN, we expect some values to be null, and some explosions
     expected_foo_bar_mapping = pl.DataFrame(

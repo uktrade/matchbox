@@ -19,6 +19,7 @@ from matchbox.common.dtos import (
     NotFoundError,
     ResolutionName,
     ResolutionOperationStatus,
+    SourceResolutionName,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -33,7 +34,7 @@ from matchbox.common.exceptions import (
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.hash import hash_to_base64
 from matchbox.common.logging import logger
-from matchbox.common.sources import Match, SourceAddress, SourceConfig
+from matchbox.common.sources import Match, SourceConfig
 
 URLEncodeHandledType = str | int | float | bytes
 
@@ -119,21 +120,20 @@ CLIENT = create_client(settings=settings)
 
 
 def query(
-    source: SourceAddress,
+    source: SourceResolutionName,
     resolution: ResolutionName | None = None,
     threshold: int | None = None,
     limit: int | None = None,
 ) -> Table:
-    log_prefix = f"Query {source.pretty}"
+    """Query a source in Matchbox."""
+    log_prefix = f"Query {source}"
     logger.debug(f"Using {resolution}", prefix=log_prefix)
 
     res = CLIENT.get(
         "/query",
         params=url_params(
             {
-                "full_name": source.full_name,
-                # Converted to b64 by `url_params()`
-                "warehouse_hash_b64": source.warehouse_hash,
+                "source": source,
                 "resolution": resolution,
                 "threshold": threshold,
                 "limit": limit,
@@ -157,18 +157,16 @@ def query(
 
 
 def match(
-    targets: list[SourceAddress],
-    source: SourceAddress,
+    targets: list[SourceResolutionName],
+    source: SourceResolutionName,
     key: str,
     resolution: ResolutionName,
     threshold: int | None = None,
 ) -> Match:
-    target_full_names = [t.full_name for t in targets]
-    target_warehouse_hashes = [t.warehouse_hash for t in targets]
-
-    log_prefix = f"Query {source.pretty}"
+    """Match a source against a list of targets."""
+    log_prefix = f"Query {source}"
     logger.debug(
-        f"{key} to {', '.join(str(t) for t in targets)} using {resolution}",
+        f"{key} to {', '.join(targets)} using {resolution}",
         prefix=log_prefix,
     )
 
@@ -176,12 +174,8 @@ def match(
         "/match",
         params=url_params(
             {
-                "target_full_names": target_full_names,
-                # Converted to b64 by `url_params()`
-                "target_warehouse_hashes_b64": target_warehouse_hashes,
-                "source_full_name": source.full_name,
-                # Converted to b64 by `url_params()`
-                "source_warehouse_hash_b64": source.warehouse_hash,
+                "targets": targets,
+                "source": source,
                 "key": key,
                 "resolution": resolution,
                 "threshold": threshold,
@@ -199,7 +193,7 @@ def match(
 
 def index(source_config: SourceConfig, batch_size: int | None = None) -> UploadStatus:
     """Index from a SourceConfig in Matchbox."""
-    log_prefix = f"Index {source_config.address.pretty}"
+    log_prefix = f"Index {source_config.name}"
     log_batch = f"with batch size {batch_size:,}" if batch_size else "without batching"
     logger.debug(f"Started {log_batch}", prefix=log_prefix)
 
@@ -242,11 +236,11 @@ def index(source_config: SourceConfig, batch_size: int | None = None) -> UploadS
     return status
 
 
-def get_source_config(address: SourceAddress) -> SourceConfig:
-    log_prefix = f"SourceConfig {address.pretty}"
+def get_source_config(name: SourceResolutionName) -> SourceConfig:
+    log_prefix = f"SourceConfig {name}"
     logger.debug("Retrieving", prefix=log_prefix)
 
-    res = CLIENT.get(f"/sources/{address.warehouse_hash_b64}/{address.full_name}")
+    res = CLIENT.get(f"/sources/{name}")
 
     return SourceConfig.model_validate(res.json())
 

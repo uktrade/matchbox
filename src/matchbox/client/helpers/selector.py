@@ -1,12 +1,12 @@
 """Functions to select and retrieve data from the Matchbox server."""
 
 import itertools
-from typing import Generator, Iterator, Literal, get_args
+from typing import Any, Generator, Iterator, Literal, Self, get_args
 
 import polars as pl
 from polars import DataFrame as PolarsDataFrame
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Engine, create_engine
+from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy import create_engine
 
 from matchbox.client import _handler
 from matchbox.client._settings import settings
@@ -14,65 +14,115 @@ from matchbox.common.db import QueryReturnType, ReturnTypeStr
 from matchbox.common.dtos import ResolutionName, SourceResolutionName
 from matchbox.common.graph import DEFAULT_RESOLUTION
 from matchbox.common.logging import logger
-from matchbox.common.sources import Match, SourceAddress, SourceConfig, SourceField
+from matchbox.common.sources import Match, SourceConfig, SourceField
 
 
 class Selector(BaseModel):
-    """A selector to choose a source and optionally a subset of fields to select."""
+    """A selector to choose a source and optionally a subset of columns to select."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    address: SourceAddress
-    fields: list[str] | None = None
-    engine: Engine
+    source: SourceConfig
+    fields: list[SourceField]
+
+    @field_validator("source", mode="after")
+    @classmethod
+    def ensure_credentials(cls: type[Self], source: SourceConfig) -> SourceConfig:
+        """Ensure that the source has credentials set."""
+        if not source.location.credentials:
+            raise ValueError("Source credentials are not set")
+        return source
+
+    @property
+    def qualified_identifier(self) -> str:
+        """Get the qualified identifier for the source."""
+        return self.source.name + "_" + self.source.identifier
+
+    @property
+    def qualified_fields(self) -> list[str]:
+        """Get the qualified fields for the source."""
+        return [self.source.name + "_" + field.name for field in self.fields]
+
+    @classmethod
+    def from_name_and_credentials(
+        cls: type[Self],
+        name: SourceResolutionName,
+        credentials: Any,
+        fields: list[str] | None = None,
+    ) -> "Selector":
+        """Create a Selector from a source name and location credentials.
+
+        Args:
+            name: The name of the source to select from
+            credentials: The credentials to use for the source
+            fields: A list of fields to select from the source
+        """
+        source = _handler.get_source_config(name=name)
+        selected_fields: list[SourceField] = []
+        if fields:
+            for index_field in source.index_fields:
+                if index_field.name in fields:
+                    selected_fields.append(index_field)
+        else:
+            selected_fields = source.index_fields
+        source.set_credentials(credentials=credentials)
+        return cls(source=source, fields=selected_fields)
 
 
 def select(
-    *selection: SourceResolutionName | dict[SourceResolutionName, str],
-    engine: Engine | None = None,
+    *selection: SourceResolutionName | dict[SourceResolutionName, list[str]],
+    credentials: Any | None = None,
 ) -> list[Selector]:
     """From one engine, builds and verifies a list of selectors.
 
+    Can we used on any number of sources as long as they share the same credentials.
+
     Args:
-        selection: Full source resolution names and optionally a subset of fields
-            to select
-        engine: The engine to connect to the data warehouse hosting the source.
-            If not provided, will use a connection string from the
-            `MB__CLIENT__DEFAULT_WAREHOUSE` environment variable.
+        selection: The source relations to retrieve data from
+        credentials: The credentials to use for the source. Datatype will depend on
+            the source's location type. For example, a RelationalDBLocation will require
+            a SQLAlchemy engine. If not provided, will populate with a SQLAlchemy engine
+            from the default warehouse set in the environment variable
+            `MB__CLIENT__DEFAULT_WAREHOUSE`
 
     Returns:
         A list of Selector objects
 
     Examples:
         ```python
-        select("companies_house", "hmrc_exporters", engine=engine)
+        select("companies_house", credentials=engine)
         ```
 
         ```python
-        select({"companies_house": ["crn"], "hmrc_exporters": ["name"]}, engine=engine)
+        select(
+            {"companies_house": ["crn"], "hmrc_exporters": ["name"]}, credentials=engine
+        )
         ```
     """
-    if not engine:
-        if default_engine := settings.default_warehouse:
-            engine = create_engine(default_engine)
+    if not credentials:
+        if default_credentials := settings.default_warehouse:
+            credentials = create_engine(default_credentials)
             logger.warning("Using default engine")
         else:
             raise ValueError(
-                "An engine needs to be provided if "
+                "Credentials need to be provided if "
                 "`MB__CLIENT__DEFAULT_WAREHOUSE` is unset"
             )
 
     selectors = []
     for s in selection:
         if isinstance(s, str):
-            source_address = SourceAddress.compose(engine, s)
-            selectors.append(Selector(engine=engine, address=source_address))
+            selectors.append(
+                Selector.from_name_and_credentials(name=s, credentials=credentials)
+            )
         elif isinstance(s, dict):
-            for full_name, fields in s.items():
-                source_address = SourceAddress.compose(engine, full_name)
-
+            for name, fields in s.items():
                 selectors.append(
-                    Selector(engine=engine, address=source_address, fields=fields)
+                    Selector.from_name_and_credentials(
+                        name=name,
+                        credentials=credentials,
+                        fields=fields,
+                    )
                 )
         else:
             raise ValueError("Selection specified in incorrect format")
@@ -84,7 +134,6 @@ def _process_query_result(
     data: PolarsDataFrame,
     selector: Selector,
     mb_ids: PolarsDataFrame,
-    key_field: SourceField,
 ) -> PolarsDataFrame:
     """Process query results by joining with matchbox IDs and filtering fields.
 
@@ -92,7 +141,6 @@ def _process_query_result(
         data: The raw data from the source
         selector: The selector with source and fields information
         mb_ids: The matchbox IDs
-        key_field: The key of the source
 
     Returns:
         The processed table with joined matchbox IDs and filtered fields
@@ -100,53 +148,18 @@ def _process_query_result(
     # Join data with matchbox IDs
     joined_table = data.join(
         other=mb_ids,
-        left_on=selector.address.format_field(key_field.name),
-        right_on="key",
+        left_on=selector.qualified_identifier,
+        right_on="source_identifier",
         how="inner",
     )
 
     # Apply field filtering if needed
     if selector.fields:
-        keep_fields = ["id"] + [
-            selector.address.format_field(f) for f in selector.fields
-        ]
-        match_fields = [field for field in joined_table.columns if field in keep_fields]
-        return joined_table.select(match_fields)
+        keep_cols = ["id"] + selector.qualified_fields
+        match_cols = [col for col in joined_table.columns if col in keep_cols]
+        return joined_table.select(match_cols)
     else:
         return joined_table
-
-
-def _source_query(
-    selector: Selector,
-    return_batches: bool = False,
-    batch_size: int | None = None,
-    only_indexed: bool = False,
-) -> tuple[SourceConfig, Iterator[PolarsDataFrame]]:
-    """From a Selector, query a source and join to matchbox IDs."""
-    source = _handler.get_source_config(selector.address).set_engine(selector.engine)
-
-    index_fields = set()
-    if source.index_fields:
-        index_fields = set([field.name for field in source.index_fields])
-
-    # If only_indexed is True and source.fields is unset, we will raise
-    if only_indexed and selector.fields and not set(selector.fields) <= index_fields:
-        raise ValueError("Attempting to query unindexed fields.")
-
-    selected_fields = None
-    if selector.fields:
-        selected_fields = list(set(selector.fields))
-
-    raw_results = source.to_polars(
-        fields=selected_fields,
-        return_batches=return_batches,
-        batch_size=batch_size,
-    )
-
-    if isinstance(raw_results, PolarsDataFrame):
-        raw_results = [raw_results]
-
-    return source, raw_results
 
 
 def _process_selectors(
@@ -154,7 +167,6 @@ def _process_selectors(
     resolution: ResolutionName | None,
     threshold: int | None,
     batch_size: int | None,
-    only_indexed: bool,
 ) -> Iterator[PolarsDataFrame]:
     """Helper function to process selectors and return an iterator of results.
 
@@ -169,29 +181,29 @@ def _process_selectors(
         batches: Iterator[PolarsDataFrame],
         selector: Selector,
         mb_ids: PolarsDataFrame,
-        key_field: SourceField,
     ) -> Generator[PolarsDataFrame, None, None]:
         """Process and transform each batch of results."""
         for batch in batches:
-            yield _process_query_result(
-                data=batch, selector=selector, mb_ids=mb_ids, key_field=key_field
-            )
+            yield _process_query_result(batch, selector, mb_ids)
 
     for selector in selectors:
         mb_ids = pl.from_arrow(
             _handler.query(
-                source=selector.address,
+                source=selector.source.name,
                 resolution=resolution,
                 threshold=threshold,
             )
         )
 
-        source, raw_batches = _source_query(
-            selector=selector,
+        raw_batches = selector.source.query(
+            qualify_names=True,
             return_batches=True,
             batch_size=batch_size,
-            only_indexed=only_indexed,
+            return_type="polars",
         )
+
+        if isinstance(raw_batches, PolarsDataFrame):
+            raw_batches = [raw_batches]
 
         # Process and transform each batch
         selector_iters.append(
@@ -199,7 +211,6 @@ def _process_selectors(
                 batches=raw_batches,
                 selector=selector,
                 mb_ids=mb_ids,
-                key_field=source.key_field,
             )
         )
 
@@ -221,7 +232,6 @@ def query(
     threshold: int | None = None,
     batch_size: int | None = None,
     return_batches: bool = False,
-    only_indexed: bool = False,
 ) -> QueryReturnType | Iterator[QueryReturnType]:
     """Runs queries against the selected backend.
 
@@ -253,11 +263,8 @@ def query(
             warehouse, which helps reduce memory usage and load on the database.
             Default is None.
         return_batches (optional): If True, returns an iterator of batches instead of a
-            single combined result, which is useful for processing large data with
+            single combined result, which is useful for processing large datasets with
             limited memory. Default is False.
-        only_indexed (optional): If True, it will raise an exception when attempting to
-            query un-indexed fields, which should never be done if querying for
-            subsequent matching. Default is False.
 
     Returns:
         If return_batches is False:
@@ -276,7 +283,7 @@ def query(
         query(
             select("companies_house", engine=engine1),
             select("datahub_companies", engine=engine2),
-            name="last_linker",
+            resolution="last_linker",
         )
         ```
 
@@ -313,7 +320,6 @@ def query(
         resolution=resolution,
         threshold=threshold,
         batch_size=batch_size,
-        only_indexed=only_indexed,
     )
     if return_batches:
         # Return an iterator of batches
@@ -351,9 +357,7 @@ def query(
                 if combine_type == "set_agg":
                     # Aggregate into lists
                     agg_expressions = [
-                        pl.col(field).unique()
-                        for field in result.columns
-                        if field != "id"
+                        pl.col(col).unique() for col in result.columns if col != "id"
                     ]
                     result = result.group_by("id").agg(agg_expressions)
 
@@ -368,20 +372,19 @@ def query(
 
 
 def match(
-    *targets: list[Selector],
-    source: list[Selector],
-    key: str,
+    *targets: list[SourceResolutionName],
+    source: SourceResolutionName,
+    identifier: str,
     resolution: ResolutionName = DEFAULT_RESOLUTION,
     threshold: int | None = None,
 ) -> list[Match]:
     """Matches IDs against the selected backend.
 
     Args:
-        targets: Each target is the output of `select()`.
-            This allows matching against sources coming from different engines
-        source: The output of using `select()` on a single source.
-        key: The key value to match from the source.
-        resolution (optional): The resolution name to use for filtering results.
+        targets: A list of source resolutions to find identifiers in
+        source: The source resolution the provided identifier belongs to
+        identifier: The value to match from the source. Usually a primary key
+        resolution (optional): The resolution to use to resolve matches against
             If not set, it will look for a default resolution.
         threshold (optional): The threshold to use for creating clusters.
             If None, uses the resolutions' default threshold
@@ -391,24 +394,22 @@ def match(
     Examples:
         ```python
         mb.match(
-            select("datahub_companies", engine=engine),
-            source=select("companies_house", engine=engine),
-            key="8534735",
+            "datahub_companies",
+            "hmrc_exporters",
+            source="companies_house",
+            source_identifier="8534735",
             resolution="last_linker",
         )
         ```
     """
-    if len(source) > 1:
-        raise ValueError("Only one source can be matched at one time")
-    source = source[0].address
-
-    targets: list[Selector] = list(itertools.chain(*targets))
-    targets = [t.address for t in targets]
+    # Validate arguments
+    for name in targets + [source]:
+        _ = _handler.get_source_config(name=name)
 
     return _handler.match(
         targets=targets,
         source=source,
-        key=key,
+        identifier=identifier,
         resolution=resolution,
         threshold=threshold,
     )

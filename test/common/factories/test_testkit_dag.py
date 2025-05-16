@@ -136,7 +136,7 @@ def test_testkit_dag_model_chain(
     # Setup: Create sources and DAG
     linked = linked_sources_factory(seed=hash(str(chain_config)))
     standalone = source_factory(
-        full_name="standalone_source",
+        name="standalone_source",
         features=[
             {"name": "name", "base_generator": "name"},
             {"name": "age", "base_generator": "random_int"},
@@ -225,12 +225,12 @@ def test_testkit_dag_multiple_linked_sources():
 
     # Create two linked source testkits
     configs1 = (
-        SourceTestkitParameters(full_name="foo1", features=tuple(features[:1])),
-        SourceTestkitParameters(full_name="foo2", features=tuple(features[:1])),
+        SourceTestkitParameters(name="foo1", features=tuple(features[:1])),
+        SourceTestkitParameters(name="foo2", features=tuple(features[:1])),
     )
     configs2 = (
-        SourceTestkitParameters(full_name="bar1", features=tuple(features[1:])),
-        SourceTestkitParameters(full_name="bar2", features=tuple(features[1:])),
+        SourceTestkitParameters(name="bar1", features=tuple(features[1:])),
+        SourceTestkitParameters(name="bar2", features=tuple(features[1:])),
     )
 
     linked1 = linked_sources_factory(source_parameters=configs1, n_true_entities=10)

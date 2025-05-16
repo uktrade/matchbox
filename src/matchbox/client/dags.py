@@ -63,14 +63,13 @@ class StepInput(BaseModel):
                 or list(self.select.keys())[0] != self.prev_node.source_config
             ):
                 raise ValueError(
-                    "Can only select from source "
-                    f"{self.prev_node.source_config.address}"
+                    f"Can only select from source {self.prev_node.source_config.name}"
                 )
         else:
             for source in self.select:
-                if str(source.address) not in self.prev_node.sources:
+                if str(source.name) not in self.prev_node.sources:
                     raise ValueError(
-                        f"Cannot select {source.address} from {self.prev_node.name}."
+                        f"Cannot select {source.name} from {self.prev_node.name}."
                         f"Available sources are {self.prev_node.sources}."
                     )
         return self
@@ -91,8 +90,8 @@ class IndexStep(Step):
         if not isinstance(data["source_config"], SourceConfig):
             raise ValueError("SourceConfig must be of type SourceConfig")
 
-        data["name"] = str(data["source_config"].address)
-        data["sources"] = {str(data["source_config"].address)}
+        data["name"] = str(data["source_config"].name)
+        data["sources"] = {str(data["source_config"].name)}
         return data
 
     @property

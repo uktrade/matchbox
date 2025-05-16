@@ -122,7 +122,9 @@ class TestE2EAnalyticalUser:
 
         # Setup code - Create tables in warehouse
         for source_testkit in self.linked_testkit.sources.values():
-            source_testkit.to_warehouse(engine=postgres_warehouse)
+            source_testkit.write_to_location(
+                credentials=postgres_warehouse, set_credentials=True
+            )
 
         # Clear matchbox database before test
         response = matchbox_client.delete("/database", params={"certain": "true"})

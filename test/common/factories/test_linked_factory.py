@@ -51,14 +51,14 @@ def test_linked_sources_custom_config():
 
     configs = (
         SourceTestkitParameters(
-            full_name="source_a",
+            name="source_a",
             engine=engine,
             features=(features["name"], features["user_id"]),
             n_true_entities=5,
             repetition=1,
         ),
         SourceTestkitParameters(
-            full_name="source_b",
+            name="source_b",
             features=(features["name"],),
             n_true_entities=3,
             repetition=2,
@@ -166,7 +166,7 @@ def test_source_entity_equality():
 def test_seed_reproducibility():
     """Test that linked sources generation is reproducible with same seed."""
     source_parameters = SourceTestkitParameters(
-        full_name="test_source",
+        name="test_source",
         features=(
             FeatureConfig(
                 name="name",
@@ -199,7 +199,7 @@ def test_seed_reproducibility():
 def test_empty_source_handling():
     """Test handling of sources with zero entities."""
     source_parameters = SourceTestkitParameters(
-        full_name="empty_source",
+        name="empty_source",
         features=(FeatureConfig(name="name", base_generator="name"),),
         n_true_entities=0,
     )
@@ -215,7 +215,7 @@ def test_empty_source_handling():
 def test_large_entity_count():
     """Test handling of sources with large number of entities."""
     source_parameters = SourceTestkitParameters(
-        full_name="large_source",
+        name="large_source",
         features=(FeatureConfig(name="user_id", base_generator="uuid4"),),
         n_true_entities=10_000,
     )
@@ -237,10 +237,10 @@ def test_feature_inheritance():
 
     configs = (
         SourceTestkitParameters(
-            full_name="source_a", features=(features["name"], features["email"])
+            name="source_a", features=(features["name"], features["email"])
         ),
         SourceTestkitParameters(
-            full_name="source_b", features=(features["name"], features["phone"])
+            name="source_b", features=(features["name"], features["phone"])
         ),
     )
 
@@ -263,7 +263,7 @@ def test_feature_inheritance():
 def test_unique_feature_values():
     """Test that unique features generate distinct values across entities."""
     source_parameters = SourceTestkitParameters(
-        full_name="test_source",
+        name="test_source",
         features=(
             FeatureConfig(name="unique_id", base_generator="uuid4", unique=True),
             FeatureConfig(name="is_true", base_generator="boolean", unique=False),
@@ -325,12 +325,12 @@ def test_linked_sources_entity_hierarchy():
 
     configs = (
         SourceTestkitParameters(
-            full_name="source_a",
+            name="source_a",
             features=(features["name"], features["user_id"]),
             n_true_entities=5,
         ),
         SourceTestkitParameters(
-            full_name="source_b",
+            name="source_b",
             features=(features["name"],),
             n_true_entities=3,
         ),
@@ -369,13 +369,13 @@ def test_linked_sources_entity_count_behavior():
     # Test error when n_true_entities missing from configs
     configs_missing_counts = (
         SourceTestkitParameters(
-            full_name="source_a",
+            name="source_a",
             engine=engine,
             features=(base_feature,),
             n_true_entities=5,
         ),
         SourceTestkitParameters(
-            full_name="source_b",
+            name="source_b",
             features=(base_feature,),  # Deliberately missing n_true_entities
         ),
     )
@@ -388,13 +388,13 @@ def test_linked_sources_entity_count_behavior():
     # Test respecting different entity counts per source
     configs_different_counts = (
         SourceTestkitParameters(
-            full_name="source_a",
+            name="source_a",
             engine=engine,
             features=(base_feature,),
             n_true_entities=5,
         ),
         SourceTestkitParameters(
-            full_name="source_b",
+            name="source_b",
             features=(base_feature,),
             n_true_entities=10,
         ),

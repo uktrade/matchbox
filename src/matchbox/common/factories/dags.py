@@ -20,22 +20,11 @@ class TestkitDAG(BaseModel):
     models: dict[ModelResolutionName, ModelTestkit] = {}
 
     # Dependency graph tracking
-    adjacency: dict[
-        ResolutionName, set[ResolutionName]
-    ] = {}  # name -> direct dependencies
-    root_source_addresses: dict[
-        ResolutionName, set[SourceResolutionName]
-    ] = {}  # model -> root source addresses
+    adjacency: dict[ResolutionName, set[ResolutionName]] = {}  # -> direct dependencies
+    root_source_names: dict[ResolutionName, set[SourceResolutionName]] = {}
 
     # Keep track of all used names to ensure uniqueness
     _all_names: set[str] = set()
-
-    @property
-    def source_address_to_name(self) -> dict[str, SourceResolutionName]:
-        """Map source address string to source key."""
-        return {
-            str(tk.source_config.address): name for name, tk in self.sources.items()
-        }
 
     def _validate_unique_name(self, name: ResolutionName) -> str:
         """Ensure a name is unique across all testkits."""
@@ -50,7 +39,7 @@ class TestkitDAG(BaseModel):
         self, left_res: ResolutionName, right_res: ResolutionName | None
     ) -> bool:
         """Ensure dependencies are valid."""
-        valid_deps = set(self.source_address_to_name.keys()) | set(self.models.keys())
+        valid_deps = set(self.sources.keys()) | set(self.models.keys())
         dependencies = {dep for dep in [left_res, right_res] if dep is not None}
 
         missing_deps = dependencies - valid_deps
@@ -61,17 +50,15 @@ class TestkitDAG(BaseModel):
             )
         return True
 
-    def _update_root_source_addresses(self, name: ModelResolutionName):
-        """Update root source addresses for a model."""
+    def _update_root_source_names(self, name: ModelResolutionName):
+        """Update root source names for a model."""
         for dep_name in self.adjacency[name]:
-            if dep_name in self.source_address_to_name:
+            if dep_name in self.sources:
                 # If dependency is a source, add it directly
-                self.root_source_addresses[name].add(dep_name)
+                self.root_source_names[name].add(dep_name)
             elif dep_name in self.models:
                 # If dependency is a model, add all its root sources
-                self.root_source_addresses[name].update(
-                    self.root_source_addresses[dep_name]
-                )
+                self.root_source_names[name].update(self.root_source_names[dep_name])
 
     def add_source(self, testkit: SourceTestkit | LinkedSourcesTestkit):
         """Add a source testkit to the DAG."""
@@ -97,7 +84,7 @@ class TestkitDAG(BaseModel):
         name = self._validate_unique_name(testkit.name)
         self.models[name] = testkit
         self.adjacency[name] = set()
-        self.root_source_addresses[name] = set()
+        self.root_source_names[name] = set()
 
         # Validate dependencies
         left_res = testkit.model.model_config.left_resolution
@@ -112,34 +99,29 @@ class TestkitDAG(BaseModel):
             self.adjacency[name].add(right_res)
 
         # Update root sources
-        self._update_root_source_addresses(name)
+        self._update_root_source_names(name)
 
     def get_sources_for_model(
         self, name: ModelResolutionName
     ) -> dict[str | None, set[SourceResolutionName]]:
-        """Find a model's LinkedSourcesTestkit keys and source resolution names.
+        """Find the LinkedSourcesTestkit keys and specific source names for a model.
 
         Args:
             name: The name of the model to analyze
 
         Returns:
             A dictionary mapping:
-            - LinkedSourcesTestkit keys (or None) to sets of model's source
-                resolution names
+            - LinkedSourcesTestkit keys (or None) to sets of model's source names
         """
         if name not in self.models:
             return {None: set()}
 
-        root_source_addresses = self.root_source_addresses.get(name, set())
-        if not root_source_addresses:
+        root_sources = self.root_source_names.get(name, set())
+        if not root_sources:
             return {None: set()}
 
-        source_names = [
-            self.source_address_to_name[address] for address in root_source_addresses
-        ]
-
         result = {}
-        for name in source_names:
+        for name in root_sources:
             # linked_key could be None
             linked_key = self.source_to_linked.get(name)
             if linked_key not in result:

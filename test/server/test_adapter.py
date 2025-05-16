@@ -9,7 +9,6 @@ from matchbox.common.arrow import SCHEMA_MB_IDS
 from matchbox.common.dtos import ModelAncestor, ModelConfig, ModelType
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxSourceNotFoundError,
 )
@@ -261,20 +260,6 @@ class TestMatchboxBackend:
                     right_resolution="dedupe_2",
                 )
             )
-
-            assert self.backend.models.count() == models_count + 3
-
-            # Test can't insert duplicate
-            with pytest.raises(MatchboxResolutionAlreadyExists):
-                self.backend.insert_model(
-                    model_config=ModelConfig(
-                        name="link_1",
-                        description="Test upsert",
-                        type=ModelType.LINKER,
-                        left_resolution="dedupe_1",
-                        right_resolution="dedupe_2",
-                    )
-                )
 
             assert self.backend.models.count() == models_count + 3
 

@@ -295,6 +295,7 @@ def test_hierarchical_clusters(input_data, expected_hierarchy):
         dtype=pa.string,
         proc_func=component_to_hierarchy,
         hash_func=_combine_strings,
+        timeout=5,
     )
 
     result = result.sort_by(

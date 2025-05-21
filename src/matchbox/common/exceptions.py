@@ -195,10 +195,6 @@ class MatchboxDeletionNotConfirmed(Exception):
         super().__init__(message)
 
 
-class MatchboxResolutionAlreadyExists(Exception):
-    """Resolution already exists."""
-
-
 # -- Adapter DB exceptions --
 
 

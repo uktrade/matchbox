@@ -1,10 +1,19 @@
+import time
 import uuid
 
 import polars as pl
 import pyarrow as pa
 import pytest
 
-from matchbox.common.hash import HashMethod, IntMap, hash_arrow_table, hash_rows
+from matchbox.common.hash import (
+    Cluster,
+    HashMethod,
+    IntMap,
+    hash_arrow_table,
+    hash_rows,
+)
+from matchbox.common.logging import logger
+from matchbox.common.transform import DisjointSet
 
 
 def test_intmap_basic():
@@ -261,3 +270,489 @@ def test_struct_json_hashing(method: HashMethod):
     # Difference checks
     assert h_a != h_c
     assert h_a != h_d
+
+
+def collect_all_leaves(cluster: Cluster) -> set[Cluster]:
+    """Recursively collect all leaf nodes from a cluster."""
+    if cluster.leaves is None:
+        return {cluster}
+
+    leaves = set()
+    for leaf in cluster.leaves:
+        leaves.update(collect_all_leaves(leaf))
+    return leaves
+
+
+class TestClusterHierarchy:
+    """Tests for using Cluster objects with DisjointSet to build hierarchies."""
+
+    @pytest.fixture
+    def intmap(self) -> IntMap:
+        """Create a fresh IntMap for each test."""
+        return IntMap(salt=10)
+
+    @pytest.fixture
+    def leaf_nodes(self, intmap: IntMap) -> list[Cluster]:
+        """Create six leaf nodes for testing."""
+        return [
+            Cluster(intmap=intmap, leaves=None, id=i, hash=f"hash{i}".encode())
+            for i in range(1, 7)
+        ]
+
+    def test_create_leaf_nodes(self, intmap: IntMap):
+        """Test that leaf nodes can be created properly."""
+        # Create a leaf node
+        node = Cluster(intmap=intmap, leaves=None, id=1, hash=b"hash1")
+
+        # Verify its properties
+        assert node.id == 1
+        assert node.hash == b"hash1"
+        assert node.leaves is None
+
+    def test_add_leaves_to_disjoint_set(self, leaf_nodes: list[Cluster]):
+        """Test adding leaf nodes to a DisjointSet."""
+        # Create a DisjointSet and add leaves
+        dsj = DisjointSet[Cluster]()
+        for node in leaf_nodes:
+            dsj.add(node)
+
+        # Verify all nodes are in separate components
+        components = dsj.get_components()
+        assert len(components) == 6
+        for component in components:
+            assert len(component) == 1
+
+    def test_union_leaves_in_disjoint_set(self, leaf_nodes: list[Cluster]):
+        """Test creating unions of leaf nodes in DisjointSet."""
+        dsj = DisjointSet[Cluster]()
+        for node in leaf_nodes:
+            dsj.add(node)
+
+        # Create three pairs
+        dsj.union(leaf_nodes[0], leaf_nodes[1])  # 1,2
+        dsj.union(leaf_nodes[2], leaf_nodes[3])  # 3,4
+        dsj.union(leaf_nodes[4], leaf_nodes[5])  # 5,6
+
+        # Verify we now have three components
+        components = dsj.get_components()
+        assert len(components) == 3
+
+        # Verify each component has the expected size
+        component_sizes = [len(comp) for comp in components]
+        assert sorted(component_sizes) == [2, 2, 2]
+
+    def test_create_clusters_from_components(self, leaf_nodes: list[Cluster]):
+        """Test creating new clusters from DisjointSet components."""
+        # Add leaves to DisjointSet and create unions
+        dsj = DisjointSet[Cluster]()
+        for node in leaf_nodes:
+            dsj.add(node)
+
+        dsj.union(leaf_nodes[0], leaf_nodes[1])  # 1,2
+        dsj.union(leaf_nodes[2], leaf_nodes[3])  # 3,4
+        dsj.union(leaf_nodes[4], leaf_nodes[5])  # 5,6
+
+        # Create clusters from components
+        components = dsj.get_components()
+        clusters: list[Cluster] = []
+        for component in components:
+            component_list = list(component)
+            if len(component_list) == 1:
+                cluster = component_list[0]
+            else:
+                cluster = Cluster.combine_many(component_list)
+            clusters.append(cluster)
+
+        # Verify we have three clusters
+        assert len(clusters) == 3
+
+        # Verify each non-leaf cluster has exactly two leaves
+        for cluster in clusters:
+            if cluster.leaves is not None:
+                assert len(cluster.leaves) == 2
+
+    def test_level1_clusters_in_disjoint_set(self, leaf_nodes: list[Cluster]):
+        """Test using level-1 clusters in another DisjointSet."""
+        # Create level-1 clusters as in previous test
+        dsj1 = DisjointSet[Cluster]()
+        for node in leaf_nodes:
+            dsj1.add(node)
+
+        dsj1.union(leaf_nodes[0], leaf_nodes[1])  # 1,2
+        dsj1.union(leaf_nodes[2], leaf_nodes[3])  # 3,4
+        dsj1.union(leaf_nodes[4], leaf_nodes[5])  # 5,6
+
+        components = dsj1.get_components()
+        level1_clusters = []
+        for component in components:
+            component_list = list(component)
+            if len(component_list) == 1:
+                cluster = component_list[0]
+            else:
+                cluster = Cluster.combine_many(component_list)
+            level1_clusters.append(cluster)
+
+        # Add these clusters to a new DisjointSet
+        dsj2 = DisjointSet[Cluster]()
+        for cluster in level1_clusters:
+            dsj2.add(cluster)
+
+        # Verify initial state
+        assert len(dsj2.get_components()) == 3
+
+        # Create a union of first two clusters
+        dsj2.union(level1_clusters[0], level1_clusters[1])
+
+        # Verify we now have two components
+        components2 = dsj2.get_components()
+        assert len(components2) == 2
+
+        # One component should have 2 clusters, the other should have 1
+        component_sizes = [len(comp) for comp in components2]
+        assert sorted(component_sizes) == [1, 2]
+
+    def test_leaf_preservation_in_hierarchy(self, leaf_nodes: list[Cluster]):
+        """Test that leaf nodes are preserved in the cluster hierarchy."""
+        # Follow the same steps as in previous tests to build a hierarchy
+        # Step 1: Create level-1 clusters
+        dsj1 = DisjointSet[Cluster]()
+        for node in leaf_nodes:
+            dsj1.add(node)
+
+        dsj1.union(leaf_nodes[0], leaf_nodes[1])  # 1,2
+        dsj1.union(leaf_nodes[2], leaf_nodes[3])  # 3,4
+        dsj1.union(leaf_nodes[4], leaf_nodes[5])  # 5,6
+
+        components1 = dsj1.get_components()
+        level1_clusters = []
+        for component in components1:
+            component_list = list(component)
+            if len(component_list) == 1:
+                cluster = component_list[0]
+            else:
+                cluster = Cluster.combine_many(component_list)
+            level1_clusters.append(cluster)
+
+        # Step 2: Union level-1 clusters
+        dsj2 = DisjointSet[Cluster]()
+        for cluster in level1_clusters:
+            dsj2.add(cluster)
+
+        dsj2.union(level1_clusters[0], level1_clusters[1])
+
+        # Find the component with multiple clusters
+        larger_component = None
+        for component in dsj2.get_components():
+            if len(component) > 1:
+                larger_component = component
+                break
+
+        assert larger_component is not None
+
+        # Create a level-2 cluster from the larger component
+        level2_cluster = Cluster.combine_many(larger_component)
+
+        # Verify the level-2 cluster contains exactly the leaf nodes 1, 2, 3, and 4
+        expected_leaves = set(leaf_nodes[:4])  # Nodes 1-4
+
+        # Collect all leaf nodes from the level-2 cluster
+        actual_leaves = collect_all_leaves(level2_cluster)
+
+        # Verify leaf nodes match
+        assert actual_leaves == expected_leaves
+        assert len(actual_leaves) == 4
+
+    def test_combine_many_with_single_cluster(self, leaf_nodes: list[Cluster]):
+        """Test that combine_many works correctly with a single cluster."""
+        # Create a single-element list
+        clusters = [leaf_nodes[0]]
+
+        # Combine
+        result = Cluster.combine_many(clusters)
+
+        # Should return the original cluster
+        assert result is leaf_nodes[0]
+
+    def test_combine_many_with_leaf_and_non_leaf(
+        self, intmap: IntMap, leaf_nodes: list[Cluster]
+    ):
+        """Test combine_many with a mix of leaf and non-leaf clusters."""
+        # Create a non-leaf cluster
+        non_leaf = Cluster(intmap=intmap, leaves=[leaf_nodes[0], leaf_nodes[1]])
+
+        # Combine with a leaf node
+        result = Cluster.combine_many([non_leaf, leaf_nodes[2]])
+
+        # Should contain three leaves
+        assert len(collect_all_leaves(result)) == 3
+
+        # The specific leaves should be 1, 2, and 3
+        expected = {leaf_nodes[0], leaf_nodes[1], leaf_nodes[2]}
+        assert collect_all_leaves(result) == expected
+
+    def test_add_operation_with_leaves(self, leaf_nodes: list[Cluster]):
+        """Test the __add__ operation with leaf nodes."""
+        # Add two leaf nodes
+        result: Cluster = leaf_nodes[0] + leaf_nodes[1]
+
+        # Verify result has both leaves as leaves
+        assert result.leaves is not None
+        assert len(result.leaves) == 2
+        assert set(result.leaves) == {leaf_nodes[0], leaf_nodes[1]}
+
+    def test_add_operation_with_non_leaves(self, leaf_nodes: list[Cluster]):
+        """Test the __add__ operation with non-leaf nodes."""
+        # Create two non-leaf clusters
+        cluster1: Cluster = leaf_nodes[0] + leaf_nodes[1]
+        cluster2: Cluster = leaf_nodes[2] + leaf_nodes[3]
+
+        # Add them together
+        result: Cluster = cluster1 + cluster2
+
+        # Verify result contains all four leaves
+        assert len(collect_all_leaves(result)) == 4
+        expected = set(leaf_nodes[:4])
+        assert collect_all_leaves(result) == expected
+
+    def test_add_operation_mixed(self, leaf_nodes: list[Cluster]):
+        """Test the __add__ operation with a mix of leaf and non-leaf nodes."""
+        # Create a non-leaf cluster
+        cluster: Cluster = leaf_nodes[0] + leaf_nodes[1]
+
+        # Add a leaf to it
+        result: Cluster = cluster + leaf_nodes[2]
+
+        # Verify result contains all three leaves
+        assert len(collect_all_leaves(result)) == 3
+        expected = {leaf_nodes[0], leaf_nodes[1], leaf_nodes[2]}
+        assert collect_all_leaves(result) == expected
+
+    def test_hash_consistency_regardless_of_order(self, leaf_nodes: list[Cluster]):
+        """Test that the hash is consistent regardless of the order of leaves."""
+        # Create two clusters with the same leaves but in different order
+        cluster1: Cluster = leaf_nodes[0] + leaf_nodes[1]
+        cluster2: Cluster = leaf_nodes[1] + leaf_nodes[0]
+
+        # Verify that both clusters have the same hash
+        assert cluster1.hash == cluster2.hash
+
+        # Test with more complex combinations
+        cluster3: Cluster = leaf_nodes[0] + leaf_nodes[1] + leaf_nodes[2]
+        cluster4: Cluster = leaf_nodes[2] + leaf_nodes[0] + leaf_nodes[1]
+        cluster5: Cluster = leaf_nodes[1] + leaf_nodes[2] + leaf_nodes[0]
+
+        # All permutations should have the same hash
+        assert cluster3.hash == cluster4.hash
+        assert cluster4.hash == cluster5.hash
+
+    def test_hash_based_on_leaf_hashes_only(self, leaf_nodes: list[Cluster]):
+        """Test that cluster hashes are based on leaf node hashes only."""
+        # Create two different paths to the same set of leaf nodes
+
+        # Path 1: Direct combination of three leaves
+        direct: Cluster = leaf_nodes[0] + leaf_nodes[1] + leaf_nodes[2]
+
+        # Path 2: Hierarchical combination
+        intermediate: Cluster = leaf_nodes[0] + leaf_nodes[1]
+        hierarchical: Cluster = intermediate + leaf_nodes[2]
+
+        # Both should have the same hash since they contain the same leaf nodes
+        assert direct.hash == hierarchical.hash
+
+        # Create a completely different structure with the same leaves
+        # This time using combine_many
+        combined: Cluster = Cluster.combine_many(
+            [leaf_nodes[0], leaf_nodes[1], leaf_nodes[2]]
+        )
+
+        # Should still have the same hash
+        assert direct.hash == combined.hash
+
+    def test_hash_with_provided_hash_value(
+        self, intmap: IntMap, leaf_nodes: list[Cluster]
+    ):
+        """Test that providing a hash value overrides the calculated hash."""
+        # Create a cluster with a provided hash
+        custom_hash = b"custom_hash_value"
+        cluster: Cluster = Cluster(
+            intmap=intmap,
+            leaves=[leaf_nodes[0], leaf_nodes[1]],
+            hash=custom_hash,
+        )
+
+        # Verify the hash is the custom one
+        assert cluster.hash == custom_hash
+
+        # Verify it's different from what would have been calculated
+        auto_cluster: Cluster = leaf_nodes[0] + leaf_nodes[1]
+        assert cluster.hash != auto_cluster.hash
+
+    def test_hash_generation_for_complex_hierarchy(
+        self, intmap: IntMap, leaf_nodes: list[Cluster]
+    ):
+        """Test that hash generation works correctly for complex hierarchies."""
+        # Create level 1 clusters
+        cluster_a: Cluster = leaf_nodes[0] + leaf_nodes[1]
+        cluster_b: Cluster = leaf_nodes[2] + leaf_nodes[3]
+        cluster_c: Cluster = leaf_nodes[4] + leaf_nodes[5]
+
+        # Create level 2 clusters
+        level2_a: Cluster = cluster_a + cluster_b
+        level2_b: Cluster = cluster_c
+
+        # Create top level cluster
+        top_level: Cluster = level2_a + level2_b
+
+        # Verify the top level hash is derived from all leaf nodes
+        # by comparing with a direct combination
+        direct_combination: Cluster = Cluster.combine_many(leaf_nodes)
+
+        # Both should have the same hash since they contain the same leaf nodes
+        assert top_level.hash == direct_combination.hash
+
+        # Check that the hash is consistent when using different intermediate groupings
+        alternate_grouping: Cluster = (
+            leaf_nodes[0] + leaf_nodes[1] + leaf_nodes[2]
+        ) + (leaf_nodes[3] + leaf_nodes[4] + leaf_nodes[5])
+        assert top_level.hash == alternate_grouping.hash
+
+    def test_hash_independence_from_intermediate_changes(
+        self, intmap: IntMap, leaf_nodes: list[Cluster]
+    ):
+        """Test that hashes depend only on leaf nodes, not intermediate structure.
+
+        Custom intermediate hashes don't affect the final hash, showing that
+        hash calculation traverses to leaf nodes.
+        """
+        # Create a cluster with all leaf nodes
+        all_leaves: Cluster = Cluster.combine_many(leaf_nodes)
+        original_hash = all_leaves.hash
+
+        # Create a new intermediate cluster with custom hash
+        custom_intermediate: Cluster = Cluster(
+            intmap=intmap,
+            leaves=[leaf_nodes[0], leaf_nodes[1]],
+            hash=b"custom_intermediate_hash",
+        )
+
+        # Create another cluster combining the custom intermediate
+        # with remaining leaves
+        remaining_leaves = leaf_nodes[2:]
+        combined_with_custom: Cluster = Cluster.combine_many(
+            [custom_intermediate] + remaining_leaves
+        )
+
+        # The hash should be the SAME because hash calculation depends
+        # only on leaf nodes, not on intermediate hashes
+        assert combined_with_custom.hash == original_hash
+
+        # Verify that the collections of leaf nodes are identical
+        assert collect_all_leaves(all_leaves) == collect_all_leaves(
+            combined_with_custom
+        )
+
+        # We can also confirm this isn't just coincidence by changing a leaf node
+        # Create a modified leaf
+        modified_leaf = Cluster(
+            intmap=intmap,
+            leaves=None,
+            id=leaf_nodes[0].id,
+            hash=b"modified_leaf_hash",
+        )
+
+        # Replace the first leaf with the modified one
+        modified_group = [modified_leaf] + leaf_nodes[1:]
+        modified_combined: Cluster = Cluster.combine_many(modified_group)
+
+        # This time the hash SHOULD be different because we changed a leaf node
+        assert modified_combined.hash != original_hash
+
+    def test_scale_performance(self, intmap: IntMap):
+        """Test that the Cluster implementation performs well at scale."""
+        # Number of terminal nodes to create
+        num_nodes = 1_000_000
+
+        # Create a large number of terminal nodes
+        start_time = time.time()
+        terminal_nodes = [
+            Cluster(intmap=intmap, leaves=None, id=i, hash=f"hash{i}".encode())
+            for i in range(num_nodes)
+        ]
+        creation_time = time.time() - start_time
+        logger.debug(
+            f"Created {num_nodes} terminal nodes in {creation_time:.2f} seconds"
+        )
+
+        # Test combining nodes in small batches first
+        batch_size = 1000
+        num_batches = num_nodes // batch_size
+
+        start_time = time.time()
+        level1_clusters = []
+        for i in range(num_batches):
+            batch = terminal_nodes[i * batch_size : (i + 1) * batch_size]
+            # Create a cluster for each batch
+            level1_cluster = Cluster.combine_many(batch)
+            level1_clusters.append(level1_cluster)
+        batching_time = time.time() - start_time
+        logger.debug(
+            f"Combined into {num_batches} level-1 clusters "
+            f"in {batching_time:.2f} seconds"
+        )
+
+        # Verify we have the expected number of level-1 clusters
+        assert len(level1_clusters) == num_batches
+
+        # Now combine all level-1 clusters into a single top-level cluster
+        start_time = time.time()
+        top_cluster = Cluster.combine_many(level1_clusters)
+        final_combination_time = time.time() - start_time
+        logger.debug(
+            "Combined all level-1 clusters into top-level cluster "
+            f"in {final_combination_time:.2f} seconds"
+        )
+
+        # Verify the top cluster has a hash
+        assert top_cluster.hash is not None
+
+        # Verify the operation is consistent by creating a cluster directly
+        # Combine a subset of terminal nodes (using a smaller sample for speed)
+        sample_size = min(1000, num_nodes)
+        sample_nodes = terminal_nodes[:sample_size]
+
+        start_time = time.time()
+        # Create a direct combination of the sample
+        direct_combined = Cluster.combine_many(sample_nodes)
+        direct_time = time.time() - start_time
+        logger.debug(
+            f"Directly combined {sample_size} nodes in {direct_time:.2f} seconds"
+        )
+
+        # Create a two-level combination of the same sample
+        start_time = time.time()
+        mid_batch_size = sample_size // 10
+        mid_clusters = []
+        for i in range(0, sample_size, mid_batch_size):
+            batch = sample_nodes[i : i + mid_batch_size]
+            mid_cluster = Cluster.combine_many(batch)
+            mid_clusters.append(mid_cluster)
+        hierarchical_combined = Cluster.combine_many(mid_clusters)
+        hierarchical_time = time.time() - start_time
+        logger.debug(
+            f"Hierarchically combined {sample_size} nodes "
+            f"in {hierarchical_time:.2f} seconds"
+        )
+
+        # Verify both approaches yield the same hash
+        assert direct_combined.hash == hierarchical_combined.hash
+
+        # Performance expectations (adjust as needed based on your hardware)
+        # These are reasonable thresholds for modern hardware
+        assert creation_time < 10.0, f"Creating {num_nodes:,} nodes took too long"
+        assert batching_time < 30.0, "Batch combining took too long"
+        assert final_combination_time < 20.0, "Final combination took too long"
+
+        # Log a summary of total performance
+        total_time = creation_time + batching_time + final_combination_time
+        logger.debug(f"Total time for {num_nodes} nodes: {total_time:.2f} seconds")
+        logger.debug(f"Time per node: {(total_time * 1000) / num_nodes:.3f} ms")

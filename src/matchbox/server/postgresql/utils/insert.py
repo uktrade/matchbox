@@ -1,22 +1,22 @@
 """Utilities for inserting data into the PostgreSQL backend."""
 
+from collections import defaultdict
+from typing import Iterator
+
 import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
-from sqlalchemy import delete, select, update
+from sqlalchemy import alias, delete, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelResolutionName
 from matchbox.common.exceptions import MatchboxResolutionAlreadyExists
 from matchbox.common.graph import ResolutionNodeType
-from matchbox.common.hash import hash_arrow_table, hash_values
+from matchbox.common.hash import Cluster, hash_arrow_table
 from matchbox.common.logging import logger
 from matchbox.common.sources import SourceConfig
-from matchbox.common.transform import (
-    attach_components_to_probabilities,
-    to_hierarchical_clusters,
-)
+from matchbox.common.transform import DisjointSet
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
@@ -362,6 +362,141 @@ def insert_model(
     logger.info("Done!", prefix=log_prefix)
 
 
+def _get_clusters_with_leaves(
+    resolution: Resolutions,
+) -> dict[int, dict[str, list[dict]]]:
+    """Query clusters and their leaves, returning a nested dictionary structure.
+
+    Args:
+        resolution: Resolution object whose parents proposed the clusters
+            we need to recover
+
+    Returns:
+        Dict mapping cluster_id to a dict with cluster info and leaves list
+    """
+    # Get parent IDs for the given resolution
+    resolution_parent_ids = (
+        select(Resolutions.resolution_id)
+        .join(ResolutionFrom, Resolutions.resolution_id == ResolutionFrom.parent)
+        .where(ResolutionFrom.child == resolution.resolution_id)
+        .where(ResolutionFrom.level == 1)
+        .scalar_subquery()
+    )
+
+    # Create table aliases
+    ClusterRoot = alias(Clusters, "root_clusters")
+    ClusterLeaf = alias(Clusters, "leaf_clusters")
+
+    # Statement to get all cluster-leaf relationships for the resolution's parents
+    stmt = (
+        select(
+            Contains.root.label("root_id"),
+            ClusterRoot.c.cluster_hash.label("root_hash"),
+            Contains.leaf.label("leaf_id"),
+            ClusterLeaf.c.cluster_hash.label("leaf_hash"),
+        )
+        .join(ClusterRoot, Contains.root == ClusterRoot.c.cluster_id)
+        .join(ClusterLeaf, Contains.leaf == ClusterLeaf.c.cluster_id)
+        # Filter by resolution parent IDs
+        .join(Probabilities, ClusterRoot.c.cluster_id == Probabilities.cluster)
+        .join(ClusterSourceKey, ClusterLeaf.c.cluster_id == ClusterSourceKey.cluster_id)
+        .join(
+            SourceConfigs,
+            SourceConfigs.source_config_id == ClusterSourceKey.source_config_id,
+        )
+        .where(
+            or_(
+                SourceConfigs.resolution_id.in_(resolution_parent_ids),
+                Probabilities.resolution.in_(resolution_parent_ids),
+            )
+        )
+    )
+
+    # Create nested structure directly from query results
+    result = defaultdict(lambda: {"root_hash": None, "leaves": []})  # Updated key name
+
+    with MBDB.get_session() as session:
+        for row in session.execute(stmt).yield_per(1000):
+            root_id = row.root_id
+
+            # Set cluster info if not set yet
+            if result[root_id]["root_hash"] is None:
+                result[root_id]["root_hash"] = row.root_hash
+
+            # Add leaf to the leaves list
+            result[root_id]["leaves"].append(
+                {"leaf_id": row.leaf_id, "leaf_hash": row.leaf_hash}
+            )
+
+    return dict(result)
+
+
+def _build_cluster_objects(
+    nested_dict: dict[int, dict[str, list[dict]]],
+) -> dict[int, Cluster]:
+    """Convert the nested dictionary to Cluster objects.
+
+    Args:
+        nested_dict: Dictionary from get_clusters_with_leaves()
+
+    Returns:
+        Dict mapping cluster IDs to Cluster objects
+    """
+    cluster_lookup: dict[int, Cluster] = {}
+
+    # First create all Cluster objects without leaves
+    for cluster_id, data in nested_dict.items():
+        cluster = Cluster(id=cluster_id, hash=data["cluster_hash"])
+        cluster_lookup[cluster_id] = cluster
+
+    # Now create and attach all leaf objects
+    for cluster_id, data in nested_dict.items():
+        cluster: Cluster = cluster_lookup[cluster_id]
+        leaves: list[Cluster] = []
+
+        for leaf_data in data["leaves"]:
+            leaf_id = leaf_data["leaf_id"]
+
+            # Create leaf if it doesn't exist in lookup
+            if leaf_id not in cluster_lookup:
+                leaf = Cluster(id=leaf_id, hash=leaf_data["leaf_hash"])
+                cluster_lookup[leaf_id] = leaf
+            else:
+                leaf = cluster_lookup[leaf_id]
+
+            # Add leaf to cluster's leaves list
+            leaves.append(leaf)
+
+        cluster.leaves = tuple(leaves)
+        cluster_lookup[cluster_id] = cluster
+
+    return cluster_lookup
+
+
+def _results_to_cluster_pairs(
+    cluster_lookup: dict[int, Cluster],
+    results: pa.Table,
+) -> Iterator[tuple[Cluster, Cluster, int]]:
+    """Convert the results from a PyArrow table to an iterator of cluster pairs.
+
+    Args:
+        cluster_lookup (dict[int, Cluster]): A dictionary mapping cluster IDs to
+            Cluster objects.
+        results (pa.Table): The PyArrow table containing the results, left_id
+            right_id, and probability.
+
+    Returns:
+        list[tuple[Cluster, Cluster, int]]: An iterator of tuples, each containing
+            the left cluster, right cluster, and the probability, in descending
+            order of probability.
+    """
+    for row in pl.from_arrow(results).sort("probability", descending=True).iter_rows():
+        left_cluster: Cluster = cluster_lookup[row["left_id"]]
+        right_cluster: Cluster = cluster_lookup[row["right_id"]]
+
+        yield left_cluster, right_cluster, row["probability"]
+
+
 def _results_to_insert_tables(
     resolution: Resolutions, probabilities: pa.Table
 ) -> tuple[pa.Table, pa.Table, pa.Table]:
@@ -384,8 +519,8 @@ def _results_to_insert_tables(
             ),
         )
         contains = pa.table(
-            {"parent": [], "child": []},
-            schema=pa.schema([("parent", pa.uint64()), ("child", pa.uint64())]),
+            {"root": [], "leaf": []},
+            schema=pa.schema([("root", pa.uint64()), ("leaf", pa.uint64())]),
         )
         probabilities = pa.table(
             {"resolution": [], "cluster": [], "probability": []},
@@ -401,98 +536,63 @@ def _results_to_insert_tables(
 
     logger.info("Wrangling data to insert tables", prefix=log_prefix)
 
-    # Create ID-Hash lookup for existing probabilities
-    with MBDB.get_adbc_connection() as conn:
-        lookup = sql_to_df(
-            stmt=compile_sql(
-                select(
-                    Clusters.cluster_hash.label("hash"), Clusters.cluster_id.label("id")
-                )
-            ),
-            connection=conn,
-            return_type="arrow",
-        )
-    lookup = lookup.cast(pa.schema([("hash", pa.large_binary()), ("id", pa.uint64())]))
-
-    hm = HashIDMap(lookup=lookup)
-
-    # Join hashes, probabilities and components
-    logger.debug("Attaching components to hashes", prefix=log_prefix)
-
-    probs_with_ccs = attach_components_to_probabilities(
-        pa.table(
-            {
-                "left_id": hm.get_hashes(probabilities["left_id"]),
-                "right_id": hm.get_hashes(probabilities["right_id"]),
-                "probability": probabilities["probability"],
-            }
-        )
-    )
+    # Get a cluster lookup dictionary based on the resolution's parents
+    nested_data = _get_clusters_with_leaves(resolution=resolution)
+    cluster_lookup: dict[int, Cluster] = _build_cluster_objects(nested_data)
 
     # Calculate hierarchies
     logger.debug("Computing hierarchies", prefix=log_prefix)
 
-    hierarchy = to_hierarchical_clusters(
-        probabilities=probs_with_ccs,
-        hash_func=hash_values,
-        dtype=pa.large_binary,
-    )
+    probabilities_table = {
+        "resolution": [],
+        "cluster": [],
+        "probability": [],
+    }
+    contains_table = {
+        "root": [],
+        "left": [],
+    }
 
-    # Determine number of new IDs to generate
-    referenced_hashes = pc.unique(
-        pa.concat_arrays(
-            [hierarchy["parent"].combine_chunks(), hierarchy["parent"].combine_chunks()]
-        )
-    )
-    indices_old_hashes = pc.index_in(referenced_hashes, lookup["hash"])
-    num_new_hashes = pc.sum(pc.is_null(indices_old_hashes)).as_py()
+    clusters_table = {
+        "cluster_id": [],
+        "cluster_hash": [],
+    }
 
-    if num_new_hashes:
-        hm.next_int = PKSpace.reserve_block(table="clusters", block_size=num_new_hashes)
-    else:
-        # No new hashes means no new cluster IDs, so next_int won't matter
-        hm.next_int = 0
+    djs = DisjointSet[Cluster]()
 
-    # Create Probabilities Arrow table to insert, containing all generated probabilities
+    threshold: int = 100
+    for left_cluster, right_cluster, probability in _results_to_cluster_pairs(
+        cluster_lookup, probabilities
+    ):
+        if probability < threshold:
+            # Process the components at the previous threshold
+            components: list[set[Cluster]] = djs.get_components()
+            for component in components:
+                cluster = Cluster.combine_many(component)
+
+                get_id_stmt = select(Clusters.cluster_id).where(
+                    Clusters.cluster_hash == cluster.hash
+                )
+                cluster_id = (
+                    MBDB.get_session().execute(get_id_stmt).scalar_one_or_none()
+                )
+                if cluster_id is not None:
+                    cluster.id = cluster_id
+                # cluster.id is Clusters.cluster_id
+                #   it MAY already exist, and we can use cluster.hash vs Cluster.cluster_hash to look it up
+
+                # cluster.id amd *cluster.leaves.id are Contains.parent and Contains.leaf
+
+                # cluster.id and threshold are Probabilities.cluster_id and Probabilities.probability
+
+            # Continue to next threshold
+            threshold = probability
+
+        djs.union(left_cluster, right_cluster)
+
     logger.debug("Filtering to target table shapes", prefix=log_prefix)
 
-    probabilities = pa.table(
-        {
-            "resolution": pa.array(
-                [resolution.resolution_id] * hierarchy.shape[0],
-                type=pa.uint64(),
-            ),
-            "cluster": hm.generate_ids(hierarchy["parent"]),
-            "probability": hierarchy["probability"],
-        }
-    )
-
-    # Probabilities will have duplicates because hierarchy tracks all parent-child edges
-    probabilities = pl.from_arrow(probabilities).unique().to_arrow()
-
-    # Create Clusters Arrow table to insert, containing only new clusters
-    new_hashes = pc.filter(hm.lookup["hash"], hm.lookup["new"])
-    clusters = pa.table(
-        {
-            "cluster_id": pc.filter(hm.lookup["id"], hm.lookup["new"]),
-            "cluster_hash": new_hashes,
-        }
-    )
-
-    # Create Contains Arrow table to insert, containing only new contains edges
-    # Recall that clusters are defined by their parents, so all existing clusters
-    # already have the same parent-child relationships as were calculated here
-    hierarchy_new = hierarchy.filter(
-        pa.compute.is_in(hierarchy["parent"], value_set=new_hashes)
-    )
-    hierarchy_new = pl.from_arrow(hierarchy_new).unique().to_arrow()
-
-    contains = pa.table(
-        {
-            "parent": hm.generate_ids(hierarchy_new["parent"]),
-            "child": hm.generate_ids(hierarchy_new["child"]),
-        }
-    )
+    ##
 
     logger.info("Wrangling complete!", prefix=log_prefix)
 

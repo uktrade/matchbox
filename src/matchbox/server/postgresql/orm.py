@@ -472,18 +472,18 @@ class Contains(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "contains"
 
     # Columns
-    parent = Column(
+    root = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
-    child = Column(
+    leaf = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
 
     # Constraints and indices
     __table_args__ = (
-        CheckConstraint("parent != child", name="no_self_containment"),
-        Index("ix_contains_parent_child", "parent", "child"),
-        Index("ix_contains_child_parent", "child", "parent"),
+        CheckConstraint("root != leaf", name="no_self_containment"),
+        Index("ix_contains_root_leaf", "root", "leaf"),
+        Index("ix_contains_leaf_root", "leaf", "root"),
     )
 
 

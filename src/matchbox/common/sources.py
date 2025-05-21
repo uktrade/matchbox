@@ -140,6 +140,7 @@ class Location(ABC, BaseModel):
         self,
         extract_transform: str,
         batch_size: int,
+        schema_overrides: dict[str, Any] | None = None,
         rename: dict[str, str] | Callable | None = None,
         return_batches: bool = False,
         return_type: ReturnTypeStr = "polars",
@@ -149,6 +150,8 @@ class Location(ABC, BaseModel):
         Args:
             extract_transform: The ET logic to execute.
             batch_size: The size of the batches to return.
+            schema_overrides: A dictionary of schema overrides to apply to the
+                returned data.
             rename: Renaming to apply after the ET logic is executed.
 
                 * If a dictionary is provided, it will be used to rename the columns.
@@ -232,6 +235,7 @@ class RelationalDBLocation(Location):
         self,
         extract_transform: str,
         batch_size: int,
+        schema_overrides: dict[str, Any] | None = None,
         rename: dict[str, str] | Callable | None = None,
         return_batches: bool = True,
         return_type: ReturnTypeStr = "polars",
@@ -240,6 +244,7 @@ class RelationalDBLocation(Location):
             stmt=extract_transform,
             connection=self.credentials,
             rename=rename,
+            schema_overrides=schema_overrides,
             batch_size=batch_size,
             return_batches=return_batches,
             return_type=return_type,
@@ -362,14 +367,21 @@ class SourceConfig(BaseModel):
         return self.prefix + field
 
     def _detect_fields(
-        self, location: Location, extract_transform: str
+        self,
+        location: Location,
+        extract_transform: str,
+        schema_overrides: dict[str, Any] | None = None,
     ) -> tuple[SourceField, ...]:
         """A helper method to detect the fields from the extract/transform logic.
 
         Return all detected fields as SourceFields.
         """
         df: pl.DataFrame = next(
-            location.execute(extract_transform=extract_transform, batch_size=100)
+            location.execute(
+                extract_transform=extract_transform,
+                schema_overrides=schema_overrides,
+                batch_size=100,
+            )
         )
 
         return tuple(
@@ -413,7 +425,12 @@ class SourceConfig(BaseModel):
             return self
 
         fields = self._detect_fields(
-            location=self.location, extract_transform=self.extract_transform
+            location=self.location,
+            extract_transform=self.extract_transform,
+            schema_overrides={
+                field.name: field.type.to_dtype()
+                for field in (self.key_field,) + self.index_fields
+            },
         )
 
         if set(self.index_fields + (self.key_field,)) != set(fields):
@@ -522,6 +539,10 @@ class SourceConfig(BaseModel):
 
         return self.location.execute(
             extract_transform=self.extract_transform,
+            schema_overrides={
+                field.name: field.type.to_dtype()
+                for field in (self.key_field,) + self.index_fields
+            },
             rename=_rename,
             batch_size=batch_size,
             return_batches=return_batches,

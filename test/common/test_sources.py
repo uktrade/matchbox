@@ -16,7 +16,7 @@ from matchbox.common.exceptions import (
     MatchboxSourceCredentialsError,
     MatchboxSourceExtractTransformError,
 )
-from matchbox.common.factories.sources import source_factory
+from matchbox.common.factories.sources import source_factory, source_from_tuple
 from matchbox.common.sources import (
     RelationalDBLocation,
     SourceConfig,
@@ -745,6 +745,164 @@ def test_source_validation_location_et_fields(sqlite_warehouse: Engine):
             key_field=SourceField(name="wrong_id", type=DataTypes.STRING),
             index_fields=(SourceField(name="name", type=DataTypes.STRING),),
         )
+
+
+@pytest.mark.parametrize(
+    ("test_name", "should_work"),
+    [
+        pytest.param("int_as_int", True, id="int_as_int_works"),
+        pytest.param("str_as_str", True, id="str_as_str_works"),
+        pytest.param("text_as_int", False, id="text_as_int_fails"),
+        pytest.param("text_as_bool", False, id="text_as_bool_fails"),
+        pytest.param("int_as_float", True, id="int_as_float_works"),
+    ],
+)
+def test_source_field_type_incompatibility(
+    sqlite_warehouse: Engine,
+    test_name: str,
+    should_work: bool,
+):
+    """Test field type incompatibility with extract/transform logic."""
+    # Define test cases mapping
+    test_cases = {
+        "int_as_int": {"field": "a", "type": DataTypes.INT64},
+        "str_as_str": {"field": "b", "type": DataTypes.STRING},
+        "text_as_int": {"field": "c", "type": DataTypes.INT64},
+        "text_as_bool": {"field": "d", "type": DataTypes.BOOLEAN},
+        "int_as_float": {"field": "a", "type": DataTypes.FLOAT64},
+    }
+
+    # Get the specific test case
+    field_name = test_cases[test_name]["field"]
+    declared_type = test_cases[test_name]["type"]
+
+    # Create test data with fields that will definitely trigger conversion errors
+    testkit = source_from_tuple(
+        data_tuple=(
+            {"a": 1, "b": "text", "c": "not_a_number", "d": "not_a_bool"},
+            {"a": 2, "b": "more", "c": "still_not_a_number", "d": "still_not_a_bool"},
+        ),
+        data_keys=["0", "1"],
+        name="type_test",
+        engine=sqlite_warehouse,
+    )
+    testkit.write_to_location(sqlite_warehouse, set_credentials=True)
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+
+    # Create extract transform that only selects the field we're testing plus the key
+    extract_transform = select("key", field_name).from_("type_test").sql()
+
+    # Test the source with the specified field type
+    if should_work:
+        source = SourceConfig(
+            location=location,
+            name="source_test",
+            extract_transform=extract_transform,
+            key_field=SourceField(name="key", type=DataTypes.STRING),
+            index_fields=[SourceField(name=field_name, type=declared_type)],
+        )
+        result = source.query()
+        assert len(result) == 2
+        assert field_name in result.columns
+    else:
+        # Should fail during query with conversion error
+        with pytest.raises(pl.exceptions.ComputeError):
+            _ = SourceConfig(
+                location=location,
+                name="source_test",
+                extract_transform=extract_transform,
+                key_field=SourceField(name="key", type=DataTypes.STRING),
+                index_fields=[SourceField(name=field_name, type=declared_type)],
+            )
+
+
+@pytest.mark.parametrize(
+    ("small_int_type", "large_int_type", "should_raise"),
+    [
+        pytest.param(DataTypes.INT64, DataTypes.INT64, False, id="i64-64_works"),
+        pytest.param(DataTypes.INT32, DataTypes.INT64, False, id="i32-64_works"),
+        pytest.param(DataTypes.INT32, DataTypes.INT32, True, id="i64-32_fail"),
+    ],
+)
+def test_source_integer_size_conversion(
+    sqlite_warehouse: Engine,
+    small_int_type: DataTypes,
+    large_int_type: DataTypes,
+    should_raise: bool,
+):
+    """Test that fields are properly cast when many are possible.
+
+    These tests focus on the integer size conversion but stand in for other
+    types as well.
+    """
+    # Create test data with a small integer and a large integer
+    small_int = 42
+    large_int = 2147483648  # 2^31, just outside INT32 range
+
+    testkit = source_from_tuple(
+        data_tuple=(
+            {"small_int": small_int, "large_int": large_int},
+            {"small_int": 100, "large_int": 3000000000},  # Another large value
+        ),
+        data_keys=["0", "1"],
+        name="int_size_test",
+        engine=sqlite_warehouse,
+    )
+    testkit.write_to_location(sqlite_warehouse, set_credentials=True)
+
+    # Create a location with credentials
+    location = RelationalDBLocation.from_engine(sqlite_warehouse)
+
+    # Extract transform
+    extract_transform = (
+        select("key", "small_int", "large_int").from_("int_size_test").sql()
+    )
+
+    # Create source configuration based on the parameter types
+    if should_raise:
+        # Test case that should raise an exception
+        with pytest.raises(
+            pl.exceptions.ComputeError, match="overflows the data-type's capacity"
+        ):
+            _ = SourceConfig(
+                location=location,
+                name="int_size_test_source",
+                extract_transform=extract_transform,
+                key_field=SourceField(name="key", type=DataTypes.STRING),
+                index_fields=(
+                    SourceField(name="small_int", type=small_int_type),
+                    SourceField(name="large_int", type=large_int_type),
+                ),
+            )
+    else:
+        # Test cases that should succeed
+        source = SourceConfig(
+            location=location,
+            name="int_size_test_source",
+            extract_transform=extract_transform,
+            key_field=SourceField(name="key", type=DataTypes.STRING),
+            index_fields=(
+                SourceField(name="small_int", type=small_int_type),
+                SourceField(name="large_int", type=large_int_type),
+            ),
+        )
+
+        # Query the data and verify both integer fields work correctly
+        result = source.query()
+
+        # Verify results
+        assert len(result) == 2
+        assert "small_int" in result.columns
+        assert "large_int" in result.columns
+
+        # Check that values are preserved correctly
+        row0 = result.filter(pl.col("key") == "0")
+        assert row0.select("small_int").item() == small_int
+        assert row0.select("large_int").item() == large_int
+
+        # Verify correct dtypes in the resulting DataFrame
+        assert result.schema["small_int"] == small_int_type.to_dtype()
+        assert result.schema["large_int"] == large_int_type.to_dtype()
 
 
 # Match

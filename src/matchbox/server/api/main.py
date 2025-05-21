@@ -44,7 +44,7 @@ from matchbox.server.api.dependencies import (
     lifespan,
     validate_api_key,
 )
-from matchbox.server.api.routers import models, resolutions, sources
+from matchbox.server.api.routers import eval, models, resolutions, sources
 
 app = FastAPI(
     title="matchbox API",
@@ -54,6 +54,7 @@ app = FastAPI(
 app.include_router(models.router)
 app.include_router(sources.router)
 app.include_router(resolutions.router)
+app.include_router(eval.router)
 
 
 @app.exception_handler(StarletteHTTPException)

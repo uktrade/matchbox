@@ -1,7 +1,6 @@
 """Objects representing the results of running a model client-side."""
 
-from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, Hashable, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Hashable, ParamSpec, TypeVar
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -22,21 +21,6 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def calculate_clusters(func: Callable[P, R]) -> Callable[P, R]:
-    """Decorator to calculate clusters if it hasn't been already."""
-
-    @wraps(func)
-    def wrapper(self: "Results", *args: P.args, **kwargs: P.kwargs) -> R:
-        if not self.clusters:
-            im = IntMap()
-            self.clusters = to_clusters(
-                results=self.probabilities, dtype=pa.int64, hash_func=im.index
-            )
-        return func(self, *args, **kwargs)
-
-    return wrapper
-
-
 class Results(BaseModel):
     """Results of a model run.
 
@@ -55,7 +39,7 @@ class Results(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     probabilities: pa.Table
-    clusters: pa.Table | None = None
+    _clusters: pa.Table | None = None
     model: Model | None = None
     metadata: ModelConfig
 
@@ -179,6 +163,17 @@ class Results(BaseModel):
 
         return df
 
+    @property
+    def clusters(self):
+        """Return clusters derived from result probabilities."""
+        if not self._clusters:
+            im = IntMap()
+            self._clusters = to_clusters(
+                results=self.probabilities, dtype=pa.int64, hash_func=im.index
+            )
+
+        return self._clusters
+
     def inspect_probabilities(
         self, left_data: DataFrame, left_key: str, right_data: DataFrame, right_key: str
     ) -> DataFrame:
@@ -194,12 +189,10 @@ class Results(BaseModel):
             right_merge_col="right_id",
         )
 
-    @calculate_clusters
     def clusters_to_pandas(self) -> DataFrame:
         """Returns the cluster results as a DataFrame."""
         return self.clusters.to_pandas(types_mapper=ArrowDtype)
 
-    @calculate_clusters
     def inspect_clusters(
         self,
         left_data: DataFrame,

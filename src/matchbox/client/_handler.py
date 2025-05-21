@@ -22,6 +22,7 @@ from matchbox.common.dtos import (
     SourceResolutionName,
     UploadStatus,
 )
+from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.exceptions import (
     MatchboxClientFileError,
     MatchboxDeletionNotConfirmed,
@@ -391,3 +392,51 @@ def delete_resolution(
 
     res = CLIENT.delete(f"/resolutions/{name}", params={"certain": certain})
     return ResolutionOperationStatus.model_validate(res.json())
+
+
+# Evaluation
+
+
+def login(user_id: int) -> str:
+    """Return name from user ID."""
+    return "Scott McGregor"
+
+
+def sample_one(user_id: int, resolution: ModelResolutionName) -> Table:
+    return Table.from_pylist(
+        [
+            {"id": 1, "company_name": "Pippo pluto PLC", "region": "England"},
+            {
+                "id": 2,
+                "company_name": "Pippo pluto e paperino UK LTD",
+                "region": "England",
+            },
+            {"id": 3, "company_name": "Pippo pluto e paperino", "region": "Devon"},
+        ]
+    )
+
+
+def compare_models(resolutions: list[ModelResolutionName]) -> ModelComparison:
+    res = CLIENT.get("/eval/compare", params=url_params({"resolutions": resolutions}))
+    return res.json()
+
+
+def send_eval(user_id: int, judgement: Judgement):
+    print(f"Posting {judgement} for {user_id}")
+    # CLIENT.post(
+    #     f"/eval/{judgement.user_id}",
+    #     json=judgement.model_dump(),
+    # )
+
+
+def download_eval_data() -> Table:
+    return Table.from_pylist(
+        [
+            {"parent": 1, "leaf": None},
+            {"parent": 2, "leaf": None},
+            {"parent": 3, "leaf": None},
+            {"parent": 4, "leaf": 5},
+            {"parent": 4, "leaf": 6},
+            {"parent": 4, "leaf": 7},
+        ]
+    )

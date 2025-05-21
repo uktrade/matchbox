@@ -14,6 +14,7 @@ from matchbox.common.dtos import (
     ResolutionName,
     SourceResolutionName,
 )
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
@@ -486,3 +487,18 @@ class MatchboxPostgres(MatchboxDBAdapter):
             else:
                 children = [r.name for r in resolution.descendants]
                 raise MatchboxDeletionNotConfirmed(childen=children)
+
+    def eval_login(self, user_id: int) -> str:  # noqa: D102
+        pass
+
+    def insert_judgement(self, user_id: int, judgement: Judgement) -> None:  # noqa: D102
+        pass
+
+    def get_judgements(self) -> Table:  # noqa: D102
+        pass
+
+    def compare_models(self, name: ResolutionName, certain: bool) -> None:  # noqa: D102
+        pass
+
+    def sample_one(self) -> ArrowTable:  # noqa: D102
+        pass

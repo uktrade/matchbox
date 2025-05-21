@@ -529,6 +529,34 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
     __table_args__ = (UniqueConstraint("cluster_hash", name="clusters_hash_key"),)
 
 
+class EvalUser(CountMixin, MBDB.MatchboxBase):
+    """Table of identities of human validators."""
+
+    __tablename__ = "eval_user"
+
+    # Columns
+    user_id = Column(BIGINT, primary_key=True)
+    name = Column(TEXT, nullable=False)
+
+
+class EvalJudgement(CountMixin, MBDB.MatchboxBase):
+    """Table of evaluation judgements produced by human validators."""
+
+    __tablename__ = "eval_judgement"
+
+    # Columns
+    user_id = Column(
+        BIGINT, ForeignKey("eval_user.user_id", ondelete="CASCADE"), primary_key=True
+    )
+    cluster = Column(
+        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
+    )
+
+    # Relationships
+    proposed_by = relationship("EvalUser", back_populates="eval_judgement")
+    proposes = relationship("Clusters", back_populates="eval_judgement")
+
+
 class Probabilities(CountMixin, MBDB.MatchboxBase):
     """Table of probabilities that a cluster is correct, according to a resolution."""
 

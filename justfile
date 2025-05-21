@@ -45,5 +45,10 @@ migration-check:
 migration-generate descriptive-message:
     uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" revision --autogenerate -m "{{descriptive-message}}"
 
+# Reset the DB to the base state
 migration-reset:
     uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" downgrade base
+
+# Run evaluation app
+eval:
+    streamlit run src/matchbox/client/eval/ui.py

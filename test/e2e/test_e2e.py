@@ -126,10 +126,25 @@ class TestE2EAnalyticalUser:
         yield
 
         # Teardown code
+
         # Clean up database tables
         with postgres_warehouse.connect() as conn:
+            # Roll back any pending transactions
+            conn.execute(text("ROLLBACK;"))
+
+            # Terminate any idle connections that might be holding locks
+            conn.execute(
+                text("""
+                SELECT pg_terminate_backend(pid) 
+                FROM pg_stat_activity 
+                WHERE datname = current_database() AND pid <> pg_backend_pid()
+            """)
+            )
+
+            # Drop all tables created by the test
             for source_name in self.linked_testkit.sources:
                 conn.execute(text(f"DROP TABLE IF EXISTS {source_name};"))
+
             conn.commit()
 
         response = matchbox_client.delete("/database", params={"certain": "true"})

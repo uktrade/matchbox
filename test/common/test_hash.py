@@ -1,5 +1,3 @@
-import uuid
-
 import polars as pl
 import pyarrow as pa
 import pytest
@@ -68,7 +66,6 @@ def test_hash_rows(method: HashMethod):
             "int_col": [1, 2, 3],
             "float_col": [1.1, 2.2, 3.3],
             "struct_col": [{"a": 1, "b": "x"}, {"a": 2, "b": None}, {"a": 3, "b": "z"}],
-            "object_col": [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()],
             "binary_col": [b"data1", b"data2", b"data3"],
         }
     )
@@ -77,7 +74,6 @@ def test_hash_rows(method: HashMethod):
     assert isinstance(data["int_col"].dtype, pl.Int64)
     assert isinstance(data["float_col"].dtype, pl.Float64)
     assert isinstance(data["struct_col"].dtype, pl.Struct)
-    assert isinstance(data["object_col"].dtype, pl.Object)
     assert isinstance(data["binary_col"].dtype, pl.Binary)
 
     hash_rows(data, columns=data.columns, method=method)

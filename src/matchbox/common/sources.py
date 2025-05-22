@@ -141,6 +141,7 @@ class Location(ABC, BaseModel):
         batch_size: int | None = None,
         rename: dict[str, str] | Callable | None = None,
         return_type: ReturnTypeStr = "polars",
+        schema_overrides: dict[str, Any] | None = None,
     ) -> Iterator[QueryReturnType]:
         """Execute ET logic against location and return batches.
 
@@ -153,6 +154,8 @@ class Location(ABC, BaseModel):
                 * If a callable is provided, it will take the old name as input and
                     return the new name.
             return_type: The type of data to return. Defaults to "polars".
+            schema_overrides: A dictionary of schema overrides to apply to the
+                returned data.
 
         Raises:
             AttributeError: If the credentials are not set.
@@ -231,6 +234,7 @@ class RelationalDBLocation(Location):
         batch_size: int | None = None,
         rename: dict[str, str] | Callable | None = None,
         return_type: ReturnTypeStr = "polars",
+        schema_overrides: dict[str, Any] | None = None,
     ) -> Generator[QueryReturnType, None, None]:
         batch_size = batch_size or 10_000
         with self.credentials.connect() as conn:
@@ -241,6 +245,7 @@ class RelationalDBLocation(Location):
                 batch_size=batch_size,
                 return_batches=True,
                 return_type=return_type,
+                schema_overrides=schema_overrides,
             )
 
     @classmethod
@@ -449,6 +454,10 @@ class SourceConfig(BaseModel):
             rename=_rename,
             batch_size=batch_size,
             return_type=return_type,
+            schema_overrides={
+                field.name: field.type.to_dtype()
+                for field in (self.key_field,) + self.index_fields
+            },
         )
 
     def hash_data(self, batch_size: int | None = None) -> ArrowTable:

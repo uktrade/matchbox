@@ -18,6 +18,6 @@
 
 ## ✅ Checklist:
 
-- [ ] My code follows the style guidelines of this project
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] I've changed or updated relevant documentation
+- [ ] All new code fullfills a defined and current need, and follows [our standards](https://uktrade.github.io/matchbox/contributing/)
+- [ ] I've tested new behaviour and thought about potential regressions
+- [ ] I've changed or updated all relevant documentation (tutorials, API docs and dev docs)

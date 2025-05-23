@@ -47,7 +47,11 @@ from matchbox.server.postgresql.utils.insert import (
     insert_results,
     insert_source,
 )
-from matchbox.server.postgresql.utils.query import get_source_config, match, query
+from matchbox.server.postgresql.utils.query import (
+    get_source_config,
+    match,
+    query,
+)
 from matchbox.server.postgresql.utils.results import (
     get_model_config,
     get_model_results,

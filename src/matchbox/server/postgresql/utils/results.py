@@ -2,18 +2,22 @@
 
 from typing import NamedTuple
 
-from pyarrow import Table
-from sqlalchemy import and_, case, func, select
+import pyarrow as pa
+from sqlalchemy import and_, func, literal, literal_column, select, union
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelConfig, ModelType
 from matchbox.common.graph import ResolutionNodeType
+from matchbox.common.logging import logger
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
+    Clusters,
+    ClusterSourceKey,
     Contains,
     Probabilities,
     ResolutionFrom,
     Resolutions,
+    SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import compile_sql
 
@@ -100,98 +104,179 @@ def get_model_config(resolution: Resolutions) -> ModelConfig:
         )
 
 
-def get_model_results(resolution: Resolutions) -> Table:
-    """Recover the model's pairwise probabilities and return as a PyArrow table.
+def get_model_results(resolution: Resolutions) -> pa.Table:
+    """Recovers the original Results object for a model resolution.
 
-    For each probability this model assigned:
-    - Get its two immediate children
-    - Filter for children that aren't parents of other clusters this model scored
-    - Determine left/right by tracing ancestry to source resolutions using query helpers
+    This function reconstructs the left_id, right_id, probability table that was
+    originally passed to insert_results() by examining the stored probabilities
+    and finding which parent clusters combined to form each pair.
 
     Args:
-        resolution: Resolution of type model to query
+        resolution: Model resolution to recover results for
 
     Returns:
-        Table containing the original pairwise probabilities
+        PyArrow table with columns: id, left_id, right_id, probability
     """
-    if resolution.type != ResolutionNodeType.MODEL:
-        raise ValueError("Expected resolution of type model")
+    session = MBDB.get_session()
 
-    source_info: SourceInfo = _get_source_info(resolution_id=resolution.resolution_id)
-
-    # First get all clusters this resolution assigned probabilities to
-    resolution_clusters = (
-        select(Probabilities.cluster)
-        .where(Probabilities.resolution == resolution.resolution_id)
-        .cte("resolution_clusters")
+    # Get direct parent resolutions
+    parent_query = (
+        select(ResolutionFrom.parent)
+        .where(ResolutionFrom.child == resolution.resolution_id)
+        .where(ResolutionFrom.level == 1)
     )
+    parent_ids = [row[0] for row in session.execute(parent_query).all()]
 
-    # Get clusters that are parents in Contains for resolution's probabilities
-    resolution_parents = (
-        select(Contains.parent)
-        .join(resolution_clusters, Contains.child == resolution_clusters.c.cluster)
-        .cte("resolution_parents")
-    )
-
-    # Get valid pairs (those with exactly 2 children)
-    # where neither child is a parent in the resolution's hierarchy
-    valid_pairs = (
-        select(Contains.parent)
-        .join(
-            Probabilities,
-            and_(
-                Probabilities.cluster == Contains.parent,
-                Probabilities.resolution == resolution.resolution_id,
-            ),
+    if not parent_ids:
+        # No parents means no results to recover
+        return pa.table(
+            {
+                "left_id": pa.array([], type=pa.uint64()),
+                "right_id": pa.array([], type=pa.uint64()),
+                "probability": pa.array([], type=pa.uint8()),
+                "cluster_id": pa.array([], type=pa.uint64()),
+            }
         )
-        .where(~Contains.child.in_(select(resolution_parents)))
-        .group_by(Contains.parent)
-        .having(func.count() == 2)
-        .cte("valid_pairs")
-    )
 
-    # Join to get children and probabilities
-    pairs = (
+    # Get pair clusters from this model (role_flag <= 1)
+    pair_clusters_cte = (
         select(
-            Contains.parent.label("id"),
-            func.array_agg(
-                case(
-                    (
-                        Contains.child.in_(list(source_info.left_ancestors)),
-                        Contains.child,
-                    ),
-                    (
-                        Contains.child.in_(list(source_info.right_ancestors))
-                        if source_info.right_ancestors
-                        else Contains.child.notin_(list(source_info.left_ancestors)),
-                        Contains.child,
-                    ),
-                )
-            ).label("children"),
-            func.min(Probabilities.probability).label("probability"),
-        )
-        .join(valid_pairs, valid_pairs.c.parent == Contains.parent)
-        .join(
-            Probabilities,
+            Probabilities.cluster.label("pair_cluster"), Probabilities.probability
+        ).where(
             and_(
-                Probabilities.cluster == Contains.parent,
                 Probabilities.resolution == resolution.resolution_id,
+                Probabilities.role_flag <= 1,  # Pairs only
+            )
+        )
+    ).cte("pair_clusters")
+
+    # Get all leaves for each pair cluster
+    pair_leaves_cte = (
+        select(
+            pair_clusters_cte.c.pair_cluster,
+            pair_clusters_cte.c.probability,
+            Contains.leaf,
+        )
+        .select_from(pair_clusters_cte)
+        .join(Contains, Contains.root == pair_clusters_cte.c.pair_cluster)
+    ).cte("pair_leaves")
+
+    # Get parent clusters - need to handle both model and source parents differently
+    parent_resolutions = []
+    for parent_id in parent_ids:
+        parent_res = session.get(Resolutions, parent_id)
+        if parent_res:
+            parent_resolutions.append(parent_res)
+
+    # For each parent, get the clusters using the hierarchy resolution logic
+    all_parent_clusters = []
+
+    for parent_res in parent_resolutions:
+        if parent_res.type == "source":
+            # For source resolutions, the "clusters" are the leaf clusters themselves
+            # Get all clusters that belong to this source
+            source_clusters_query = (
+                select(
+                    Clusters.cluster_id.label("parent_cluster"),
+                    literal(parent_res.resolution_id).label("parent_resolution"),
+                )
+                .select_from(Clusters)
+                .join(
+                    ClusterSourceKey, ClusterSourceKey.cluster_id == Clusters.cluster_id
+                )
+                .join(
+                    SourceConfigs,
+                    SourceConfigs.source_config_id == ClusterSourceKey.source_config_id,
+                )
+                .where(SourceConfigs.resolution_id == parent_res.resolution_id)
+            )
+        else:
+            # For model resolutions, get clusters with role_flag >= 1
+            source_clusters_query = select(
+                Probabilities.cluster.label("parent_cluster"),
+                literal(parent_res.resolution_id).label("parent_resolution"),
+            ).where(
+                and_(
+                    Probabilities.resolution == parent_res.resolution_id,
+                    Probabilities.role_flag >= 1,
+                )
+            )
+
+        parent_clusters = session.execute(source_clusters_query).all()
+        all_parent_clusters.extend(parent_clusters)
+
+    if not all_parent_clusters:
+        return pa.table(
+            {
+                "left_id": pa.array([], type=pa.uint64()),
+                "right_id": pa.array([], type=pa.uint64()),
+                "probability": pa.array([], type=pa.uint8()),
+                "cluster_id": pa.array([], type=pa.uint64()),
+            }
+        )
+
+    # Create a CTE for parent clusters
+    parent_clusters_data = [
+        {"parent_cluster": cluster_id, "parent_resolution": res_id}
+        for cluster_id, res_id in all_parent_clusters
+    ]
+
+    # Convert to temporary table or use direct values
+    parent_clusters_cte = (
+        select(
+            literal_column(str(pc["parent_cluster"])).label("parent_cluster"),
+            literal_column(str(pc["parent_resolution"])).label("parent_resolution"),
+        )
+        for pc in parent_clusters_data
+    )
+
+    if len(parent_clusters_data) > 1:
+        parent_clusters_cte = union(*parent_clusters_cte).cte("parent_clusters")
+    else:
+        parent_clusters_cte = parent_clusters_cte[0].cte("parent_clusters")
+
+    # Get leaves for each parent cluster
+    # (for source clusters, they are leaves themselves)
+    parent_leaves_cte = (
+        select(
+            parent_clusters_cte.c.parent_cluster,
+            parent_clusters_cte.c.parent_resolution,
+            func.coalesce(Contains.leaf, parent_clusters_cte.c.parent_cluster).label(
+                "leaf"
             ),
         )
-        .group_by(Contains.parent)
-    ).cte("pairs")
+        .select_from(parent_clusters_cte)
+        .outerjoin(Contains, Contains.root == parent_clusters_cte.c.parent_cluster)
+    ).cte("parent_leaves")
 
-    # Final select to properly split out left and right
-    final_select = select(
-        pairs.c.id,
-        pairs.c.children[1].label("left_id"),
-        pairs.c.children[2].label("right_id"),
-        pairs.c.probability,
+    # Find which parent clusters combine to form each pair
+    results_query = (
+        select(
+            pair_leaves_cte.c.pair_cluster.label("id"),
+            func.min(parent_leaves_cte.c.parent_cluster).label("left_id"),
+            func.max(parent_leaves_cte.c.parent_cluster).label("right_id"),
+            pair_leaves_cte.c.probability,
+        )
+        .select_from(pair_leaves_cte)
+        .join(parent_leaves_cte, parent_leaves_cte.c.leaf == pair_leaves_cte.c.leaf)
+        .group_by(pair_leaves_cte.c.pair_cluster, pair_leaves_cte.c.probability)
+        .having(func.count(func.distinct(parent_leaves_cte.c.parent_cluster)) == 2)
     )
 
     with MBDB.get_adbc_connection() as conn:
-        return sql_to_df(
-            stmt=compile_sql(final_select),
-            connection=conn,
-            return_type="arrow",
+        stmt = compile_sql(results_query)
+        logger.debug(f"Recover results SQL: \n {stmt}")
+
+        results_df = sql_to_df(stmt=stmt, connection=conn, return_type="arrow")
+
+    if results_df.shape[0] == 0:
+        return pa.table(
+            {
+                "id": pa.array([], type=pa.uint64()),
+                "left_id": pa.array([], type=pa.uint64()),
+                "right_id": pa.array([], type=pa.uint64()),
+                "probability": pa.array([], type=pa.uint8()),
+            }
         )
+
+    return results_df

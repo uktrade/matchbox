@@ -6,12 +6,13 @@ import cProfile
 import io
 import pstats
 import uuid
+from typing import Generator
 
 import pyarrow as pa
 from adbc_driver_manager import ProgrammingError as ADBCProgrammingError
 from adbc_driver_postgresql import dbapi as adbc_dbapi
 from pyarrow import Table as ArrowTable
-from sqlalchemy import Column, Table, func, select, text
+from sqlalchemy import Column, MetaData, Table, func, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -319,3 +320,64 @@ def large_ingest(
             finally:
                 # Drop temp table
                 temp_table.drop(session.bind, checkfirst=True)
+
+
+@contextlib.contextmanager
+def ingest_to_temporary_table(
+    table_name: str,
+    schema_name: str,
+    data: ArrowTable,
+    max_chunksize: int | None = None,
+) -> Generator[Table, None, None]:
+    """Context manager to ingest Arrow data to a temporary table.
+
+    Let ADBC create the table based on the PyArrow schema,
+    ingests the data, and drops the table automatically on exit.
+
+    Args:
+        table_name: Base name for the temporary table
+        schema_name: Schema where the temporary table will be created
+        data: PyArrow table containing the data to ingest
+        max_chunksize: Optional maximum chunk size for batches
+
+    Returns:
+        A SQLAlchemy Table object representing the temporary table
+    """
+    with (
+        MBDB.get_adbc_connection() as conn,
+        MBDB.get_session() as session,
+    ):
+        temp_table_name = f"{table_name}_tmp_{uuid.uuid4().hex}"
+
+        try:
+            # Create the table with ADBC
+            batch_reader = pa.RecordBatchReader.from_batches(
+                data.schema, data.to_batches(max_chunksize=max_chunksize)
+            )
+
+            with conn.cursor() as cursor:
+                cursor.adbc_ingest(
+                    table_name=temp_table_name,
+                    data=batch_reader,
+                    mode="create",
+                    db_schema_name=schema_name,
+                )
+                conn.commit()
+
+            # Reflect the table that ADBC created
+            metadata = MetaData()
+            temp_table = Table(
+                temp_table_name,
+                metadata,
+                schema=schema_name,
+                autoload_with=session.bind,
+            )
+
+            # Yield the temporary table
+            yield temp_table
+
+        finally:
+            # Drop the table when done
+            with conn.cursor() as cursor:
+                cursor.execute(f"DROP TABLE IF EXISTS {schema_name}.{temp_table_name}")
+                conn.commit()

@@ -472,18 +472,18 @@ class Contains(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "contains"
 
     # Columns
-    parent = Column(
+    root = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
-    child = Column(
+    leaf = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
 
     # Constraints and indices
     __table_args__ = (
-        CheckConstraint("parent != child", name="no_self_containment"),
-        Index("ix_contains_parent_child", "parent", "child"),
-        Index("ix_contains_child_parent", "child", "parent"),
+        CheckConstraint("root != leaf", name="no_self_containment"),
+        Index("ix_contains_root_leaf", "root", "leaf"),
+        Index("ix_contains_leaf_root", "leaf", "root"),
     )
 
 
@@ -507,12 +507,12 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
         back_populates="proposes",
         passive_deletes=True,
     )
-    children = relationship(
+    leaves = relationship(
         "Clusters",
         secondary=Contains.__table__,
-        primaryjoin="Clusters.cluster_id == Contains.parent",
-        secondaryjoin="Clusters.cluster_id == Contains.child",
-        backref="parents",
+        primaryjoin="Clusters.cluster_id == Contains.root",
+        secondaryjoin="Clusters.cluster_id == Contains.leaf",
+        backref="roots",
     )
     # Add relationship to SourceConfigs through ClusterSourceKey
     source_configs = relationship(
@@ -530,7 +530,17 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
 
 
 class Probabilities(CountMixin, MBDB.MatchboxBase):
-    """Table of probabilities that a cluster is correct, according to a resolution."""
+    """Table of probabilities that a cluster is correct, according to a resolution.
+
+    The role flag is used to efficiently store whether the probability is:
+        - 0: a pair cluster, only to be used when recovering pairwise probabilities
+        - 1: both a component and pair cluster, returned in both cases
+        - 2: a component cluster, to be returned as the resolution's proposition
+            at this threshold
+
+    The role flag allows queries to use >= 1 to get the correct clusters proposed by
+    the resolution, and <= 1 to get the pair clusters.
+    """
 
     __tablename__ = "probabilities"
 
@@ -544,6 +554,7 @@ class Probabilities(CountMixin, MBDB.MatchboxBase):
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
     probability = Column(SMALLINT, nullable=False)
+    role_flag = Column(SMALLINT, nullable=False)
 
     # Relationships
     proposed_by = relationship("Resolutions", back_populates="probabilities")

@@ -91,6 +91,21 @@ class ModelConfig(BaseModel):
     left_resolution: ResolutionName
     right_resolution: ResolutionName | None = None  # Only used for linker models
 
+    def __eq__(self, other: "ModelConfig") -> bool:
+        """Check equality of model configurations.
+
+        Model configurations don't care about the order of left and right resolutions.
+        """
+        if not isinstance(other, ModelConfig):
+            return NotImplemented
+        return (
+            self.name == other.name
+            and self.description == other.description
+            and self.type == other.type
+            and {self.left_resolution, self.right_resolution}
+            == {other.left_resolution, other.right_resolution}
+        )
+
 
 class ModelAncestor(BaseModel):
     """A model's ancestor and its truth value."""

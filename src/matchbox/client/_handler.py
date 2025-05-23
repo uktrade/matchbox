@@ -275,13 +275,16 @@ def insert_model(model_config: ModelConfig) -> ResolutionOperationStatus:
     return ResolutionOperationStatus.model_validate(res.json())
 
 
-def get_model(name: ModelResolutionName) -> ModelConfig:
+def get_model(name: ModelResolutionName) -> ModelConfig | None:
     """Get model metadata from Matchbox."""
     log_prefix = f"Model {name}"
     logger.debug("Retrieving metadata", prefix=log_prefix)
 
-    res = CLIENT.get(f"/models/{name}")
-    return ModelConfig.model_validate(res.json())
+    try:
+        res = CLIENT.get(f"/models/{name}")
+        return ModelConfig.model_validate(res.json())
+    except MatchboxResolutionNotFoundError:
+        return None
 
 
 def add_model_results(name: ModelResolutionName, results: Table) -> UploadStatus:

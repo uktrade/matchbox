@@ -10,11 +10,9 @@ Given a key and a source, retrieves all keys that share its cluster in both the 
     from matchbox import select
     import sqlalchemy
 
-    engine = sqlalchemy.create_engine('postgresql://')
-
     mb.match(
-        select("datahub_companies", engine=engine),
-        source=select("companies_house", engine=engine),
+        "datahub_companies",
+        source="companies_house",
         key="8534735",
         resolution="last_linker",
     )
@@ -55,10 +53,10 @@ Retrieves entire data sources along with a unique entity identifier according to
                 "dbt.companieshouse": ["company_name"],
                 "hmrc.exporters": ["year", "commodity_codes"],
             },
-            engine=engine,
-            combine_type="explode",
-            resolution="companies",
+            credentials=engine,
         )
+        combine_type="set_agg",
+        resolution="companies",
     )
     ```
 

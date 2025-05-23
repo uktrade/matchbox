@@ -36,6 +36,31 @@ def test_step_input_validation(sqlite_warehouse: Engine):
         StepInput(prev_node=d_foo_right, select={bar: []})
 
 
+def test_step_input_select_fields(sqlite_warehouse: Engine):
+    """Test that StepInput correctly handles field selection in select attribute."""
+    foo = source_factory(name="foo", engine=sqlite_warehouse).source_config
+
+    # Create some mock source fields
+    field1 = foo.index_fields[0]
+
+    i_foo = IndexStep(source_config=foo)
+
+    # Test selecting specific fields
+    step_input = StepInput(prev_node=i_foo, select={foo: [field1.name]})
+
+    # Verify the select attribute contains the expected fields
+    assert step_input.select[foo] == [field1.name]
+    assert len(step_input.select) == 1
+    assert foo in step_input.select
+
+    # Test selecting empty field list (all fields)
+    step_input_all = StepInput(prev_node=i_foo, select={foo: []})
+
+    # Verify empty list selection works
+    assert step_input_all.select[foo] == []
+    assert len(step_input_all.select) == 1
+
+
 def test_model_step_validation(sqlite_warehouse: Engine):
     foo = source_factory(name="foo", engine=sqlite_warehouse).source_config
     bar = source_factory(name="bar", engine=sqlite_warehouse).source_config
@@ -161,7 +186,6 @@ def test_dedupe_step_run(
             return_type="pandas",
             threshold=d_foo.left.threshold,
             resolution=d_foo.left.name,
-            only_indexed=True,
             batch_size=100 if batched else None,
         )
         # Data is pre-processed
@@ -228,7 +252,7 @@ def test_link_step_run(
             description="",
             left=StepInput(
                 prev_node=i_foo,
-                select={foo: []},
+                select={foo: ["company_name", "crn"]},
                 threshold=0.5,
                 batch_size=100 if batched else None,
             ),
@@ -248,11 +272,10 @@ def test_link_step_run(
         # Right data is queried
         assert query_mock.call_count == 2
         assert query_mock.call_args_list[0] == call(
-            [Selector(source=foo, fields=[])],
+            [Selector(source=foo, fields=foo.index_fields)],
             return_type="pandas",
             threshold=foo_bar.left.threshold,
             resolution=foo_bar.left.name,
-            only_indexed=True,
             batch_size=100 if batched else None,
         )
         assert query_mock.call_args_list[1] == call(
@@ -260,7 +283,6 @@ def test_link_step_run(
             return_type="pandas",
             threshold=foo_bar.right.threshold,
             resolution=foo_bar.right.name,
-            only_indexed=True,
             batch_size=100 if batched else None,
         )
 

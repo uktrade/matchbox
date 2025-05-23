@@ -16,6 +16,7 @@ from matchbox.common.dtos import (
     ResolutionName,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
+from matchbox.common.logging import logger
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -39,7 +40,16 @@ class Model:
 
     def insert_model(self) -> None:
         """Insert the model into the backend database."""
-        _handler.insert_model(model_config=self.model_config)
+        if model_config := _handler.get_model(name=self.model_config.name):
+            if model_config != self.model_config:
+                raise ValueError(
+                    f"Model {self.model_config.name} already exists with "
+                    "different configuration. Please delete the existing model "
+                    "or use a different name. "
+                )
+            logger.warning(f"Model {model_config.name} already exists. Passing.")
+        else:
+            _handler.insert_model(model_config=self.model_config)
 
     @property
     def results(self) -> Results:

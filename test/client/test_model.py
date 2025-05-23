@@ -30,7 +30,15 @@ def test_insert_model(matchbox_api: MockRouter):
     testkit = model_factory(model_type="linker")
 
     # Mock the POST /models endpoint
-    route = matchbox_api.post("/models").mock(
+    get_route = matchbox_api.get(f"/models/{testkit.model.model_config.name}").mock(
+        return_value=Response(
+            404,
+            json=NotFoundError(
+                details="Model not found", entity=BackendRetrievableType.RESOLUTION
+            ).model_dump(),
+        )
+    )
+    insert_route = matchbox_api.post("/models").mock(
         return_value=Response(
             201,
             json=ResolutionOperationStatus(
@@ -45,9 +53,10 @@ def test_insert_model(matchbox_api: MockRouter):
     testkit.model.insert_model()
 
     # Verify the API call
-    assert route.called
+    assert get_route.called
+    assert insert_route.called
     assert (
-        route.calls.last.request.content.decode()
+        insert_route.calls.last.request.content.decode()
         == testkit.model.model_config.model_dump_json()
     )
 
@@ -57,7 +66,15 @@ def test_insert_model_error(matchbox_api: MockRouter):
     testkit = model_factory(model_type="linker")
 
     # Mock the POST /models endpoint with an error response
-    route = matchbox_api.post("/models").mock(
+    get_route = matchbox_api.get(f"/models/{testkit.model.model_config.name}").mock(
+        return_value=Response(
+            404,
+            json=NotFoundError(
+                details="Model not found", entity=BackendRetrievableType.RESOLUTION
+            ).model_dump(),
+        )
+    )
+    insert_route = matchbox_api.post("/models").mock(
         return_value=Response(
             500,
             json=ResolutionOperationStatus(
@@ -73,7 +90,8 @@ def test_insert_model_error(matchbox_api: MockRouter):
     with pytest.raises(MatchboxUnhandledServerResponse, match="Internal server error"):
         testkit.model.insert_model()
 
-    assert route.called
+    assert get_route.called
+    assert insert_route.called
 
 
 def test_results_getter(matchbox_api: MockRouter):

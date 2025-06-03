@@ -40,14 +40,14 @@ services:
       retries: 5
   datadog-agent:
     image: datadog/agent:7
-    profiles:
-      - monitoring
+    #profiles:
+    #  - monitoring
     env_file:
       - .datadog.env
     environment:
       # Sets tags attached to logs/metrics/errors
       DD_SERVICE: matchbox
-      DD_ENV: local
+      DD_ENV: aidan-local
       # What integrations are enabled
       DD_APM_ENABLED: true
       DD_LOGS_ENABLED: true

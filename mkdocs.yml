@@ -15,6 +15,7 @@ nav:
   - API: 
     - Overview: api/client/index.md
 - Server:
+  - Matchbox concepts: server/concepts.md
   - Installation: server/install.md
   - Deploy: server/deploy.md
   - API: 

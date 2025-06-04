@@ -52,7 +52,7 @@ class NaiveDeduper(Deduper):
         # We also need to suppress raw.left_id = raw.right_id in cases where
         # we're deduplicating an unnested array of primary keys
         sql = f"""
-            select distinct on (list_sort([raw.left_id, raw.right_id]))
+            select distinct
                 raw.left_id,
                 raw.right_id,
                 1.0 as probability

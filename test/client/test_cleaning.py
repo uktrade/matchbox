@@ -1,11 +1,16 @@
-import ast
+"""Tests for cleaning functions using a programmatic approach.
+
+This module provides tests for the cleaning functions in matchbox.client.clean.
+
+To test complex cleaning functions like company_name, we test:
+
+1. The leaf functions in the stack (e.g., clean_punctuation, tokenise)
+2. The methods that assemble them (e.g., cleaning_function, unnest_renest)
+"""
+
 from functools import partial
-from pathlib import Path
 from typing import Callable
 
-import duckdb
-import pandas as pd
-import pyarrow as pa
 import pytest
 
 from matchbox.client.clean import drop
@@ -17,51 +22,11 @@ from matchbox.client.clean.steps import (
     tokenise,
 )
 from matchbox.client.clean.utils import alias, cleaning_function, unnest_renest
-
-"""
-----------------------------
--- Feature cleaning tests --
-----------------------------
-
-To avoid bug-prone unit tests for complex cleaning functions like
-cmf.clean.company_name, we instead test the constituent
-parts, and the methods that build those parts into something complex.
-
-To test company_name, therefore, we test the leaf functions in the stack:
-
-* clean_comp_names
-    * clean_punctuation
-    * expand_abbreviations
-    * tokenise
-    * array_except
-    * list_join_to_string
-
-And the methods that assemble them:
-
-* cleaning_function
-* unnest_renest
-
-See cleaning/ directory for more information on specific tests.
-
-"""
-
-
-def load_test_data(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    dirty = pd.read_csv(Path(path, "dirty.csv"), converters={"list": ast.literal_eval})
-    clean = pd.read_csv(Path(path, "clean.csv"), converters={"list": ast.literal_eval})
-
-    dirty.columns = ["col"]
-    clean.columns = ["col"]
-
-    dirty = dirty.convert_dtypes(dtype_backend="pyarrow")
-    clean = clean.convert_dtypes(dtype_backend="pyarrow")
-
-    if isinstance(clean["col"][0], list):
-        clean["col"] = clean["col"].astype(pd.ArrowDtype(pa.list_(pa.string())))
-    if isinstance(dirty["col"][0], list):
-        dirty["col"] = dirty["col"].astype(pd.ArrowDtype(pa.list_(pa.string())))
-
-    return dirty, clean
+from test.client.cleaning.utils import (
+    create_test_case,
+    run_cleaner_test,
+    run_composed_test,
+)
 
 
 def passthrough(input_column: str) -> str:
@@ -72,134 +37,275 @@ def passthrough(input_column: str) -> str:
     return f"{input_column}"
 
 
-remove_stopwords_partial = partial(remove_stopwords, stopwords=["ltd", "plc"])
-expand_abbreviations_partial = partial(
-    expand_abbreviations, replacements={"co": "company", "ltd": "limited"}
-)
-
-cleaning_tests = [
-    ("clean_punctuation", clean_punctuation),
-    ("remove_stopwords", remove_stopwords_partial),
-    ("list_join_to_string", list_join_to_string),
-    ("tokenise", tokenise),
-    ("expand_abbreviations", expand_abbreviations_partial),
-]
+# Setup fixtures for reusable components
+@pytest.fixture
+def stopwords_remover() -> Callable[[str], str]:
+    """Create a stopwords remover with predefined stopwords."""
+    return partial(remove_stopwords, stopwords=["ltd", "plc"])
 
 
-@pytest.mark.parametrize("test", cleaning_tests)
-def test_basic_functions(test: tuple[str, Callable], test_root_dir: Path):
-    """
-    Tests whether the basic cleaning functions do what they're supposed
-    to. More complex functions should follow from here.
-    """
-    test_name = test[0]
-    test_cleaning_function = test[1]
-
-    dirty, clean = load_test_data(Path(test_root_dir, "client", "cleaning", test_name))
-
-    cleaned = (
-        duckdb.sql(
-            f"""
-        select
-            {test_cleaning_function("col")} as col
-        from
-            dirty
-    """
-        )
-        .arrow()
-        .to_pandas(types_mapper=pd.ArrowDtype)
+@pytest.fixture
+def abbreviation_expander() -> Callable[[str], str]:
+    """Create an abbreviation expander with predefined replacements."""
+    return partial(
+        expand_abbreviations, replacements={"co": "company", "ltd": "limited"}
     )
 
-    assert cleaned.equals(clean)
+
+# --------------------------
+# -- Basic Function Tests --
+# --------------------------
 
 
-function_tests = [
-    ("tokenise", [tokenise]),
-    ("pass", [passthrough]),
-    (
-        "clean_comp_names",
-        [
-            clean_punctuation,
-            expand_abbreviations_partial,
-            tokenise,
-            remove_stopwords_partial,
-            list_join_to_string,
-        ],
-    ),
-]
+def test_clean_punctuation_basic():
+    """Test clean_punctuation with basic inputs."""
+    cleaned, success = run_cleaner_test(
+        clean_punctuation,
+        ["!@#$%^&*()_+=-{}[]\"|\\'\\§±<>,./?`~`£__foo"],
+        ["foo"],
+    )
+    assert success, f"Failed with output: {cleaned}"
 
 
-@pytest.mark.parametrize("test", function_tests)
-def test_function(test: tuple[str, Callable], test_root_dir: Path):
-    """
-    Tests whether the cleaning function is accurately combining basic
-    functions.
-    """
-    test_name = test[0]
-    test_cleaning_function = cleaning_function(*test[1])
+def test_clean_punctuation_spaces():
+    """Test clean_punctuation with spaces and periods."""
+    cleaned, success = run_cleaner_test(
+        clean_punctuation,
+        ["        bar.       "],
+        ["bar"],
+    )
+    assert success, f"Failed with output: {cleaned}"
 
-    dirty, clean = load_test_data(
-        Path(test_root_dir, "client", "cleaning", "cleaning_function", test_name)
+
+def test_clean_punctuation_case():
+    """Test clean_punctuation with uppercase."""
+    cleaned, success = run_cleaner_test(
+        clean_punctuation,
+        ["BAZ"],
+        ["baz"],
+    )
+    assert success, f"Failed with output: {cleaned}"
+
+
+def test_tokenise_basic():
+    """Test tokenise with basic inputs."""
+    cleaned, _ = run_cleaner_test(
+        tokenise,
+        ["hello world"],
+        [["hello", "world"]],
     )
 
-    cleaned = test_cleaning_function(dirty, column="col")
+    # Convert numpy array to list for comparison
+    result = cleaned["col"].iloc[0]
+    expected = ["hello", "world"]
 
-    assert cleaned.equals(clean)
-
-
-nest_unnest_tests = [
-    ("expand_abbreviations", expand_abbreviations_partial),
-    ("pass", passthrough),
-]
+    assert list(result) == expected, f"Got {list(result)} instead of {expected}"
 
 
-@pytest.mark.parametrize("test", nest_unnest_tests)
-def test_nest_unnest(test: tuple[str, Callable], test_root_dir: Path):
-    """
-    Tests whether the nest_unnest function is working.
-    """
-    test_name = test[0]
-    test_cleaning_function = cleaning_function(test[1])
-
-    dirty, clean = load_test_data(
-        Path(test_root_dir, "client", "cleaning", "unnest_renest", test_name)
+def test_tokenise_multi_words():
+    """Test tokenise with multiple words."""
+    cleaned, _ = run_cleaner_test(
+        tokenise,
+        ["one two three"],
+        [["one", "two", "three"]],
     )
 
-    test_cleaning_function_arrayed = unnest_renest(test_cleaning_function)
+    result = cleaned["col"].iloc[0]
+    expected = ["one", "two", "three"]
 
-    cleaned = test_cleaning_function_arrayed(dirty, column="col")
-
-    # Handle arrays being unsortable
-    cleaned["col"] = cleaned["col"].astype("string[pyarrow]")
-    clean["col"] = clean["col"].astype("string[pyarrow]")
-
-    cleaned = cleaned.sort_values(by="col").reset_index(drop=True)
-    clean = clean.sort_values(by="col").reset_index(drop=True)
-
-    assert cleaned.equals(clean)
+    assert list(result) == expected, f"Got {list(result)} instead of {expected}"
 
 
-def test_alias(test_root_dir: Path):
-    """
-    Tests whether the alias function is working.
-    """
-    test_cleaning_function = cleaning_function(passthrough)
+def test_remove_stopwords_basic(stopwords_remover: Callable[[str], str]):
+    """Test remove_stopwords with basic inputs."""
+    cleaned, _ = run_cleaner_test(
+        stopwords_remover,
+        [["company", "ltd"]],
+        [["company"]],
+    )
 
-    dirty, clean = load_test_data(Path(test_root_dir, "client", "cleaning", "alias"))
+    result = cleaned["col"].iloc[0]
+    expected = ["company"]
 
-    alias_function = alias(test_cleaning_function, "foo")
-
-    cleaned = alias_function(dirty, column="col")
-
-    assert "foo" in cleaned.columns
+    assert list(result) == expected, f"Got {list(result)} instead of {expected}"
 
 
-def test_drop(test_root_dir: Path):
-    """
-    Tests whether the drop function is working.
-    """
-    dirty, clean = load_test_data(Path(test_root_dir, "client", "cleaning", "alias"))
+def test_remove_stopwords_middle(stopwords_remover: Callable[[str], str]):
+    """Test remove_stopwords with stopword in the middle."""
+    cleaned, _ = run_cleaner_test(
+        stopwords_remover,
+        [["hello", "plc", "world"]],
+        [["hello", "world"]],
+    )
 
+    result = cleaned["col"].iloc[0]
+    expected = ["hello", "world"]
+
+    assert list(result) == expected, f"Got {list(result)} instead of {expected}"
+
+
+def test_list_join_basic():
+    """Test list_join_to_string with basic inputs."""
+    cleaned, success = run_cleaner_test(
+        list_join_to_string,
+        [["hello", "world"]],
+        ["hello world"],
+    )
+    assert success, f"Failed with output: {cleaned}"
+
+
+def test_list_join_multi():
+    """Test list_join_to_string with multiple words."""
+    cleaned, success = run_cleaner_test(
+        list_join_to_string,
+        [["one", "two", "three"]],
+        ["one two three"],
+    )
+    assert success, f"Failed with output: {cleaned}"
+
+
+def test_expand_abbreviations_both(abbreviation_expander: Callable[[str], str]):
+    """Test expand_abbreviations with both replacements."""
+    cleaned, success = run_cleaner_test(
+        abbreviation_expander,
+        ["co ltd"],
+        ["company limited"],
+    )
+    assert success, f"Failed with output: {cleaned}"
+
+
+def test_expand_abbreviations_single(abbreviation_expander: Callable[[str], str]):
+    """Test expand_abbreviations with one replacement."""
+    cleaned, success = run_cleaner_test(
+        abbreviation_expander,
+        ["co only"],
+        ["company only"],
+    )
+    assert success, f"Failed with output: {cleaned}"
+
+
+# -----------------------------
+# -- Composed Function Tests --
+# -----------------------------
+
+
+def test_function_tokenise():
+    """Test composed tokenise function."""
+    func = cleaning_function(tokenise)
+    cleaned, success = run_composed_test(
+        func,
+        ["hello world"],
+        [["hello", "world"]],
+    )
+    assert success, f"Failed with output: {cleaned}"
+
+
+def test_function_passthrough():
+    """Test composed passthrough function."""
+    func = cleaning_function(passthrough)
+    expected = "unchanged text"
+    cleaned, _ = run_composed_test(
+        func,
+        ["unchanged text"],
+        [expected],
+    )
+
+    result = cleaned["col"].iloc[0]
+
+    assert result == expected, f"Got {result} instead of {expected}"
+
+
+def test_function_clean_names(
+    abbreviation_expander: Callable[[str], str], stopwords_remover: Callable[[str], str]
+):
+    """Test complex composed cleaning function."""
+    func = cleaning_function(
+        clean_punctuation,
+        abbreviation_expander,
+        tokenise,
+        stopwords_remover,
+        list_join_to_string,
+    )
+    expected = "company limited"
+    cleaned, _ = run_composed_test(
+        func,
+        ["co. ltd!@#"],
+        [expected],
+    )
+
+    result = cleaned["col"].iloc[0]
+
+    assert result == expected, f"Got {result} instead of {expected}"
+
+
+# ---------------------------
+# -- Nest/Unnest Function --
+# ---------------------------
+
+
+def test_nest_unnest_abbreviations(abbreviation_expander: Callable[[str], str]):
+    """Test unnest_renest with abbreviation expansion."""
+    test_func = cleaning_function(abbreviation_expander)
+    unnested_func = unnest_renest(test_func)
+
+    dirty, clean = create_test_case(
+        [["co ltd", "another co"]],
+        [["company limited", "another company"]],
+    )
+    cleaned = unnested_func(dirty, column="col")
+
+    # Convert to Python lists for deep comparison
+    cleaned_list = cleaned["col"].tolist()
+    clean_list = clean["col"].tolist()
+
+    # Compare the lists directly - they should be identical nested lists
+    assert cleaned_list == clean_list, (
+        f"Failed with output: {cleaned_list}, expected: {clean_list}"
+    )
+
+
+def test_nest_unnest_passthrough():
+    """Test unnest_renest with passthrough function."""
+    test_func = cleaning_function(passthrough)
+    unnested_func = unnest_renest(test_func)
+
+    dirty, clean = create_test_case(
+        [["text1", "text2"]],
+        [["text1", "text2"]],
+    )
+    cleaned = unnested_func(dirty, column="col")
+
+    # Convert to Python lists for deep comparison
+    cleaned_list = cleaned["col"].tolist()
+    clean_list = clean["col"].tolist()
+
+    # Compare the lists directly - they should be identical nested lists
+    assert cleaned_list == clean_list, (
+        f"Failed with output: {cleaned_list}, expected: {clean_list}"
+    )
+
+
+# ---------------------
+# -- Utility Tests --
+# ---------------------
+
+
+def test_alias():
+    """Test the alias function."""
+    test_func = cleaning_function(passthrough)
+    alias_func = alias(test_func, "foo")
+
+    dirty, _ = create_test_case(["test text"], ["test text"])
+    cleaned = alias_func(dirty, column="col")
+
+    assert "foo" in cleaned.columns, f"Alias column not found in {cleaned.columns}"
+
+
+def test_drop():
+    """Test the drop function."""
+    dirty, _ = create_test_case(["text to drop"], [""])
     cleaned = drop(dirty, column="col")
 
-    assert len(cleaned.columns) == 0
+    assert len(cleaned.columns) == 0, (
+        f"Column was not dropped, found: {cleaned.columns}"
+    )

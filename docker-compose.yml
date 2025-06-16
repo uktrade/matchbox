@@ -1,27 +1,16 @@
 services:
-  warehouse:
+  server-warehouse:
     image: postgres:17
     restart: always
-    environment:
-      POSTGRES_USER: warehouse_user
-      POSTGRES_PASSWORD: warehouse_password
-      POSTGRES_DB: warehouse
     ports:
       - "${MB__DEV__WAREHOUSE_PORT:-7654}:5432"
     volumes:
       - warehouse_data:/var/lib/postgresql/data
-  matchbox-postgres:
-    image: postgres:17
-    restart: always
     environment:
-      POSTGRES_USER: matchbox_user
-      POSTGRES_PASSWORD: matchbox_password
-      POSTGRES_DB: matchbox
-    ports:
-      - "${MB__DEV__POSTGRES_BACKEND_PORT:-5432}:5432"
-    volumes:
-      - matchbox_data:/var/lib/postgresql/data
-  matchbox-storage:
+      - POSTGRES_USER=warehouse_user
+      - POSTGRES_PASSWORD=warehouse_password
+      - POSTGRES_DB=warehouse
+  server-filestorage:
     image: minio/minio:latest
     restart: always
     volumes:
@@ -30,54 +19,31 @@ services:
     ports:
       - "${MB__DEV__DATASTORE_PORT:-9000}:9000"
       - "${MB__DEV__DATASTORE_CONSOLE_PORT-9001}:9001"
-    environment:
-      MINIO_ROOT_USER: ${MB__SERVER__DATASTORE__ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${MB__SERVER__DATASTORE__SECRET_ACCESS_KEY}
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 5
-  datadog-agent:
-    image: datadog/agent:7
-    profiles:
-      - monitoring
-    env_file:
-      - .datadog.env
     environment:
-      # Sets tags attached to logs/metrics/errors
-      DD_SERVICE: matchbox
-      DD_ENV: local
-      # What integrations are enabled
-      DD_APM_ENABLED: true
-      DD_LOGS_ENABLED: true
-      DD_PROFILING_ENABLED: true
-      DD_PROCESS_AGENT_PROCESS_COLLECTION_ENABLED: true
-      # Allows connections not from localhost to the agent (crucial when running as a sidecar container)
-      DD_APM_NON_LOCAL_TRAFFIC: true
-      # Where logs and traces are sent to
-      DD_SITE: datadoghq.eu
-      # The hostname of the agent itself (which is the service name when running via docker compose)
-      DD_HOSTNAME: datadog-agent
-    ports:
-      - "8126:8126"
-  api:
+      MINIO_ROOT_USER: ${MB__SERVER__DATASTORE__ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${MB__SERVER__DATASTORE__SECRET_ACCESS_KEY}
+  server-api:
     build:
       context: .
       args:
         ENV_FILE: server.env
       dockerfile: src/matchbox/server/Dockerfile
       target: dev
-    environment:
-      DD_AGENT_HOST: datadog-agent
-      DD_LOGS_INJECTION: true
     ports:
       - "${MB__DEV__API_PORT-8000}:8000"
     depends_on:
-      matchbox-postgres:
+      server-database:
         condition: service_started
         required: true
-      matchbox-storage:
+      server-warehouse:
+        condition: service_started
+        required: true
+      server-filestorage:
         condition: service_started
         required: true
       datadog-agent:
@@ -94,7 +60,88 @@ services:
         # Rebuild the image on changes to the `pyproject.toml`
         - action: rebuild
           path: ./pyproject.toml
-
+    environment:
+      - DD_AGENT_HOST=datadog-agent
+      - DD_ENV=local-${LOCAL_USERNAME}
+      - DD_SERVICE=matchbox-server-api
+    labels:
+          my.custom.label.team: 'matchbox'
+          my.custom.label.application: 'matchbox'
+          com.datadoghq.ad.logs: '[{"source": "python"}]'
+  server-database:
+    image: postgres:17
+    restart: always
+    ports:
+      - "${MB__SERVER__POSTGRES__PORT:-5432}:5432"
+    volumes:
+      - matchbox_data:/var/lib/postgresql/data
+    environment:
+      - DD_AGENT_HOST=datadog-agent
+      - DD_ENV=local-${LOCAL_USERNAME}
+      - DD_SERVICE=matchbox-server-database
+      - POSTGRES_DB=matchbox
+      - POSTGRES_PASSWORD=matchbox_password
+      - POSTGRES_USER=matchbox_user
+    labels:
+          my.custom.label.team: 'matchbox'
+          my.custom.label.application: 'matchbox'
+          com.datadoghq.ad.logs: '[{"source": "postgres"}]'
+  datadog-agent:
+    image: public.ecr.aws/datadog/agent:7
+    env_file:
+      - .datadog.env
+    pid: "host"  # "task" for ECS
+    ports:
+      - "8125:8125/tcp"
+      - "8126:8126/udp"
+    # NOTE: see documentation https://docs.datadoghq.com/universal_service_monitoring/setup/?tab=dockercompose
+    volumes:
+     - /var/run/docker.sock:/var/run/docker.sock:ro
+     - /proc/:/host/proc/:ro
+     - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+     - /sys/kernel/debug:/sys/kernel/debug
+     - /lib/modules:/lib/modules
+     - /usr/src:/usr/src
+     - /var/tmp/datadog-agent/system-probe/build:/var/tmp/datadog-agent/system-probe/build
+     - /var/tmp/datadog-agent/system-probe/kernel-headers:/var/tmp/datadog-agent/system-probe/kernel-headers
+     - /etc/apt:/host/etc/apt
+     - /etc/yum.repos.d:/host/etc/yum.repos.d
+     - /etc/zypp:/host/etc/zypp
+     - /etc/pki:/host/etc/pki
+     - /etc/yum/vars:/host/etc/yum/vars
+     - /etc/dnf/vars:/host/etc/dnf/vars
+     - /etc/rhsm:/host/etc/rhsm
+    cap_add:
+     - SYS_ADMIN
+     - SYS_RESOURCE
+     - SYS_PTRACE
+     - NET_ADMIN
+     - NET_BROADCAST
+     - NET_RAW
+     - IPC_LOCK
+     - CHOWN
+    security_opt:
+     - apparmor:unconfined
+    environment:
+      - DD_APM_ENABLED=true
+      - DD_APM_NON_LOCAL_TRAFFIC=true
+      - DD_CONTAINER_EXCLUDE='name:server-warehouse name:server-filestorage'
+      - DD_CONTAINER_LABELS_AS_TAGS={"my.custom.label.team":"team", "my.custom.label.application":"application"}
+      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
+      - DD_ENV=local-${LOCAL_USERNAME}
+      - DD_HOSTNAME
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+      - DD_LOGS_ENABLED=true
+      - DD_LOG_LEVEL=INFO
+      - DD_PROCESS_AGENT_ENABLED=true
+      - DD_SITE=datadoghq.eu
+      - DD_SYSTEM_PROBE_NETWORK_ENABLED=true
+      - DD_SYSTEM_PROBE_SERVICE_MONITORING_ENABLED=true
+      - HOST_ROOT='/host/root'
+    labels:
+          my.custom.label.team: 'matchbox'
+          my.custom.label.application: 'matchbox'
+          com.datadoghq.ad.logs: '[{"source": "agent"}]'
 volumes:
   warehouse_data:
   matchbox_data:

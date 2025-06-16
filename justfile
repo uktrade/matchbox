@@ -1,6 +1,6 @@
 # Build and run all containers
 build:
-    docker compose --env-file=environments/server.env up --build -d --wait
+    LOCAL_USERNAME="$(id -un)" docker compose --env-file=environments/server.env up --build
 
 # Delete all compiled Python files
 clean:

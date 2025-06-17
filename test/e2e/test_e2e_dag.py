@@ -2,15 +2,17 @@ import logging
 
 import pytest
 from httpx import Client
+from splink import SettingsCreator
+from splink import comparison_library as cl
 from sqlalchemy import Engine, text
 
 from matchbox import query
-from matchbox.client.clean import steps
-from matchbox.client.clean.utils import cleaning_function
+from matchbox.client.clean import remove_prefix, steps
+from matchbox.client.clean.utils import cleaning_function, select_cleaners
 from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
-from matchbox.client.helpers import cleaner, cleaners, select
+from matchbox.client.helpers import cleaner, select
 from matchbox.client.models.dedupers import NaiveDeduper
-from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.models.linkers import DeterministicLinker, SplinkLinker
 from matchbox.common.factories.sources import (
     FeatureConfig,
     LinkedSourcesTestkit,
@@ -160,19 +162,27 @@ class TestE2EPipelineBuilder:
             steps.trim,
         )
 
-        source_a_cleaners = cleaners(
-            cleaner(
+        source_a_cleaners = {
+            "company_name": cleaner(
                 clean_company_name,
-                {"column": "source_a_company_name"},
+                {"column": source_a_config.qualify_field("company_name")},
             ),
-        )
+            "make_conformant": cleaner(
+                remove_prefix,
+                {"column": "", "prefix": source_a_config.qualify_field("")},
+            ),
+        }
 
-        source_b_cleaners = cleaners(
-            cleaner(
+        source_b_cleaners = {
+            "company_name": cleaner(
                 clean_company_name,
-                {"column": "source_b_company_name"},
+                {"column": source_b_config.qualify_field("company_name")},
             ),
-        )
+            "make_conformant": cleaner(
+                remove_prefix,
+                {"column": "", "prefix": source_b_config.qualify_field("")},
+            ),
+        }
 
         # === DAG DEFINITION ===
         # Index steps
@@ -184,7 +194,9 @@ class TestE2EPipelineBuilder:
             left=StepInput(
                 prev_node=i_source_a,
                 select={source_a_config: ["company_name", "registration_id"]},
-                cleaners=source_a_cleaners,
+                cleaners=select_cleaners(
+                    (source_a_cleaners, ["company_name"]),
+                ),
                 batch_size=batch_size,
             ),
             name="dedupe_source_a",
@@ -192,7 +204,7 @@ class TestE2EPipelineBuilder:
             model_class=NaiveDeduper,
             settings={
                 "id": "id",
-                "unique_fields": ["source_a_registration_id"],
+                "unique_fields": [source_a_config.qualify_field("registration_id")],
             },
             truth=1.0,
         )
@@ -201,7 +213,9 @@ class TestE2EPipelineBuilder:
             left=StepInput(
                 prev_node=i_source_b,
                 select={source_b_config: ["company_name", "registration_id"]},
-                cleaners=source_b_cleaners,
+                cleaners=select_cleaners(
+                    (source_b_cleaners, ["company_name"]),
+                ),
                 batch_size=batch_size,
             ),
             name="dedupe_source_b",
@@ -209,7 +223,7 @@ class TestE2EPipelineBuilder:
             model_class=NaiveDeduper,
             settings={
                 "id": "id",
-                "unique_fields": ["source_b_registration_id"],
+                "unique_fields": [source_b_config.qualify_field("registration_id")],
             },
             truth=1.0,
         )
@@ -219,13 +233,17 @@ class TestE2EPipelineBuilder:
             left=StepInput(
                 prev_node=dedupe_a,
                 select={source_a_config: ["company_name", "registration_id"]},
-                cleaners=source_a_cleaners,
+                cleaners=select_cleaners(
+                    (source_a_cleaners, ["company_name"]),
+                ),
                 batch_size=batch_size,
             ),
             right=StepInput(
                 prev_node=dedupe_b,
                 select={source_b_config: ["company_name", "registration_id"]},
-                cleaners=source_b_cleaners,
+                cleaners=select_cleaners(
+                    (source_b_cleaners, ["company_name"]),
+                ),
                 batch_size=batch_size,
             ),
             name="__DEFAULT__",
@@ -235,7 +253,8 @@ class TestE2EPipelineBuilder:
                 "left_id": "id",
                 "right_id": "id",
                 "comparisons": (
-                    "l.source_a_registration_id = r.source_b_registration_id",
+                    f"l.{source_a_config.qualify_field('registration_id')}"
+                    f"= r.{source_b_config.qualify_field('registration_id')}",
                 ),
             },
             truth=1.0,
@@ -300,5 +319,106 @@ class TestE2EPipelineBuilder:
 
         # Basic sanity checks
         assert len(final_df_second) > 0, "Expected some results from second run"
+
+        # === SECOND PARALLEL DAG RUN ===
+        logging.info("Running second parallel link step with Splink linker")
+
+        # Define comparisons using Splink's built-in comparison library
+        comparisons = [
+            cl.JaroWinklerAtThresholds("company_name", [0.9, 0.8]),
+            cl.ExactMatch("registration_id"),
+        ]
+
+        # Training functions
+        linker_training_functions = [
+            {
+                "function": "estimate_probability_two_random_records_match",
+                "arguments": {
+                    "deterministic_matching_rules": [
+                        "l.registration_id = r.registration_id",
+                        "l.company_name = r.company_name",
+                    ],
+                    "recall": 0.8,
+                },
+            },
+            {
+                "function": "estimate_u_using_random_sampling",
+                "arguments": {"max_pairs": 1e3},
+            },
+            {
+                "function": "estimate_parameters_using_expectation_maximisation",
+                "arguments": {
+                    "blocking_rule": ("l.registration_id = r.registration_id"),
+                },
+            },
+        ]
+
+        # Blocking rules
+        blocking_rules = [
+            "l.registration_id = r.registration_id",
+            "l.company_name = r.company_name",
+        ]
+
+        linker_ab_2 = LinkStep(
+            left=StepInput(
+                prev_node=dedupe_a,
+                select={source_a_config: ["company_name", "registration_id"]},
+                cleaners=select_cleaners(
+                    (source_a_cleaners, ["company_name", "make_conformant"]),
+                ),
+                batch_size=batch_size,
+            ),
+            right=StepInput(
+                prev_node=dedupe_b,
+                select={source_b_config: ["company_name", "registration_id"]},
+                cleaners=select_cleaners(
+                    (source_b_cleaners, ["company_name", "make_conformant"]),
+                ),
+                batch_size=batch_size,
+            ),
+            name="splink_linker",
+            description="Link sources A and B on registration_id (second run)",
+            model_class=SplinkLinker,
+            settings={
+                "left_id": "id",
+                "right_id": "id",
+                "linker_training_functions": linker_training_functions,
+                "linker_settings": SettingsCreator(
+                    link_type="link_only",
+                    retain_matching_columns=False,
+                    retain_intermediate_calculation_columns=False,
+                    blocking_rules_to_generate_predictions=blocking_rules,
+                    comparisons=comparisons,
+                ),
+                "threshold": 0.01,
+            },
+            truth=0.01,
+        )
+
+        # Create and run second DAG
+        second_dag = DAG()
+        second_dag.add_steps(i_source_a, i_source_b)
+        second_dag.add_steps(dedupe_a, dedupe_b)
+        second_dag.add_steps(linker_ab_2)
+
+        second_dag.run()
+
+        # Basic verification - check that we have some linked results
+
+        second_final_df = query(
+            select(
+                {
+                    source_a_config.name: ["company_name", "registration_id"],
+                    source_b_config.name: ["company_name", "registration_id"],
+                },
+                credentials=self.warehouse_engine,
+            ),
+            resolution="splink_linker",
+            return_type="pandas",
+        )
+
+        # Should have linked results
+        assert len(second_final_df) > 0, "Expected some results from second DAG"
+        assert second_final_df["id"].nunique() == len(self.linked_testkit.true_entities)
 
         logging.info("DAG pipeline test completed successfully!")

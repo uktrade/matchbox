@@ -1,14 +1,16 @@
 """API routes for the Matchbox server."""
 
 from importlib.metadata import version
-from typing import Annotated
+from typing import Annotated, Any, Awaitable
 
+import anyio
 from fastapi import (
     BackgroundTasks,
     Depends,
     FastAPI,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -34,6 +36,7 @@ from matchbox.common.exceptions import (
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.graph import ResolutionGraph
+from matchbox.common.logging import logger
 from matchbox.common.sources import Match
 from matchbox.server.api.arrow import table_to_s3
 from matchbox.server.api.cache import process_upload
@@ -202,11 +205,28 @@ async def get_upload_status(
 # Retrieval
 
 
+async def disconnected(request: Request) -> None:
+    """Cancel task on client KeyboardInterrupt."""
+    while True:
+        message = await request.receive()
+        if message["type"] == "http.disconnect":
+            logger.info("Query disrupted by client disconnection.")
+            break
+
+
+async def wrap(call: Awaitable[Any], cancel_scope: anyio.CancelScope):
+    """Wrapper for calling async endpoint functions."""
+    res = await call
+    cancel_scope.cancel()
+    return res
+
+
 @app.get(
     "/query",
     responses={404: {"model": NotFoundError}},
 )
-def query(
+async def query(
+    request: Request,
     backend: BackendDependency,
     source: SourceResolutionName,
     resolution: ResolutionName | None = None,
@@ -214,30 +234,36 @@ def query(
     limit: int | None = None,
 ) -> ParquetResponse:
     """Query Matchbox for matches based on a source resolution name."""
-    try:
-        res = backend.query(
-            source=source,
-            resolution=resolution,
-            threshold=threshold,
-            limit=limit,
-        )
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
-            ).model_dump(),
-        ) from e
-    except MatchboxSourceNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.SOURCE
-            ).model_dump(),
-        ) from e
 
-    buffer = table_to_buffer(res)
-    return ParquetResponse(buffer.getvalue())
+    async def _query():
+        try:
+            res = backend.query(
+                source=source,
+                resolution=resolution,
+                threshold=threshold,
+                limit=limit,
+            )
+        except MatchboxResolutionNotFoundError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=NotFoundError(
+                    details=str(e), entity=BackendRetrievableType.RESOLUTION
+                ).model_dump(),
+            ) from e
+        except MatchboxSourceNotFoundError as e:
+            raise HTTPException(
+                status_code=404,
+                detail=NotFoundError(
+                    details=str(e), entity=BackendRetrievableType.SOURCE
+                ).model_dump(),
+            ) from e
+
+        buffer = table_to_buffer(res)
+        return ParquetResponse(buffer.getvalue())
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(wrap, disconnected(request), tg.cancel_scope)
+        return await wrap(_query(), tg.cancel_scope)
 
 
 @app.get(

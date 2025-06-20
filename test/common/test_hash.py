@@ -2,7 +2,12 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
-from matchbox.common.hash import HashMethod, IntMap, hash_arrow_table, hash_rows
+from matchbox.common.hash import (
+    HashMethod,
+    IntMap,
+    hash_arrow_table,
+    hash_rows,
+)
 
 
 def test_intmap_basic():

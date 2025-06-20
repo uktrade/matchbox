@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.dtos import ModelConfig
 from matchbox.common.hash import IntMap
 from matchbox.common.transform import to_clusters
@@ -69,45 +70,23 @@ class Results(BaseModel):
         if not isinstance(value, pa.Table):
             raise ValueError("Expected a polars DataFrame or pyarrow Table.")
 
-        table_fields = set(value.column_names)
-        expected_fields = {"left_id", "right_id", "probability"}
-        optional_fields = {"id"}
-
-        if table_fields - optional_fields != expected_fields:
-            raise ValueError(f"Expected {expected_fields}. \nFound {table_fields}.")
-
-        # Define the schema based on whether 'id' is present
-        has_id = "id" in table_fields
-        schema_fields = (
-            [
-                ("id", pa.uint64()),
-                ("left_id", pa.uint64()),
-                ("right_id", pa.uint64()),
-                ("probability", pa.uint8()),
-            ]
-            if has_id
-            else [
-                ("left_id", pa.uint64()),
-                ("right_id", pa.uint64()),
-                ("probability", pa.uint8()),
-            ]
-        )
-        target_schema = pa.schema(schema_fields)
+        expected_fields = set(SCHEMA_RESULTS.names)
+        if set(value.column_names) != expected_fields:
+            raise ValueError(
+                f"Expected {expected_fields}. \nFound {set(value.column_names)}."
+            )
 
         # Handle empty tables
         if value.num_rows == 0:
-            empty_arrays = [pa.array([], type=field.type) for field in target_schema]
+            empty_arrays = [pa.array([], type=field.type) for field in SCHEMA_RESULTS]
             return pa.Table.from_arrays(
-                empty_arrays, names=[field.name for field in target_schema]
+                empty_arrays, names=[field.name for field in SCHEMA_RESULTS]
             )
 
         # Process probability field if it contains floating-point or decimal values
         probability_type = value["probability"].type
-        if any(
-            [
-                pa.types.is_floating(probability_type),
-                pa.types.is_decimal(probability_type),
-            ]
+        if pa.types.is_floating(probability_type) or pa.types.is_decimal(
+            probability_type
         ):
             probability_uint8 = pc.cast(
                 pc.round(pc.multiply(value["probability"], 100)),
@@ -131,7 +110,7 @@ class Results(BaseModel):
                 column=probability_uint8,
             )
 
-        return value.cast(target_schema)
+        return value.cast(SCHEMA_RESULTS)
 
     def _merge_with_source_data(
         self,

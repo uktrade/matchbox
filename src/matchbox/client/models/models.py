@@ -47,7 +47,8 @@ class Model:
                     "different configuration. Please delete the existing model "
                     "or use a different name. "
                 )
-            logger.warning(f"Model {model_config.name} already exists. Passing.")
+            log_prefix = f"Model {model_config.name}"
+            logger.warning("Already exists. Passing.", prefix=log_prefix)
         else:
             _handler.insert_model(model_config=self.model_config)
 

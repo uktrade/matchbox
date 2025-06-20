@@ -24,7 +24,6 @@ from matchbox.common.dtos import ResolutionName
 from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.graph import ResolutionNodeType
 from matchbox.common.sources import SourceConfig as CommonSourceConfig
 from matchbox.common.sources import SourceField as CommonSourceField
 from matchbox.server.postgresql.db import MBDB
@@ -82,6 +81,11 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         back_populates="proposed_by",
         passive_deletes=True,
     )
+    results = relationship(
+        "Results",
+        back_populates="proposed_by",
+        passive_deletes=True,
+    )
     children = relationship(
         "Resolutions",
         secondary=ResolutionFrom.__table__,
@@ -125,53 +129,48 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             )
             return set(session.execute(descendant_query).scalars().all())
 
-    def get_lineage(self) -> dict[int, float]:
-        """Returns all ancestors and their cached truth values from this model."""
+    def get_lineage(
+        self, sources: list["SourceConfigs"] | None = None, threshold: int | None = None
+    ) -> list[tuple[int, float | None]]:
+        """Returns lineage ordered by priority: [(resolution_id, threshold), ...].
+
+        Highest priority (lowest level) first, then by resolution_id for stability.
+
+        Args:
+            sources: If provided, only return lineage paths that lead to these sources
+            threshold: If provided, override this resolution's threshold
+        """
         with MBDB.get_session() as session:
-            lineage_query = (
-                select(ResolutionFrom.parent, ResolutionFrom.truth_cache)
-                .where(ResolutionFrom.child == self.resolution_id)
-                .order_by(ResolutionFrom.level.desc())
+            query = select(ResolutionFrom.parent, ResolutionFrom.truth_cache).where(
+                ResolutionFrom.child == self.resolution_id
             )
 
-            results = session.execute(lineage_query).all()
+            if sources:
+                source_resolution_ids = [sc.resolution_id for sc in sources]
 
-            lineage = {parent: truth for parent, truth in results}
-            lineage[self.resolution_id] = self.truth
-
-            return lineage
-
-    def get_lineage_to_source(
-        self, source: "Resolutions"
-    ) -> tuple[bytes, dict[int, float]]:
-        """Returns the resolution lineage and cached truth values to a source."""
-        if source.type != ResolutionNodeType.SOURCE.value:
-            raise ValueError(
-                f"Target resolution must be of type 'source', got {source.type}"
-            )
-
-        if self.resolution_id == source.resolution_id:
-            return {source.resolution_id: None}
-
-        with MBDB.get_session() as session:
-            path_query = (
-                select(ResolutionFrom.parent, ResolutionFrom.truth_cache)
-                .join(Resolutions, Resolutions.resolution_id == ResolutionFrom.parent)
-                .where(ResolutionFrom.child == self.resolution_id)
-                .order_by(ResolutionFrom.level.desc())
-            )
-
-            results = session.execute(path_query).all()
-
-            if not any(parent == source.resolution_id for parent, _ in results):
-                raise ValueError(
-                    f"No path between resolution {self.name}, source {source.name}"
+                # Include target sources + resolutions that have them as ancestors
+                valid_parents = (
+                    source_resolution_ids
+                    + session.execute(
+                        select(ResolutionFrom.child).where(
+                            ResolutionFrom.parent.in_(source_resolution_ids)
+                        )
+                    )
+                    .scalars()
+                    .all()
                 )
 
-            lineage = {parent: truth for parent, truth in results}
-            lineage[self.resolution_id] = self.truth
+                query = query.where(ResolutionFrom.parent.in_(valid_parents))
 
-            return lineage
+            results = session.execute(
+                query.order_by(ResolutionFrom.level.asc(), ResolutionFrom.parent.asc())
+            ).all()
+
+            # Use threshold override if provided, otherwise use self.truth
+            self_threshold = threshold if threshold is not None else self.truth
+
+            # Add self at beginning (highest priority - level 0)
+            return [(self.resolution_id, self_threshold)] + list(results)
 
     @classmethod
     def from_name(
@@ -472,18 +471,18 @@ class Contains(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "contains"
 
     # Columns
-    parent = Column(
+    root = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
-    child = Column(
+    leaf = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
 
     # Constraints and indices
     __table_args__ = (
-        CheckConstraint("parent != child", name="no_self_containment"),
-        Index("ix_contains_parent_child", "parent", "child"),
-        Index("ix_contains_child_parent", "child", "parent"),
+        CheckConstraint("root != leaf", name="no_self_containment"),
+        Index("ix_contains_root_leaf", "root", "leaf"),
+        Index("ix_contains_leaf_root", "leaf", "root"),
     )
 
 
@@ -507,12 +506,12 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
         back_populates="proposes",
         passive_deletes=True,
     )
-    children = relationship(
+    leaves = relationship(
         "Clusters",
         secondary=Contains.__table__,
-        primaryjoin="Clusters.cluster_id == Contains.parent",
-        secondaryjoin="Clusters.cluster_id == Contains.child",
-        backref="parents",
+        primaryjoin="Clusters.cluster_id == Contains.root",
+        secondaryjoin="Clusters.cluster_id == Contains.leaf",
+        backref="roots",
     )
     # Add relationship to SourceConfigs through ClusterSourceKey
     source_configs = relationship(
@@ -535,12 +534,12 @@ class Probabilities(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "probabilities"
 
     # Columns
-    resolution = Column(
+    resolution_id = Column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    cluster = Column(
+    cluster_id = Column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
     probability = Column(SMALLINT, nullable=False)
@@ -552,5 +551,37 @@ class Probabilities(CountMixin, MBDB.MatchboxBase):
     # Constraints
     __table_args__ = (
         CheckConstraint("probability BETWEEN 0 AND 100", name="valid_probability"),
-        Index("ix_probabilities_resolution", "resolution"),
+        Index("ix_probabilities_resolution", "resolution_id"),
+    )
+
+
+class Results(CountMixin, MBDB.MatchboxBase):
+    """Table of results for a resolution.
+
+    Stores the raw left/right probabilities created by a model.
+    """
+
+    __tablename__ = "results"
+
+    # Columns
+    resolution_id = Column(
+        BIGINT,
+        ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    left_id = Column(
+        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
+    )
+    right_id = Column(
+        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
+    )
+    probability = Column(SMALLINT, nullable=False)
+
+    # Relationships
+    proposed_by = relationship("Resolutions", back_populates="results")
+
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("probability BETWEEN 0 AND 100", name="valid_probability"),
+        Index("ix_results_resolution", "resolution_id"),
     )

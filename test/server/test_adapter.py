@@ -1,5 +1,6 @@
 from functools import partial
 
+import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
@@ -283,36 +284,34 @@ class TestMatchboxBackend:
             assert isinstance(pre_results, pa.Table)
             assert len(pre_results) > 0
 
-            self.backend.validate_ids(ids=pre_results["id"].to_pylist())
+            # Validate IDs
             self.backend.validate_ids(ids=pre_results["left_id"].to_pylist())
             self.backend.validate_ids(ids=pre_results["right_id"].to_pylist())
 
-            # Set
-            target_row = pre_results.to_pylist()[0]
-            target_id = target_row["id"]
-            target_left_id = target_row["left_id"]
-            target_right_id = target_row["right_id"]
+            # Wrangle in polars
+            pre_results_pl = pl.from_arrow(pre_results)
 
-            matches_id_mask = pc.not_equal(pre_results["id"], target_id)
-            matches_left_mask = pc.not_equal(pre_results["left_id"], target_left_id)
-            matches_right_mask = pc.not_equal(pre_results["right_id"], target_right_id)
+            # Remove a single row from the results
+            target_row = pre_results_pl.row(0, named=True)
 
-            combined_mask = pc.and_(
-                pc.and_(matches_id_mask, matches_left_mask), matches_right_mask
-            )
-            df_probabilities_truncated = pre_results.filter(combined_mask)
-
-            results = df_probabilities_truncated.select(
-                ["left_id", "right_id", "probability"]
+            results_truncated = pre_results_pl.filter(
+                ~(
+                    (pl.col("left_id") == target_row["left_id"])
+                    & (pl.col("right_id") == target_row["right_id"])
+                )
             )
 
-            self.backend.set_model_results(name="naive_test.crn", results=results)
+            # Set new results
+            self.backend.set_model_results(
+                name="naive_test.crn", results=results_truncated.to_arrow()
+            )
 
             # Retrieve again
             post_results = self.backend.get_model_results(name="naive_test.crn")
 
             # Check difference
             assert len(pre_results) != len(post_results)
+            assert len(post_results) == len(pre_results) - 1
 
     def test_model_results_shared_clusters(self):
         """Test that model results data can be inserted when clusters are shared."""

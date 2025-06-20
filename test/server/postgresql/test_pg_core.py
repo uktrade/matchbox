@@ -9,7 +9,6 @@ from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
 from matchbox.server.postgresql.orm import PKSpace
 from matchbox.server.postgresql.utils.db import ingest_to_temporary_table, large_ingest
-from matchbox.server.postgresql.utils.insert import HashIDMap
 
 
 @pytest.mark.docker
@@ -29,43 +28,6 @@ def test_reserve_id_block(
 
     with pytest.raises(ValueError):
         PKSpace.reserve_block("clusters", 0)
-
-
-def test_hash_id_map():
-    """Test HashIDMap core functionality including basic operations."""
-    # Initialize with some existing mappings
-    lookup = pa.Table.from_arrays(
-        [
-            pa.array([1, 2], type=pa.uint64()),
-            pa.array([b"hash1", b"hash2"], type=pa.large_binary()),
-        ],
-        names=["id", "hash"],
-    )
-    hash_map = HashIDMap(start=100, lookup=lookup)
-
-    # Test getting existing hashes
-    ids = pa.array([2, 1], type=pa.uint64())
-    hashes = hash_map.get_hashes(ids)
-    assert hashes.to_pylist() == [b"hash2", b"hash1"]
-
-    # Test getting mix of existing and new hashes
-    input_hashes = pa.array([b"hash1", b"new_hash", b"hash2"], type=pa.large_binary())
-    returned_ids = hash_map.generate_ids(input_hashes)
-
-    # Verify results
-    id_list = returned_ids.to_pylist()
-    assert id_list[0] == 1  # Existing hash1
-    assert id_list[2] == 2  # Existing hash2
-    assert id_list[1] == 100  # New hash got next available ID
-
-    # Verify lookup table was updated correctly
-    assert hash_map.lookup.shape == (3, 3)
-    assert hash_map.next_int == 101
-
-    # Test error handling for missing IDs
-    with pytest.raises(ValueError) as exc_info:
-        hash_map.get_hashes(pa.array([999], type=pa.uint64()))
-    assert "not found in lookup table" in str(exc_info.value)
 
 
 @pytest.mark.docker

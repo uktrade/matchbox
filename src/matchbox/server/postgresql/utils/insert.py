@@ -529,7 +529,7 @@ def insert_results(
     )
 
     # Check if the content hash is the same
-    content_hash = hash_arrow_table(results)
+    content_hash = hash_arrow_table(results, normalise=["left_id", "right_id"])
     if resolution.hash == content_hash:
         logger.info("Results already uploaded. Finished", prefix=log_prefix)
         return

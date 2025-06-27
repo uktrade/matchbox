@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelResolutionName
-from matchbox.common.exceptions import MatchboxResolutionAlreadyExists
 from matchbox.common.graph import ResolutionNodeType
 from matchbox.common.hash import IntMap, hash_arrow_table
 from matchbox.common.logging import logger
@@ -225,7 +224,6 @@ def insert_model(
 
     Raises:
         MatchboxResolutionNotFoundError: If the specified parent models don't exist.
-        MatchboxResolutionAlreadyExists: If the specified model already exists.
     """
     log_prefix = f"Model {name}"
     logger.info("Registering", prefix=log_prefix)
@@ -235,7 +233,8 @@ def insert_model(
         exists_obj = session.scalar(exists_stmt)
 
         if exists_obj is not None:
-            raise MatchboxResolutionAlreadyExists
+            logger.info("Model resolution already exists", prefix=log_prefix)
+            return
         else:
             new_res = Resolutions(
                 type=ResolutionNodeType.MODEL.value,

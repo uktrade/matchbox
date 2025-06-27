@@ -3,6 +3,7 @@
 import datetime
 import json
 import logging
+import os
 from functools import cached_property
 from importlib.metadata import version
 from typing import Any, Final, Literal
@@ -121,10 +122,14 @@ class ASIMFormatter(logging.Formatter):
                 "EventOriginalSeverity": record.levelname,
                 "EventSchema": "ProcessEvent",
                 "EventSchemaVersion": "0.1.4",
-                "EventVendor": "Matchbox",
-                "EventProduct": "Matchbox",
+                "EventVendor": "AWS",
+                "EventProduct": "VPC",
                 "AdditionalFields": {
-                    "MatchboxVersion": self.matchbox_version,
+                    "dd.version": self.matchbox_version,
+                    "dd.env": os.getenv("DD_ENV"),
+                    "dd.service": os.getenv("DD_SERVICE"),
+                    "dd.team": "matchbox",
+                    "dd.application": "matchbox",
                 },
             }
         )

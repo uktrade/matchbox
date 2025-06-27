@@ -131,5 +131,5 @@ class ASIMFormatter(logging.Formatter):
                     "dd.team": "matchbox",
                     "dd.application": "matchbox",
                 },
-            }
+            },
         )

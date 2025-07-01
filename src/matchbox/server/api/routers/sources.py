@@ -22,7 +22,7 @@ from matchbox.common.sources import SourceConfig
 from matchbox.server.api.dependencies import (
     BackendDependency,
     MetadataStoreDependency,
-    validate_api_key,
+    validate_jwt,
 )
 
 router = APIRouter(prefix="/sources", tags=["sources"])
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(validate_api_key)],
+    dependencies=[Depends(validate_jwt)],
 )
 async def add_source(
     metadata_store: MetadataStoreDependency, source: SourceConfig

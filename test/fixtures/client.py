@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from matchbox.client._settings import settings as client_settings
+from matchbox.common.jwt import generate_json_web_token
 from matchbox.server import app
 from matchbox.server.api.dependencies import backend, settings
 
@@ -44,6 +45,10 @@ def test_client() -> Generator[TestClient, None, None]:
         app.dependency_overrides[backend] = lambda: mock_backend
         app.dependency_overrides[settings] = lambda: mock_settings
 
-        yield TestClient(app, headers={"X-API-Key": "test-api-key"})
+        token = generate_json_web_token(
+            sub="test.user@email.com",
+            private_key=mock_settings.api_key.get_secret_value(),
+        )
+        yield TestClient(app, headers={"Authorization": token})
 
         app.dependency_overrides.clear()

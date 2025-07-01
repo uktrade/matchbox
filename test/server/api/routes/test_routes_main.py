@@ -3,6 +3,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, Mock, call, patch
 
+import jwt
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -511,14 +512,16 @@ def test_api_key_authorisation(test_client: TestClient):
     ]
 
     # Incorrect API Key Value
-    test_client.headers["X-API-Key"] = "incorrect-api-key"
+    test_client.headers["Authorization"] = jwt.encode(
+        {}, "incorrect-api-key", algorithm="HS256"
+    )
     for method, url in routes:
         response = method(url)
         assert response.status_code == 401
-        assert response.content == b'"API Key invalid."'
+        assert response.content == b'"JWT invalid."'
 
     # Missing API Key Value
-    test_client.headers.pop("X-API-Key")
+    test_client.headers.pop("Authorization")
     for method, url in routes:
         response = method(url)
         assert response.status_code == 403

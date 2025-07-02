@@ -18,6 +18,7 @@ from matchbox.common.dtos import (
     ResolutionName,
     SourceResolutionName,
 )
+from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.logging import LogLevelType
 from matchbox.common.sources import Match, SourceConfig
@@ -483,5 +484,51 @@ class MatchboxDBAdapter(ABC):
         Args:
             name: The name of the resolution to delete.
             certain: Whether to delete the model without confirmation.
+        """
+        ...
+
+    @abstractmethod
+    def login(self, user_name: str) -> int:
+        """Receives a user name and returns user ID."""
+
+    @abstractmethod
+    def insert_judgement(judgement: Judgement) -> None:
+        """Adds an evaluation judgement to the database.
+
+        Args:
+            judgement: representation of the proposed clusters.
+        """
+        ...
+
+    @abstractmethod
+    def get_judgements(self) -> Table:
+        """Retrieves all evaluation judgements.
+
+        Returns:
+            A PyArrow table with the clusters implied by the judgements.
+        """
+        ...
+
+    @abstractmethod
+    def compare_models(self, resolutions: list[ModelResolutionName]) -> ModelComparison:
+        """Compare metrics of models based on evaluation data.
+
+        Args:
+            resolutions: List of names of model resolutions to be compared.
+
+        Returns:
+            A model comparison object, listing metrics for each model.
+        """
+        ...
+
+    @abstractmethod
+    def sample_one(self, resolution: ModelResolutionName) -> Table:
+        """Sample a cluster to validate.
+
+        Args:
+            resolution: Name of resolution from which to sample
+
+        Returns:
+            An Arrow table with the same schema as returned by `query()`
         """
         ...

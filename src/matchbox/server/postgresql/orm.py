@@ -9,6 +9,7 @@ from sqlalchemy import (
     SMALLINT,
     CheckConstraint,
     Column,
+    DateTime,
     ForeignKey,
     Identity,
     Index,
@@ -545,9 +546,41 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
         ),
         viewonly=True,
     )
+    judgements = relationship("EvalJudgements", back_populates="proposes")
 
     # Constraints and indices
     __table_args__ = (UniqueConstraint("cluster_hash", name="clusters_hash_key"),)
+
+
+class Users(CountMixin, MBDB.MatchboxBase):
+    """Table of identities of human validators."""
+
+    __tablename__ = "users"
+
+    # Columns
+    user_id = Column(BIGINT, primary_key=True)
+    name = Column(TEXT, nullable=False)
+
+    judgements = relationship("EvalJudgements", back_populates="user")
+
+
+class EvalJudgements(CountMixin, MBDB.MatchboxBase):
+    """Table of evaluation judgements produced by human validators."""
+
+    __tablename__ = "eval_judgements"
+
+    # Columns
+    user_id = Column(
+        BIGINT, ForeignKey("users.user_id", ondelete="CASCADE"), primary_key=True
+    )
+    cluster_id = Column(
+        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
+    )
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+
+    # Relationships
+    user = relationship("Users", back_populates="judgements")
+    proposes = relationship("Clusters", back_populates="judgements")
 
 
 class Probabilities(CountMixin, MBDB.MatchboxBase):

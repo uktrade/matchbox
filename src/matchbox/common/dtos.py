@@ -26,6 +26,18 @@ class OKMessage(BaseModel):
     version: str = Field(default_factory=lambda: version("matchbox-db"))
 
 
+class LoginAttempt(BaseModel):
+    """Request for log in process."""
+
+    user_name: str
+
+
+class LoginResult(BaseModel):
+    """Response from log in process."""
+
+    user_id: int
+
+
 class BackendCountableType(StrEnum):
     """Enumeration of supported backend countable types."""
 
@@ -50,6 +62,13 @@ class BackendRetrievableType(StrEnum):
 
     SOURCE = "source"
     RESOLUTION = "resolution"
+
+
+class BackendUnprocessableType(StrEnum):
+    """Enumeration of entity types processed indirectly by the backend."""
+
+    CLUSTERS = "clusters"
+    USERS = "users"
 
 
 class BackendUploadType(StrEnum):
@@ -249,6 +268,13 @@ class NotFoundError(BaseModel):
 
     details: str
     entity: BackendRetrievableType
+
+
+class UnprocessableError(BaseModel):
+    """APIerror for a 422 status code."""
+
+    details: str
+    entity: BackendUnprocessableType
 
 
 class DataTypes(StrEnum):

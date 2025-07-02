@@ -26,6 +26,15 @@ SCHEMA_RESULTS: Final[pa.Schema] = pa.schema(
 """Data transfer schema for the results of a deduplication or linking process."""
 
 
+SCHEMA_JUDGEMENTS: Final[pa.Schema] = pa.schema(
+    [
+        ("user_id", pa.uint64()),
+        ("parent", pa.uint64()),
+        ("child", pa.uint64()),
+    ]
+)
+
+
 def table_to_buffer(table: pa.Table) -> BytesIO:
     """Converts an Arrow table to a BytesIO buffer."""
     sink = BytesIO()

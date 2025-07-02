@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
 from matchbox.common.dtos import (
     BackendRetrievableType,
+    LoginAttempt,
+    LoginResult,
     OKMessage,
     UploadStatus,
 )
@@ -44,6 +46,20 @@ def test_healthcheck(test_client: TestClient):
     response = OKMessage.model_validate(response.json())
     assert response.status == "OK"
     assert response.version == version("matchbox-db")
+
+
+def test_login(test_client: TestClient):
+    """Test the login endpoint."""
+    mock_backend = Mock()
+    mock_backend.login = Mock(return_value=1)
+
+    response = test_client.post(
+        "/login", json=LoginAttempt(user_name="alice").model_dump()
+    )
+
+    assert response.status_code == 200
+    response = LoginResult.model_validate(response.json())
+    assert response.user_id == 1
 
 
 @patch("matchbox.server.api.main.BackgroundTasks.add_task")

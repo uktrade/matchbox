@@ -21,6 +21,8 @@ from matchbox.common.dtos import (
     BackendRetrievableType,
     BackendUploadType,
     CountResult,
+    LoginAttempt,
+    LoginResult,
     NotFoundError,
     OKMessage,
     ResolutionName,
@@ -44,7 +46,7 @@ from matchbox.server.api.dependencies import (
     lifespan,
     validate_api_key,
 )
-from matchbox.server.api.routers import models, resolutions, sources
+from matchbox.server.api.routers import eval, models, resolutions, sources
 
 app = FastAPI(
     title="matchbox API",
@@ -54,6 +56,7 @@ app = FastAPI(
 app.include_router(models.router)
 app.include_router(sources.router)
 app.include_router(resolutions.router)
+app.include_router(eval.router)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -69,6 +72,17 @@ async def http_exception_handler(request, exc):
 async def healthcheck() -> OKMessage:
     """Perform a health check and return the status."""
     return OKMessage()
+
+
+@app.post(
+    "/login",
+)
+async def login(
+    backend: BackendDependency,
+    credentials: LoginAttempt,
+) -> LoginResult:
+    """Receives a user name and returns a user ID."""
+    return LoginResult(user_id=backend.login(credentials.user_name))
 
 
 @app.post(

@@ -183,6 +183,11 @@ class DisjointSet(Generic[T]):
         return list(components.values())
 
 
+def hash_cluster_leaves(leaves: list[bytes]) -> bytes:
+    """Canonical method to convert list of cluster IDs to their combined hash."""
+    return HASH_FUNC(b"|".join(leaf for leaf in sorted(leaves))).digest()
+
+
 class Cluster:
     """A cluster of connected components.
 
@@ -232,7 +237,7 @@ class Cluster:
         elif self.leaves is None:
             raise ValueError("Leaf nodes must have hash specified")
         else:
-            self.hash = HASH_FUNC(b"|".join(leaf.hash for leaf in self.leaves)).digest()
+            self.hash = hash_cluster_leaves([leaf.hash for leaf in self.leaves])
 
         # Set ID - use provided ID or calculate
         if id is not None:

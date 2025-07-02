@@ -8,6 +8,7 @@ from sqlalchemy import Engine
 
 from matchbox.common.arrow import SCHEMA_MB_IDS
 from matchbox.common.dtos import ModelAncestor, ModelConfig, ModelType
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
     MatchboxResolutionAlreadyExists,
@@ -901,3 +902,59 @@ class TestMatchboxBackend:
 
             # Verify counts still match
             assert get_counts() == pre_dump_counts
+
+    def test_login(self):
+        """Can swap user name with user ID."""
+        with self.scenario(self.backend, "bare"):
+            alice_id = self.backend.login("alice")
+            assert alice_id == self.backend.login("alice")
+            assert alice_id != self.backend.login("bob")
+
+    def test_insert_judgement(self):
+        """Can insert judgements."""
+        with self.scenario(self.backend, "dedupe"):
+            # Do some queries to find real source cluster IDs
+            deduped_query = pl.from_arrow(
+                self.backend.query(source="crn", resolution="naive_test.crn")
+            )
+            unique_ids = deduped_query["id"].unique()
+            all_leaves = pl.from_arrow(self.backend.query(source="crn"))
+
+            def get_leaf_ids(cluster_id: int) -> list[int]:
+                keys = deduped_query.filter(pl.col("id") == cluster_id)["key"].to_list()
+                return all_leaves.filter(pl.col("key").is_in(keys))["id"].to_list()
+
+            cluster_one_leaf_ids, cluster_two_leaf_ids = (
+                get_leaf_ids(unique_ids[0]),
+                get_leaf_ids(unique_ids[1]),
+            )
+
+            # The first cluster exists, the second and third are new
+            judgement_clusters = [
+                cluster_one_leaf_ids,
+                cluster_two_leaf_ids[:1],
+                cluster_two_leaf_ids[1:],
+            ]
+
+            prev_cluster_num = self.backend.clusters.count()
+            self.backend.insert_judgement(
+                judgement=Judgement(
+                    user_id=self.backend.login("alice"),
+                    clusters=judgement_clusters,
+                ),
+            )
+            assert self.backend.clusters.count() == prev_cluster_num + 2
+
+            # Now, let's check failures instead
+            # Confirm that the following leaves don't exist
+            fake_leaves = [10000, 10001]
+            with pytest.raises(MatchboxDataNotFound):
+                self.backend.validate_ids(fake_leaves)
+
+            with pytest.raises(MatchboxDataNotFound):
+                self.backend.insert_judgement(
+                    judgement=Judgement(
+                        user_id=self.backend.login("alice"),
+                        clusters=[fake_leaves],
+                    ),
+                )

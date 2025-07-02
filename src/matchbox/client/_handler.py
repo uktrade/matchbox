@@ -14,6 +14,8 @@ from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
 from matchbox.common.dtos import (
     BackendCountableType,
     BackendRetrievableType,
+    LoginAttempt,
+    LoginResult,
     ModelAncestor,
     ModelConfig,
     ModelResolutionName,
@@ -23,6 +25,7 @@ from matchbox.common.dtos import (
     SourceResolutionName,
     UploadStatus,
 )
+from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.exceptions import (
     MatchboxClientFileError,
     MatchboxDeletionNotConfirmed,
@@ -93,7 +96,9 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
     if res.status_code == 422:
         raise MatchboxUnparsedClientRequest(res.content)
 
-    raise MatchboxUnhandledServerResponse(res.content)
+    raise MatchboxUnhandledServerResponse(
+        details=res.content, http_status=res.status_code
+    )
 
 
 def create_client(settings: ClientSettings) -> httpx.Client:
@@ -115,6 +120,14 @@ def create_headers(settings: ClientSettings) -> dict[str, str]:
 
 
 CLIENT = create_client(settings=settings)
+
+
+def login(user_name: str) -> int:
+    logger.debug(f"Log in attempt for {user_name}")
+    response = CLIENT.post(
+        "/login", json=LoginAttempt(user_name=user_name).model_dump()
+    )
+    return LoginResult.model_validate(response.json()).user_id
 
 
 # Retrieval
@@ -389,6 +402,46 @@ def delete_resolution(
 
     res = CLIENT.delete(f"/resolutions/{name}", params={"certain": certain})
     return ResolutionOperationStatus.model_validate(res.json())
+
+
+# Evaluation
+
+
+def sample_one(user_id: int, resolution: ModelResolutionName) -> Table:
+    return Table.from_pylist(
+        [
+            {"id": 1, "company_name": "Pippo pluto PLC", "region": "England"},
+            {
+                "id": 2,
+                "company_name": "Pippo pluto e paperino UK LTD",
+                "region": "England",
+            },
+            {"id": 3, "company_name": "Pippo pluto e paperino", "region": "Devon"},
+        ]
+    )
+
+
+def compare_models(resolutions: list[ModelResolutionName]) -> ModelComparison:
+    res = CLIENT.get("/eval/compare", params=url_params({"resolutions": resolutions}))
+    return res.json()
+
+
+def send_eval_judgement(judgement: Judgement) -> None:
+    logger.debug(f"Posting {judgement.clusters} for {judgement.user_id}")
+    CLIENT.post("/eval/", json=judgement.model_dump())
+
+
+def download_eval_data() -> Table:
+    return Table.from_pylist(
+        [
+            {"parent": 1, "leaf": None},
+            {"parent": 2, "leaf": None},
+            {"parent": 3, "leaf": None},
+            {"parent": 4, "leaf": 5},
+            {"parent": 4, "leaf": 6},
+            {"parent": 4, "leaf": 7},
+        ]
+    )
 
 
 # Admin

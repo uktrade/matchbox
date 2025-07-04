@@ -82,6 +82,9 @@ build-backend = "setuptools.build_meta"
 default-groups = ["dev", "typing"]
 package = true
 upgrade-package = ["ruff"]
+constraint-dependencies = [
+    "urllib3>=2.5.0"
+]
 
 [tool.ruff]
 exclude = [

@@ -1,6 +1,7 @@
 # Build and run all containers
 build *DOCKER_ARGS:
-    MB_VERSION=$(uv run --frozen python -m setuptools_scm) docker compose up --build {{DOCKER_ARGS}}
+    MB_VERSION=$(uv run --frozen python -m setuptools_scm) \
+    docker compose --env-file=environments/server.env up --build {{DOCKER_ARGS}}
 
 # Delete all compiled Python files
 clean:

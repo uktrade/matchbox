@@ -6,8 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from matchbox.client._jwt import generate_json_web_token
 from matchbox.client._settings import settings as client_settings
-from matchbox.common.jwt import generate_json_web_token
 from matchbox.server import app
 from matchbox.server.api.dependencies import backend, settings
 

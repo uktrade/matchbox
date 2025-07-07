@@ -2,7 +2,6 @@
 
 import logging
 import sys
-import time
 from contextlib import asynccontextmanager
 from typing import Annotated, AsyncGenerator, Generator
 
@@ -16,9 +15,8 @@ from fastapi import (
 )
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
-from jwt.exceptions import InvalidSignatureError
+from jwt.exceptions import ExpiredSignatureError, InvalidSignatureError
 
-from matchbox.common.jwt import generate_json_web_token
 from matchbox.common.logging import ASIMFormatter
 from matchbox.server.api.cache import MetadataStore
 from matchbox.server.base import (
@@ -135,7 +133,7 @@ def validate_jwt(
         )
 
     try:
-        payload = jwt.decode(
+        jwt.decode(
             client_token, settings.api_key.get_secret_value(), algorithms=ALGORITHM
         )
     except InvalidSignatureError as e:
@@ -144,21 +142,9 @@ def validate_jwt(
             detail="JWT invalid.",
             headers={"WWW-Authenticate": "Authorization"},
         ) from e
-
-    if payload["exp"] < time.time():
+    except ExpiredSignatureError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="JWT expired.",
             headers={"WWW-Authenticate": "Authorization"},
-        )
-
-    if client_token != generate_json_web_token(
-        sub=payload["sub"],
-        private_key=settings.api_key.get_secret_value(),
-        exp=payload["exp"],
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT invalid.",
-            headers={"WWW-Authenticate": "Authorization"},
-        )
+        ) from e

@@ -158,7 +158,7 @@ def query(
 
 
 def match(
-    target: list[SourceResolutionName],
+    targets: list[SourceResolutionName],
     source: SourceResolutionName,
     key: str,
     resolution: ResolutionName,
@@ -167,7 +167,7 @@ def match(
     """Match a source against a list of targets."""
     log_prefix = f"Query {source}"
     logger.debug(
-        f"{key} to {', '.join(target)} using {resolution}",
+        f"{key} to {', '.join(targets)} using {resolution}",
         prefix=log_prefix,
     )
 
@@ -175,7 +175,7 @@ def match(
         "/match",
         params=url_params(
             {
-                "target": target,
+                "targets": targets,
                 "source": source,
                 "key": key,
                 "resolution": resolution,

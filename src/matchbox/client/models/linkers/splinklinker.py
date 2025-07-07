@@ -242,7 +242,6 @@ class SplinkLinker(Linker):
                     "match_probability",
                 ]
             )
-            .unique()
             .with_columns(
                 [
                     pl.col(f"{self.settings.left_id}_l")
@@ -255,5 +254,8 @@ class SplinkLinker(Linker):
                 ]
             )
             .select(["left_id", "right_id", "probability"])
+            # Mutiple blocking rules can lead to multiple matches
+            .group_by(["left_id", "right_id"])
+            .agg(pl.col("probability").max())
             .collect()
         )

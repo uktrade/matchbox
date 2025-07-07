@@ -1,17 +1,14 @@
 """Functions to transform data between tabular and graph structures."""
 
-import multiprocessing
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
-from typing import Callable, Generic, Hashable, Iterable, TypeVar
+from typing import Any, Callable, Generic, Hashable, Iterable, Self, TypeVar
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import rustworkx as rx
 
-from matchbox.common.hash import hash_values
-from matchbox.common.logging import build_progress_bar, logger
+from matchbox.common.hash import HASH_FUNC, IntMap, hash_values
 
 T = TypeVar("T", bound=Hashable)
 
@@ -131,37 +128,6 @@ def graph_results(
     return graph, left_indices, right_indices
 
 
-def attach_components_to_probabilities(probabilities: pa.Table) -> pa.Table:
-    """Takes an Arrow table of probabilities and adds a component column.
-
-    Expects an Arrow table of column left_id, right_id, probability.
-
-    Returns a table with an additional column, component.
-    """
-    # Handle empty probabilities
-    if len(probabilities) == 0:
-        empty_components = pa.array([], type=pa.int64())
-        return probabilities.append_column("component", empty_components)
-
-    graph, left_indices, _ = graph_results(probabilities)
-    components = rx.connected_components(graph)
-
-    # Convert components to arrays, map back to input to join, and reattach
-    component_indices = np.concatenate([np.array(list(c)) for c in components])
-    component_labels = np.repeat(
-        np.arange(len(components)), [len(c) for c in components]
-    )
-
-    node_to_component = np.zeros(graph.num_nodes(), dtype=np.int64)
-    node_to_component[component_indices] = component_labels
-
-    edge_components = pa.array(node_to_component[left_indices])
-
-    return probabilities.append_column("component", edge_components).sort_by(
-        [("component", "ascending"), ("probability", "descending")]
-    )
-
-
 class DisjointSet(Generic[T]):
     """Disjoint set forest with "path compression" and "union by rank" heuristics.
 
@@ -217,190 +183,115 @@ class DisjointSet(Generic[T]):
         return list(components.values())
 
 
-def component_to_hierarchy(
-    table: pa.Table,
-    dtype: pa.DataType = pa.large_binary,
-    hash_func: Callable[[*tuple[T, ...]], T] = hash_values,
-) -> pa.Table:
-    """Convert pairwise probabilities into a hierarchical representation.
+class Cluster:
+    """A cluster of connected components.
 
-    Assumes data is pre-sorted by probability descending.
+    Can be a source cluster (a single data point) or a model cluster (a cluster of
+    clusters). The hash of a cluster is the hash of its source clusters -- its leaves.
 
-    Args:
-        table: Arrow Table with columns ['left', 'right', 'probability']
-        dtype: Arrow data type for the parent and child columns
-        hash_func: Function to hash the parent and child values
-
-    Returns:
-        Arrow Table with columns ['parent', 'child', 'probability']
+    We generate negative integers for IDs, allowing us to generate a true ID with
+    the database after we've calculated components using these objects.
     """
-    probs = pc.unique(table["probability"]).sort(order="descending")
 
-    djs = DisjointSet[int]()  # implements connected components
-    current_roots: dict[int, set[int]] = defaultdict(set)  # tracks ultimate parents
-    hierarchy: list[tuple[int, int, float]] = []  # the output of this function
-    seen_components: set[frozenset[int]] = set()  # track previously seen component sets
+    id: int
+    probability: int | None
+    hash: bytes
+    leaves: tuple["Cluster"] | None
 
-    table_by_p = defaultdict(list)
-    for batch in table.to_batches():
-        d = batch.to_pydict()
-        for left, right, p in zip(
-            d["left_id"], d["right_id"], d["probability"], strict=False
-        ):
-            table_by_p[p].append([left, right])
+    _intmap: IntMap  # Reference to the IntMap singleton
 
-    for threshold in probs.to_numpy():
-        for left, right in table_by_p[threshold]:
-            djs.union(left, right)
-            parent = hash_func(left, right)
-            hierarchy.extend([(parent, left, threshold), (parent, right, threshold)])
-            current_roots[left].add(parent)
-            current_roots[right].add(parent)
+    def __init__(
+        self,
+        intmap: IntMap,
+        probability: int | None = None,
+        leaves: tuple["Cluster"] | list["Cluster"] | None = None,
+        id: int | None = None,
+        hash: bytes | None = None,
+    ):
+        """Initialise the Cluster.
 
-        for children in djs.get_components():
-            if len(children) <= 2:
-                continue  # Skip pairs already handled by pairwise probabilities
+        Args:
+            intmap: An IntMap instance for generating unique IDs
+            probability: probability of the cluster from its resolution, or None if
+                source
+            leaves: A list of Cluster objects that are the leaves of this cluster
+            id: The ID of the cluster (only for leaf nodes)
+            hash: The hash of the cluster (only for leaf nodes)
+        """
+        self._intmap = intmap
+        self.probability = probability
 
-            # Skip if we've seen this exact component before
-            frozen_children = frozenset(children)
-            if frozen_children in seen_components:
-                continue
-
-            seen_components.add(frozen_children)
-
-            parent = hash_func(*children)
-            prev_roots: set[int] = set()
-            for child in children:
-                prev_roots.update(current_roots[child])
-                current_roots[child] = {parent}
-
-            for r in prev_roots:
-                hierarchy.append((parent, r, threshold))
-
-    parents, children, probs = zip(*hierarchy, strict=True)
-    return pa.table(
-        {
-            "parent": pa.array(parents, type=dtype()),
-            "child": pa.array(children, type=dtype()),
-            "probability": pa.array(probs, type=pa.uint8()),
-        }
-    )
-
-
-def to_hierarchical_clusters(
-    probabilities: pa.Table,
-    proc_func: Callable[[pa.Table, pa.DataType], pa.Table] = component_to_hierarchy,
-    hash_func: Callable[[*tuple[T, ...]], T] = hash_values,
-    dtype: pa.DataType = pa.large_binary,
-    parallel: bool = True,
-    timeout: int = 300,
-    min_rows_per_worker: int = 1000,
-) -> pa.Table:
-    """Converts a table of pairwise probabilities into a table of hierarchical clusters.
-
-    Args:
-        probabilities: Arrow table with columns ['component', 'left', 'right',
-            'probability']
-        proc_func: Function to process each component
-        hash_func: Function to hash the parent and child values
-        dtype: Arrow data type for the parent and child columns
-        parallel: Whether to work on separate connected components in parallel
-        timeout: Maximum seconds to wait for each worker to finish processing.
-            Ignored if parallel==False
-        min_rows_per_worker: Minimum number of rows to pass to each worker.
-            Ignored if parallel==False
-
-    Returns:
-        Arrow table with columns ['parent', 'child', 'probability']
-    """
-    # Handle empty probabilities
-    if len(probabilities) == 0:
-        return pa.table(
-            {
-                "parent": pa.array([], type=dtype()),
-                "child": pa.array([], type=dtype()),
-                "probability": pa.array([], type=pa.uint8()),
-            }
-        )
-
-    probabilities = probabilities.sort_by([("component", "ascending")])
-    components = pc.unique(probabilities["component"])
-    n_cores = multiprocessing.cpu_count()
-    n_components = len(components)
-
-    logger.info(f"Processing {n_components:,} components using {n_cores} workers")
-
-    # Split table into separate component tables
-    component_col = probabilities["component"]
-    indices = []
-    start_idx = 0
-
-    with build_progress_bar() as progress:
-        split_task = progress.add_task(
-            "[cyan]Splitting tables...", total=len(component_col)
-        )
-
-        for i in range(1, len(component_col)):
-            if (component_col[i] != component_col[i - 1]) and (
-                (i - start_idx) >= min_rows_per_worker
-            ):
-                indices.append((start_idx, i))
-                start_idx = i
-            progress.update(split_task, advance=1)
-
-        indices.append((start_idx, len(component_col)))
-        progress.update(split_task, completed=len(component_col))
-
-    component_tables = []
-    for start, end in indices:
-        idx_array = pa.array(range(start, end))
-        component_tables.append(probabilities.take(idx_array))
-
-    # Process components in parallel
-    results = []
-    with build_progress_bar() as progress:
-        process_task = progress.add_task(
-            "[green]Processing components...", total=len(component_tables)
-        )
-        if parallel:
-            with ProcessPoolExecutor(max_workers=n_cores) as executor:
-                futures = [
-                    executor.submit(
-                        proc_func, component_table, hash_func=hash_func, dtype=dtype
-                    )
-                    for component_table in component_tables
-                ]
-                for future in futures:
-                    try:
-                        result = future.result(timeout=timeout)
-                        results.append(result)
-                        progress.update(process_task, advance=1)
-                    except TimeoutError:
-                        logger.error(
-                            f"Component processing timed out after {timeout} seconds"
-                        )
-                        raise
-                    except Exception as e:
-                        logger.error(f"Error processing component: {str(e)}")
-                        raise
+        if leaves:
+            self.leaves = tuple(sorted(leaves, key=lambda leaf: leaf.hash))
         else:
-            results = [
-                proc_func(component_table, hash_func=hash_func, dtype=dtype)
-                for component_table in component_tables
-                if not progress.update(process_task, advance=1)
-            ]
+            self.leaves = None
 
-    logger.info(f"Completed processing {len(results):,} components successfully")
+        # Set hash - use provided hash or calculate
+        if hash is not None:
+            self.hash = hash
+        elif self.leaves is None:
+            raise ValueError("Leaf nodes must have hash specified")
+        else:
+            self.hash = HASH_FUNC(b"|".join(leaf.hash for leaf in self.leaves)).digest()
 
-    # Create empty table if no results
-    if not results:
-        logger.warning("No results to concatenate")
-        return pa.table(
-            {
-                "parent": pa.array([], type=dtype()),
-                "child": pa.array([], type=dtype()),
-                "probability": pa.array([], type=pa.uint8()),
-            }
+        # Set ID - use provided ID or calculate
+        if id is not None:
+            self.id = id
+        elif self.leaves is None:
+            raise ValueError("Leaf nodes must have id specified")
+        else:
+            self.id = intmap.index(leaf.id for leaf in self.leaves)
+
+    def __hash__(self) -> int:
+        """Return a hash of the cluster based on its hash bytes."""
+        return hash(self.hash)
+
+    def __eq__(self, other: Any) -> bool:
+        """Check equality of two Cluster objects based on their hash."""
+        if not isinstance(other, Cluster):
+            return False
+        return self.hash == other.hash
+
+    @classmethod
+    def combine(
+        cls: type[Self],
+        clusters: Iterable["Cluster"],
+        probability: int | None = None,
+    ) -> "Cluster":
+        """Efficiently combine multiple clusters at once.
+
+        Args:
+            clusters: An iterable of Cluster objects to combine
+            probability: the probability of the cluster from its resolution
+
+        Returns:
+            A new Cluster containing all unique leaves from the input clusters
+        """
+        clusters = list(clusters)
+        if len(clusters) == 1:
+            new_probability = (
+                clusters[0].probability if probability is None else probability
+            )
+            return cls(
+                intmap=clusters[0]._intmap,
+                probability=new_probability,
+                leaves=clusters[0].leaves,
+                id=clusters[0].id,
+                hash=clusters[0].hash,
+            )
+
+        intmap = clusters[0]._intmap
+        unique_dict: dict[int, Cluster] = {}
+
+        for cluster in clusters:
+            if cluster.leaves is None:
+                unique_dict[id(cluster)] = cluster
+            else:
+                for leaf in cluster.leaves:
+                    unique_dict[id(leaf)] = leaf
+
+        return cls(
+            intmap=intmap,
+            probability=probability,
+            leaves=list(unique_dict.values()),
         )
-
-    return pa.concat_tables(results)

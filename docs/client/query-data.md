@@ -23,9 +23,9 @@ Given a key and a source, retrieves all keys that share its cluster in both the 
     [
         {
             "cluster": 2354,
-            "source": "dbt.companieshouse",
+            "source": "companieshouse",
             "source_id": ["8534735", "8534736"],
-            "target": "hmrc.exporters",
+            "target": "datahub_companies",
             "target_id": ["EXP123", "EXP124"]
         }
     ]

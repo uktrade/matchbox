@@ -6,6 +6,7 @@ from pyarrow import Table
 from pydantic import BaseModel
 from sqlalchemy import and_, bindparam, delete, func, or_, select
 
+from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     ModelAncestor,
     ModelConfig,
@@ -36,16 +37,22 @@ from matchbox.server.postgresql.orm import (
     Probabilities,
     ResolutionFrom,
     Resolutions,
+    Results,
     SourceConfigs,
 )
-from matchbox.server.postgresql.utils.db import dump, get_resolution_graph, restore
+from matchbox.server.postgresql.utils.db import (
+    compile_sql,
+    dump,
+    get_resolution_graph,
+    restore,
+)
 from matchbox.server.postgresql.utils.insert import (
     insert_model,
     insert_results,
     insert_source,
 )
 from matchbox.server.postgresql.utils.query import get_source_config, match, query
-from matchbox.server.postgresql.utils.results import get_model_config, get_model_results
+from matchbox.server.postgresql.utils.results import get_model_config
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -77,7 +84,7 @@ class FilteredClusters(BaseModel):
                 else:
                     query = query.join(
                         Probabilities,
-                        Probabilities.cluster == Clusters.cluster_id,
+                        Probabilities.cluster_id == Clusters.cluster_id,
                     )
 
             return query.scalar()
@@ -95,7 +102,8 @@ class FilteredProbabilities(BaseModel):
 
             if self.over_truth:
                 query = query.join(
-                    Resolutions, Probabilities.resolution == Resolutions.resolution_id
+                    Resolutions,
+                    Probabilities.resolution_id == Resolutions.resolution_id,
                 ).filter(
                     and_(
                         Resolutions.truth.isnot(None),
@@ -408,8 +416,21 @@ class MatchboxPostgres(MatchboxDBAdapter):
         )
 
     def get_model_results(self, name: ModelResolutionName) -> Table:  # noqa: D102
-        resolution = Resolutions.from_name(name=name, res_type="model")
-        return get_model_results(resolution=resolution)
+        results_query = (
+            select(Results.left_id, Results.right_id, Results.probability)
+            .join(
+                Resolutions,
+                Results.resolution_id == Resolutions.resolution_id,
+            )
+            .where(
+                Resolutions.name == name, Resolutions.type == ResolutionNodeType.MODEL
+            )
+        )
+        with MBDB.get_adbc_connection() as conn:
+            stmt: str = compile_sql(results_query)
+            return sql_to_df(
+                stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
+            )
 
     def set_model_truth(self, name: ModelResolutionName, truth: int) -> None:  # noqa: D102
         with MBDB.get_session() as session:

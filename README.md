@@ -1,8 +1,8 @@
 <p align="center">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/matchbox-logo-dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset="docs/assets/matchbox-logo-light.svg">
-      <img alt="Shows the Matchbox logo in light or dark color mode." src="docs/assets/matchbox-logo-light.svg">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/uktrade/matchbox/refs/heads/main/docs/assets/matchbox-logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/uktrade/matchbox/refs/heads/main/docs/assets/matchbox-logo-light.svg">
+      <img alt="Shows the Matchbox logo in light or dark color mode." src="https://raw.githubusercontent.com/uktrade/matchbox/refs/heads/main/docs/assets/matchbox-logo-light.svg">
     </picture>
 </p>
 

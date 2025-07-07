@@ -1,9 +1,11 @@
 """Generic utilities for default cleaning functions."""
 
-from typing import Callable
+from typing import Any, Callable
 
 import duckdb
 import polars as pl
+
+from matchbox.client.helpers.cleaner import cleaners
 
 STOPWORDS = [
     "limited",
@@ -133,3 +135,62 @@ def unnest_renest(function: Callable) -> Callable:
         return duckdb.sql(renest_sql).pl()
 
     return cleaning_method
+
+
+def select_cleaners(*sources: tuple[dict, list[str]]) -> dict[str, dict[str, Any]]:
+    """Select cleaners from one or more (cleaner_dict, keys) pairs.
+
+    Useful for storing a dictionary of cleaning funtions for a particular source,
+    then building them dynamically based on the keys you want to use.
+
+    Examples:
+        ```python
+        from matchbox.client import clean
+        from matchbox.client.dags import LinkStep, StepInput
+        from matchbox.client.helpers.cleaner import cleaner, cleaners
+
+        foo_cleaners = {
+            "company_name": cleaner(
+                clean.company_name,
+                {"column": foo.qualify_field("company_name")},
+            ),
+            "company_number": cleaner(
+                clean.company_number,
+                {"column": foo.qualify_field("company_number")},
+            ),
+        }
+
+        bar_cleaners = {
+            "company_name": cleaner(
+                clean.company_name,
+                {"column": bar.qualify_field("company_name")},
+            ),
+            "postcode": cleaner(
+                clean.postcode,
+                {"column": bar.qualify_field("postcode")},
+            ),
+        }
+
+        my_linker = LinkStep(
+            left=StepInput(
+                select={
+                    foo: ["company_name"],
+                    bar: ["postcode"],
+                },
+                cleaners=select_cleaners(
+                    (foo_cleaners, ["company_name"]),
+                    (bar_cleaners, ["postcode"]),
+                ),
+                ...
+            ),
+            ...
+        )
+        ```
+
+    Returns:
+        Dictionary matching the return type of `cleaners()`
+    """
+    selected = {}
+    for cleaner_dict, keys in sources:
+        selected.update({k: v for k, v in cleaner_dict.items() if k in keys})
+    return cleaners(*selected.values())

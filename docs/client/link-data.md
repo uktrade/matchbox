@@ -2,6 +2,10 @@
 
 Data matching and entity resolution are complex tasks that often require multiple processing steps. Matchbox provides a powerful Directed Acyclic Graph (DAG) framework that allows you to define and run sophisticated matching pipelines with clearly defined dependencies.
 
+!!! tip "DAG steps and resolutions"
+    Once it is run, a step in a DAG corresponds to a resolution in the Matchbox database. Learn more by reading about the tutorial on [exploring resolutions](../client/explore_resolutions.md) or dive deeper by consulting the extended guide to [Matchbox concepts](../server/concepts.md). 
+
+
 This guide walks through creating complete matching pipelines using the Matchbox DAG API, covering everything from [defining data sources](#1-defining-data-sources) to [executing complex multi-step matching processes](#advanced-use-cases). In our examples we'll be referencing publicly available datasets about UK companies, specifically [Companies House data](https://find-and-update.company-information.service.gov.uk), and [UK trade data](https://www.uktradeinfo.com).
 
 ## Understanding DAGs in Matchbox

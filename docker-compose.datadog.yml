@@ -1,0 +1,80 @@
+services:
+  server-api:
+    depends_on:
+      datadog-agent:
+        condition: service_healthy
+        required: false
+    environment:
+      - DD_AGENT_HOST=datadog-agent
+      - DD_ENV=local-${LOCAL_USERNAME:-$(whoami)}
+      - DD_SERVICE=matchbox-server-api
+    labels:
+      my.custom.label.team: 'matchbox'
+      my.custom.label.application: 'matchbox'
+      com.datadoghq.ad.logs: '[{"source": "python"}]'
+  server-postgres:
+    environment:
+      - DD_AGENT_HOST=datadog-agent
+      - DD_ENV=local-${LOCAL_USERNAME:-$(whoami)}
+      - DD_SERVICE=matchbox-server-database
+    labels:
+      my.custom.label.team: 'matchbox'
+      my.custom.label.application: 'matchbox'
+      com.datadoghq.ad.logs: '[{"source": "postgres"}]'
+  datadog-agent:
+    image: public.ecr.aws/datadog/agent:7.66.1
+    env_file:
+      - .datadog.env
+    pid: "host"
+    ports:
+      - "8125:8125/tcp"
+      - "8126:8126/udp"
+    # NOTE: see documentation https://docs.datadoghq.com/universal_service_monitoring/setup/?tab=dockercompose
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /lib/modules:/lib/modules
+      - /usr/src:/usr/src
+      - /var/tmp/datadog-agent/system-probe/build:/var/tmp/datadog-agent/system-probe/build
+      - /var/tmp/datadog-agent/system-probe/kernel-headers:/var/tmp/datadog-agent/system-probe/kernel-headers
+      - /etc/apt:/host/etc/apt
+      - /etc/yum.repos.d:/host/etc/yum.repos.d
+      - /etc/zypp:/host/etc/zypp
+      - /etc/pki:/host/etc/pki
+      - /etc/yum/vars:/host/etc/yum/vars
+      - /etc/dnf/vars:/host/etc/dnf/vars
+      - /etc/rhsm:/host/etc/rhsm
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - SYS_PTRACE
+      - NET_ADMIN
+      - NET_BROADCAST
+      - NET_RAW
+      - IPC_LOCK
+      - CHOWN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - DD_APM_ENABLED=true
+      - DD_APM_NON_LOCAL_TRAFFIC=true
+      - DD_CONTAINER_EXCLUDE='name:server-warehouse name:server-filestorage'
+      - DD_CONTAINER_LABELS_AS_TAGS={"my.custom.label.team":"team", "my.custom.label.application":"application"}
+      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
+      - DD_ENV=local-${LOCAL_USERNAME:-$(whoami)}
+      - DD_HOSTNAME
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+      - DD_LOGS_ENABLED=true
+      - DD_LOG_LEVEL=INFO
+      - DD_PROCESS_AGENT_ENABLED=true
+      - DD_SERVICE=matchbox-datadog-agent
+      - DD_SITE=datadoghq.eu
+      - DD_SYSTEM_PROBE_NETWORK_ENABLED=true
+      - DD_SYSTEM_PROBE_SERVICE_MONITORING_ENABLED=true
+      - HOST_ROOT='/host/root'
+    labels:
+      my.custom.label.team: 'matchbox'
+      my.custom.label.application: 'matchbox'
+      com.datadoghq.ad.logs: '[{"source": "agent"}]'

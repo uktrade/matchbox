@@ -47,7 +47,7 @@ just test
 If you're running tests with some other method, such as your IDE or pytest directly, you'll need to start the local backends and mock warehouse in Docker.
 
 ```shell
-docker compose up -d --wait
+just build -d --wait
 ```
 
 ## Database Migrations for PostgreSQL backend
@@ -61,7 +61,7 @@ Migrations for the PostgreSQL backend are managed by [Alembic](https://alembic.s
 If:
 
 * You have made an alteration to the database through the ORM code, but not yet applied it
-* You have run `docker compose up` to ensure the database container is running
+* You have run `just build` to ensure the database container is running
 
 Then you can verify a migration script would be created (without creating one) with:
 

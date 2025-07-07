@@ -42,7 +42,7 @@ jobs:
 
       - name: Run DBs and API
         run: |
-          docker compose --env-file=environments/server.env up -d --wait
+          docker compose up -d --wait
 
       - name: Run pytest
         run: |

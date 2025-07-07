@@ -22,10 +22,10 @@ def resolution_graph() -> ResolutionGraph:
             ResolutionNode(id=5, name="5", type=ResType.MODEL),
         },
         edges={
-            ResolutionEdge(parent=2, child=1),
-            ResolutionEdge(parent=4, child=3),
-            ResolutionEdge(parent=5, child=2),
-            ResolutionEdge(parent=5, child=4),
+            ResolutionEdge(parent=1, child=3),
+            ResolutionEdge(parent=2, child=5),
+            ResolutionEdge(parent=3, child=4),
+            ResolutionEdge(parent=4, child=5),
         },
     )
 
@@ -40,8 +40,8 @@ def pydigraph() -> PyDiGraph:
     n3 = G.add_node({"id": 3, "name": "3", "type": str(ResType.MODEL)})
     n4 = G.add_node({"id": 4, "name": "4", "type": str(ResType.MODEL)})
     n5 = G.add_node({"id": 5, "name": "5", "type": str(ResType.MODEL)})
-    G.add_edge(n2, n1, {})
-    G.add_edge(n4, n3, {})
-    G.add_edge(n5, n2, {})
-    G.add_edge(n5, n4, {})
+    G.add_edge(n1, n3, {})
+    G.add_edge(n2, n5, {})
+    G.add_edge(n3, n4, {})
+    G.add_edge(n4, n5, {})
     return G

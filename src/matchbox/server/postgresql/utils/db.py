@@ -10,12 +10,13 @@ from typing import Generator
 
 import pyarrow as pa
 from adbc_driver_manager import ProgrammingError as ADBCProgrammingError
+from adbc_driver_postgresql.dbapi import Connection as ADBCConnection
 from pyarrow import Table as ArrowTable
 from sqlalchemy import Column, MetaData, Table, func, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeMeta
+from sqlalchemy.pool import PoolProxiedConnection
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
@@ -197,6 +198,7 @@ def compile_sql(stmt: Select) -> str:
 def _copy_to_table(
     table_name: str,
     schema_name: str,
+    connection: ADBCConnection,
     data: ArrowTable,
     max_chunksize: int | None = None,
 ):
@@ -205,123 +207,50 @@ def _copy_to_table(
         data.schema, data.to_batches(max_chunksize=max_chunksize)
     )
 
-    with MBDB.get_adbc_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.adbc_ingest(
-                table_name=table_name,
-                data=batch_reader,
-                mode="append",
-                db_schema_name=schema_name,
-            )
-            connection.commit()
+    with connection.cursor() as cursor:
+        cursor.adbc_ingest(
+            table_name=table_name,
+            data=batch_reader,
+            mode="append",
+            db_schema_name=schema_name,
+        )
 
 
-def large_ingest(
+def large_append(
     data: pa.Table,
     table_class: DeclarativeMeta,
+    adbc_connection: PoolProxiedConnection,
     max_chunksize: int | None = None,
-    upsert_keys: list[str] | None = None,
-    update_columns: list[str] | None = None,
 ):
     """Append a PyArrow table to a PostgreSQL table using ADBC.
 
-    It will either copy directly (and error if primary key constraints are violated),
-    or it can be run in upsert mode by using a staging table, which is slower.
+    This function does not support upserting and will error if keys clash.
+    This method does not auto-commit, which is the responsibility of the caller.
 
     Args:
         data: A PyArrow table to write.
         table_class: The SQLAlchemy ORM class for the table to write to.
+        adbc_connection: An ADBC connection from the pool.
+            This is returned by MBDB.get_adbc_connection() and needs to be used via a
+            context manager.
         max_chunksize: Size of data chunks to be read and copied.
-        upsert_keys: Columns used as keys for "on conflict do update".
-            If passed, it will run ingest in slower upsert mode.
-            If not passed and `update_columns` is passed, defaults to primary keys.
-        update_columns: Columns to update when upserting.
-            If passed, it will run ingest in slower upsert mode.
-            If not passed and `upsert_keys` is passed, defaults to all other columns.
     """
     table: Table = table_class.__table__
-    metadata = table.metadata
 
     table_columns = [c.name for c in table.columns]
     col_diff = set(data.column_names) - set(table_columns)
     if len(col_diff) > 0:
         raise ValueError(f"Table {table.name} does not have columns {col_diff}")
-
-    if not update_columns and not upsert_keys:
-        try:
-            _copy_to_table(
-                table_name=table.name,
-                schema_name=table.schema,
-                data=data,
-                max_chunksize=max_chunksize,
-            )
-        except ADBCProgrammingError as e:
-            raise MatchboxDatabaseWriteError from e
-
-    # Upsert mode (slower)
-    else:
-        keys_names = [c.name for c in table.primary_key.columns]
-
-        # Validate upsert arguments
-        if len(set(update_columns or []) & set(upsert_keys or [])) > 0:
-            raise ValueError("Cannot update a custom upsert key")
-
-        if len(set(update_columns or []) & set(keys_names)) > 0:
-            raise ValueError(
-                "Cannot update a primary key without "
-                "setting a different custom upsert key"
-            )
-
-        # If necessary, set defaults for upsert variables
-        upsert_keys = upsert_keys or keys_names
-
-        if not update_columns:
-            update_columns = [c for c in table_columns if c not in upsert_keys]
-
-        # Create temp table
-        temp_table_name = f"{table.name}_tmp_{uuid.uuid4().hex}"
-        temp_cols = [
-            Column(c.name, c.type, primary_key=c.primary_key) for c in table.columns
-        ]
-        temp_table = Table(temp_table_name, metadata, *temp_cols)
-
-        try:
-            with MBDB.get_session() as session:
-                temp_table.create(session.bind)
-                session.commit()
-
-            # Add new records to temp table
-            _copy_to_table(
-                table_name=temp_table_name,
-                schema_name=table.schema,
-                data=data,
-                max_chunksize=max_chunksize,
-            )
-
-            # Copy new records to original table
-            with MBDB.get_session() as session:
-                insert_stmt = insert(table).from_select(
-                    [c.name for c in temp_table.columns], temp_table.select()
-                )
-                upsert_stmt = insert_stmt.on_conflict_do_update(
-                    index_elements=upsert_keys,
-                    set_={c: getattr(insert_stmt.excluded, c) for c in update_columns},
-                )
-
-                session.execute(upsert_stmt)
-                session.commit()
-
-        except (ADBCProgrammingError, IntegrityError) as e:
-            raise MatchboxDatabaseWriteError from e
-
-        finally:
-            # Drop temp table - use a fresh session to ensure clean state
-            try:
-                with MBDB.get_session() as cleanup_session:
-                    temp_table.drop(cleanup_session.bind, checkfirst=True)
-                    cleanup_session.commit()
-            except Exception as e:
-                logger.warning(f"Failed to drop temp table {temp_table_name}: {e}")
+    try:
+        _copy_to_table(
+            table_name=table.name,
+            schema_name=table.schema,
+            connection=adbc_connection,
+            data=data,
+            max_chunksize=max_chunksize,
+        )
+    except ADBCProgrammingError as e:
+        raise MatchboxDatabaseWriteError from e
 
 
 @contextlib.contextmanager
@@ -366,12 +295,15 @@ def ingest_to_temporary_table(
             session.commit()
 
         # Ingest data into the temporary table
-        _copy_to_table(
-            table_name=temp_table_name,
-            schema_name=schema_name,
-            data=data,
-            max_chunksize=max_chunksize,
-        )
+        with MBDB.get_adbc_connection() as connection:
+            _copy_to_table(
+                table_name=temp_table_name,
+                schema_name=schema_name,
+                connection=connection,
+                data=data,
+                max_chunksize=max_chunksize,
+            )
+            connection.commit()
 
         yield temp_table
 

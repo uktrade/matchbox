@@ -325,7 +325,7 @@ def query(
 
 
 def match(
-    *target: list[SourceResolutionName],
+    *targets: list[SourceResolutionName],
     source: SourceResolutionName,
     key: str,
     resolution: ResolutionName = DEFAULT_RESOLUTION,
@@ -334,7 +334,7 @@ def match(
     """Matches IDs against the selected backend.
 
     Args:
-        target: A list of source resolutions to find keys in
+        targets: Source resolutions to find keys in
         source: The source resolution the provided key belongs to
         key: The value to match from the source. Usually a primary key
         resolution (optional): The resolution to use to resolve matches against
@@ -356,11 +356,11 @@ def match(
         ```
     """
     # Validate arguments
-    for name in target + (source,):
+    for name in targets + (source,):
         _ = _handler.get_source_config(name=name)
 
     return _handler.match(
-        target=target,
+        targets=targets,
         source=source,
         key=key,
         resolution=resolution,

@@ -156,6 +156,7 @@ def hash_rows(
 def hash_arrow_table(
     table: pa.Table,
     method: HashMethod = HashMethod.XXH3_128,
+    as_sorted_list: list[str] | None = None,
 ) -> bytes:
     """Computes a content hash of an Arrow table invariant to row and field order.
 
@@ -164,6 +165,14 @@ def hash_arrow_table(
     Args:
         table: The pyarrow Table to hash
         method: The method to use for hashing rows (XXH3_128 or SHA256)
+        as_sorted_list: Optional list of column names to hash as a sorted list.
+            For example, ["left_id", "right_id"] will create a "sorted_list"
+            column and drop the original columns to ensure (1,2) and (2,1)
+            hash to the same value. Works with 2 or more columns.
+
+            Note: if list columns are combined with a column that's nullable,
+            list + null value returns null. See Polars' concat_list documentation
+            for more details.
 
     Returns:
         Bytes representing the content hash of the table
@@ -172,6 +181,23 @@ def hash_arrow_table(
 
     if df.height == 0:
         return b"empty_table_hash"
+
+    # Apply normalisation if specified
+    if as_sorted_list:
+        if len(as_sorted_list) < 2:
+            raise ValueError(
+                "Lists passed to as_sorted_list must contain at least 2 column names"
+            )
+
+        # Check that all columns exist
+        missing_cols = [col for col in as_sorted_list if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+
+        # Create normalised group and drop original columns
+        df = df.with_columns(
+            pl.concat_list(as_sorted_list).list.sort().alias("sorted_list")
+        ).drop(as_sorted_list)
 
     columns: list[str] = sorted(df.columns)
     df = df.select(columns)
@@ -182,9 +208,7 @@ def hash_arrow_table(
             df = df.explode(column)
 
     df = df.sort(by=columns)
-
     row_hashes = hash_rows(df=df, columns=columns, method=method)
-
     all_hashes: bytes = b"".join(row_hashes.sort().to_list())
 
     return HASH_FUNC(all_hashes).digest()

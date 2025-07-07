@@ -639,8 +639,8 @@ def test_match_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     param_set = sorted(match_route.calls.last.request.url.params.multi_items())
     assert param_set == sorted(
         [
-            ("target", "target1"),
-            ("target", "target2"),
+            ("targets", "target1"),
+            ("targets", "target2"),
             ("source", "source"),
             ("key", "pk1"),
             ("resolution", "foo"),

@@ -11,8 +11,10 @@ To test complex cleaning functions like company_name, we test:
 from functools import partial
 from typing import Callable
 
+import polars as pl
 import pytest
 
+from matchbox.client import clean
 from matchbox.client.clean import drop
 from matchbox.client.clean.steps import (
     clean_punctuation,
@@ -21,7 +23,13 @@ from matchbox.client.clean.steps import (
     remove_stopwords,
     tokenise,
 )
-from matchbox.client.clean.utils import alias, cleaning_function, unnest_renest
+from matchbox.client.clean.utils import (
+    alias,
+    cleaning_function,
+    select_cleaners,
+    unnest_renest,
+)
+from matchbox.client.helpers.cleaner import cleaner, cleaners
 from test.client.cleaning.utils import (
     create_test_case,
     run_cleaner_test,
@@ -266,3 +274,65 @@ def test_drop():
     assert len(cleaned.columns) == 0, (
         f"Column was not dropped, found: {cleaned.columns}"
     )
+
+
+def test_select_cleaners():
+    """Tests whether the select_cleaners function is working."""
+
+    foo_cleaners = {
+        "company_name": cleaner(
+            clean.company_name,
+            {"column": "company_name"},
+        ),
+        "company_number": cleaner(
+            clean.company_number,
+            {"column": "company_number"},
+        ),
+    }
+
+    bar_cleaners = {
+        "postcode": cleaner(
+            clean.postcode,
+            {"column": "postcode"},
+        ),
+    }
+
+    built_cleaners = select_cleaners(
+        (foo_cleaners, ["company_name"]),
+        (bar_cleaners, ["postcode"]),
+    )
+
+    regular_cleaners = cleaners(
+        cleaner(
+            clean.company_name,
+            {"column": "company_name"},
+        ),
+        cleaner(
+            clean.postcode,
+            {"column": "postcode"},
+        ),
+    )
+
+    assert built_cleaners == regular_cleaners
+    assert len(built_cleaners) == 2
+
+
+def test_remove_prefix():
+    """Tests whether the remove_prefix function is working."""
+    df = pl.DataFrame(
+        {
+            "prefix_col1": [1, 2, 3],
+            "prefix_col2": [4, 5, 6],
+            "other_col": ["a", "b", "c"],
+        }
+    )
+    prefix = "prefix_"
+    cleaned_df = clean.remove_prefix(df, column="", prefix=prefix)
+    expected_df = pl.DataFrame(
+        {
+            "col1": [1, 2, 3],
+            "col2": [4, 5, 6],
+            "other_col": ["a", "b", "c"],
+        }
+    )
+    assert cleaned_df.equals(expected_df)

@@ -168,6 +168,51 @@ def create_dedupe_scenario(
     return dag
 
 
+@register_scenario("probabilistic_dedupe")
+def create_probabilistic_dedupe_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+) -> TestkitDAG:
+    """Create a dedupe TestkitDAG scenario."""
+    # First create the index scenario
+    dag = create_index_scenario(backend, warehouse_engine, n_entities, seed)
+
+    # Get the linked sources
+    linked_key = next(iter(dag.linked.keys()))
+    linked = dag.linked[linked_key]
+
+    # Create and add deduplication models
+    for testkit in dag.sources.values():
+        source = testkit.source_config
+        name = f"probabilistic_test.{source.name}"
+
+        # Query the raw data
+        source_query = backend.query(source=source.name)
+
+        # Build model testkit using query data
+        model_testkit = query_to_model_factory(
+            left_resolution=source.name,
+            left_query=source_query,
+            left_keys={source.name: "key"},
+            true_entities=tuple(linked.true_entities),
+            name=name,
+            description=f"Probabilistic deduplication of {source.name}",
+            prob_range=(0.5, 0.99),
+            seed=seed,
+        )
+        model_testkit.threshold = 50
+
+        # Add to backend and DAG
+        backend.insert_model(model_config=model_testkit.model.model_config)
+        backend.set_model_results(name=name, results=model_testkit.probabilities)
+        backend.set_model_truth(name=name, truth=0.5)
+        dag.add_model(model_testkit)
+
+    return dag
+
+
 @register_scenario("link")
 def create_link_scenario(
     backend: MatchboxDBAdapter,

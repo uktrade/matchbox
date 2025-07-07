@@ -6,7 +6,7 @@ In order to explore which resolutions are stored on Matchbox, you can use the fo
 
 === "Example"
     ```python
-    from matchbox import draw_resolution_graph
+    from matchbox.client.visualisation import draw_resolution_graph
 
     draw_resolution_graph()
     ```

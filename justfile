@@ -1,6 +1,10 @@
-# Build and run all containers
-build:
-    docker compose --env-file=environments/server.env up --build -d --wait
+# Build and run all containers (excluding datadog)
+build *DOCKER_ARGS:
+    MB_VERSION=$(uv run --frozen python -m setuptools_scm) docker compose -f docker-compose.yml up --build {{DOCKER_ARGS}}
+
+# Build and run all containers (including datadog)
+build-inc-datadog *DOCKER_ARGS:
+    LOCAL_USERNAME=$(whoami) MB_VERSION=$(uv run --frozen python -m setuptools_scm) docker compose -f docker-compose.yml -f docker-compose.datadog.yml up --build {{DOCKER_ARGS}}
 
 # Delete all compiled Python files
 clean:
@@ -18,7 +22,10 @@ format:
 
 # Scan for secrets
 scan:
-    bash -c "docker run -v "$(pwd):/repo" -i --rm trufflesecurity/trufflehog:latest git file:///repo"
+    docker run -v "$(pwd):/repo" -i --rm \
+        trufflesecurity/trufflehog:latest \
+        filesystem /repo \
+        --exclude-paths=/repo/trufflehog-exclude.txt
 
 # Run Python tests (usage: just test [local|docker])
 test ENV="":

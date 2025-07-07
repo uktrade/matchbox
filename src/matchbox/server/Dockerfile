@@ -7,6 +7,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /code
 
+ARG MB_VERSION
+RUN if [ -z "$MB_VERSION" ]; then echo 'Environment variable MB_VERSION must be specified. Exiting.'; exit 1; fi
+ENV MB_VERSION=${MB_VERSION}
+
+
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
@@ -27,9 +32,7 @@ COPY ./src/matchbox /code/src/matchbox
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 RUN --mount=type=cache,target=/root/.cache/uv \
-    # Determine package version dynamically from the git tag
-    --mount=source=.git,target=/code/.git,type=bind \
-    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MATCHBOX_DB=$(uv run python -m setuptools_scm) \
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MATCHBOX_DB=${MB_VERSION} \
     uv sync --frozen --all-extras --no-dev
 
 # Place executables in the environment at the front of the path

@@ -189,3 +189,28 @@ def drop(df: pl.DataFrame, column: str) -> pl.DataFrame:
         dataframe: the same as went in without the column
     """
     return df.drop(column)
+
+
+def remove_prefix(df: pl.DataFrame, column: str, prefix: str) -> pl.DataFrame:
+    """Remove a prefix from any column names that contain it.
+
+    Args:
+        df: a dataframe
+        column: a dead variable to appease Matchbox while a bug is fixed
+        prefix: the prefix string to remove from column names
+
+    Returns:
+        dataframe: the same as went in, but with column names cleaned
+    """
+    del column
+
+    # Create a mapping of old column names to new column names
+    column_mapping = {
+        col: col[len(prefix) :] for col in df.columns if col.startswith(prefix)
+    }
+
+    # Rename columns if any matches were found
+    if column_mapping:
+        df = df.rename(column_mapping)
+
+    return df

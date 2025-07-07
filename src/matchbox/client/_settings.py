@@ -10,7 +10,7 @@ class ClientSettings(BaseSettings):
     api_root: str
     timeout: float | None = None
     api_key: SecretStr | None = None
-    retry_delay: int = 5
+    retry_delay: int = 15
     default_warehouse: str | None = None
 
     model_config = SettingsConfigDict(

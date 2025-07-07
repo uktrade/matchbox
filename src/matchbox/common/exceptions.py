@@ -63,7 +63,7 @@ class MatchboxSourceExtractTransformError(Exception):
         """Initialise the exception."""
         message = "Invalid ETL logic detected."
         if logic is not None:
-            message += f"\{logic}"
+            message += f"\n{logic}"
 
         super().__init__(message)
 

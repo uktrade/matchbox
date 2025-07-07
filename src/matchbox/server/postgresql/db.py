@@ -18,7 +18,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import PoolProxiedConnection, QueuePool
 
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
@@ -145,8 +145,8 @@ class MatchboxDatabase:
         return self._SessionLocal()
 
     @contextmanager
-    def get_adbc_connection(self) -> Generator[adbc_dbapi.Connection, Any, Any]:
-        """Get a new ADBC connection.
+    def get_adbc_connection(self) -> Generator[PoolProxiedConnection, Any, Any]:
+        """Get a new ADBC connection wrapped by a SQLAlchemy pool proxy.
 
         The connection must be used within a context manager.
         """
@@ -155,7 +155,7 @@ class MatchboxDatabase:
 
         conn = self._adbc_pool.connect()
         try:
-            yield conn.driver_connection
+            yield conn
         finally:
             conn.close()
 

@@ -9,8 +9,13 @@ from matchbox.client.clean.lib import (
     extract_duns_number_to_new,
     postcode,
     postcode_to_area,
+    remove_prefix,
 )
-from matchbox.client.clean.utils import alias, cleaning_function, unnest_renest
+from matchbox.client.clean.utils import (
+    alias,
+    cleaning_function,
+    unnest_renest,
+)
 
 __all__ = (
     # Cleaning functions
@@ -26,4 +31,5 @@ __all__ = (
     "alias",
     "cleaning_function",
     "unnest_renest",
+    "remove_prefix",
 )

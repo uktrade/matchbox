@@ -4,10 +4,10 @@ The server allows any link or deduplication job on any warehouse to be stored in
 
 ## Running the server locally
 
-To run the server locally:
+To build and run the server locally:
 
 ```shell
-docker compose up --build
+just build
 ```
 
 ### With Datadog integration

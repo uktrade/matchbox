@@ -5,6 +5,7 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Annotated, AsyncGenerator, Generator
 
+import jwt
 from fastapi import (
     Depends,
     FastAPI,
@@ -14,6 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
+from jwt.exceptions import ExpiredSignatureError, InvalidSignatureError
 
 from matchbox.common.logging import ASIMFormatter
 from matchbox.server.api.cache import MetadataStore
@@ -34,7 +36,8 @@ class ParquetResponse(Response):
 SETTINGS: MatchboxServerSettings | None = None
 BACKEND: MatchboxDBAdapter | None = None
 METADATA_STORE = MetadataStore(expiry_minutes=30)
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key")
+JWT_HEADER = APIKeyHeader(name="Authorization")
+ALGORITHM = "HS256"
 
 
 def backend() -> Generator[MatchboxDBAdapter, None, None]:
@@ -110,26 +113,38 @@ SettingsDependency = Annotated[MatchboxServerSettings, Depends(settings)]
 MetadataStoreDependency = Annotated[MetadataStore, Depends(metadata_store)]
 
 
-def validate_api_key(
-    settings: SettingsDependency, api_key: str = Security(API_KEY_HEADER)
+def validate_jwt(
+    settings: SettingsDependency,
+    client_token: str = Security(JWT_HEADER),
 ) -> None:
-    """Validate client API Key against settings."""
+    """Validate client JWT with server API Key."""
     if not settings.api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API Key missing in server configuration.",
-            headers={"WWW-Authenticate": "X-API-Key"},
+            headers={"WWW-Authenticate": "Authorization"},
         )
 
-    if not api_key:
+    if not client_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API Key required but not provided.",
-            headers={"WWW-Authenticate": "X-API-Key"},
+            detail="JWT required but not provided.",
+            headers={"WWW-Authenticate": "Authorization"},
         )
-    elif api_key != settings.api_key.get_secret_value():
+
+    try:
+        jwt.decode(
+            client_token, settings.api_key.get_secret_value(), algorithms=ALGORITHM
+        )
+    except InvalidSignatureError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API Key invalid.",
-            headers={"WWW-Authenticate": "X-API-Key"},
-        )
+            detail="JWT invalid.",
+            headers={"WWW-Authenticate": "Authorization"},
+        ) from e
+    except ExpiredSignatureError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="JWT expired.",
+            headers={"WWW-Authenticate": "Authorization"},
+        ) from e

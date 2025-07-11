@@ -25,6 +25,7 @@ dependencies = [
     "polars>=1.26.0",
     "sqlglot[rs]>=26.12.1",
     "polars-hash>=0.5.3",
+    "pyjwt>=2.10.1",
 ]
 
 [project.optional-dependencies]

@@ -1,8 +1,10 @@
+import time
 from importlib.metadata import version
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, Mock, call, patch
 
+import jwt
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -510,15 +512,32 @@ def test_api_key_authorisation(test_client: TestClient):
         (test_client.delete, "/database"),
     ]
 
+    payload = {
+        "sub": "test.user@email.com",
+        "exp": int(time.time() + 60 * 60 * 24),
+    }
+
     # Incorrect API Key Value
-    test_client.headers["X-API-Key"] = "incorrect-api-key"
+    test_client.headers["Authorization"] = jwt.encode(
+        payload, "incorrect-api-key", algorithm="HS256"
+    )
     for method, url in routes:
         response = method(url)
         assert response.status_code == 401
-        assert response.content == b'"API Key invalid."'
+        assert response.content == b'"JWT invalid."'
+
+    # Expired JWT
+    payload["exp"] = int(time.time() - 60)
+    test_client.headers["Authorization"] = jwt.encode(
+        payload, "test-api-key", algorithm="HS256"
+    )
+    for method, url in routes:
+        response = method(url)
+        assert response.status_code == 401
+        assert response.content == b'"JWT expired."'
 
     # Missing API Key Value
-    test_client.headers.pop("X-API-Key")
+    test_client.headers.pop("Authorization")
     for method, url in routes:
         response = method(url)
         assert response.status_code == 403

@@ -9,6 +9,7 @@ import httpx
 from pyarrow import Table
 from pyarrow.parquet import read_table
 
+from matchbox.client._jwt import generate_json_web_token
 from matchbox.client._settings import ClientSettings, settings
 from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
 from matchbox.common.dtos import (
@@ -109,8 +110,13 @@ def create_client(settings: ClientSettings) -> httpx.Client:
 def create_headers(settings: ClientSettings) -> dict[str, str]:
     """Creates client headers."""
     headers = {"X-Matchbox-Client-Version": version("matchbox_db")}
-    if settings.api_key is not None:
-        headers["X-API-Key"] = settings.api_key.get_secret_value()
+    if settings.jwt:
+        headers["Authorization"] = settings.jwt
+    elif settings.user and settings.api_key:
+        private_key = settings.api_key.get_secret_value()
+        headers["Authorization"] = generate_json_web_token(
+            sub=settings.user, private_key=private_key
+        )
     return headers
 
 

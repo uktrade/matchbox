@@ -343,7 +343,7 @@ def generate_dummy_probabilities(
 
         if n_extra_edges > 0:
             # Generate remaining random edges strictly within this component
-            # TODO: this can certainly be optimised
+            # Note: this can certainly be optimised, but doesn't matter much for now
             if deduplicate:
                 all_possible_edges = list(
                     {

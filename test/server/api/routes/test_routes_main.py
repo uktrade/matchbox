@@ -11,7 +11,9 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
 from matchbox.common.dtos import (
-    BackendRetrievableType,
+    BackendResourceType,
+    LoginAttempt,
+    LoginResult,
     OKMessage,
     UploadStatus,
 )
@@ -44,6 +46,20 @@ def test_healthcheck(test_client: TestClient):
     response = OKMessage.model_validate(response.json())
     assert response.status == "OK"
     assert response.version == version("matchbox-db")
+
+
+def test_login(test_client: TestClient):
+    """Test the login endpoint."""
+    mock_backend = Mock()
+    mock_backend.login = Mock(return_value=1)
+
+    response = test_client.post(
+        "/login", json=LoginAttempt(user_name="alice").model_dump()
+    )
+
+    assert response.status_code == 200
+    response = LoginResult.model_validate(response.json())
+    assert response.user_id == 1
 
 
 @patch("matchbox.server.api.main.BackgroundTasks.add_task")
@@ -408,7 +424,7 @@ def test_match_404_resolution(test_client: TestClient):
 
     # Check response
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendRetrievableType.RESOLUTION
+    assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
 def test_match_404_source(test_client: TestClient):
@@ -431,7 +447,7 @@ def test_match_404_source(test_client: TestClient):
 
     # Check response
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendRetrievableType.SOURCE
+    assert response.json()["entity"] == BackendResourceType.SOURCE
 
 
 # Admin

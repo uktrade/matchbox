@@ -96,7 +96,7 @@ def _build_probability_subquery(
     )
 
 
-def _build_unified_query(
+def build_unified_query(
     resolution: Resolutions,
     sources: list[SourceConfigs] | None = None,
     threshold: int | None = None,
@@ -264,7 +264,7 @@ def _build_target_cluster_cte(
 ) -> Select:
     """Build the target_cluster CTE.
 
-    Follows very similar logic to `_build_unified_query`, but with filtering
+    Follows very similar logic to `build_unified_query`, but with filtering
     specifically for a single key and source_config_id.
     """
     # Get ordered lineage
@@ -419,7 +419,7 @@ def _build_match_query(
     The overall process:
 
         1. **Target cluster CTE**: Uses the same `COALESCE` hierarchy logic as
-            `_build_unified_query` to resolve which cluster the input key belongs to.
+            `build_unified_query` to resolve which cluster the input key belongs to.
             This handles the full resolution hierarchy with proper priority ordering.
         2. **Matching leaves CTE**: Builds a `UNION ALL` query with multiple branches:
 
@@ -502,7 +502,7 @@ def query(
             ).where(ClusterSourceKey.source_config_id == source_config.source_config_id)
         else:
             # Use hierarchy resolution
-            id_query: Select = _build_unified_query(
+            id_query: Select = build_unified_query(
                 resolution=truth_resolution,
                 sources=[source_config],
                 threshold=threshold,
@@ -560,7 +560,7 @@ def get_parent_clusters_and_leaves(
             if parent_resolution is None:
                 continue
 
-            parent_assignments: Select = _build_unified_query(
+            parent_assignments: Select = build_unified_query(
                 resolution=parent_resolution,
                 mode="root_leaf",
             )

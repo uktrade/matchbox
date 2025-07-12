@@ -31,13 +31,11 @@ class MatchboxUnparsedClientRequest(Exception):
 class MatchboxUnhandledServerResponse(Exception):
     """The API sent an unexpected response."""
 
-    def __init__(
-        self,
-        message: str | None = None,
-    ):
+    def __init__(self, http_status: int, details: str | None = None):
         """Initialise the exception."""
-        if message is None:
-            message = "The API sent an unexpected response"
+        message = f"The API sent an unexpected response with status {http_status}"
+        if details:
+            message += f" and the following message: {details}"
 
         super().__init__(message)
 
@@ -112,6 +110,20 @@ class MatchboxModelConfigError(Exception):
 
 
 # -- Resource not found on server exceptions --
+
+
+class MatchboxUserNotFoundError(Exception):
+    """User not found."""
+
+    def __init__(self, message: str | None = None, user_id: str | None = None):
+        """Initialise the exception."""
+        if message is None:
+            message = "User not found."
+            if user_id is not None:
+                message = f"User {user_id} not found."
+
+        super().__init__(message)
+        self.user_id = user_id
 
 
 class MatchboxResolutionNotFoundError(Exception):
@@ -211,6 +223,10 @@ class MatchboxDeletionNotConfirmed(Exception):
 
 class MatchboxResolutionAlreadyExists(Exception):
     """Resolution already exists."""
+
+
+class MatchboxTooManySamplesRequested(Exception):
+    """Too many samples have been requested from the server."""
 
 
 # -- Adapter DB exceptions --

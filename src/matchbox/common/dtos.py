@@ -26,6 +26,18 @@ class OKMessage(BaseModel):
     version: str = Field(default_factory=lambda: version("matchbox-db"))
 
 
+class LoginAttempt(BaseModel):
+    """Request for log in process."""
+
+    user_name: str
+
+
+class LoginResult(BaseModel):
+    """Response from log in process."""
+
+    user_id: int
+
+
 class BackendCountableType(StrEnum):
     """Enumeration of supported backend countable types."""
 
@@ -45,11 +57,19 @@ class ModelResultsType(StrEnum):
     CLUSTERS = "clusters"
 
 
-class BackendRetrievableType(StrEnum):
-    """Enumeration of supported backend retrievable types."""
+class BackendResourceType(StrEnum):
+    """Enumeration of resources types referenced by client or API."""
 
     SOURCE = "source"
     RESOLUTION = "resolution"
+    CLUSTER = "cluster"
+    USER = "user"
+
+
+class BackendParameterType(StrEnum):
+    """Enumeration of parameters passable to the API."""
+
+    SAMPLE_SIZE = "sample_size"
 
 
 class BackendUploadType(StrEnum):
@@ -248,7 +268,14 @@ class NotFoundError(BaseModel):
     """API error for a 404 status code."""
 
     details: str
-    entity: BackendRetrievableType
+    entity: BackendResourceType
+
+
+class InvalidParameterError(BaseModel):
+    """API error for a custom 422 status code."""
+
+    details: str
+    parameter: BackendParameterType
 
 
 class DataTypes(StrEnum):

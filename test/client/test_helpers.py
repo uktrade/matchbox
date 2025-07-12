@@ -19,7 +19,7 @@ from matchbox.client.helpers.index import index
 from matchbox.client.helpers.selector import Match
 from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
 from matchbox.common.dtos import (
-    BackendRetrievableType,
+    BackendResourceType,
     BackendUploadType,
     NotFoundError,
     UploadStatus,
@@ -168,7 +168,7 @@ def test_select_404_source_get(matchbox_api: MockRouter, sqlite_warehouse: Engin
             404,
             json=NotFoundError(
                 details="SourceConfig 42 not found",
-                entity=BackendRetrievableType.SOURCE,
+                entity=BackendResourceType.SOURCE,
             ).model_dump(),
         )
     )
@@ -421,7 +421,7 @@ def test_query_404_resolution(matchbox_api: MockRouter, sqlite_warehouse: Engine
             404,
             json=NotFoundError(
                 details="Resolution 42 not found",
-                entity=BackendRetrievableType.RESOLUTION,
+                entity=BackendResourceType.RESOLUTION,
             ).model_dump(),
         )
     )
@@ -659,7 +659,7 @@ def test_match_404_resolution(matchbox_api: MockRouter, sqlite_warehouse: Engine
             404,
             json=NotFoundError(
                 details="Resolution 42 not found",
-                entity=BackendRetrievableType.RESOLUTION,
+                entity=BackendResourceType.RESOLUTION,
             ).model_dump(),
         )
     )
@@ -693,7 +693,7 @@ def test_match_404_source(matchbox_api: MockRouter, sqlite_warehouse: Engine):
             404,
             json=NotFoundError(
                 details="SourceConfig 42 not found",
-                entity=BackendRetrievableType.SOURCE,
+                entity=BackendResourceType.SOURCE,
             ).model_dump(),
         )
     )

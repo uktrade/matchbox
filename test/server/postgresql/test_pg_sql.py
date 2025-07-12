@@ -29,7 +29,7 @@ from matchbox.server.postgresql.orm import (
 )
 from matchbox.server.postgresql.utils.db import compile_sql
 from matchbox.server.postgresql.utils.query import (
-    _build_unified_query,
+    build_unified_query,
     get_parent_clusters_and_leaves,
     get_source_config,
     match,
@@ -626,7 +626,7 @@ class TestBuildUnifiedQuery:
             source_a_resolution = session.get(Resolutions, 1)  # source_a resolution
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=source_a_resolution,
                 sources=[source_a_config],  # Pass source config directly
                 threshold=None,
@@ -671,7 +671,7 @@ class TestBuildUnifiedQuery:
             dedupe_a_resolution = session.get(Resolutions, 3)  # dedupe_a context
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=dedupe_a_resolution,
                 sources=[source_a_config],  # Query source_a through dedupe_a
                 threshold=80,  # Override threshold to 80
@@ -732,7 +732,7 @@ class TestBuildUnifiedQuery:
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
             source_b_config = session.get(SourceConfigs, 22)  # source_b config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=[source_a_config, source_b_config],  # Both sources
                 threshold=80,  # Override linker threshold to 80 (from default 90)
@@ -780,7 +780,7 @@ class TestBuildUnifiedQuery:
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
             source_b_config = session.get(SourceConfigs, 22)  # source_b config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=[source_a_config, source_b_config],  # Both sources
                 threshold=95,  # Very high threshold excludes all linker clusters
@@ -823,7 +823,7 @@ class TestBuildUnifiedQuery:
             linker_resolution = session.get(Resolutions, 5)  # linker context
             source_b_config = session.get(SourceConfigs, 22)  # source_b only
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=[source_b_config],  # Only source_b
                 threshold=80,  # Override linker threshold to 80
@@ -872,7 +872,7 @@ class TestBuildUnifiedQuery:
         with MBDB.get_session() as session:
             linker_resolution = session.get(Resolutions, 5)  # linker context
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=None,  # No filtering - all sources
                 threshold=80,  # Override linker threshold to 80
@@ -917,7 +917,7 @@ class TestBuildUnifiedQuery:
         with MBDB.get_session() as session:
             source_a_resolution = session.get(Resolutions, 1)  # source_a resolution
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=source_a_resolution,  # Query source_a
                 sources=None,  # No source filtering
                 threshold=None,
@@ -950,7 +950,7 @@ class TestBuildUnifiedQuery:
             dedupe_resolution = session.get(Resolutions, 3)  # dedupe context
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=dedupe_resolution,
                 sources=[source_a_config],
                 threshold=70,  # Use threshold lower than cache and C301

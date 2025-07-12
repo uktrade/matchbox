@@ -1,11 +1,17 @@
 """PostgreSQL adapter for Matchbox server."""
 
+from datetime import datetime, timedelta, timezone
+from itertools import chain
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
+import numpy as np
+import polars as pl
+import pyarrow as pa
 from pyarrow import Table
 from pydantic import BaseModel
-from sqlalchemy import and_, bindparam, delete, func, or_, select
+from sqlalchemy import BIGINT, and_, bindparam, delete, func, or_, select
 
+from matchbox.common.arrow import SCHEMA_EVAL_SAMPLES
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     ModelAncestor,
@@ -15,14 +21,18 @@ from matchbox.common.dtos import (
     ResolutionName,
     SourceResolutionName,
 )
+from matchbox.common.eval import Judgement as CommonJudgement
+from matchbox.common.eval import ModelComparison, precision_recall
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxModelConfigError,
     MatchboxResolutionNotFoundError,
+    MatchboxUserNotFoundError,
 )
 from matchbox.common.graph import ResolutionGraph, ResolutionNodeType
 from matchbox.common.sources import Match, SourceConfig
+from matchbox.common.transform import hash_cluster_leaves
 from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
 from matchbox.server.postgresql.db import (
     MBDB,
@@ -33,17 +43,20 @@ from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
     Contains,
+    EvalJudgements,
     PKSpace,
     Probabilities,
     ResolutionFrom,
     Resolutions,
     Results,
     SourceConfigs,
+    Users,
 )
 from matchbox.server.postgresql.utils.db import (
     compile_sql,
     dump,
     get_resolution_graph,
+    ingest_to_temporary_table,
     restore,
 )
 from matchbox.server.postgresql.utils.insert import (
@@ -51,7 +64,12 @@ from matchbox.server.postgresql.utils.insert import (
     insert_results,
     insert_source,
 )
-from matchbox.server.postgresql.utils.query import get_source_config, match, query
+from matchbox.server.postgresql.utils.query import (
+    build_unified_query,
+    get_source_config,
+    match,
+    query,
+)
 from matchbox.server.postgresql.utils.results import get_model_config
 
 T = TypeVar("T")
@@ -82,9 +100,23 @@ class FilteredClusters(BaseModel):
                         ClusterSourceKey.cluster_id == Clusters.cluster_id,
                     )
                 else:
-                    query = query.join(
-                        Probabilities,
-                        Probabilities.cluster_id == Clusters.cluster_id,
+                    query = (
+                        query.join(
+                            Probabilities,
+                            Probabilities.cluster_id == Clusters.cluster_id,
+                            isouter=True,
+                        )
+                        .join(
+                            EvalJudgements,
+                            EvalJudgements.endorsed_cluster_id == Clusters.cluster_id,
+                            isouter=True,
+                        )
+                        .filter(
+                            or_(
+                                EvalJudgements.endorsed_cluster_id.is_not(None),
+                                Probabilities.cluster_id.is_not(None),
+                            )
+                        )
                     )
 
             return query.scalar()
@@ -513,3 +545,284 @@ class MatchboxPostgres(MatchboxDBAdapter):
             else:
                 children = [r.name for r in resolution.descendants]
                 raise MatchboxDeletionNotConfirmed(childen=children)
+
+    def login(self, user_name: str) -> int:  # noqa: D102
+        with MBDB.get_session() as session:
+            if user_id := session.scalar(
+                select(Users.user_id).where(Users.name == user_name)
+            ):
+                return user_id
+
+            user = Users(name=user_name)
+            session.add(user)
+            session.commit()
+
+            return user.user_id
+
+    def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
+        # Check that all referenced cluster IDs exist
+        ids = list(chain(*judgement.endorsed)) + [judgement.shown]
+        self.validate_ids(ids)
+        # Note: we don't currently check that the shown cluster ID points to
+        # the source cluster IDs. We must assume this is well-formed.
+
+        # Check that the user exists
+        with MBDB.get_session() as session:
+            if not session.scalar(
+                select(Users.name).where(Users.user_id == judgement.user_id)
+            ):
+                raise MatchboxUserNotFoundError(user_id=judgement.user_id)
+
+        for leaves in judgement.endorsed:
+            with MBDB.get_session() as session:
+                # Compute hash corresponding to set of source clusters (leaves)
+                leaf_hashes = [
+                    session.scalar(
+                        select(Clusters.cluster_hash).where(
+                            Clusters.cluster_id == leaf_id
+                        )
+                    )
+                    for leaf_id in leaves
+                ]
+                endorsed_cluster_hash = hash_cluster_leaves(leaf_hashes)
+
+                # If cluster with this hash does not exist, create it.
+                # Note that only endorsed clusters might be new. The cluster shown to
+                # the user is guaranteed to exist in the backend; we have checked above.
+                if not (
+                    endorsed_cluster_id := session.scalar(
+                        select(Clusters.cluster_id).where(
+                            Clusters.cluster_hash == endorsed_cluster_hash
+                        )
+                    )
+                ):
+                    endorsed_cluster_id = PKSpace.reserve_block(
+                        table="clusters", block_size=1
+                    )
+                    session.add(
+                        Clusters(
+                            cluster_id=endorsed_cluster_id,
+                            cluster_hash=endorsed_cluster_hash,
+                        )
+                    )
+                    for leaf_id in leaves:
+                        session.add(Contains(root=endorsed_cluster_id, leaf=leaf_id))
+
+                session.add(
+                    EvalJudgements(
+                        user_id=judgement.user_id,
+                        shown_cluster_id=judgement.shown,
+                        endorsed_cluster_id=endorsed_cluster_id,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                )
+
+                session.commit()
+
+    def get_judgements(self) -> tuple[Table, Table]:  # noqa: D102
+        judgements_stmt = select(
+            EvalJudgements.user_id,
+            EvalJudgements.endorsed_cluster_id.label("endorsed"),
+            EvalJudgements.shown_cluster_id.label("shown"),
+        )
+
+        with MBDB.get_adbc_connection() as conn:
+            judgements = sql_to_df(
+                stmt=compile_sql(judgements_stmt),
+                connection=conn.dbapi_connection,
+                return_type="arrow",
+            )
+            shown_clusters = set(judgements["shown"].to_pylist())
+            endorsed_clusters = set(judgements["endorsed"].to_pylist())
+            referenced_clusters = Table.from_pydict(
+                {"root": list(shown_clusters | endorsed_clusters)}
+            )
+
+        with ingest_to_temporary_table(
+            table_name="judgements",
+            schema_name="mb",
+            column_types={
+                "root": BIGINT,
+            },
+            data=referenced_clusters,
+        ) as temp_table:
+            cluster_expansion_stmt = (
+                select(temp_table.c.root, func.array_agg(Contains.leaf).label("leaves"))
+                .select_from(temp_table)
+                .join(Contains, Contains.root == temp_table.c.root)
+                .group_by(temp_table.c.root)
+            )
+
+            with MBDB.get_adbc_connection() as conn:
+                cluster_expansion = sql_to_df(
+                    stmt=compile_sql(cluster_expansion_stmt),
+                    connection=conn.dbapi_connection,
+                    return_type="arrow",
+                )
+
+        # Do a bit of casting to conform to data transfer schema
+        for i, col in enumerate(["user_id", "endorsed", "shown"]):
+            judgements = judgements.set_column(
+                i, col, judgements[col].cast(pa.uint64())
+            )
+
+        cluster_expansion = cluster_expansion.set_column(
+            0, "root", cluster_expansion["root"].cast(pa.uint64())
+        )
+        cluster_expansion = cluster_expansion.set_column(
+            1, "leaves", cluster_expansion["leaves"].cast(pa.list_(pa.uint64()))
+        )
+
+        return judgements, cluster_expansion
+
+    def compare_models(self, resolutions: list[ModelResolutionName]) -> ModelComparison:  # noqa: D102
+        def get_root_leaf(resolution_name: ModelResolutionName) -> Table:
+            resolution = Resolutions.from_name(resolution_name)
+            root_leaf_query = build_unified_query(
+                resolution, threshold=resolution.truth, mode="root_leaf"
+            )
+
+            with MBDB.get_adbc_connection() as conn:
+                root_leaf_results = sql_to_df(
+                    stmt=compile_sql(root_leaf_query),
+                    connection=conn.dbapi_connection,
+                    return_type="arrow",
+                )
+                return root_leaf_results.rename({"root_id": "root", "leaf_id": "leaf"})[
+                    ["root", "leaf"]
+                ]
+
+        models_root_leaf = [get_root_leaf(res) for res in resolutions]
+        judgements, expansion = self.get_judgements()
+        pr_values = precision_recall(
+            models_root_leaf=models_root_leaf,
+            judgements=judgements,
+            expansion=expansion,
+        )
+
+        return dict(zip(resolutions, pr_values, strict=True))
+
+    def sample_for_eval(  # noqa: D102
+        self, n: int, resolution: ModelResolutionName, user_id: int
+    ) -> ArrowTable:
+        # Not currently checking validity of the user_id
+        # If the user ID does not exist, the exclusion by previous judgements breaks
+        if n > 100:
+            # This reasonable assumption means simple "IS IN" function later is fine
+            raise ValueError("Can only sample 100 entries at a time.")
+
+        with MBDB.get_session() as session:
+            # Retrieve metadata of target resolution
+            if resolution_info := session.execute(
+                select(Resolutions.resolution_id, Resolutions.truth).where(
+                    Resolutions.name == resolution
+                )
+            ).first():
+                resolution_id, truth = resolution_info
+            else:
+                raise MatchboxResolutionNotFoundError(name=resolution)
+
+        # Get a list of cluster IDs and features for this resolution and user
+        user_judgements = (
+            select(EvalJudgements).where(EvalJudgements.user_id == user_id).subquery()
+        )
+        cluster_features_stmt = (
+            select(
+                Probabilities.cluster_id,
+                # We expect only one probability per cluster within one resolution
+                func.max(Probabilities.probability).label("probability"),
+                func.max(user_judgements.c.timestamp).label("latest_ts"),
+            )
+            .join(
+                user_judgements,
+                Probabilities.cluster_id == user_judgements.c.shown_cluster_id,
+                isouter=True,
+            )
+            .where(
+                Probabilities.resolution_id == resolution_id,
+            )
+            .group_by(Probabilities.cluster_id)
+        )
+
+        with MBDB.get_adbc_connection() as conn:
+            cluster_features = sql_to_df(
+                stmt=compile_sql(cluster_features_stmt),
+                connection=conn.dbapi_connection,
+                return_type="polars",
+            )
+
+        # Exclude clusters recently judged by this user
+        to_sample = cluster_features.filter(
+            (pl.col("latest_ts") < datetime.now(timezone.utc) - timedelta(days=365))
+            | (pl.col("latest_ts").is_null())
+        )
+
+        # Return early if nothing to sample from
+        if not len(to_sample):
+            return Table.from_pydict(
+                {"root": [], "leaf": [], "key": [], "source": []},
+                schema=SCHEMA_EVAL_SAMPLES,
+            )
+
+        # Sample proportionally to distance from the truth, and get 1D array
+        distances = np.abs(to_sample.select("probability").to_numpy() - truth)[:, 0]
+        # Add small noise to avoid division by 0 if all distances are 0
+        unnormalised_probs = distances + 0.001
+        probs = unnormalised_probs / unnormalised_probs.sum()
+
+        # With fewer clusters than requested, return all
+        if to_sample.shape[0] <= n:
+            sampled_cluster_ids = to_sample.select("cluster_id").to_series().to_list()
+        else:
+            indices = np.random.choice(
+                to_sample.shape[0], size=n, p=probs, replace=False
+            )
+            sampled_cluster_ids = (
+                to_sample[indices].select("cluster_id").to_series().to_list()
+            )
+
+        # Get all info we need for the cluster IDs we've sampled, i.e.:
+        # source cluster IDs, keys and source resolutions
+        with MBDB.get_adbc_connection() as conn:
+            source_clusters = (
+                select(Contains.root, Contains.leaf)
+                .where(Contains.root.in_(sampled_cluster_ids))
+                .subquery()
+            )
+            enrich_stmt = (
+                select(
+                    source_clusters.c.root,
+                    source_clusters.c.leaf,
+                    ClusterSourceKey.key,
+                    Resolutions.name.label("source"),
+                )
+                .select_from(source_clusters)
+                .join(
+                    ClusterSourceKey,
+                    ClusterSourceKey.cluster_id == source_clusters.c.leaf,
+                )
+                .join(
+                    SourceConfigs,
+                    SourceConfigs.source_config_id == ClusterSourceKey.source_config_id,
+                )
+                .join(
+                    Resolutions,
+                    Resolutions.resolution_id == SourceConfigs.resolution_id,
+                )
+            )
+
+            final_samples = sql_to_df(
+                stmt=compile_sql(enrich_stmt),
+                connection=conn.dbapi_connection,
+                return_type="arrow",
+            )
+
+            # Cast to align with data transfer schema
+            final_samples = final_samples.set_column(
+                0, "root", final_samples["root"].cast(pa.uint64())
+            )
+            final_samples = final_samples.set_column(
+                1, "leaf", final_samples["leaf"].cast(pa.uint64())
+            )
+
+        return final_samples

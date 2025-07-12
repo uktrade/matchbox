@@ -1,19 +1,29 @@
 """Functions abstracting the interaction with the server API."""
 
 import time
+import zipfile
 from collections.abc import Iterable
 from importlib.metadata import version
 from io import BytesIO
 
 import httpx
-from pyarrow import Table
+from pyarrow import Schema, Table
 from pyarrow.parquet import read_table
 
 from matchbox.client._settings import ClientSettings, settings
-from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
+from matchbox.common.arrow import (
+    SCHEMA_CLUSTER_EXPANSION,
+    SCHEMA_JUDGEMENTS,
+    SCHEMA_MB_IDS,
+    JudgementsZipFilenames,
+    table_to_buffer,
+)
 from matchbox.common.dtos import (
     BackendCountableType,
-    BackendRetrievableType,
+    BackendParameterType,
+    BackendResourceType,
+    LoginAttempt,
+    LoginResult,
     ModelAncestor,
     ModelConfig,
     ModelResolutionName,
@@ -23,14 +33,18 @@ from matchbox.common.dtos import (
     SourceResolutionName,
     UploadStatus,
 )
+from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.exceptions import (
     MatchboxClientFileError,
+    MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
     MatchboxServerFileError,
     MatchboxSourceNotFoundError,
+    MatchboxTooManySamplesRequested,
     MatchboxUnhandledServerResponse,
     MatchboxUnparsedClientRequest,
+    MatchboxUserNotFoundError,
 )
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.hash import hash_to_base64
@@ -79,21 +93,34 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
 
     if res.status_code == 404:
         error = NotFoundError.model_validate(res.json())
-        if error.entity == BackendRetrievableType.SOURCE:
-            raise MatchboxSourceNotFoundError(error.details)
-        if error.entity == BackendRetrievableType.RESOLUTION:
-            raise MatchboxResolutionNotFoundError(error.details)
-        else:
-            raise RuntimeError(f"Unexpected 404 error: {error.details}")
+        match error.entity:
+            case BackendResourceType.SOURCE:
+                raise MatchboxSourceNotFoundError(error.details)
+            case BackendResourceType.RESOLUTION:
+                raise MatchboxResolutionNotFoundError(error.details)
+            case BackendResourceType.CLUSTER:
+                raise MatchboxDataNotFound(error.details)
+            case BackendResourceType.USER:
+                raise MatchboxUserNotFoundError(error.details)
+            case _:
+                raise RuntimeError(f"Unexpected 404 error: {error.details}")
 
     if res.status_code == 409:
         error = ResolutionOperationStatus.model_validate(res.json())
         raise MatchboxDeletionNotConfirmed(message=error.details)
 
     if res.status_code == 422:
+        if (
+            "parameter" in res.content
+            and res.content["parameter"] == BackendParameterType.SAMPLE_SIZE
+        ):
+            raise MatchboxTooManySamplesRequested(res.content)
+        # Not a custom Matchbox exception, most likely a Pydantic error
         raise MatchboxUnparsedClientRequest(res.content)
 
-    raise MatchboxUnhandledServerResponse(res.content)
+    raise MatchboxUnhandledServerResponse(
+        details=res.content, http_status=res.status_code
+    )
 
 
 def create_client(settings: ClientSettings) -> httpx.Client:
@@ -115,6 +142,14 @@ def create_headers(settings: ClientSettings) -> dict[str, str]:
 
 
 CLIENT = create_client(settings=settings)
+
+
+def login(user_name: str) -> int:
+    logger.debug(f"Log in attempt for {user_name}")
+    response = CLIENT.post(
+        "/login", json=LoginAttempt(user_name=user_name).model_dump()
+    )
+    return LoginResult.model_validate(response.json()).user_id
 
 
 # Retrieval
@@ -389,6 +424,58 @@ def delete_resolution(
 
     res = CLIENT.delete(f"/resolutions/{name}", params={"certain": certain})
     return ResolutionOperationStatus.model_validate(res.json())
+
+
+# Evaluation
+
+
+def sample_for_eval(n: int, resolution: ModelResolutionName, user_id: int) -> Table:
+    res = CLIENT.get(
+        "/eval/samples",
+        params=url_params({"n": n, "resolution": resolution, "user_id": user_id}),
+    )
+
+    return read_table(BytesIO(res.content))
+
+
+def compare_models(resolutions: list[ModelResolutionName]) -> ModelComparison:
+    res = CLIENT.get("/eval/compare", params=url_params({"resolutions": resolutions}))
+    scores = {resolution: tuple(pr) for resolution, pr in res.json().items()}
+    return scores
+
+
+def send_eval_judgement(judgement: Judgement) -> None:
+    logger.debug(
+        f"Submitting judgement {judgement.shown}:{judgement.endorsed} "
+        f"for {judgement.user_id}"
+    )
+    CLIENT.post("/eval/judgements", json=judgement.model_dump())
+
+
+def download_eval_data() -> tuple[Table, Table]:
+    logger.debug("Retrieving all judgements.")
+    res = CLIENT.get("/eval/judgements")
+
+    zip_bytes = BytesIO(res.content)
+    with zipfile.ZipFile(zip_bytes, "r") as zip_file:
+        with zip_file.open(JudgementsZipFilenames.JUDGEMENTS) as f1:
+            judgements = read_table(f1)
+
+        with zip_file.open(JudgementsZipFilenames.EXPANSION) as f2:
+            expansion = read_table(f2)
+
+    logger.debug("Finished retrieving judgements.")
+
+    def check_schema(expected: Schema, actual: Schema) -> None:
+        if expected != actual:
+            raise MatchboxClientFileError(
+                message=(f"Schema mismatch. Expected:\n{expected}\nGot:\n{actual}")
+            )
+
+    check_schema(judgements.schema, SCHEMA_JUDGEMENTS)
+    check_schema(expansion.schema, SCHEMA_CLUSTER_EXPANSION)
+
+    return judgements, expansion
 
 
 # Admin

@@ -113,7 +113,8 @@ class MatchboxServerSettings(BaseSettings):
     batch_size: int = Field(default=250_000)
     backend_type: MatchboxBackends
     datastore: MatchboxDatastoreSettings
-    api_key: SecretStr | None = Field(default=None)
+    authorisation: bool = False
+    public_key: SecretStr | None = Field(default=None)
     log_level: LogLevelType = "INFO"
 
 

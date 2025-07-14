@@ -1,11 +1,15 @@
 """API dependencies for the Matchbox server."""
 
+import json
 import logging
 import sys
+import time
+from base64 import urlsafe_b64decode
 from contextlib import asynccontextmanager
 from typing import Annotated, AsyncGenerator, Generator
 
-import jwt
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import (
     Depends,
     FastAPI,
@@ -15,7 +19,6 @@ from fastapi import (
 )
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
-from jwt.exceptions import ExpiredSignatureError, InvalidSignatureError
 
 from matchbox.common.logging import ASIMFormatter
 from matchbox.server.api.cache import MetadataStore
@@ -36,7 +39,7 @@ class ParquetResponse(Response):
 SETTINGS: MatchboxServerSettings | None = None
 BACKEND: MatchboxDBAdapter | None = None
 METADATA_STORE = MetadataStore(expiry_minutes=30)
-JWT_HEADER = APIKeyHeader(name="Authorization")
+JWT_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
 ALGORITHM = "HS256"
 
 
@@ -113,15 +116,20 @@ SettingsDependency = Annotated[MatchboxServerSettings, Depends(settings)]
 MetadataStoreDependency = Annotated[MetadataStore, Depends(metadata_store)]
 
 
+def b64_decode(b64_bytes):
+    """B64 decode."""
+    return urlsafe_b64decode(b64_bytes + (b"=" * ((4 - len(b64_bytes) % 4) % 4)))
+
+
 def validate_jwt(
     settings: SettingsDependency,
     client_token: str = Security(JWT_HEADER),
 ) -> None:
     """Validate client JWT with server API Key."""
-    if not settings.api_key:
+    if not settings.public_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API Key missing in server configuration.",
+            detail="Public Key missing in server configuration.",
             headers={"WWW-Authenticate": "Authorization"},
         )
 
@@ -132,19 +140,38 @@ def validate_jwt(
             headers={"WWW-Authenticate": "Authorization"},
         )
 
+    header_b64, payload_b64, signature_b64 = client_token.encode().split(b".")
+    payload = json.loads(b64_decode(payload_b64))
+
+    # Decode to unicode-escape removes \\n encoding for
+    # secrets stored in AWS secrets manager.
+    public_key = load_pem_public_key(
+        settings.public_key.get_secret_value()
+        .encode()
+        .decode("unicode-escape")
+        .encode()
+    )
+
     try:
-        jwt.decode(
-            client_token, settings.api_key.get_secret_value(), algorithms=ALGORITHM
-        )
-    except InvalidSignatureError as e:
+        public_key.verify(b64_decode(signature_b64), header_b64 + b"." + payload_b64)
+    except InvalidSignature as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="JWT invalid.",
             headers={"WWW-Authenticate": "Authorization"},
         ) from e
-    except ExpiredSignatureError as e:
+
+    if payload["exp"] <= time.time():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="JWT expired.",
             headers={"WWW-Authenticate": "Authorization"},
-        ) from e
+        )
+
+
+def authorisation_dependencies(
+    settings: SettingsDependency, client_token: str = Security(JWT_HEADER)
+):
+    """Optional authorisation."""
+    if settings.authorisation:
+        validate_jwt(settings, client_token)

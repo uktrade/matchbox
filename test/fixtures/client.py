@@ -6,10 +6,16 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from matchbox.client._jwt import generate_json_web_token
 from matchbox.client._settings import settings as client_settings
+from matchbox.client.authorisation import (
+    generate_EdDSA_key_pair,
+    generate_json_web_token,
+)
 from matchbox.server import app
-from matchbox.server.api.dependencies import backend, settings
+from matchbox.server.api.dependencies import (
+    backend,
+    settings,
+)
 
 
 @pytest.fixture(scope="function")
@@ -34,21 +40,23 @@ def env_setter() -> Generator[Callable[[str, str], None], None, None]:
 
 
 @pytest.fixture(scope="function")
-def test_client() -> Generator[TestClient, None, None]:
+def test_client(env_setter) -> Generator[TestClient, None, None]:
     """Return a configured TestClient with patched backend and settings."""
     with (
         patch("matchbox.server.api.dependencies.settings") as mock_settings,
         patch("matchbox.server.api.dependencies.backend") as mock_backend,
     ):
-        mock_settings.api_key = SecretStr("test-api-key")
+        # Generate private and public key pair
+        private_key, public_key = generate_EdDSA_key_pair()
+
+        mock_settings.authorisation = True
+        mock_settings.public_key = SecretStr(public_key.decode())
+        env_setter("MB__CLIENT__PRIVATE_KEY", private_key.decode())
 
         app.dependency_overrides[backend] = lambda: mock_backend
         app.dependency_overrides[settings] = lambda: mock_settings
 
-        token = generate_json_web_token(
-            sub="test.user@email.com",
-            private_key=mock_settings.api_key.get_secret_value(),
-        )
+        token = generate_json_web_token(sub="test.user@email.com")
         yield TestClient(app, headers={"Authorization": token})
 
         app.dependency_overrides.clear()

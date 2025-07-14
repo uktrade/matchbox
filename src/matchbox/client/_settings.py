@@ -9,7 +9,7 @@ from matchbox.common.exceptions import MatchboxClientSettingsException
 class ClientSettings(BaseSettings):
     api_root: str
     timeout: float | None = None
-    api_key: SecretStr | None = None
+    private_key: SecretStr | None = None
     retry_delay: int = 15
     default_warehouse: str | None = None
     jwt: str | None = None

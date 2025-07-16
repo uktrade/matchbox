@@ -32,6 +32,7 @@ server = [
     "adbc-driver-postgresql>=1.5.0",
     "alembic>=1.15.2",
     "boto3>=1.35.99",
+    "cryptography>=44.0.2",
     "ddtrace>=3.2.1",
     "fastapi[standard]>=0.115.0,<0.116.0",
     "python-multipart>=0.0.18",

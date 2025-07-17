@@ -107,6 +107,36 @@ class ASIMFormatter(logging.Formatter):
             "CRITICAL": "High",
         }
 
+    @cached_property
+    def get_container_id(self) -> str:
+        """This environment variable is injected by AWS to all ECS tasks.
+
+        It turns out we are able to retrieve the container_id directly from the endpoint
+        url string itself, so it is simpler to return that and not interact with the
+        metadata endpoint itself which would return the same end result for
+        container_id.
+        """
+        try:
+            return os.environ["ECS_CONTAINER_METADATA_URI"].split("/")[-1]
+        except (KeyError, IndexError):
+            return ""
+
+    @cached_property
+    def get_env(self) -> str:
+        """This environment variable is set by the ECS task definition."""
+        try:
+            return os.environ["DD_ENV"]
+        except KeyError:
+            return ""
+
+    @cached_property
+    def get_service(self) -> str:
+        """This environment variable is set by the ECS task definition."""
+        try:
+            return os.environ["DD_SERVICE"]
+        except KeyError:
+            return ""
+
     def format(self, record) -> str:
         """Convert logs to JSON."""
         log_time = datetime.datetime.utcfromtimestamp(record.created).isoformat()
@@ -124,12 +154,14 @@ class ASIMFormatter(logging.Formatter):
                 "EventSchemaVersion": "0.1.4",
                 "EventVendor": "AWS",
                 "EventProduct": "VPC",
-                "AdditionalFields": {
+                "AdditionalFields": {},
+                "extra": {
                     "dd.version": self.matchbox_version,
-                    "dd.env": os.getenv("DD_ENV"),
-                    "dd.service": os.getenv("DD_SERVICE"),
+                    "dd.env": self.get_env,
+                    "dd.service": self.get_service,
                     "dd.team": "matchbox",
                     "dd.application": "matchbox",
+                    "dd.container_id": self.get_container_id,
                 },
             },
         )

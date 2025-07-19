@@ -126,7 +126,7 @@ class SourceTestkit(BaseModel):
 
     @property
     def query_backend(self) -> pa.Table:
-        """Return a PyArrow table in the same format as the SCHEMA_MB_IDS DTO."""
+        """Return a PyArrow table in the same format as the SCHEMA_QUERY DTO."""
         return pa.Table.from_arrays(
             [self.data["id"], self.data["key"]], names=["id", "key"]
         )

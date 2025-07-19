@@ -96,11 +96,12 @@ def _build_probability_subquery(
     )
 
 
-def _build_unified_query(
+def build_unified_query(
     resolution: Resolutions,
     sources: list[SourceConfigs] | None = None,
     threshold: int | None = None,
-    mode: Literal["root_leaf", "id_key"] = "root_leaf",
+    level: Literal["leaf", "key"] = "leaf",
+    get_hashes: bool = False,
 ) -> Select:
     """Build a query to resolve cluster assignments across resolution hierarchies.
 
@@ -129,12 +130,14 @@ def _build_unified_query(
     5. **`COALESCE` assembly**: Joins all subqueries to source data and uses `COALESCE`
         to select the highest-priority cluster assignment for each record
 
-    The mode changes the data returned:
+    The level changes the data returned:
 
-    * `"id_key"`: Returns just the cluster ID and key
-    * `"root_leaf"`: Returns both root and leaf cluster IDs and hashes. This will return
-        less rows than `"id_key"` because it doesn't need a row for every key that
-        a leaf hash has, just the leaf hash itself
+    * `"leaf"`: Returns both root and leaf cluster IDs. For unmerged source
+        clusters, the root and leaf properties will be the same.
+    * `"key"`: In addition to the above, it also returns the source key. This will give
+        more rows than `"leaf"` because it needs a row for every key attached to a leaf.
+
+    Additionally, if `get_hashes` is set to True, the root and leaf hashes are returned.
     """
     # Get ordered lineage (already sorted by priority)
     lineage = resolution.get_lineage(sources=sources, threshold=threshold)
@@ -170,90 +173,96 @@ def _build_unified_query(
     leaf_clusters = aliased(Clusters, name="leaf_clusters")
     root_clusters = aliased(Clusters, name="root_clusters")
 
+    # `ClusterSourceKey` is the basis for all subsequent joins
+    from_clause: FromClause = ClusterSourceKey
+
     # Handle source-only case (no model resolutions in lineage)
     if not model_resolutions:
-        if mode == "id_key":
-            return select(
-                ClusterSourceKey.cluster_id.label("id"),
-                ClusterSourceKey.key,
-            ).where(source_filter)
-        else:  # "root_leaf"
-            return (
-                select(
-                    ClusterSourceKey.cluster_id.label("root_id"),
-                    leaf_clusters.cluster_hash.label("root_hash"),
-                    ClusterSourceKey.cluster_id.label("leaf_id"),
-                    leaf_clusters.cluster_hash.label("leaf_hash"),
-                )
-                .select_from(
-                    join(
-                        ClusterSourceKey,
-                        leaf_clusters,
-                        ClusterSourceKey.cluster_id == leaf_clusters.cluster_id,
-                    )
-                )
-                .where(source_filter)
-                .distinct()
-            )
+        # We always must select from `ClusterSourceKey`, as it points to source clusters
+        selection = [
+            ClusterSourceKey.cluster_id.label("root_id"),
+            ClusterSourceKey.cluster_id.label("leaf_id"),
+        ]
 
-    # Build subqueries for each model resolution
-    # Note both subqueries and cluster_columns are in priority order
-    subqueries: list[Select] = []
-    cluster_columns: list[ColumnElement] = []
-
-    for i, (res_id, threshold_val) in enumerate(model_resolutions):
-        subquery = _build_probability_subquery(res_id, threshold_val, str(i))
-        subqueries.append(subquery)
-        cluster_columns.append(subquery.c[f"cluster_{i}"])
-
-    # Build FROM clause - start with cluster_keys
-    if mode == "root_leaf":
-        from_clause: FromClause = join(
-            ClusterSourceKey,
-            leaf_clusters,
-            ClusterSourceKey.cluster_id == leaf_clusters.cluster_id,
-        )
-    else:
-        from_clause = ClusterSourceKey
-
-    # Add LEFT JOINs for each model resolution subquery
-    for subquery in subqueries:
-        from_clause = outerjoin(
-            from_clause,
-            subquery,
-            ClusterSourceKey.cluster_id == subquery.c.leaf,
-        )
-
-    # Build final cluster ID
-    # First non-null wins (highest priority first)
-    final_root_cluster_id = func.coalesce(*cluster_columns, ClusterSourceKey.cluster_id)
-
-    # Build final query with appropriate columns
-    if mode == "id_key":
-        return (
-            select(
-                final_root_cluster_id.label("id"),
+        if level == "key":
+            selection.append(
                 ClusterSourceKey.key,
             )
-            .select_from(from_clause)
-            .where(source_filter)
-        )
-    else:  # "root_leaf"
-        return (
-            select(
-                final_root_cluster_id.label("root_id"),
-                root_clusters.cluster_hash.label("root_hash"),
-                ClusterSourceKey.cluster_id.label("leaf_id"),
+
+        if get_hashes:
+            selection += [
+                leaf_clusters.cluster_hash.label("root_hash"),
                 leaf_clusters.cluster_hash.label("leaf_hash"),
+            ]
+
+            from_clause = join(
+                from_clause,
+                leaf_clusters,
+                ClusterSourceKey.cluster_id == leaf_clusters.cluster_id,
             )
-            .select_from(
-                from_clause.outerjoin(
-                    root_clusters, final_root_cluster_id == root_clusters.cluster_id
-                )
+
+    else:  # Querying from a resolution not at the bottom
+        # Build subqueries for each model resolution
+        # Note both subqueries and cluster_columns are in priority order
+        subqueries: list[Select] = []
+        cluster_columns: list[ColumnElement] = []
+
+        for i, (res_id, threshold_val) in enumerate(model_resolutions):
+            subquery = _build_probability_subquery(res_id, threshold_val, str(i))
+            subqueries.append(subquery)
+            cluster_columns.append(subquery.c[f"cluster_{i}"])
+
+        # To get hashes we need to join `Clusters`, here for leaves
+        # and later for roots
+        if get_hashes:
+            from_clause: FromClause = join(
+                from_clause,
+                leaf_clusters,
+                ClusterSourceKey.cluster_id == leaf_clusters.cluster_id,
             )
-            .where(source_filter)
-            .distinct()
+
+        # Add LEFT JOINs for each model resolution subquery
+        for subquery in subqueries:
+            from_clause = outerjoin(
+                from_clause,
+                subquery,
+                ClusterSourceKey.cluster_id == subquery.c.leaf,
+            )
+
+        # Build final cluster ID
+        # First non-null wins (highest priority first)
+        final_root_cluster_id = func.coalesce(
+            *cluster_columns, ClusterSourceKey.cluster_id
         )
+
+        selection = [
+            final_root_cluster_id.label("root_id"),
+            ClusterSourceKey.cluster_id.label("leaf_id"),
+        ]
+
+        if level == "key":
+            selection.append(
+                ClusterSourceKey.key,
+            )
+
+        if get_hashes:
+            selection += [
+                root_clusters.cluster_hash.label("root_hash"),
+                leaf_clusters.cluster_hash.label("leaf_hash"),
+            ]
+
+            from_clause: FromClause = from_clause.outerjoin(
+                root_clusters, final_root_cluster_id == root_clusters.cluster_id
+            )
+
+    query = select(*selection).select_from(from_clause).where(source_filter)
+
+    # Because we start from `ClusterSourceKey`, we must remove duplicates caused
+    # by distinct keys on the same leaf
+    if level == "leaf":
+        query = query.distinct()
+
+    return query
 
 
 def _build_target_cluster_cte(
@@ -264,7 +273,7 @@ def _build_target_cluster_cte(
 ) -> Select:
     """Build the target_cluster CTE.
 
-    Follows very similar logic to `_build_unified_query`, but with filtering
+    Follows very similar logic to `build_unified_query`, but with filtering
     specifically for a single key and source_config_id.
     """
     # Get ordered lineage
@@ -419,7 +428,7 @@ def _build_match_query(
     The overall process:
 
         1. **Target cluster CTE**: Uses the same `COALESCE` hierarchy logic as
-            `_build_unified_query` to resolve which cluster the input key belongs to.
+            `build_unified_query` to resolve which cluster the input key belongs to.
             This handles the full resolution hierarchy with proper priority ordering.
         2. **Matching leaves CTE**: Builds a `UNION ALL` query with multiple branches:
 
@@ -461,6 +470,7 @@ def query(
     source: SourceResolutionName,
     resolution: ResolutionName | None = None,
     threshold: int | None = None,
+    return_leaf_id: bool = False,
     limit: int = None,
 ) -> pa.Table:
     """Queries Matchbox to retrieve linked data for a source.
@@ -494,20 +504,12 @@ def query(
         else:
             truth_resolution: Resolutions = source_resolution
 
-        # Simple case - same resolution, no hierarchy needed
-        if truth_resolution.resolution_id == source_config.resolution_id:
-            id_query: Select = select(
-                ClusterSourceKey.cluster_id.label("id"),
-                ClusterSourceKey.key,
-            ).where(ClusterSourceKey.source_config_id == source_config.source_config_id)
-        else:
-            # Use hierarchy resolution
-            id_query: Select = _build_unified_query(
-                resolution=truth_resolution,
-                sources=[source_config],
-                threshold=threshold,
-                mode="id_key",
-            )
+        id_query: Select = build_unified_query(
+            resolution=truth_resolution,
+            sources=[source_config],
+            threshold=threshold,
+            level="key",
+        )
 
         if limit:
             id_query = id_query.limit(limit)
@@ -515,9 +517,15 @@ def query(
         with MBDB.get_adbc_connection() as conn:
             stmt: str = compile_sql(id_query)
             logger.debug(f"Query SQL: \n {stmt}")
-            return sql_to_df(
+            id_results = sql_to_df(
                 stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
-            )
+            ).rename_columns({"root_id": "id"})
+
+        selection = ["id", "key"]
+        if return_leaf_id:
+            selection.append("leaf_id")
+
+        return id_results.select(selection)
 
 
 def get_parent_clusters_and_leaves(
@@ -560,9 +568,8 @@ def get_parent_clusters_and_leaves(
             if parent_resolution is None:
                 continue
 
-            parent_assignments: Select = _build_unified_query(
-                resolution=parent_resolution,
-                mode="root_leaf",
+            parent_assignments: Select = build_unified_query(
+                resolution=parent_resolution, get_hashes=True
             )
 
             for row in session.execute(parent_assignments):

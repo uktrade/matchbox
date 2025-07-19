@@ -7,7 +7,7 @@ from respx.router import MockRouter
 from matchbox.client.results import Results
 from matchbox.common.arrow import SCHEMA_RESULTS, table_to_buffer
 from matchbox.common.dtos import (
-    BackendRetrievableType,
+    BackendResourceType,
     BackendUploadType,
     CRUDOperation,
     ModelAncestor,
@@ -34,7 +34,7 @@ def test_insert_model(matchbox_api: MockRouter):
         return_value=Response(
             404,
             json=NotFoundError(
-                details="Model not found", entity=BackendRetrievableType.RESOLUTION
+                details="Model not found", entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         )
     )
@@ -70,7 +70,7 @@ def test_insert_model_error(matchbox_api: MockRouter):
         return_value=Response(
             404,
             json=NotFoundError(
-                details="Model not found", entity=BackendRetrievableType.RESOLUTION
+                details="Model not found", entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         )
     )
@@ -123,7 +123,7 @@ def test_results_getter_not_found(matchbox_api: MockRouter):
         return_value=Response(
             404,
             json=NotFoundError(
-                details="Results not found", entity=BackendRetrievableType.RESOLUTION
+                details="Results not found", entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         )
     )

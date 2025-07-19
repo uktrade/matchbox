@@ -161,6 +161,7 @@ class ModelStep(Step):
 
         return query(
             selectors,
+            return_leaf_id=False,
             return_type="polars",
             threshold=step_input.threshold,
             resolution=step_input.name,

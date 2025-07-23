@@ -118,6 +118,7 @@ MetadataStoreDependency = Annotated[MetadataStore, Depends(metadata_store)]
 
 def b64_decode(b64_bytes):
     """B64 decode."""
+    # Add padding if required and decode b64
     return urlsafe_b64decode(b64_bytes + (b"=" * ((4 - len(b64_bytes) % 4) % 4)))
 
 

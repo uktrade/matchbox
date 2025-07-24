@@ -37,6 +37,9 @@ server = [
     "python-multipart>=0.0.18",
     "tomli>=2.0.1",
 ]
+eval = [
+ "streamlit>=1.45.0",
+]
 
 [dependency-groups]
 dev = [

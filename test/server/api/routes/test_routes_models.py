@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
-    BackendRetrievableType,
+    BackendResourceType,
     CRUDOperation,
     ModelAncestor,
     NotFoundError,
@@ -92,7 +92,7 @@ def test_get_model_not_found(test_client: TestClient):
     response = test_client.get("/models/nonexistent")
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendRetrievableType.RESOLUTION
+    assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
 @pytest.mark.parametrize("model_type", ["deduper", "linker"])
@@ -296,7 +296,7 @@ def test_set_results_model_not_found(test_client: TestClient):
     response = test_client.post("/models/nonexistent-model/results")
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendRetrievableType.RESOLUTION
+    assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
 def test_get_results(test_client: TestClient):
@@ -449,7 +449,7 @@ def test_model_get_endpoints_404(endpoint: str, test_client: TestClient) -> None
     # Verify response
     assert response.status_code == 404
     error = NotFoundError.model_validate(response.json())
-    assert error.entity == BackendRetrievableType.RESOLUTION
+    assert error.entity == BackendResourceType.RESOLUTION
 
 
 @pytest.mark.parametrize(
@@ -485,7 +485,7 @@ def test_model_patch_endpoints_404(
     # Verify response
     assert response.status_code == 404
     error = NotFoundError.model_validate(response.json())
-    assert error.entity == BackendRetrievableType.RESOLUTION
+    assert error.entity == BackendResourceType.RESOLUTION
 
 
 def test_delete_resolution(test_client: TestClient):
@@ -548,4 +548,4 @@ def test_delete_resolution_404(certain: bool, test_client: TestClient) -> None:
     # Verify response
     assert response.status_code == 404
     error = NotFoundError.model_validate(response.json())
-    assert error.entity == BackendRetrievableType.RESOLUTION
+    assert error.entity == BackendResourceType.RESOLUTION

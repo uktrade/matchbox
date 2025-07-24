@@ -2,13 +2,36 @@
 
 from typing import Any
 
-from matchbox.common.dtos import ResolutionName, SourceResolutionName
+from pyarrow import Schema
 
-# -- Configuration exceptions
+# -- Common data objects exceptions --
+
+
+class MatchboxArrowSchemaMismatch(Exception):
+    """Arrow schema mismatch."""
+
+    def __init__(self, expected: Schema, actual: Schema):
+        """Initialise the exception."""
+        message = f"Schema mismatch. Expected:\n{expected}\nGot:\n{actual}"
+
+        super().__init__(message)
+
+
+# -- Configuration exceptions --
 
 
 class MatchboxClientSettingsException(Exception):
     """Incorrect configuration provided to client."""
+
+    def __init__(
+        self,
+        message: str | None = None,
+    ):
+        """Initialise the exception."""
+        if message is None:
+            message = "Incorrect configuration provided to client."
+
+        super().__init__(message)
 
 
 # -- Client-side API exceptions --
@@ -31,13 +54,11 @@ class MatchboxUnparsedClientRequest(Exception):
 class MatchboxUnhandledServerResponse(Exception):
     """The API sent an unexpected response."""
 
-    def __init__(
-        self,
-        message: str | None = None,
-    ):
+    def __init__(self, http_status: int, details: str | None = None):
         """Initialise the exception."""
-        if message is None:
-            message = "The API sent an unexpected response"
+        message = f"The API sent an unexpected response with status {http_status}"
+        if details:
+            message += f" and the following message: {details}"
 
         super().__init__(message)
 
@@ -114,10 +135,24 @@ class MatchboxModelConfigError(Exception):
 # -- Resource not found on server exceptions --
 
 
+class MatchboxUserNotFoundError(Exception):
+    """User not found."""
+
+    def __init__(self, message: str | None = None, user_id: str | None = None):
+        """Initialise the exception."""
+        if message is None:
+            message = "User not found."
+            if user_id is not None:
+                message = f"User {user_id} not found."
+
+        super().__init__(message)
+        self.user_id = user_id
+
+
 class MatchboxResolutionNotFoundError(Exception):
     """Resolution not found."""
 
-    def __init__(self, message: str | None = None, name: ResolutionName | None = None):
+    def __init__(self, message: str | None = None, name: str | None = None):
         """Initialise the exception."""
         if message is None:
             message = "Resolution not found."
@@ -134,7 +169,7 @@ class MatchboxSourceNotFoundError(Exception):
     def __init__(
         self,
         message: str = None,
-        name: SourceResolutionName | None = None,
+        name: str | None = None,
     ):
         """Initialise the exception."""
         if message is None:
@@ -171,17 +206,6 @@ class MatchboxDataNotFound(Exception):
 # -- Server-side API exceptions --
 
 
-class MatchboxClientFileError(Exception):
-    """There was a problem with file download."""
-
-    def __init__(self, message: str | None = None):
-        """Initialise the exception."""
-        if message is None:
-            message = "There was a problem with file download."
-
-        super().__init__(message)
-
-
 class MatchboxConnectionError(Exception):
     """Connection to Matchbox's backend database failed."""
 
@@ -189,9 +213,7 @@ class MatchboxConnectionError(Exception):
 class MatchboxDeletionNotConfirmed(Exception):
     """Deletion must be confirmed: if certain, rerun with certain=True."""
 
-    def __init__(
-        self, message: str | None = None, children: list[ResolutionName] | None = None
-    ):
+    def __init__(self, message: str | None = None, children: list[str] | None = None):
         """Initialise the exception."""
         if message is None:
             message = "Deletion must be confirmed: if certain, rerun with certain=True."
@@ -213,7 +235,15 @@ class MatchboxResolutionAlreadyExists(Exception):
     """Resolution already exists."""
 
 
+class MatchboxTooManySamplesRequested(Exception):
+    """Too many samples have been requested from the server."""
+
+
 # -- Adapter DB exceptions --
+
+
+class MatchboxNoJudgements(Exception):
+    """No judgements found in the database when required for operation."""
 
 
 class MatchboxDatabaseWriteError(Exception):

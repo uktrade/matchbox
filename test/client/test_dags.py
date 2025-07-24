@@ -229,6 +229,7 @@ def test_dedupe_step_run(
         query_mock.assert_called_once_with(
             [Selector(source=foo, fields=[])],
             return_type="polars",
+            return_leaf_id=False,
             threshold=d_foo.left.threshold,
             resolution=d_foo.left.name,
             batch_size=100 if batched else None,
@@ -320,6 +321,7 @@ def test_link_step_run(
         assert query_mock.call_args_list[0] == call(
             [Selector(source=foo, fields=foo.index_fields)],
             return_type="polars",
+            return_leaf_id=False,
             threshold=foo_bar.left.threshold,
             resolution=foo_bar.left.name,
             batch_size=100 if batched else None,
@@ -328,6 +330,7 @@ def test_link_step_run(
         assert query_mock.call_args_list[1] == call(
             [Selector(source=bar, fields=[])],
             return_type="polars",
+            return_leaf_id=False,
             threshold=foo_bar.right.threshold,
             resolution=foo_bar.right.name,
             batch_size=100 if batched else None,

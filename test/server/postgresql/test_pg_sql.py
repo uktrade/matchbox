@@ -29,7 +29,7 @@ from matchbox.server.postgresql.orm import (
 )
 from matchbox.server.postgresql.utils.db import compile_sql
 from matchbox.server.postgresql.utils.query import (
-    _build_unified_query,
+    build_unified_query,
     get_parent_clusters_and_leaves,
     get_source_config,
     match,
@@ -612,76 +612,84 @@ class TestGetSourceConfig:
 
 
 @pytest.mark.docker
-@pytest.mark.parametrize("mode", ["root_leaf", "id_key"])
+@pytest.mark.parametrize(
+    "level", [pytest.param("leaf", id="leaf"), pytest.param("key", id="key")]
+)
+@pytest.mark.parametrize(
+    "get_hashes",
+    [pytest.param(True, id="with_hashes"), pytest.param(False, id="without_hashes")],
+)
 class TestBuildUnifiedQuery:
     """Test unified query building with correct COALESCE expectations."""
 
     def test_build_unified_source_only(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Should build unified query for source-only scenario."""
         with MBDB.get_session() as session:
             source_a_resolution = session.get(Resolutions, 1)  # source_a resolution
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=source_a_resolution,
                 sources=[source_a_config],  # Pass source config directly
                 threshold=None,
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        expected_columns = {"root_id", "leaf_id"}
+        if level == "leaf":
             # 5 unique cluster rows (not 6) since two keys share cluster 101
             assert len(result) == 5
 
-            expected_columns = {
-                "root_id",
-                "root_hash",
-                "leaf_id",
-                "leaf_hash",
-            }
-            assert set(result.columns) == expected_columns
             assert all(result["root_id"] == result["leaf_id"])
 
             # Should have clusters 101, 102, 103, 104, 105
             cluster_ids = set(result["root_id"])
             assert cluster_ids == {101, 102, 103, 104, 105}
 
-        else:  # id_key
+        else:  # key level
+            expected_columns.update(["key"])
             # Should return all 6 keys from source_a
             assert len(result) == 6
+            assert set(result["root_id"]) == {101, 102, 103, 104, 105}
 
-            expected_columns = {"id", "key"}
+        if get_hashes:
+            expected_columns.update(["root_hash", "leaf_hash"])
             assert set(result.columns) == expected_columns
-            assert set(result["id"]) == {101, 102, 103, 104, 105}
+        else:
+            assert set(result.columns) == expected_columns
 
     def test_build_unified_mixed_scenario(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Should build unified query mixing sources and models."""
         with MBDB.get_session() as session:
             dedupe_a_resolution = session.get(Resolutions, 3)  # dedupe_a context
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=dedupe_a_resolution,
                 sources=[source_a_config],  # Query source_a through dedupe_a
                 threshold=80,  # Override threshold to 80
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        if level == "leaf":
             # We should have 5 unique (root_id, leaf_id) combinations:
             # - (301, 101), (301, 102) for the dedupe cluster
             # - (103, 103), (104, 104), (105, 105) for unclaimed clusters
@@ -703,17 +711,19 @@ class TestBuildUnifiedQuery:
             remaining_clusters = cluster_ids - {301}
             assert remaining_clusters == {103, 104, 105}
 
-        else:  # id_key
+        else:  # key level
             # For id_key, we still get all 6 rows since it includes the key column
             assert len(result) == 6
 
-            cluster_ids = set(result["id"])
+            cluster_ids = set(result["root_id"])
 
             # At threshold 80, C301 qualifies (prob=80 >= 80)
             assert 301 in cluster_ids
 
             # Keys that should map to C301 (contains clusters 101, 102)
-            keys_in_301 = [row["key"] for row in result.to_dicts() if row["id"] == 301]
+            keys_in_301 = [
+                row["key"] for row in result.to_dicts() if row["root_id"] == 301
+            ]
             expected_301_keys = {"src_a_key1", "src_a_key2", "src_a_key3"}
             assert set(keys_in_301) == expected_301_keys
 
@@ -723,8 +733,9 @@ class TestBuildUnifiedQuery:
 
     def test_build_unified_linker_all_sources(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Should build unified query for linker with all sources."""
         with MBDB.get_session() as session:
@@ -732,24 +743,25 @@ class TestBuildUnifiedQuery:
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
             source_b_config = session.get(SourceConfigs, 22)  # source_b config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=[source_a_config, source_b_config],  # Both sources
                 threshold=80,  # Override linker threshold to 80 (from default 90)
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        if level == "leaf":
             # Return 10 unique hashes from the 11 keys
             assert len(result) == 10
             cluster_ids = set(result["root_id"])
-        else:  # id_key
+        else:  # key level
             # Should return all 11 keys from both sources
             assert len(result) == 11
-            cluster_ids = set(result["id"])
+            cluster_ids = set(result["root_id"])
 
         # At threshold 80 for linker:
         # - C501 (prob=90): 90% >= 80% ✓ but superseded by C503
@@ -771,8 +783,9 @@ class TestBuildUnifiedQuery:
 
     def test_build_unified_linker_high_threshold(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Should exclude linker clusters that don't meet high threshold."""
         with MBDB.get_session() as session:
@@ -780,24 +793,25 @@ class TestBuildUnifiedQuery:
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
             source_b_config = session.get(SourceConfigs, 22)  # source_b config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=[source_a_config, source_b_config],  # Both sources
                 threshold=95,  # Very high threshold excludes all linker clusters
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        if level == "leaf":
             # Return 10 unique hashes from the 11 keys
             assert len(result) == 10
             cluster_ids = set(result["root_id"])
-        else:  # id_key
+        else:  # key level
             # Should return all 11 keys from both sources
             assert len(result) == 11
-            cluster_ids = set(result["id"])
+            cluster_ids = set(result["root_id"])
 
         # No linker clusters qualify at threshold=95
         assert 503 not in cluster_ids  # 80% < 95%
@@ -815,32 +829,34 @@ class TestBuildUnifiedQuery:
 
     def test_build_unified_single_source_filter(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Should filter to single source lineage."""
         with MBDB.get_session() as session:
             linker_resolution = session.get(Resolutions, 5)  # linker context
             source_b_config = session.get(SourceConfigs, 22)  # source_b only
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=[source_b_config],  # Only source_b
                 threshold=80,  # Override linker threshold to 80
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        if level == "leaf":
             # Return 5 unique hashes from the 5 keys
             assert len(result) == 5
             cluster_ids = set(result["root_id"])
-        else:  # id_key
+        else:  # key level
             # Should return only 5 keys from source_b
             assert len(result) == 5
-            cluster_ids = set(result["id"])
+            cluster_ids = set(result["root_id"])
 
         # Should see linker clusters that contain source_b data:
         # C503 contains source_b keys: 201, 202, 205
@@ -865,31 +881,32 @@ class TestBuildUnifiedQuery:
 
     def test_build_unified_no_source_filter(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Should include all sources when no filtering."""
         with MBDB.get_session() as session:
             linker_resolution = session.get(Resolutions, 5)  # linker context
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=linker_resolution,
                 sources=None,  # No filtering - all sources
                 threshold=80,  # Override linker threshold to 80
-                mode=mode,
+                level=level,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        if level == "leaf":
             # Return 10 unique hashes from the 11 keys
             assert len(result) == 10
             cluster_ids = set(result["root_id"])
-        else:  # id_key
+        else:  # key level
             # Should return all 11 keys from both sources
             assert len(result) == 11
-            cluster_ids = set(result["id"])
+            cluster_ids = set(result["root_id"])
 
         # At threshold 80 for linker:
         # - C502 (prob=90): 90% >= 80% ✓
@@ -910,24 +927,26 @@ class TestBuildUnifiedQuery:
 
     def test_build_unified_source_only_no_sources_filter(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Source resolution with sources=None returns that source only."""
         with MBDB.get_session() as session:
             source_a_resolution = session.get(Resolutions, 1)  # source_a resolution
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=source_a_resolution,  # Query source_a
                 sources=None,  # No source filtering
                 threshold=None,
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
-        if mode == "root_leaf":
+        if level == "leaf":
             # Return 5 unique hashes from the 6 keys
             assert len(result) == 5
             cluster_ids = set(result["root_id"])
@@ -936,13 +955,14 @@ class TestBuildUnifiedQuery:
         else:
             # Should return 6 keys from source_a
             assert len(result) == 6
-            cluster_ids = set(result["id"])
+            cluster_ids = set(result["root_id"])
             assert cluster_ids == {101, 102, 103, 104, 105}
 
     def test_simple_thresholding(
         self,
+        level: Literal["leaf", "key"],
+        get_hashes: bool,
         populated_postgres_db: MatchboxPostgres,
-        mode: Literal["root_leaf", "id_key"],
     ):
         """Simple test showing thresholding works."""
         # Query at threshold=70 where both C301 (80%) and C302 (70%) qualify
@@ -950,22 +970,23 @@ class TestBuildUnifiedQuery:
             dedupe_resolution = session.get(Resolutions, 3)  # dedupe context
             source_a_config = session.get(SourceConfigs, 11)  # source_a config
 
-            query = _build_unified_query(
+            query = build_unified_query(
                 resolution=dedupe_resolution,
                 sources=[source_a_config],
                 threshold=70,  # Use threshold lower than cache and C301
-                mode=mode,
+                level=level,
+                get_hashes=get_hashes,
             )
 
         with MBDB.get_adbc_connection() as conn:
             result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
 
         # Get the appropriate column name for cluster IDs
-        if mode == "id_key":
+        if level == "key":
             # Should return 6 keys from source a with no repetition
             assert len(result) == 6
-            cluster_column = "id"
-        else:  # "root_leaf"
+            cluster_column = "root_id"
+        else:  # leaf level
             # Return 5 unique hashes from the 6 keys
             assert len(result) == 5
             cluster_column = "root_id"

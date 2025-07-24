@@ -7,7 +7,7 @@ from respx import MockRouter
 from sqlalchemy import Engine, create_engine
 
 from matchbox.client.extract import key_field_map
-from matchbox.common.arrow import SCHEMA_MB_IDS, table_to_buffer
+from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
 from matchbox.common.exceptions import MatchboxSourceNotFoundError
 from matchbox.common.factories.sources import source_from_tuple
 
@@ -69,7 +69,7 @@ def test_key_field_map(
                         {"id": 2, "key": "2"},
                         {"id": 3, "key": "3"},
                     ],
-                    schema=SCHEMA_MB_IDS,
+                    schema=SCHEMA_QUERY,
                 )
             ).read(),
         )
@@ -85,7 +85,7 @@ def test_key_field_map(
                         {"id": 3, "key": "b"},
                         {"id": 3, "key": "c"},
                     ],
-                    schema=SCHEMA_MB_IDS,
+                    schema=SCHEMA_QUERY,
                 )
             ).read(),
         )

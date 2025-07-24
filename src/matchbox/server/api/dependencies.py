@@ -25,6 +25,12 @@ from matchbox.server.base import (
 )
 
 
+class ZipResponse(Response):
+    """A response object for a zipped data."""
+
+    media_type = "application/zip"
+
+
 class ParquetResponse(Response):
     """A response object for returning parquet data."""
 

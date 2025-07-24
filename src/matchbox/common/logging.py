@@ -47,7 +47,9 @@ class PrefixedLoggerAdapter(logging.LoggerAdapter):
         return msg, kwargs
 
 
-logger: Final[PrefixedLoggerAdapter]
+logger: Final[PrefixedLoggerAdapter] = PrefixedLoggerAdapter(
+    logging.getLogger("matchbox"), {}
+)
 """Logger for Matchbox.
 
 Used for all logging in the Matchbox library.
@@ -62,8 +64,6 @@ Examples:
     logger.info("Insert successful", prefix=log_prefix)
     ```
 """
-logger = PrefixedLoggerAdapter(logging.getLogger("matchbox"), {})
-
 
 console: Final[Console] = Console()
 """Console for Matchbox.

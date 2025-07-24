@@ -25,6 +25,7 @@ nav:
     - Overview: api/client/index.md
     - DAGs: api/client/dags.md
     - Clean: api/client/clean.md
+    - Evaluation: api/client/eval.md
     - Helpers: api/client/helpers.md
     - Models: api/client/models.md
     - Results: api/client/results.md
@@ -38,6 +39,7 @@ nav:
   - Common: 
     - Overview: api/common/index.md
     - Database: api/common/db.md
+    - Evaluation: api/common/eval.md
     - Exceptions: api/common/exceptions.md
     - Factories: 
       - Overview: api/common/factories/index.md

@@ -62,17 +62,31 @@ erDiagram
         int level
         smallint truth_cache
     }
+    Users {
+        bigint user_id PK
+        string name
+    }
+    EvalJudgements {
+        bigint judgement_id PK
+        bigint user_id FK
+        bigint endorsed_cluster_id FK
+        bigint shown_cluster_id FK
+        datetime timestamp
+    }
 
     SourceConfigs |o--|| Resolutions : ""
     SourceConfigs ||--o{ SourceFields : ""
     SourceConfigs ||--o{ ClusterSourceKey : ""
     Clusters ||--o{ ClusterSourceKey : ""
     Clusters ||--o{ Probabilities : ""
+    Clusters ||--o{ EvalJudgements : "endorsed_cluster_id"
+    Clusters ||--o{ EvalJudgements : "shown_cluster_id" 
     Clusters ||--o{ Contains : "parent"
     Contains }o--|| Clusters : "child"
     Resolutions ||--o{ Probabilities : ""
     Resolutions ||--o{ ResolutionFrom : "parent"
     ResolutionFrom }o--|| Resolutions : "child"
+    Users ||--o{ EvalJudgements : ""
 ```
 
 

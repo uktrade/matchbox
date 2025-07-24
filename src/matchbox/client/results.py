@@ -1,7 +1,6 @@
 """Objects representing the results of running a model client-side."""
 
-from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, Hashable, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Hashable, ParamSpec, TypeVar
 
 import polars as pl
 import pyarrow as pa
@@ -23,21 +22,6 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def calculate_clusters(func: Callable[P, R]) -> Callable[P, R]:
-    """Decorator to calculate clusters if it hasn't been already."""
-
-    @wraps(func)
-    def wrapper(self: "Results", *args: P.args, **kwargs: P.kwargs) -> R:
-        if not self.clusters:
-            im = IntMap()
-            self.clusters = to_clusters(
-                results=self.probabilities, dtype=pa.int64, hash_func=im.index
-            )
-        return func(self, *args, **kwargs)
-
-    return wrapper
-
-
 class Results(BaseModel):
     """Results of a model run.
 
@@ -56,7 +40,7 @@ class Results(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     probabilities: pa.Table
-    clusters: pa.Table | None = None
+    _clusters: pa.Table | None = None
     model: Model | None = None
     metadata: ModelConfig
 
@@ -111,6 +95,16 @@ class Results(BaseModel):
             )
 
         return value.cast(SCHEMA_RESULTS)
+
+    @property
+    def clusters(self):
+        """Retrieve new clusters implied by these results."""
+        if not self._clusters:
+            im = IntMap()
+            self._clusters = to_clusters(
+                results=self.probabilities, dtype=pa.int64, hash_func=im.index
+            )
+        return self._clusters
 
     def _merge_with_source_data(
         self,
@@ -177,12 +171,10 @@ class Results(BaseModel):
             right_merge_col="right_id",
         )
 
-    @calculate_clusters
     def clusters_to_polars(self) -> pl.DataFrame:
         """Returns the cluster results as a polars DataFrame."""
         return pl.from_arrow(self.clusters)
 
-    @calculate_clusters
     def inspect_clusters(
         self,
         left_data: pl.DataFrame,
@@ -201,6 +193,48 @@ class Results(BaseModel):
             left_merge_col="child",
             right_merge_col="child",
         )
+
+    def root_leaf(self):
+        """Returns all roots and leaves implied by these results."""
+        if ("leaf_id" not in self.model.left_data.columns) or (
+            self.model.right_data is not None
+            and ("leaf_id" not in self.model.right_data.columns)
+        ):
+            raise RuntimeError(
+                "To compute root-leaf, model inputs must contain leaf IDs."
+            )
+
+        parents_root_leaf = self.model.left_data.select(["id", "leaf_id"])
+        if self.model.right_data is not None:
+            parents_root_leaf = pl.concat(
+                [parents_root_leaf, self.model.right_data.select(["id", "leaf_id"])]
+            )
+
+        # Go from parent-child (where child could be the root of another model)
+        # to root-leaf, where leaf is a source cluster ID
+        root_leaf_res = (
+            self.clusters_to_polars()
+            .rename({"parent": "root_id"})
+            .join(parents_root_leaf, left_on="child", right_on="id")
+            .select(["root_id", "leaf_id"])
+            .unique()
+        )
+
+        # Generate root-leaf for those input rows that weren't merged by this model
+        unmerged_ids_rows = (
+            parents_root_leaf.select("id", "leaf_id")
+            .join(
+                self.clusters_to_polars().select("child"),
+                left_on="id",
+                right_on="child",
+                how="anti",
+            )
+            .rename({"id": "root_id"})
+            .select(["root_id", "leaf_id"])
+            .unique()
+        )
+
+        return pl.concat([root_leaf_res, unmerged_ids_rows])
 
     def to_matchbox(self) -> None:
         """Writes the results to the Matchbox database."""

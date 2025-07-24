@@ -12,7 +12,7 @@ from fastapi import (
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
-    BackendRetrievableType,
+    BackendResourceType,
     CRUDOperation,
     ModelAncestor,
     ModelConfig,
@@ -82,7 +82,7 @@ async def get_model(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
 
@@ -105,7 +105,7 @@ async def set_results(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
 
@@ -127,7 +127,7 @@ async def get_results(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
 
@@ -163,7 +163,7 @@ async def set_truth(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
     except Exception as e:
@@ -190,7 +190,7 @@ async def get_truth(backend: BackendDependency, name: ModelResolutionName) -> fl
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
 
@@ -209,7 +209,7 @@ async def get_ancestors(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
 
@@ -242,7 +242,7 @@ async def set_ancestors_cache(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e
     except Exception as e:
@@ -271,6 +271,6 @@ async def get_ancestors_cache(
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
-                details=str(e), entity=BackendRetrievableType.RESOLUTION
+                details=str(e), entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         ) from e

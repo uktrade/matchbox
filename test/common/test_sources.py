@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 import polars as pl
 import pyarrow as pa
 import pytest
+from polars.testing import assert_frame_equal
 from pydantic import AnyUrl, ValidationError
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.exc import OperationalError
@@ -247,6 +248,17 @@ def test_relational_db_execute(sqlite_warehouse: Engine):
     # Combine all batches to check total row count
     combined_df = pl.concat(results)
     assert len(combined_df) == 10
+
+    # Try query with filter
+    keys_to_filter = source_testkit.query["key"][:2].to_pylist()
+    filtered_results = pl.concat(
+        location.execute(sql, batch_size, keys=("key", keys_to_filter))
+    )
+    assert len(filtered_results) == 2
+
+    # Filtering by no keys has no effect
+    unfiltered_results = pl.concat(location.execute(sql, batch_size, keys=("key", [])))
+    assert_frame_equal(unfiltered_results, combined_df)
 
 
 def test_relational_db_execute_invalid(sqlite_warehouse: Engine):
@@ -521,6 +533,15 @@ def test_source_query(sqlite_warehouse: Engine):
     assert len(result) == 5
     assert "key" in result.columns
     assert "name" in result.columns
+
+    # Try applying key filter
+    key_subset = result[source.key_field.name][:2].to_list()
+    result = next(source.query(keys=key_subset))
+    assert len(result) == 2
+
+    # Key filter ineffective with empty list
+    result = next(source.query(keys=[]))
+    assert len(result) == 5
 
 
 @pytest.mark.parametrize(

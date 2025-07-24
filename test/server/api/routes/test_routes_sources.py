@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
-    BackendRetrievableType,
+    BackendResourceType,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -50,7 +50,7 @@ def test_get_source_404(test_client: TestClient):
 
     response = test_client.get("/sources/foo")
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendRetrievableType.SOURCE
+    assert response.json()["entity"] == BackendResourceType.SOURCE
 
 
 def test_get_resolution_sources(test_client: TestClient):
@@ -79,7 +79,7 @@ def test_get_resolution_sources_404(test_client: TestClient):
 
     response = test_client.get("/sources", params={"name": "foo"})
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendRetrievableType.RESOLUTION
+    assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
 def test_add_source(test_client: TestClient):

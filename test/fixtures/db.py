@@ -207,7 +207,7 @@ def create_probabilistic_dedupe_scenario(
         # Add to backend and DAG
         backend.insert_model(model_config=model_testkit.model.model_config)
         backend.set_model_results(name=name, results=model_testkit.probabilities)
-        backend.set_model_truth(name=name, truth=0.5)
+        backend.set_model_truth(name=name, truth=50)
         dag.add_model(model_testkit)
 
     return dag
@@ -317,6 +317,92 @@ def create_link_scenario(
     return dag
 
 
+@register_scenario("alt_dedupe")
+def create_alt_dedupe_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+) -> TestkitDAG:
+    """Create a TestkitDAG scenario with two alternative dedupers."""
+    dag = TestkitDAG()
+
+    # Create linked sources
+    company_name_feature = FeatureConfig(
+        name="company_name", base_generator="company"
+    ).add_variations(SuffixRule(suffix=" UK"))
+
+    foo_a_tkit_source = SourceTestkitParameters(
+        name="foo_a",
+        engine=warehouse_engine,
+        features=(company_name_feature,),
+        drop_base=False,
+        n_true_entities=n_entities,
+        repetition=1,
+    )
+
+    linked = linked_sources_factory(source_parameters=(foo_a_tkit_source,))
+    dag.add_source(linked)
+
+    # Write sources to warehouse
+    _testkitdag_to_location(warehouse_engine, dag)
+
+    # Index sources in backend
+    for source_testkit in dag.sources.values():
+        backend.index(
+            source_config=source_testkit.source_config,
+            data_hashes=source_testkit.data_hashes,
+        )
+
+    # Create and add deduplication models
+    for testkit in dag.sources.values():
+        source = testkit.source_config
+        model_name1 = f"dedupe.{source.name}"
+        model_name2 = f"dedupe2.{source.name}"
+
+        # Query the raw data
+        source_query = backend.query(source=source.name)
+
+        # Build model testkit using query data
+        model_testkit1 = query_to_model_factory(
+            left_resolution=source.name,
+            left_query=source_query,
+            left_keys={source.name: "key"},
+            true_entities=tuple(linked.true_entities),
+            name=model_name1,
+            description=f"Deduplication of {source.name}",
+            prob_range=(0.5, 1.0),
+            seed=seed,
+        )
+
+        model_testkit2 = query_to_model_factory(
+            left_resolution=source.name,
+            left_query=source_query,
+            left_keys={source.name: "key"},
+            true_entities=tuple(linked.true_entities),
+            name=model_name2,
+            description=f"Deduplication of {source.name}",
+            prob_range=(0.5, 1.0),
+            seed=seed,
+        )
+
+        assert model_testkit1.probabilities.num_rows > 0
+        assert model_testkit1.probabilities == model_testkit2.probabilities
+
+        for model, threshold in ((model_testkit1, 50), (model_testkit2, 75)):
+            model.threshold = threshold
+
+            # Add both models to backend and DAG
+            backend.insert_model(model_config=model.model.model_config)
+            backend.set_model_results(name=model.name, results=model.probabilities)
+            backend.set_model_truth(name=model.name, truth=threshold)
+
+            # Add to DAG
+            dag.add_model(model)
+
+    return dag
+
+
 @register_scenario("convergent")
 def create_convergent_scenario(
     backend: MatchboxDBAdapter,
@@ -399,7 +485,15 @@ _DATABASE_SNAPSHOTS_CACHE: dict[str, tuple[TestkitDAG, MatchboxSnapshot]] = {}
 @contextmanager
 def setup_scenario(
     backend: MatchboxDBAdapter,
-    scenario_type: Literal["bare", "index", "dedupe", "link", "convergent"],
+    scenario_type: Literal[
+        "bare",
+        "index",
+        "dedupe",
+        "link",
+        "probabilistic_dedupe",
+        "alt_dedupe",
+        "convergent",
+    ],
     warehouse: Engine,
     n_entities: int = 10,
     seed: int = 42,

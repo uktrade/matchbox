@@ -18,6 +18,7 @@ from matchbox.common.dtos import (
     ResolutionName,
     SourceResolutionName,
 )
+from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.logging import LogLevelType
 from matchbox.common.sources import Match, SourceConfig
@@ -231,6 +232,7 @@ class MatchboxDBAdapter(ABC):
         source: SourceResolutionName,
         resolution: ResolutionName | None = None,
         threshold: int | None = None,
+        return_leaf_id: bool = False,
         limit: int = None,
     ) -> Table:
         """Queries the database from an optional point of truth.
@@ -243,6 +245,7 @@ class MatchboxDBAdapter(ABC):
                 If None, uses the models' default threshold
                 If an integer, uses that threshold for the specified model, and the
                 model's cached thresholds for its ancestors
+            return_leaf_id (optional): whether to return cluster ID of leaves
             limit (optional): the number to use in a limit clause. Useful for testing
 
         Returns:
@@ -483,5 +486,56 @@ class MatchboxDBAdapter(ABC):
         Args:
             name: The name of the resolution to delete.
             certain: Whether to delete the model without confirmation.
+        """
+        ...
+
+    @abstractmethod
+    def login(self, user_name: str) -> int:
+        """Receives a user name and returns user ID."""
+
+    @abstractmethod
+    def insert_judgement(judgement: Judgement) -> None:
+        """Adds an evaluation judgement to the database.
+
+        Args:
+            judgement: representation of the proposed clusters.
+        """
+        ...
+
+    @abstractmethod
+    def get_judgements(self) -> tuple[Table, Table]:
+        """Retrieves all evaluation judgements.
+
+        Returns:
+            Two PyArrow tables with the judgments and their expansion.
+            See `matchbox.common.arrow` for information on the schema.
+        """
+        ...
+
+    @abstractmethod
+    def compare_models(self, resolutions: list[ModelResolutionName]) -> ModelComparison:
+        """Compare metrics of models based on evaluation data.
+
+        Args:
+            resolutions: List of names of model resolutions to be compared.
+
+        Returns:
+            A model comparison object, listing metrics for each model.
+        """
+        ...
+
+    @abstractmethod
+    def sample_for_eval(
+        self, n: int, resolution: ModelResolutionName, user_id: int
+    ) -> Table:
+        """Sample a cluster to validate.
+
+        Args:
+            n: Number of clusters to sample
+            resolution: Name of resolution from which to sample
+            user_id: ID of user requesting the sample
+
+        Returns:
+            An Arrow table with the same schema as returned by `query()`
         """
         ...

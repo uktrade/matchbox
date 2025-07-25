@@ -40,7 +40,6 @@ SETTINGS: MatchboxServerSettings | None = None
 BACKEND: MatchboxDBAdapter | None = None
 METADATA_STORE = MetadataStore(expiry_minutes=30)
 JWT_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
-ALGORITHM = "HS256"
 
 
 def backend() -> Generator[MatchboxDBAdapter, None, None]:
@@ -117,9 +116,11 @@ MetadataStoreDependency = Annotated[MetadataStore, Depends(metadata_store)]
 
 
 def b64_decode(b64_bytes):
-    """B64 decode."""
-    # Add padding if required and decode b64
-    return urlsafe_b64decode(b64_bytes + (b"=" * ((4 - len(b64_bytes) % 4) % 4)))
+    """Add padding and decode b64 bytes."""
+    remainder = len(b64_bytes) % 4
+    if remainder:
+        b64_bytes += b"=" * (4 - remainder)
+    return urlsafe_b64decode(b64_bytes)
 
 
 def validate_jwt(

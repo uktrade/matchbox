@@ -1,4 +1,11 @@
-"""Utilities for JWT API authorisation."""
+"""Utilities for JWT API authorisation.
+
+NOTE: The current version of this code is not structured for security as a standalone
+Matchbox service but intended for providing authorisation within a pre-existing secure
+platform such as Data Workspace. Client tokens should be generated within a secure
+environment with private key access, from which they can be assigned to individual
+users if required.
+"""
 
 import json
 import time

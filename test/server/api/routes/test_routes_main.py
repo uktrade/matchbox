@@ -9,6 +9,9 @@ import pytest
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
+from matchbox.client.authorisation import (
+    generate_json_web_token,
+)
 from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
@@ -526,19 +529,36 @@ def test_api_key_authorisation(test_client: TestClient):
         (test_client.delete, "/database"),
     ]
 
-    # Incorrect API Key Value
-    test_client.headers["X-API-Key"] = "incorrect-api-key"
+    # Incorrect signature
+    _, _, signature_b64 = test_client.headers["Authorization"].encode().split(b".")
+    header_b64, payload_64, _ = (
+        generate_json_web_token(sub="incorrect.user@email.com").encode().split(b".")
+    )
+    test_client.headers["Authorization"] = b".".join(
+        [header_b64, payload_64, signature_b64]
+    ).decode()
+
     for method, url in routes:
         response = method(url)
         assert response.status_code == 401
-        assert response.content == b'"API Key invalid."'
+        assert response.content == b'"JWT invalid."'
 
-    # Missing API Key Value
-    test_client.headers.pop("X-API-Key")
+    # Expired JWT
+    with patch("matchbox.client.authorisation.EXPIRY_AFTER_X_HOURS", -2):
+        test_client.headers["Authorization"] = generate_json_web_token(
+            sub="test.user@email.com"
+        )
+        for method, url in routes:
+            response = method(url)
+            assert response.status_code == 401
+            assert response.content == b'"JWT expired."'
+
+    # Missing Authorization header
+    test_client.headers.pop("Authorization")
     for method, url in routes:
         response = method(url)
-        assert response.status_code == 403
-        assert response.content == b'"Not authenticated"'
+        assert response.status_code == 401
+        assert response.content == b'"JWT required but not provided."'
 
 
 def test_get_resolution_graph(

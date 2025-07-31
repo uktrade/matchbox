@@ -17,7 +17,7 @@ from matchbox.common.exceptions import (
 from matchbox.common.graph import ResolutionName
 from matchbox.server.api.dependencies import (
     BackendDependency,
-    validate_api_key,
+    authorisation_dependencies,
 )
 
 router = APIRouter(prefix="/resolutions", tags=["resolutions"])
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/resolutions", tags=["resolutions"])
             **ResolutionOperationStatus.status_409_examples(),
         },
     },
-    dependencies=[Depends(validate_api_key)],
+    dependencies=[Depends(authorisation_dependencies)],
 )
 async def delete_resolution(
     backend: BackendDependency,

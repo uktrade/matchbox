@@ -1,5 +1,4 @@
 version = 1
-revision = 1
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1401,6 +1400,7 @@ wheels = [
 
 [[package]]
 name = "matchbox-db"
+version = "0.4.8.dev12+g857c9f07.d20250730"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1431,6 +1431,7 @@ server = [
     { name = "adbc-driver-postgresql" },
     { name = "alembic" },
     { name = "boto3" },
+    { name = "cryptography" },
     { name = "ddtrace" },
     { name = "fastapi", extra = ["standard"] },
     { name = "python-multipart" },
@@ -1470,6 +1471,7 @@ requires-dist = [
     { name = "alembic", marker = "extra == 'server'", specifier = ">=1.15.2" },
     { name = "boto3", marker = "extra == 'server'", specifier = ">=1.35.99" },
     { name = "click", specifier = ">=8.1.7" },
+    { name = "cryptography", marker = "extra == 'server'", specifier = ">=44.0.2" },
     { name = "ddtrace", marker = "extra == 'server'", specifier = ">=3.2.1" },
     { name = "duckdb", specifier = ">=1.1.1" },
     { name = "faker", specifier = ">=36.1.1" },
@@ -1493,7 +1495,6 @@ requires-dist = [
     { name = "streamlit", marker = "extra == 'eval'", specifier = ">=1.45.0" },
     { name = "tomli", marker = "extra == 'server'", specifier = ">=2.0.1" },
 ]
-provides-extras = ["server", "eval"]
 
 [package.metadata.requires-dev]
 dev = [

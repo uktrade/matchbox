@@ -11,10 +11,6 @@ ARG MB_VERSION
 RUN if [ -z "$MB_VERSION" ]; then echo 'Environment variable MB_VERSION must be specified. Exiting.'; exit 1; fi
 ENV MB_VERSION=${MB_VERSION}
 
-# Datadog
-ENV DD_VERSION=${MB_VERSION}
-LABEL com.datadoghq.tags.version=${MB_VERSION}
-
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
@@ -40,9 +36,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Place executables in the environment at the front of the path
 ENV PATH="/code/.venv/bin:$PATH"
-
-ENTRYPOINT ["ddtrace-run"]
-
 
 # Local development stage: with locally-specified environment variables and hot reloading
 

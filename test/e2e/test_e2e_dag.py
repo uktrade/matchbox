@@ -7,10 +7,8 @@ from sqlalchemy import Engine, text
 
 from matchbox import match as mb_match
 from matchbox import query
-from matchbox.client.clean import remove_prefix, steps
-from matchbox.client.clean.utils import cleaning_function, select_cleaners
 from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
-from matchbox.client.helpers import cleaner, select
+from matchbox.client.helpers import select
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.common.factories.sources import (
@@ -31,6 +29,40 @@ class TestE2EPipelineBuilder:
     warehouse_engine: Engine | None = None
     linked_testkit: LinkedSourcesTestkit | None = None
     n_true_entities: int | None = None
+
+    def _clean_data(self, source_config: SourceConfig) -> str:
+        """Generate cleaning SQL for a source configuration.
+
+        Removes company suffixes (Ltd, Limited) and normalises whitespace
+        from the company_name field.
+
+        Args:
+            source_config: Source configuration containing field information
+
+        Returns:
+            SQL string for cleaning the data
+        """
+        company_name_field = source_config.f("company_name")
+
+        return f"""
+            select
+                *,
+                trim(
+                    regexp_replace(
+                        regexp_replace(
+                            {company_name_field}, 
+                            ' (Ltd|Limited)$', 
+                            '', 
+                            'g'
+                        ), 
+                        '\\s+', 
+                        ' ', 
+                        'g'
+                    )
+                ) as {company_name_field}
+            from
+                data;
+        """
 
     @pytest.fixture(autouse=True, scope="function")
     def setup_environment(
@@ -152,42 +184,6 @@ class TestE2EPipelineBuilder:
             index_fields=["company_name", "registration_id"],
         )
 
-        # Create simple cleaners
-        from functools import partial
-
-        remove_company_stopwords = partial(
-            steps.remove_stopwords, stopwords=["Ltd", "Limited"]
-        )
-
-        clean_company_name = cleaning_function(
-            steps.tokenise,
-            remove_company_stopwords,
-            steps.list_join_to_string,
-            steps.trim,
-        )
-
-        source_a_cleaners = {
-            "company_name": cleaner(
-                clean_company_name,
-                {"column": source_a_config.f("company_name")},
-            ),
-            "make_conformant": cleaner(
-                remove_prefix,
-                {"column": "", "prefix": source_a_config.f("")},
-            ),
-        }
-
-        source_b_cleaners = {
-            "company_name": cleaner(
-                clean_company_name,
-                {"column": source_b_config.f("company_name")},
-            ),
-            "make_conformant": cleaner(
-                remove_prefix,
-                {"column": "", "prefix": source_b_config.f("")},
-            ),
-        }
-
         # === DAG DEFINITION ===
         # Index steps
         i_source_a = IndexStep(source_config=source_a_config, batch_size=batch_size)
@@ -198,9 +194,7 @@ class TestE2EPipelineBuilder:
             left=StepInput(
                 prev_node=i_source_a,
                 select={source_a_config: ["company_name", "registration_id"]},
-                cleaners=select_cleaners(
-                    (source_a_cleaners, ["company_name"]),
-                ),
+                cleaning_sql=self._clean_data(source_a_config),
                 batch_size=batch_size,
             ),
             name="dedupe_source_a",
@@ -217,9 +211,7 @@ class TestE2EPipelineBuilder:
             left=StepInput(
                 prev_node=i_source_b,
                 select={source_b_config: ["company_name", "registration_id"]},
-                cleaners=select_cleaners(
-                    (source_b_cleaners, ["company_name"]),
-                ),
+                cleaning_sql=self._clean_data(source_b_config),
                 batch_size=batch_size,
             ),
             name="dedupe_source_b",
@@ -237,17 +229,13 @@ class TestE2EPipelineBuilder:
             left=StepInput(
                 prev_node=dedupe_a,
                 select={source_a_config: ["company_name", "registration_id"]},
-                cleaners=select_cleaners(
-                    (source_a_cleaners, ["company_name"]),
-                ),
+                cleaning_sql=self._clean_data(source_a_config),
                 batch_size=batch_size,
             ),
             right=StepInput(
                 prev_node=dedupe_b,
                 select={source_b_config: ["company_name", "registration_id"]},
-                cleaners=select_cleaners(
-                    (source_b_cleaners, ["company_name"]),
-                ),
+                cleaning_sql=self._clean_data(source_b_config),
                 batch_size=batch_size,
             ),
             name="__DEFAULT__",

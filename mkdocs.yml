@@ -26,7 +26,6 @@ nav:
   - Client:
     - Overview: api/client/index.md
     - DAGs: api/client/dags.md
-    - Clean: api/client/clean.md
     - Evaluation: api/client/eval.md
     - Helpers: api/client/helpers.md
     - Models: api/client/models.md

@@ -5,13 +5,14 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any, Literal
 
+import duckdb
 import polars as pl
+import sqlglot
 from pyarrow import Table
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import create_engine
 
 from matchbox.client import _handler
-from matchbox.client.helpers.cleaner import process
 from matchbox.client.helpers.selector import Selector, query
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
@@ -57,7 +58,7 @@ class StepInput(BaseModel):
 
     prev_node: Step
     select: dict[SourceConfig, list[str]]
-    cleaners: dict[str, dict[str, Any]] = {}
+    cleaning_sql: str | None = None
     batch_size: int | None = None
     threshold: float | None = None
     combine_type: Literal["concat", "explode", "set_agg"] = "concat"
@@ -66,6 +67,43 @@ class StepInput(BaseModel):
     def name(self) -> str:
         """Resolution name for node generating this input for the next step."""
         return self.prev_node.name
+
+    @field_validator("cleaning_sql")
+    @classmethod
+    def validate_cleaning_sql(cls, v: str | None) -> str | None:
+        """Validate cleaning SQL.
+
+        * Valid DuckDB SQL
+        * Only references the `data` table
+        """
+        if v is None:
+            return v
+
+        try:
+            parsed = sqlglot.parse_one(v, dialect="duckdb")
+        except sqlglot.errors.ParseError as e:
+            raise ValueError("Invalid SQL in cleaning_sql") from e
+
+        # Find all table references in FROM clauses
+        from_tables = set()
+        for node in parsed.walk():
+            if isinstance(node, sqlglot.expressions.Table):
+                from_tables.add(node.name.lower())
+
+        # Check that only "data" is referenced in FROM clauses
+        if from_tables and from_tables != {"data"}:
+            invalid_tables = from_tables - {"data"}
+            raise ValueError(
+                f"Invalid table references in cleaning_sql: {invalid_tables}. "
+                "Please refer to the data as `data`"
+            )
+        elif not from_tables:
+            raise ValueError(
+                "No table references found in cleaning_sql. "
+                "Please refer to the data as `data`"
+            )
+
+        return v
 
     @model_validator(mode="after")
     def validate_all_input(self) -> "StepInput":
@@ -169,6 +207,23 @@ class ModelStep(Step):
             combine_type=step_input.combine_type,
         )
 
+    def clean(self, data: pl.DataFrame, step_input: StepInput) -> pl.DataFrame:
+        """Clean data using DuckDB with the provided cleaning SQL.
+
+        Args:
+            data: Raw polars dataframe to clean
+            step_input: Step input containing cleaning_sql
+
+        Returns:
+            Cleaned polars dataframe
+        """
+        if step_input.cleaning_sql is None:
+            return data
+
+        with duckdb.connect(":memory:") as conn:
+            conn.register("data", data)
+            return conn.execute(step_input.cleaning_sql).pl()
+
 
 class DedupeStep(ModelStep):
     """Deduplication step."""
@@ -183,7 +238,7 @@ class DedupeStep(ModelStep):
     def run(self) -> Results:
         """Run full deduping pipeline and store results."""
         left_raw = self.query(self.left)
-        left_clean = process(left_raw, self.left.cleaners)
+        left_clean = self.clean(left_raw, self.left)
 
         deduper = make_model(
             name=self.name,
@@ -214,10 +269,10 @@ class LinkStep(ModelStep):
     def run(self) -> Results:
         """Run whole linking step."""
         left_raw = self.query(self.left)
-        left_clean = process(left_raw, self.left.cleaners)
+        left_clean = self.clean(left_raw, self.left)
 
         right_raw = self.query(self.right)
-        right_clean = process(right_raw, self.right.cleaners)
+        right_clean = self.clean(right_raw, self.right)
 
         linker = make_model(
             name=self.name,

@@ -1,60 +1,20 @@
 from importlib.metadata import version
 from typing import Callable
 
-import polars as pl
 import pytest
 from httpx import Response
 from respx import MockRouter
 from sqlalchemy import Engine
 
-from matchbox import process
 from matchbox.client._handler import create_client
 from matchbox.client._settings import ClientSettings
-from matchbox.client.clean import company_name, company_number
-from matchbox.client.helpers import cleaner, cleaners, comparison, select
+from matchbox.client.helpers import comparison, select
 from matchbox.common.dtos import BackendResourceType, NotFoundError
 from matchbox.common.exceptions import MatchboxSourceNotFoundError
 from matchbox.common.factories.sources import (
     linked_sources_factory,
-    source_factory,
     source_from_tuple,
 )
-
-
-def test_cleaners():
-    cleaner_name = cleaner(function=company_name, arguments={"column": "company_name"})
-    cleaner_number = cleaner(
-        function=company_number, arguments={"column": "company_number"}
-    )
-    cleaner_name_number = cleaners(cleaner_name, cleaner_number)
-
-    assert cleaner_name_number is not None
-
-
-def test_process():
-    crn = source_factory().query
-    # Duplicate column
-    crn = crn.append_column("company_name_again", crn.column("company_name"))
-
-    cleaner_name = cleaner(
-        function=company_name,
-        arguments={"column": "company_name"},
-    )
-    # I can add the same function twice
-    cleaner_name_again = cleaner(
-        function=company_name,
-        arguments={"column": "company_name_again"},
-    )
-    cleaner_number = cleaner(
-        function=company_number,
-        arguments={"column": "crn"},
-    )
-    cleaner_name_number = cleaners(cleaner_name, cleaner_name_again, cleaner_number)
-
-    df_name_cleaned = process(data=crn, pipeline=cleaner_name_number)
-
-    assert isinstance(df_name_cleaned, pl.DataFrame)
-    assert df_name_cleaned.shape[0] == 10
 
 
 def test_comparisons():

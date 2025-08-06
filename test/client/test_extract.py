@@ -61,35 +61,48 @@ def test_key_field_map(
         )
     )
 
-    matchbox_api.get("/query", params={"source": "foo"}).mock(
+    # Create mock table for foo source (for single-source queries)
+    indices_foo = pa.array([0, 0, 0], type=pa.int32())
+    dictionary_foo = pa.array(["foo"], type=pa.string())
+    source_dict_foo = pa.DictionaryArray.from_arrays(indices_foo, dictionary_foo)
+
+    foo_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2, 3], type=pa.int64()),
+            pa.array(["1", "2", "3"], type=pa.large_string()),
+            source_dict_foo,
+        ],
+        schema=SCHEMA_QUERY,
+    )
+
+    matchbox_api.get("/query", params={"sources": ["foo"]}).mock(
         return_value=Response(
             200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"id": 1, "key": "1"},
-                        {"id": 2, "key": "2"},
-                        {"id": 3, "key": "3"},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
+            content=table_to_buffer(foo_table).read(),
         )
     )
 
-    matchbox_api.get("/query", params={"source": "bar"}).mock(
+    # Create combined mock table for multi-source queries
+    combined_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.int32())
+    combined_dictionary = pa.array(["foo", "bar"], type=pa.string())
+    combined_source_dict = pa.DictionaryArray.from_arrays(
+        combined_indices, combined_dictionary
+    )
+
+    combined_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2, 3, 1, 3, 3], type=pa.int64()),
+            pa.array(["1", "2", "3", "a", "b", "c"], type=pa.large_string()),
+            combined_source_dict,
+        ],
+        schema=SCHEMA_QUERY,
+    )
+
+    # Mock for multi-source query (no filter or both sources)
+    matchbox_api.get("/query", params={"sources": ["foo", "bar"]}).mock(
         return_value=Response(
             200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"id": 1, "key": "a"},
-                        {"id": 3, "key": "b"},
-                        {"id": 3, "key": "c"},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
+            content=table_to_buffer(combined_table).read(),
         )
     )
 
@@ -112,7 +125,7 @@ def test_key_field_map(
     )
 
     # With source filter
-    foo_mapping = key_field_map(resolution="companies", source_filter="foo")
+    foo_mapping = key_field_map(resolution="companies", source_filter=["foo"])
 
     assert_frame_equal(
         pl.from_arrow(foo_mapping),
@@ -124,7 +137,7 @@ def test_key_field_map(
     # With both filters
     foo_mapping = key_field_map(
         resolution="companies",
-        source_filter="foo",
+        source_filter=["foo"],
         location_names="sqlite",
     )
 

@@ -14,7 +14,7 @@ SCHEMA_QUERY: Final[pa.Schema] = pa.schema(
     [
         ("id", pa.int64()),
         ("key", pa.large_string()),
-        ("source", pa.dictionary(pa.int32(), pa.large_string())),
+        ("source", pa.dictionary(pa.int32(), pa.string())),
     ]
 )
 """Data transfer schema for root cluster IDs keyed to primary keys with source ID."""

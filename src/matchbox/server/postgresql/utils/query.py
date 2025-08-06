@@ -551,15 +551,25 @@ def query(
         if return_leaf_id:
             selection.append("leaf_id")
 
-        final_df = id_results.select(selection)
+        # Cast source column to large_string in Polars before Arrow conversion
+        # This ensures Polars produces large_string type when converting to Arrow
+        final_df = id_results.select(selection).with_columns(
+            pl.col("source").cast(pl.Utf8).alias("source")
+        )
 
-        # Convert to Arrow with categorical encoding for source column at final moment
+        # Convert to Arrow - this will now produce large_string for the source column
         arrow_table = final_df.to_arrow()
 
         # Convert source column to categorical for efficient storage
         source_col_idx = arrow_table.schema.get_field_index("source")
         source_column = arrow_table.column(source_col_idx)
+
+        # Encode as dictionary with string values (cast from large_string)
         categorical_source = pa.compute.dictionary_encode(source_column)
+        # Cast dictionary values to string for consistency with SCHEMA_QUERY
+        categorical_source = pa.compute.cast(
+            categorical_source, pa.dictionary(pa.int32(), pa.string())
+        )
 
         # Replace the source column with the categorical version
         arrow_table = arrow_table.set_column(

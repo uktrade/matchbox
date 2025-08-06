@@ -32,20 +32,39 @@ def test_query_no_resolution_ok_various_params(
         return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
     )
 
+    # Create mock table with proper schema including categorical source
+    # Need to match exact dictionary type from SCHEMA_QUERY
+    indices = pa.array([0, 0], type=pa.int32())
+    dictionary = pa.array(["foo"], type=pa.string())
+    source_dict = pa.DictionaryArray.from_arrays(indices, dictionary)
+
+    mock_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2], type=pa.int64()),
+            pa.array(["0", "1"], type=pa.large_string()),
+            source_dict,
+        ],
+        schema=SCHEMA_QUERY,
+    )
+
     query_route = matchbox_api.get("/query").mock(
         return_value=Response(
             200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"key": "0", "id": 1},
-                        {"key": "1", "id": 2},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
+            content=table_to_buffer(mock_table).read(),
         )
     )
+
+    # For now, remove the problematic threshold route
+    # TODO: Fix parameter matching for threshold route
+    # threshold_query_route = matchbox_api.get(
+    #     "/query",
+    #     params={"sources": "foo", "return_leaf_id": "False", "threshold": "50"},
+    # ).mock(
+    #     return_value=Response(
+    #         200,
+    #         content=table_to_buffer(mock_table).read(),
+    #     )
+    # )
 
     selectors = select({"foo": ["a", "b"]}, client=sqlite_warehouse)
 
@@ -54,8 +73,10 @@ def test_query_no_resolution_ok_various_params(
     assert len(results) == 2
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
-    assert dict(query_route.calls.last.request.url.params) == {
-        "source": testkit.source_config.name,
+    # Check first call (without threshold)
+    first_call_params = dict(query_route.calls[0].request.url.params)
+    assert first_call_params == {
+        "sources": testkit.source_config.name,
         "return_leaf_id": "False",
     }
 
@@ -66,8 +87,10 @@ def test_query_no_resolution_ok_various_params(
     assert len(results) == 2
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
-    assert dict(query_route.calls.last.request.url.params) == {
-        "source": testkit.source_config.name,
+    # Check second call (with threshold)
+    second_call_params = dict(query_route.calls[1].request.url.params)
+    assert second_call_params == {
+        "sources": testkit.source_config.name,
         "threshold": "50",
         "return_leaf_id": "False",
     }
@@ -101,34 +124,30 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
         return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
     )
 
+    # Create combined mock table for both sources
+    combined_indices = pa.array([0, 0, 1, 1], type=pa.int32())
+    combined_dictionary = pa.array(
+        [testkit1.source_config.name, testkit2.source_config.name], type=pa.string()
+    )
+    combined_source_dict = pa.DictionaryArray.from_arrays(
+        combined_indices, combined_dictionary
+    )
+
+    combined_mock_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2, 1, 2], type=pa.int64()),
+            pa.array(["0", "1", "2", "3"], type=pa.large_string()),
+            combined_source_dict,
+        ],
+        schema=SCHEMA_QUERY,
+    )
+
+    # Mock for multi-source query - use general matching
     query_route = matchbox_api.get("/query").mock(
-        side_effect=[
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            {"key": "0", "id": 1},
-                            {"key": "1", "id": 2},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            {"key": "2", "id": 1},
-                            {"key": "3", "id": 2},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-        ]
-        * 2  # 2 calls to `query()` in this test, each querying server twice
+        return_value=Response(
+            200,
+            content=table_to_buffer(combined_mock_table).read(),
+        )
     )
 
     sels = select("foo", {"foo2": ["c"]}, client=sqlite_warehouse)
@@ -146,18 +165,21 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
         "id",
     } == set(results.columns)
 
-    assert dict(query_route.calls[-2].request.url.params) == {
-        "source": testkit1.source_config.name,
-        "resolution": DEFAULT_RESOLUTION,
-        "return_leaf_id": "False",
-    }
-    assert dict(query_route.calls[-1].request.url.params) == {
-        "source": testkit2.source_config.name,
-        "resolution": DEFAULT_RESOLUTION,
-        "return_leaf_id": "False",
+    # Check that the multi-source query was made correctly
+    from urllib.parse import parse_qs, urlparse
+
+    last_request_url = str(query_route.calls.last.request.url)
+    parsed_url = urlparse(last_request_url)
+    url_params = parse_qs(parsed_url.query)
+
+    assert url_params == {
+        "sources": [testkit1.source_config.name, testkit2.source_config.name],
+        "resolution": [DEFAULT_RESOLUTION],
+        "return_leaf_id": ["False"],
     }
 
     # It also works with the selectors specified separately
+    # But with the optimization, this also makes a single multi-source call
     query([sels[0]], [sels[1]], return_leaf_id=False)
 
 
@@ -195,36 +217,29 @@ def test_query_combine_type(
         return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
     )
 
+    # Create combined mock table for multi-source query
+    combined_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.int32())
+    combined_dictionary = pa.array(
+        [testkit1.source_config.name, testkit2.source_config.name], type=pa.string()
+    )
+    combined_source_dict = pa.DictionaryArray.from_arrays(
+        combined_indices, combined_dictionary
+    )
+
+    combined_mock_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 1, 2, 2, 2, 3], type=pa.int64()),
+            pa.array(["0", "1", "2", "3", "3", "4"], type=pa.large_string()),
+            combined_source_dict,
+        ],
+        schema=SCHEMA_QUERY,
+    )
+
     matchbox_api.get("/query").mock(
-        side_effect=[
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            {"key": "0", "id": 1},
-                            {"key": "1", "id": 1},
-                            {"key": "2", "id": 2},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            # Creating a duplicate value for the same Matchbox ID
-                            {"key": "3", "id": 2},
-                            {"key": "3", "id": 2},
-                            {"key": "4", "id": 3},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-        ]  # two sources to query
+        return_value=Response(
+            200,
+            content=table_to_buffer(combined_mock_table).read(),
+        )
     )
 
     sels = select("foo", "bar", client=sqlite_warehouse)

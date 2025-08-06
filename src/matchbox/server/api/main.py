@@ -235,16 +235,16 @@ async def get_upload_status(
 )
 def query(
     backend: BackendDependency,
-    source: SourceResolutionName,
+    sources: Annotated[list[SourceResolutionName], Query()],
     return_leaf_id: bool,
     resolution: ResolutionName | None = None,
     threshold: int | None = None,
     limit: int | None = None,
 ) -> ParquetResponse:
-    """Query Matchbox for matches based on a source resolution name."""
+    """Query Matchbox for matches based on multiple source resolution names."""
     try:
         res = backend.query(
-            source=source,
+            sources=sources,
             resolution=resolution,
             threshold=threshold,
             return_leaf_id=return_leaf_id,

@@ -193,14 +193,14 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     def query(  # noqa: D102
         self,
-        source: SourceResolutionName,
+        sources: list[SourceResolutionName],
         resolution: ResolutionName | None = None,
         threshold: int | None = None,
         return_leaf_id: bool = False,
         limit: int | None = None,
     ) -> ArrowTable:
         return query(
-            source=source,
+            sources=sources,
             resolution=resolution,
             threshold=threshold,
             return_leaf_id=return_leaf_id,

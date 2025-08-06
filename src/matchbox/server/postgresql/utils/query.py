@@ -2,6 +2,7 @@
 
 from typing import Literal, TypeVar
 
+import polars as pl
 import pyarrow as pa
 from sqlalchemy import (
     CTE,
@@ -467,17 +468,17 @@ def _build_match_query(
 
 
 def query(
-    source: SourceResolutionName,
+    sources: list[SourceResolutionName],
     resolution: ResolutionName | None = None,
     threshold: int | None = None,
     return_leaf_id: bool = False,
     limit: int = None,
 ) -> pa.Table:
-    """Queries Matchbox to retrieve linked data for a source.
+    """Queries Matchbox to retrieve linked data for multiple sources.
 
-    Retrieves all linked data for a given source, resolving through hierarchy if needed.
+    Retrieves all linked data for given sources, resolving through hierarchy if needed.
 
-    * Simple case: If querying the same resolution as the source, just select cluster
+    * Simple case: If querying the same resolution as the sources, just select cluster
         IDs and keys directly from ClusterSourceKey
     * Hierarchy case: Uses the unified query builder to traverse up the resolution
         hierarchy, applying COALESCE priority logic to determine which parent cluster
@@ -487,11 +488,19 @@ def query(
 
     Returns all records with their final resolved cluster IDs.
     """
+    if not sources:
+        raise ValueError("At least one source must be provided")
+
     with MBDB.get_session() as session:
-        source_config: SourceConfigs = get_source_config(source, session)
-        source_resolution: Resolutions = session.get(
-            Resolutions, source_config.resolution_id
-        )
+        # Get all source configs and validate they exist
+        source_configs: list[SourceConfigs] = []
+        source_resolutions: list[Resolutions] = []
+
+        for source in sources:
+            source_config = get_source_config(source, session)
+            source_configs.append(source_config)
+            source_resolution = session.get(Resolutions, source_config.resolution_id)
+            source_resolutions.append(source_resolution)
 
         if resolution:
             truth_resolution: Resolutions = (
@@ -502,14 +511,16 @@ def query(
             if truth_resolution is None:
                 raise MatchboxResolutionNotFoundError(name=resolution)
         else:
-            truth_resolution: Resolutions = source_resolution
+            # Use the first source's resolution as the truth resolution
+            truth_resolution: Resolutions = source_resolutions[0]
 
+        # Add source_config_id to the query level selection
         id_query: Select = build_unified_query(
             resolution=truth_resolution,
-            sources=[source_config],
+            sources=source_configs,
             threshold=threshold,
             level="key",
-        )
+        ).add_columns(ClusterSourceKey.source_config_id)
 
         if limit:
             id_query = id_query.limit(limit)
@@ -518,14 +529,44 @@ def query(
             stmt: str = compile_sql(id_query)
             logger.debug(f"Query SQL: \n {stmt}")
             id_results = sql_to_df(
-                stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
-            ).rename_columns({"root_id": "id"})
+                stmt=stmt, connection=conn.dbapi_connection, return_type="polars"
+            ).rename({"root_id": "id"})
 
-        selection = ["id", "key"]
+        # Add source identification column using Polars
+        # Create a mapping from source_config_id to source name
+        source_id_to_name = {
+            config.source_config_id: sources[i]
+            for i, config in enumerate(source_configs)
+        }
+
+        # Add source column to results using Polars map functionality
+        id_results = id_results.with_columns(
+            pl.col("source_config_id")
+            .map_elements(lambda x: source_id_to_name.get(x), return_dtype=pl.String)
+            .alias("source")
+        )
+
+        # Select final columns
+        selection = ["id", "key", "source"]
         if return_leaf_id:
             selection.append("leaf_id")
 
-        return id_results.select(selection)
+        final_df = id_results.select(selection)
+
+        # Convert to Arrow with categorical encoding for source column at final moment
+        arrow_table = final_df.to_arrow()
+
+        # Convert source column to categorical for efficient storage
+        source_col_idx = arrow_table.schema.get_field_index("source")
+        source_column = arrow_table.column(source_col_idx)
+        categorical_source = pa.compute.dictionary_encode(source_column)
+
+        # Replace the source column with the categorical version
+        arrow_table = arrow_table.set_column(
+            source_col_idx, "source", categorical_source
+        )
+
+        return arrow_table
 
 
 def get_parent_clusters_and_leaves(

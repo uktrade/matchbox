@@ -146,7 +146,7 @@ def create_dedupe_scenario(
         name = f"naive_test.{source.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(sources=[source.name])
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
@@ -189,7 +189,7 @@ def create_probabilistic_dedupe_scenario(
         name = f"probabilistic_test.{source.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(sources=[source.name])
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
@@ -234,9 +234,9 @@ def create_link_scenario(
     cdms_model = dag.models["naive_test.cdms"]
 
     # Query data for each resolution
-    crn_query = backend.query(source="crn", resolution=crn_model.name)
-    duns_query = backend.query(source="duns", resolution=duns_model.name)
-    cdms_query = backend.query(source="cdms", resolution=cdms_model.name)
+    crn_query = backend.query(sources=["crn"], resolution=crn_model.name)
+    duns_query = backend.query(sources=["duns"], resolution=duns_model.name)
+    cdms_query = backend.query(sources=["cdms"], resolution=cdms_model.name)
 
     # Create CRN-DUNS link
     crn_duns_name = "deterministic_naive_test.crn_naive_test.duns"
@@ -282,17 +282,17 @@ def create_link_scenario(
     # Create final join
     # Query the previous link's results
     crn_cdms_query_crn_only = backend.query(
-        source="crn", resolution=crn_cdms_name
-    ).rename_columns(["id", "keys_crn"])
+        sources=["crn"], resolution=crn_cdms_name
+    ).rename_columns(["id", "keys_crn", "source"])
     crn_cdms_query_cdms_only = backend.query(
-        source="cdms", resolution=crn_cdms_name
-    ).rename_columns(["id", "keys_cdms"])
+        sources=["cdms"], resolution=crn_cdms_name
+    ).rename_columns(["id", "keys_cdms", "source"])
     crn_cdms_query = pa.concat_tables(
         [crn_cdms_query_crn_only, crn_cdms_query_cdms_only],
         promote_options="default",
     ).combine_chunks()
 
-    duns_query_linked = backend.query(source="duns", resolution=duns_model.name)
+    duns_query_linked = backend.query(sources=["duns"], resolution=duns_model.name)
 
     final_join_name = "final_join"
     final_join_model = query_to_model_factory(
@@ -361,7 +361,7 @@ def create_alt_dedupe_scenario(
         model_name2 = f"dedupe2.{source.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(sources=[source.name])
 
         # Build model testkit using query data
         model_testkit1 = query_to_model_factory(
@@ -457,7 +457,7 @@ def create_convergent_scenario(
         name = f"naive_test.{source.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(sources=[source.name])
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(

@@ -158,21 +158,21 @@ def login(user_name: str) -> int:
 
 
 def query(
-    source: SourceResolutionName,
+    sources: list[SourceResolutionName],
     return_leaf_id: bool,
     resolution: ResolutionName | None = None,
     threshold: int | None = None,
     limit: int | None = None,
 ) -> Table:
-    """Query a source in Matchbox."""
-    log_prefix = f"Query {source}"
+    """Query multiple sources in Matchbox."""
+    log_prefix = f"Query {', '.join(sources)}"
     logger.debug(f"Using {resolution}", prefix=log_prefix)
 
     res = CLIENT.get(
         "/query",
         params=url_params(
             {
-                "source": source,
+                "sources": sources,
                 "resolution": resolution,
                 "return_leaf_id": return_leaf_id,
                 "threshold": threshold,

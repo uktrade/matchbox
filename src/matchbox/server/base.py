@@ -228,7 +228,7 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def query(
         self,
-        source: SourceResolutionName,
+        sources: list[SourceResolutionName],
         resolution: ResolutionName | None = None,
         threshold: int | None = None,
         return_leaf_id: bool = False,
@@ -237,9 +237,9 @@ class MatchboxDBAdapter(ABC):
         """Queries the database from an optional point of truth.
 
         Args:
-            source: the `SourceResolutionName` string identifying the source to query
+            sources: list of `SourceResolutionName` strings identifying sources to query
             resolution (optional): the resolution to use for filtering results
-                If not specified, will use the source resolution for the queried source
+                If not specified, will use the source resolution for the first source
             threshold (optional): the threshold to use for creating clusters
                 If None, uses the models' default threshold
                 If an integer, uses that threshold for the specified model, and the

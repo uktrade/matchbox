@@ -177,7 +177,11 @@ def process_judgements(
         # if missing expansion, assume we're dealing with singleton leaves
         .with_columns(
             pl.when(pl.col("endorsed_leaves").is_null())
-            .then(pl.col("endorsed").map_elements(lambda x: [x]))
+            .then(
+                pl.col("endorsed").map_elements(
+                    lambda x: [x], return_dtype=pl.List(pl.UInt64)
+                )
+            )
             .otherwise(pl.col("endorsed_leaves"))
             .alias("endorsed_leaves")
         )

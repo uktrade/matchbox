@@ -75,7 +75,7 @@ class TestMatchboxBackend:
             crn_testkit = dag.sources.get("crn")
 
             df_crn = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution="naive_test.crn",
             )
 
@@ -92,7 +92,7 @@ class TestMatchboxBackend:
             crn_testkit = dag.sources.get("crn")
 
             df_crn = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution="naive_test.crn",
             )
 
@@ -112,7 +112,7 @@ class TestMatchboxBackend:
             crn_testkit = dag.sources.get("crn")
 
             df_crn = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution="naive_test.crn",
             )
 
@@ -294,7 +294,7 @@ class TestMatchboxBackend:
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately
             res = self.backend.query(
-                source=dag.sources["crn"].source_config.name,
+                sources=[dag.sources["crn"].source_config.name],
                 resolution="naive_test.crn",
             )
             res_clusters = query_to_cluster_entities(
@@ -350,7 +350,7 @@ class TestMatchboxBackend:
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately
             res = self.backend.query(
-                source=dag.sources["crn"].source_config.name,
+                sources=[dag.sources["crn"].source_config.name],
                 resolution="probabilistic_test.crn",
             )
             res_clusters = query_to_cluster_entities(
@@ -553,14 +553,14 @@ class TestMatchboxBackend:
             crn_testkit = dag.sources.get("crn")
 
             df_crn_sample = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 limit=10,
             )
 
             assert isinstance(df_crn_sample, pa.Table)
             assert df_crn_sample.num_rows == 10
 
-            df_crn_full = self.backend.query(source=crn_testkit.source_config.name)
+            df_crn_full = self.backend.query(sources=[crn_testkit.source_config.name])
 
             assert df_crn_full.num_rows == crn_testkit.query.num_rows
             assert df_crn_full.schema.equals(SCHEMA_QUERY)
@@ -571,7 +571,7 @@ class TestMatchboxBackend:
             crn_testkit = dag.sources.get("crn")
 
             df_crn_full = self.backend.query(
-                source=crn_testkit.source_config.name, return_leaf_id=True
+                sources=[crn_testkit.source_config.name], return_leaf_id=True
             )
 
             assert df_crn_full.num_rows == crn_testkit.query.num_rows
@@ -583,7 +583,7 @@ class TestMatchboxBackend:
             crn_testkit = dag.sources.get("crn")
 
             df_crn = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution="naive_test.crn",
             )
 
@@ -607,7 +607,7 @@ class TestMatchboxBackend:
             duns_testkit = dag.sources.get("duns")
 
             df_crn = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution=linker_name,
             )
 
@@ -616,7 +616,7 @@ class TestMatchboxBackend:
             assert df_crn.schema.equals(SCHEMA_QUERY)
 
             df_duns = self.backend.query(
-                source=duns_testkit.source_config.name,
+                sources=[duns_testkit.source_config.name],
                 resolution=linker_name,
             )
 
@@ -644,7 +644,7 @@ class TestMatchboxBackend:
             cdms_testkit = dag.sources.get("cdms")
 
             df_crn = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution=linker_name,
             )
 
@@ -653,7 +653,7 @@ class TestMatchboxBackend:
             assert df_crn.schema.equals(SCHEMA_QUERY)
 
             df_cdms = self.backend.query(
-                source=cdms_testkit.source_config.name,
+                sources=[cdms_testkit.source_config.name],
                 resolution=linker_name,
             )
 
@@ -667,12 +667,12 @@ class TestMatchboxBackend:
 
             # Test query with threshold
             df_crn_threshold = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution=linker_name,
                 threshold=100,
             )
             df_cdms_threshold = self.backend.query(
-                source=cdms_testkit.source_config.name,
+                sources=[cdms_testkit.source_config.name],
                 resolution=linker_name,
                 threshold=100,
             )
@@ -889,7 +889,7 @@ class TestMatchboxBackend:
 
             # Get some specific IDs to verify they're restored properly
             df_crn_before = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution="naive_test.crn",
             )
             sample_ids_before = df_crn_before["id"].to_pylist()[:5]  # Take first 5 IDs
@@ -909,7 +909,7 @@ class TestMatchboxBackend:
 
             # Verify specific data was restored correctly
             df_crn_after = self.backend.query(
-                source=crn_testkit.source_config.name,
+                sources=[crn_testkit.source_config.name],
                 resolution="naive_test.crn",
             )
             sample_ids_after = df_crn_after["id"].to_pylist()[:5]  # Take first 5 IDs
@@ -939,10 +939,10 @@ class TestMatchboxBackend:
 
             # Do some queries to find real source cluster IDs
             deduped_query = pl.from_arrow(
-                self.backend.query(source="crn", resolution="naive_test.crn")
+                self.backend.query(sources=["crn"], resolution="naive_test.crn")
             )
             unique_ids = deduped_query["id"].unique()
-            all_leaves = pl.from_arrow(self.backend.query(source="crn"))
+            all_leaves = pl.from_arrow(self.backend.query(sources=["crn"]))
 
             def get_leaf_ids(cluster_id: int) -> list[int]:
                 return (
@@ -1098,9 +1098,9 @@ class TestMatchboxBackend:
             # We now look at more interesting cases
             # Query backend to form expectations
             resolution_clusters = pl.from_arrow(
-                self.backend.query(source="crn", resolution="naive_test.crn")
+                self.backend.query(sources=["crn"], resolution="naive_test.crn")
             )
-            source_clusters = pl.from_arrow(self.backend.query(source="crn"))
+            source_clusters = pl.from_arrow(self.backend.query(sources=["crn"]))
             # We can request more than available
             assert len(resolution_clusters["id"].unique()) < 99
 
@@ -1111,8 +1111,11 @@ class TestMatchboxBackend:
             assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES)
 
             # We can reconstruct the expected sample from resolution and source queries
+            # Select only needed columns from source_clusters to avoid column collision
             expected_sample = (
-                resolution_clusters.join(source_clusters, on="key", suffix="_source")
+                resolution_clusters.join(
+                    source_clusters.select(["id", "key"]), on="key", suffix="_source"
+                )
                 .rename({"id": "root", "id_source": "leaf"})
                 .with_columns(pl.lit("crn").alias("source"))
             )

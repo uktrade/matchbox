@@ -34,7 +34,7 @@ server = [
     "alembic>=1.15.2",
     "boto3>=1.35.99",
     "ddtrace>=3.2.1",
-    "fastapi[standard]>=0.115.0,<0.116.0",
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.116.0",
     "python-multipart>=0.0.18",
     "tomli>=2.0.1",
 ]

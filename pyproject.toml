@@ -8,38 +8,24 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "click>=8.1.7",
+    "cryptography>=44.0.2",
     "duckdb>=1.1.1",
     "faker>=36.1.1",
     "frozendict>=2.4.6",
     "httpx>=0.28.0",
     "matplotlib>=3.9.2",
     "pandas>=2.2.3",
+    "polars>=1.26.0",
+    "polars-hash>=0.5.3",
     "psycopg[binary, pool]>=3.2.6",
     "pyarrow>=17.0.0",
     "pydantic-settings>=2.5.2",
     "pydantic>=2.9.2",
+    "rich>=13.9.4",
     "rustworkx>=0.15.1",
     "splink>=4.0.5,<4.1.0",
     "sqlalchemy[asyncio]>=2.0.35",
-    "rich>=13.9.4",
-    "polars>=1.26.0",
     "sqlglot[rs]>=26.12.1",
-    "polars-hash>=0.5.3",
-    "cryptography>=44.0.2",
-]
-
-[project.optional-dependencies]
-server = [
-    "adbc-driver-postgresql>=1.5.0",
-    "alembic>=1.15.2",
-    "boto3>=1.35.99",
-    "ddtrace>=3.2.1",
-    "fastapi[standard]>=0.115.0,<0.116.0",
-    "python-multipart>=0.0.18",
-    "tomli>=2.0.1",
-]
-eval = [
- "streamlit>=1.45.0",
 ]
 
 [dependency-groups]
@@ -64,6 +50,17 @@ dev = [
     "snakeviz>=2.2.2",
     "tomli-w>=1.1.0",
 ]
+eval = [
+ "streamlit>=1.45.0",
+]
+server = [
+    "adbc-driver-postgresql>=1.5.0",
+    "alembic>=1.15.2",
+    "boto3>=1.35.99",
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.116.0",
+    "python-multipart>=0.0.18",
+    "tomli>=2.0.1",
+]
 typing = [
     "boto3-stubs[s3]>=1.35.99",
     "pyarrow-stubs>=17.16",
@@ -79,7 +76,6 @@ build-backend = "setuptools.build_meta"
 
 # Presence enables setuptools-scm
 [tool.setuptools_scm]
-
 
 [tool.uv]
 default-groups = ["dev", "typing"]

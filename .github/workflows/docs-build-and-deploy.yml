@@ -23,11 +23,11 @@ jobs:
           python-version-file: "pyproject.toml"
 
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --frozen --all-groups
 
       - name: Build with MkDocs
         run: uv run mkdocs build
-        
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -40,7 +40,7 @@ jobs:
       contents: read
     needs: build
     runs-on: ubuntu-latest
-    
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

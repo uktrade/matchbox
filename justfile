@@ -1,16 +1,8 @@
-# Build and run all containers (excluding datadog)
+# Build and run all containers
 build *DOCKER_ARGS:
+    uv sync --all-groups
     MB_VERSION=$(uv run --frozen python -m setuptools_scm) \
     docker compose --env-file=environments/server.env up --build {{DOCKER_ARGS}}
-
-# Build and run all containers (including datadog)
-build-inc-datadog *DOCKER_ARGS:
-    LOCAL_USERNAME=$(whoami) \
-    MB_VERSION=$(uv run --frozen python -m setuptools_scm) \
-    docker compose --env-file=environments/server.env \
-      -f docker-compose.yml \
-      -f docker-compose.datadog.yml \
-      up --build {{DOCKER_ARGS}}
 
 # Delete all compiled Python files
 clean:

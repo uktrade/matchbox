@@ -11,10 +11,6 @@ ARG MB_VERSION
 RUN if [ -z "$MB_VERSION" ]; then echo 'Environment variable MB_VERSION must be specified. Exiting.'; exit 1; fi
 ENV MB_VERSION=${MB_VERSION}
 
-# Datadog
-ENV DD_VERSION=${MB_VERSION}
-LABEL com.datadoghq.tags.version=${MB_VERSION}
-
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
@@ -25,7 +21,7 @@ ENV UV_LINK_MODE=copy
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --all-extras --no-install-project --no-dev
+    uv sync --frozen --all-groups --no-dev --no-install-project
 
 ARG ENV_FILE
 COPY ./uv.lock /code/uv.lock
@@ -36,13 +32,10 @@ COPY ./src/matchbox /code/src/matchbox
 # Installing separately from its dependencies allows optimal layer caching
 RUN --mount=type=cache,target=/root/.cache/uv \
     SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MATCHBOX_DB=${MB_VERSION} \
-    uv sync --frozen --all-extras --no-dev
+    uv sync --frozen --all-groups --no-dev
 
 # Place executables in the environment at the front of the path
 ENV PATH="/code/.venv/bin:$PATH"
-
-ENTRYPOINT ["ddtrace-run"]
-
 
 # Local development stage: with locally-specified environment variables and hot reloading
 

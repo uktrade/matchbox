@@ -28,10 +28,9 @@ format:
 
 # Scan for secrets
 scan:
-    docker run -v "$(pwd):/repo" -i --rm \
-        trufflesecurity/trufflehog:latest \
-        filesystem /repo \
-        --exclude-paths=/repo/trufflehog-exclude.txt
+    bash -c "docker run -v "$(pwd):/repo" -i --rm \
+        trufflesecurity/trufflehog:latest git file:///repo  \
+        --since-commit HEAD --branch $(git branch --show-current) --fail"
 
 # Run Python tests (usage: just test [local|docker])
 test ENV="":

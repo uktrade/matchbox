@@ -1,0 +1,51 @@
+name: Create and Publish the Matchbox Open-Source Docker Image
+
+on:
+  push:
+    branches:
+      - 'main'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Run uv to extract the version and set as an environment variable
+        run:  echo "MB_VERSION=$(uv run --frozen python -m setuptools_scm)" >> $GITHUB_ENV
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.MB_VERSION }}
+            type=raw,value=latest
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/matchbox/server/Dockerfile
+          push: true
+          build-args: |
+            MB_VERSION=${{ env.MB_VERSION }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}

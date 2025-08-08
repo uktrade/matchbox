@@ -41,19 +41,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Place executables in the environment at the front of the path
 ENV PATH="/code/.venv/bin:$PATH"
 
-ENTRYPOINT ["ddtrace-run"]
-
-
 # Local development stage: with locally-specified environment variables and hot reloading
-
 FROM base AS dev
 
 COPY ./environments/$ENV_FILE /code/.env
 CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/matchbox/server/api"]
 
-
 # Production stage: no environment variables (they come from the infrastructure) and no hot reloading
-
 FROM base AS prod
 
 # Uses `--host 0.0.0.0` to allow access from outside the container

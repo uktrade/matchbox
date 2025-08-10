@@ -3,7 +3,7 @@ name: Create and Publish the Matchbox Open-Source Docker Image
 on:
   push:
     branches:
-      - 'main'
+      - 'feature/implement_wills_proposal_for_datadog_logging'
 
 env:
   REGISTRY: ghcr.io

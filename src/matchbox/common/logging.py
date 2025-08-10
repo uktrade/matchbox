@@ -1,10 +1,11 @@
 """Logging utilities."""
 
+import importlib.metadata
 import json
 import logging
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Protocol
 
 from rich.console import Console
 from rich.progress import (
@@ -15,6 +16,35 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+
+
+class LoggingPlugin(Protocol):
+    """Protocol for logging plugins that can be registered with Matchbox."""
+
+    def get_trace_context(self) -> tuple[str | None, str | None]:
+        """Get trace context information for logging."""
+        ...
+
+    def get_metadata(self) -> dict[str, Any]:
+        """Get additional fields for logging."""
+        ...
+
+
+_PLUGINS = None
+
+
+def get_logging_plugins():
+    """Retrieve logging plugins registered in the 'matchbox.logging' entry point."""
+    global _PLUGINS
+    if _PLUGINS is None:
+        _PLUGINS = []
+        for ep in importlib.metadata.entry_points(group="matchbox.logging"):
+            try:
+                _PLUGINS.append(ep.load()())
+            except Exception:
+                pass
+    return _PLUGINS
+
 
 LogLevelType = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 """Type for all Python log levels."""
@@ -89,6 +119,11 @@ def build_progress_bar(console_: Console | None = None) -> Progress:
 class ASIMFormatter(logging.Formatter):
     """Format logging with ASIM standard fields."""
 
+    def __init__(self, fmt=None, datefmt=None, style="%", validate=True):
+        """Initialize the ASIMFormatter including any logging plugins."""
+        super().__init__(fmt=fmt, datefmt=datefmt, style=style, validate=validate)
+        self.plugins = get_logging_plugins()
+
     @cached_property
     def event_severity(self) -> dict[str, str]:
         """Event severity level lookup."""
@@ -100,17 +135,26 @@ class ASIMFormatter(logging.Formatter):
             "CRITICAL": "High",
         }
 
-    def format(self, record) -> str:
+    def format(self, record):
         """Convert logs to JSON."""
         log_time = datetime.fromtimestamp(record.created, timezone.utc).isoformat()
-        return json.dumps(
-            {
-                "EventCount": 1,
-                "EventStartTime": log_time,
-                "EventEndTime": log_time,
-                "EventType": record.name,
-                "EventSeverity": self.event_severity[record.levelname],
-                "EventOriginalSeverity": record.levelname,
-                "message": record.getMessage(),
-            },
-        )
+        log_entry = {
+            "EventCount": 1,
+            "EventStartTime": log_time,
+            "EventEndTime": log_time,
+            "EventType": record.name,
+            "EventSeverity": self.event_severity[record.levelname],
+            "EventOriginalSeverity": record.levelname,
+            "message": record.getMessage(),
+        }
+
+        for plugin in self.plugins:
+            try:
+                trace_id, span_id = plugin.get_trace_context()
+                if trace_id:
+                    log_entry.update({"trace_id": trace_id, "span_id": span_id})
+                log_entry.update(plugin.get_metadata())
+            except Exception:
+                pass
+
+        return json.dumps(log_entry)

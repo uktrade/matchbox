@@ -136,7 +136,7 @@ class ASIMFormatter(logging.Formatter):
         }
 
     def format(self, record):
-        """Convert logs to JSON."""
+        """Convert logs to JSON including basic ASIM fields."""
         log_time = datetime.fromtimestamp(record.created, timezone.utc).isoformat()
         log_entry = {
             "EventCount": 1,

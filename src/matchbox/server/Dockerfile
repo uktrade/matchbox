@@ -28,6 +28,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --all-extras --no-install-project --no-dev
 
 ARG ENV_FILE
+
 COPY ./uv.lock /code/uv.lock
 COPY ./pyproject.toml /code/pyproject.toml
 COPY ./src/matchbox /code/src/matchbox

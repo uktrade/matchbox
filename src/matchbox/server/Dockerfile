@@ -13,7 +13,6 @@ ENV MB_VERSION=${MB_VERSION}
 
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
-
 # Copy from the cache instead of linking since it's a mounted volume
 ENV UV_LINK_MODE=copy
 
@@ -24,7 +23,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --all-extras --no-install-project --no-dev
 
 ARG ENV_FILE
-
 COPY ./uv.lock /code/uv.lock
 COPY ./pyproject.toml /code/pyproject.toml
 COPY ./src/matchbox /code/src/matchbox

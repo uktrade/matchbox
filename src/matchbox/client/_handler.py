@@ -256,13 +256,13 @@ def index(source_config: SourceConfig, data_hashes: Table) -> UploadStatus:
 
     # Poll until complete with retry/timeout configuration
     status = UploadStatus.model_validate(upload_res.json())
-    while status.status not in ["complete", "failed"]:
+    while status.stage not in ["complete", "failed"]:
         status_res = CLIENT.get(f"/upload/{upload.id}/status")
         status = UploadStatus.model_validate(status_res.json())
 
-        logger.debug(f"Uploading data: {status.status}", prefix=log_prefix)
+        logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)
 
-        if status.status == "failed":
+        if status.stage == "failed":
             raise MatchboxServerFileError(status.details)
 
         time.sleep(settings.retry_delay)
@@ -345,13 +345,13 @@ def add_model_results(name: ModelResolutionName, results: Table) -> UploadStatus
 
     # Poll until complete with retry/timeout configuration
     status = UploadStatus.model_validate(upload_res.json())
-    while status.status not in ["complete", "failed"]:
+    while status.stage not in ["complete", "failed"]:
         status_res = CLIENT.get(f"/upload/{upload.id}/status")
         status = UploadStatus.model_validate(status_res.json())
 
-        logger.debug(f"Uploading data: {status.status}", prefix=log_prefix)
+        logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)
 
-        if status.status == "failed":
+        if status.stage == "failed":
             raise MatchboxServerFileError(status.details)
 
         time.sleep(settings.retry_delay)

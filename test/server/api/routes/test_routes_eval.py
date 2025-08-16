@@ -22,16 +22,11 @@ from matchbox.common.exceptions import (
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
 )
-from matchbox.server.api.dependencies import backend
-from matchbox.server.api.main import app
 
 
-def test_insert_judgement_ok(test_client: TestClient):
+def test_insert_judgement_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test that a judgement is passed on to backend."""
-    mock_backend = Mock()
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
+    test_client, mock_backend, _ = api_client_and_mocks
     judgement = Judgement(user_id=1, shown=10, endorsed=[[1]])
     response = test_client.post("/eval/judgements", json=judgement.model_dump())
     assert response.status_code == 201
@@ -40,16 +35,12 @@ def test_insert_judgement_ok(test_client: TestClient):
     )
 
 
-def test_insert_judgement_error(test_client: TestClient):
+def test_insert_judgement_error(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test that judgement insertion bubbles up errors."""
-    mock_backend = Mock()
-    mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
-
+    test_client, mock_backend, _ = api_client_and_mocks
     fake_judgement = Judgement(user_id=1, shown=10, endorsed=[[1]]).model_dump()
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
+    mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
     response = test_client.post("/eval/judgements", json=fake_judgement)
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.CLUSTER
@@ -60,7 +51,7 @@ def test_insert_judgement_error(test_client: TestClient):
     assert response.json()["entity"] == BackendResourceType.USER
 
 
-def test_get_judgements(test_client: TestClient):
+def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test that all judgements can be retrieved."""
     judgements = pa.Table.from_pylist(
         [
@@ -83,11 +74,8 @@ def test_get_judgements(test_client: TestClient):
     # There will be nulls in case of a schema mismatch
     assert len(expansion.drop_null()) == len(expansion)
 
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_judgements = Mock(return_value=(judgements, expansion))
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     # Process response
     response = test_client.get("/eval/judgements")
@@ -106,13 +94,11 @@ def test_get_judgements(test_client: TestClient):
     assert downloaded_expansion.equals(expansion)
 
 
-def test_compare_models_ok(test_client: TestClient):
+def test_compare_models_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test errors in requesting samples."""
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_pr = {"a": (1, 0.5), "b": (0.5, 1)}
     mock_backend.compare_models = Mock(return_value=mock_pr)
-
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.get(
         "/eval/compare",
@@ -126,38 +112,30 @@ def test_compare_models_ok(test_client: TestClient):
     assert tuple(result["b"]) == mock_pr["b"]
 
 
-def test_compare_models_404(test_client: TestClient):
+def test_compare_models_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test errors in requesting samples."""
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
 
     # Resolution not found
     mock_backend.compare_models = Mock(side_effect=MatchboxResolutionNotFoundError)
-
-    app.dependency_overrides[backend] = lambda: mock_backend
-
     response = test_client.get(
         "/eval/compare",
         params={"resolutions": ["a", "b", "c"]},
     )
-
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
     # No judgements available
     mock_backend.compare_models = Mock(side_effect=MatchboxNoJudgements)
-
-    app.dependency_overrides[backend] = lambda: mock_backend
-
     response = test_client.get(
         "/eval/compare",
         params={"resolutions": ["a", "b", "c"]},
     )
-
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.JUDGEMENT
 
 
-def test_get_samples(test_client: TestClient):
+def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test that samples can be requested."""
     sample = pa.Table.from_pylist(
         [
@@ -169,11 +147,8 @@ def test_get_samples(test_client: TestClient):
     # There will be nulls in case of a schema mismatch
     assert len(sample.drop_null()) == len(sample)
 
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.sample_for_eval = Mock(return_value=sample)
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     # Process response
     response = test_client.get(
@@ -204,14 +179,13 @@ def test_get_samples(test_client: TestClient):
     ],
 )
 def test_get_samples_404(
-    exception: BaseException, entity: BackendResourceType, test_client: TestClient
+    exception: BaseException,
+    entity: BackendResourceType,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
     """Test errors in requesting samples."""
-    mock_backend = Mock()
-
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.sample_for_eval = Mock(side_effect=exception)
-
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.get(
         "/eval/samples",
@@ -222,13 +196,10 @@ def test_get_samples_404(
     assert response.json()["entity"] == entity
 
 
-def test_get_samples_422(test_client: TestClient):
+def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test errors in requesting samples."""
-    mock_backend = Mock()
-
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.sample_for_eval = Mock(side_effect=MatchboxTooManySamplesRequested)
-
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.get(
         "/eval/samples",

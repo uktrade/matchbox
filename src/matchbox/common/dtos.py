@@ -1,5 +1,6 @@
 """Data transfer objects for Matchbox API."""
 
+from datetime import datetime
 from enum import StrEnum
 from importlib.metadata import version
 from typing import Literal
@@ -203,10 +204,17 @@ class CountResult(BaseModel):
 class UploadStatus(BaseModel):
     """Response model for any file upload processes."""
 
-    id: str | None = None
-    status: Literal[
-        "ready", "awaiting_upload", "queued", "processing", "complete", "failed"
+    id: str
+    stage: Literal[
+        "ready",
+        "awaiting_upload",
+        "queued",
+        "processing",
+        "complete",
+        "failed",
+        "unknown",
     ]
+    update_timestamp: datetime
     details: str | None = None
     entity: BackendUploadType | None = None
 
@@ -219,11 +227,11 @@ class UploadStatus(BaseModel):
         "processing": 200,
     }
 
-    def get_http_code(self, status: bool) -> int:
-        """Get the HTTP status code for the upload status."""
-        if self.status == "failed":
+    def get_http_code(self, stage: str) -> int:
+        """Get the HTTP status code for the upload stage."""
+        if self.stage == "failed":
             return 400
-        return self._status_code_mapping[self.status]
+        return self._status_code_mapping[self.stage]
 
     @classmethod
     def status_400_examples(cls) -> dict:
@@ -236,22 +244,24 @@ class UploadStatus(BaseModel):
                             "summary": "Upload ID expired",
                             "value": cls(
                                 id="example_id",
-                                status="failed",
+                                stage="failed",
                                 details=(
                                     "Upload ID not found or expired. Entries expire "
                                     "after 30 minutes of inactivity, including "
                                     "failed processes."
                                 ),
                                 entity=BackendUploadType.INDEX,
+                                update_timestamp=datetime.now(),
                             ).model_dump(),
                         },
                         "schema_mismatch": {
                             "summary": "Schema validation error",
                             "value": cls(
                                 id="example_id",
-                                status="failed",
+                                stage="failed",
                                 details="Schema mismatch. Expected: ... Got: ...",
                                 entity=BackendUploadType.INDEX,
+                                update_timestamp=datetime.now(),
                             ).model_dump(),
                         },
                     },

@@ -12,9 +12,9 @@ This guide walks through creating complete matching pipelines using the Matchbox
 
 A DAG (Directed Acyclic Graph) represents a sequence of operations where each step depends on the outputs of previous steps, without any circular dependencies. In Matchbox, a DAG consists of:
 
-1. [`IndexStep`s][matchbox.client.dags.IndexStep]: Loading and indexing data from sources
-2. [`DedupeStep`s][matchbox.client.dags.DedupeStep]: Removing duplicates within a source
-3. [`LinkStep`s][matchbox.client.dags.LinkStep]: Connecting records between different sources
+1. [`IndexStep`s][matchbox.common.dags.IndexStep]: Loading and indexing data from sources
+2. [`DedupeStep`s][matchbox.common.dags.DedupeStep]: Removing duplicates within a source
+3. [`LinkStep`s][matchbox.common.dags.LinkStep]: Connecting records between different sources
 
 ## Setting up your environment
 
@@ -23,7 +23,7 @@ Before building a pipeline, ensure you have Matchbox properly installed and conf
 ```python
 import logging
 from matchbox.client import clean
-from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
+from matchbox.common.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
 from matchbox.client.models.dedupers.naive import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.common.sources import SourceConfig, RelationalDBLocation
@@ -139,7 +139,7 @@ Only data indexed in Matchbox can we used to match.
 
 === "Example"
     ```python
-    from matchbox.client.dags import IndexStep
+    from matchbox.common.dags import IndexStep
     
     # Define batch size
     batch_size = 250_000
@@ -149,7 +149,7 @@ Only data indexed in Matchbox can we used to match.
     i_exporters = IndexStep(source_config=exporters, batch_size=batch_size)
     ```
 
-Each [`IndexStep`][matchbox.client.dags.IndexStep] requires:
+Each [`IndexStep`][matchbox.common.dags.IndexStep] requires:
 
 - A `source` object
 - An optional `batch_size` for processing large data in chunks
@@ -160,7 +160,7 @@ Dedupe steps identify and resolve duplicates within a single source.
 
 === "Example"
     ```python
-    from matchbox.client.dags import DedupeStep, StepInput
+    from matchbox.common.dags import DedupeStep, StepInput
     from matchbox.client.models.dedupers.naive import NaiveDeduper
 
     # Deduplicate Companies House data based on company number
@@ -187,9 +187,9 @@ Dedupe steps identify and resolve duplicates within a single source.
     )
     ```
 
-A [`DedupeStep`][matchbox.client.dags.DedupeStep] requires:
+A [`DedupeStep`][matchbox.common.dags.DedupeStep] requires:
 
-- A `left` input, defined as a [`StepInput`][matchbox.client.dags.StepInput] that specifies:
+- A `left` input, defined as a [`StepInput`][matchbox.common.dags.StepInput] that specifies:
     - The previous step (`prev_node`)
     - Which fields to select (`select`)
     - Cleaning operations to apply ([`cleaning_dict`][matchbox.client.queries.clean])
@@ -304,7 +304,7 @@ Link steps connect records between different sources.
 
 === "Example"
     ```python
-    from matchbox.client.dags import LinkStep
+    from matchbox.common.dags import LinkStep
     from matchbox.client.models.linkers import DeterministicLinker
     
     # Link exporters and importers based on name and postcode
@@ -344,9 +344,9 @@ Link steps connect records between different sources.
     )
     ```
 
-A [`LinkStep`][matchbox.client.dags.LinkStep] requires:
+A [`LinkStep`][matchbox.common.dags.LinkStep] requires:
 
-- A `left` and `right` input, defined as a [`StepInput`][matchbox.client.dags.StepInput] that specifies:
+- A `left` and `right` input, defined as a [`StepInput`][matchbox.common.dags.StepInput] that specifies:
     - The previous step (`prev_node`)
     - Which fields to select (`select`)
     - Cleaning operations to apply ([`cleaning_dict`][matchbox.client.queries.clean])
@@ -425,11 +425,11 @@ Matchbox provides several linking methodologies:
 
 ## 5. Building and running the DAG
 
-Once you've defined all your steps, you can build and run the complete [`DAG`][matchbox.client.dags.DAG].
+Once you've defined all your steps, you can build and run the complete [`DAG`][matchbox.common.dags.DAG].
 
 === "Example"
     ```python
-    from matchbox.client.dags import DAG
+    from matchbox.common.dags import DAG
     
     # Create the DAG
     my_dag = DAG()
@@ -595,6 +595,6 @@ The Matchbox DAG API provides a powerful framework for building sophisticated da
 
 For more information, explore the API reference for specific components:
 
-- [DAG API](../api/client/dags.md)
+- [DAG API](../api/common/dags.md)
 - [Linkers](../api/client/models.md)
 - [Results](../api/client/results.md)

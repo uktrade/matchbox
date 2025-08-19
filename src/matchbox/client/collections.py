@@ -2,10 +2,10 @@
 
 from typing import Self
 
+from pyarrow import Table
 from pydantic import BaseModel
 
 from matchbox.client import _handler
-from matchbox.client.models.models import Model
 from matchbox.common.dtos import ModelConfig
 from matchbox.common.sources import SourceConfig
 
@@ -27,33 +27,35 @@ class Version(BaseModel):
     def add_source(
         self,
         source_config: SourceConfig,
-        batch_size: int | None = None,
-    ) -> None:
+        data_hashes: Table,
+    ):
         """Indexes data on the server.
 
         Args:
             source_config: A SourceConfig with client set
-            batch_size: the size of each batch when fetching data from the warehouse,
-                which helps reduce the load on the database.
+            data_hashes: Result of hashing data source
         """
         if not source_config.location.client:
             raise ValueError("Source client not set.")
 
-        data_hashes = source_config.hash_data(batch_size=batch_size)
-        _handler.index(
+        _handler.create_source(
             version_id=self.id, source_config=source_config, data_hashes=data_hashes
         )
 
-    def add_model(self, model: Model) -> None:
+    def add_model(self, model_config: ModelConfig, results: Table) -> None:
         """Stores results on the server.
 
         Args:
-            model: A Model that has been run
+            model_config: a model configuration
+            results: output from the model
         """
-        if not model.results:
-            raise ValueError("Model not run.")
+        _handler.create_model(
+            version_id=self.id, model_config=self.model_config, results=results
+        )
 
-        _handler.create_model(version_id=self.id, model_config=self.model_config)
+    def set_model_threshold(self, threshold: int):
+        """Set probability threshold for model."""
+        _handler.set_model_threshold(version_id=self.id, threshold=threshold)
 
     def get_source(self, resolution_name: str) -> SourceConfig | None:
         """Retrieve source config by resolution name."""

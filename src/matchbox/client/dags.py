@@ -1,25 +1,215 @@
 """Objects to define a DAG which indexes, deduplicates and links data."""
 
 import datetime
-from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Literal
+from typing import Any
 
 import polars as pl
-from pyarrow import Table
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import create_engine
-from sqlglot import errors, expressions, parse_one
 
-from matchbox.client import _handler
-from matchbox.client.models.dedupers.base import Deduper
-from matchbox.client.models.linkers.base import Linker
+from matchbox.client.collections import Version
 from matchbox.client.models.models import make_model
 from matchbox.client.queries import Selector, clean, query
-from matchbox.client.results import Results
+from matchbox.common.dags import DAG, DedupeStep, IndexStep, Step, StepInput
 from matchbox.common.graph import ResolutionName, SourceResolutionName
 from matchbox.common.logging import logger
 from matchbox.common.sources import RelationalDBLocation, SourceConfig, SourceField
+
+
+def find_apex(dag: DAG) -> tuple[dict[str, list[str]], str]:
+    """Find apex of DAG.
+
+    Raises:
+        ValueError: If the DAG has multiple disconnected components
+    """
+    inverse_graph = defaultdict(list)
+    for node in dag.graph:
+        for neighbor in dag.graph[node]:
+            inverse_graph[neighbor].append(node)
+
+    apex_nodes = {node for node in dag.graph if node not in inverse_graph}
+    if len(apex_nodes) > 1:
+        raise ValueError("Some models or sources are disconnected")
+    elif not apex_nodes:
+        raise ValueError("No root node found, DAG might contain cycles")
+    else:
+        return apex_nodes.pop()
+
+
+def running_sequence(dag: DAG) -> list[str]:
+    """Determine order of execution of steps."""
+    apex = find_apex(dag)
+
+    def depth_first(node: str, sequence: list):
+        sequence.append(node)
+        for neighbour in dag.graph[node]:
+            if neighbour not in sequence:
+                depth_first(neighbour, sequence)
+
+    inverse_sequence = []
+    depth_first(apex, inverse_sequence)
+    return list(reversed(inverse_sequence))
+
+
+def query_step_input(step_input: StepInput) -> pl.DataFrame:
+    """Retrieve data for step input.
+
+    Args:
+        step_input: Declared input to this DAG step.
+
+    Returns:
+        Polars dataframe with retrieved results.
+    """
+    selectors: list[Selector] = []
+
+    for source, fields in step_input.select.items():
+        field_lookup: dict[str, SourceField] = {
+            field.name: field for field in source.index_fields
+        }
+
+        selected_fields: list[SourceField] = []
+        for field in fields:
+            selected_fields.append(field_lookup[field])
+
+        selectors.append(Selector(source=source, fields=selected_fields))
+
+    return query(
+        selectors,
+        return_leaf_id=False,
+        return_type="polars",
+        threshold=step_input.threshold,
+        resolution=step_input.name,
+        batch_size=step_input.batch_size,
+        combine_type=step_input.combine_type,
+    )
+
+
+def run_step(version: Version, step: Step) -> Any:
+    """Run appropriate logic depending on type of step."""
+    if isinstance(step, IndexStep):
+        data_hashes = version.add_source(
+            source_config=SourceConfig, batch_size=step.batch_size
+        )
+
+        return data_hashes
+
+    left_raw = query_step_input(step.left)
+    left_clean = clean(left_raw, step.left.cleaning_dict)
+
+    if isinstance(step, DedupeStep):
+        model = make_model(
+            name=step.name,
+            description=step.description,
+            model_class=step.model_class,
+            model_settings=step.settings,
+            left_data=left_clean,
+            left_resolution=step.left.name,
+        )
+
+    else:
+        right_raw = query_step_input(step.right)
+        right_clean = clean(right_raw, step.right.cleaning_dict)
+
+        model = make_model(
+            name=step.name,
+            description=step.description,
+            model_class=step.model_class,
+            model_settings=step.settings,
+            left_data=left_clean,
+            left_resolution=step.left.name,
+            right_data=right_clean,
+            right_resolution=step.right.name,
+        )
+
+    results = model.run()
+    results.to_matchbox()
+    model.truth = step.truth
+    return results
+
+
+def draw(
+    dag: DAG,
+    start_time: datetime.datetime | None = None,
+    doing: ResolutionName | None = None,
+    skipped: list[ResolutionName] | None = None,
+) -> str:
+    """Create a string representation of the DAG as a tree structure.
+
+    If `start_time` is provided, it will show the status of each node
+    based on the last run time. The status indicators are:
+
+    * ✅ Done
+    * 🔄 Working
+    * ⏸️ Awaiting
+    * ⏭️ Skipped
+
+    Args:
+        dag: DAG to draw.
+        start_time: Start time of the DAG run. Used to calculate node status.
+        doing: Name of the node currently being processed (if any).
+        skipped: List of node names that were skipped.
+
+    Returns:
+        String representation of the DAG with status indicators.
+    """
+    root_name = find_apex(dag)
+    skipped = skipped or []
+
+    def _get_node_status(name: ResolutionName) -> str:
+        """Determine the status indicator for a node."""
+        if name in skipped:
+            return "⏭️"
+        elif doing and name == doing:
+            return "🔄"
+        elif (
+            (node := dag.nodes.get(name))
+            and node.last_run
+            and node.last_run > start_time
+        ):
+            return "✅"
+        else:
+            return "⏸️"
+
+    # Add status indicator if start_time is provided
+    if start_time is not None:
+        status = _get_node_status(root_name)
+        result = [f"{status} {root_name}"]
+    else:
+        result = [root_name]
+
+    visited = set([root_name])
+
+    def format_children(node: ResolutionName, prefix=""):
+        """Recursively format the children of a node."""
+        children = []
+        # Get all outgoing edges from this node
+        for target in dag.graph.get(node, []):
+            if target not in visited:
+                children.append(target)
+                visited.add(target)
+
+        # Format each child
+        for i, child in enumerate(children):
+            is_last = i == len(children) - 1
+
+            # Add status indicator if start_time is provided
+            if start_time is not None:
+                status = _get_node_status(child)
+                child_display = f"{status} {child}"
+            else:
+                child_display = child
+
+            if is_last:
+                result.append(f"{prefix}└── {child_display}")
+                format_children(child, prefix + "    ")
+            else:
+                result.append(f"{prefix}├── {child_display}")
+                format_children(child, prefix + "│   ")
+
+    format_children(root_name)
+
+    return "\n".join(result)
 
 
 class DAGDebugOptions(BaseModel):
@@ -33,483 +223,77 @@ class DAGDebugOptions(BaseModel):
     keep_outputs: bool = False
 
 
-class Step(BaseModel, ABC):
-    """Abstract base class defining what a step needs to support."""
+def run_dag(dag: DAG, debug_options: DAGDebugOptions | None = None) -> dict[str, Any]:
+    """Run entire DAG.
 
-    name: ResolutionName
-    sources: set[str] = Field(default_factory=set)
-    last_run: datetime.datetime | None = Field(default=None)
+    Args:
+        dag: DAG to run.
+        debug_options: configuration options for debug run
+    """
+    debug_options = debug_options or DAGDebugOptions()
+    start_time = datetime.datetime.now()
 
-    @property
-    @abstractmethod
-    def inputs(self) -> list["StepInput"]:
-        """Return all inputs to this step."""
-        ...
+    sequence = running_sequence(dag)
 
-    @abstractmethod
-    def run(self) -> Table | Results:
-        """Run the step."""
-        ...
+    # Identify skipped nodes
+    skipped_nodes = []
+    if debug_options.start:
+        try:
+            start_index = sequence.index(debug_options.start)
+            skipped_nodes = sequence[:start_index]
+        except ValueError as e:
+            raise ValueError(f"Step {debug_options.start} not in DAG") from e
+    else:
+        start_index = 0
 
+    # Determine end index
+    if debug_options.finish:
+        try:
+            end_index = sequence.index(debug_options.finish) + 1
+            skipped_nodes.extend(sequence[end_index:])
+        except ValueError as e:
+            raise ValueError(f"Step {debug_options.finish} not in DAG") from e
+    else:
+        end_index = len(sequence)
 
-class StepInput(BaseModel):
-    """Input to a DAG step, generated by a previous node in the DAG."""
+    # Create debug warehouse if needed
+    if len(debug_options.override_sources):
+        debug_sqlite_uri = "sqlite:///:memory:"
+        debug_engine = create_engine(debug_sqlite_uri)
+        debug_location = RelationalDBLocation(name="__DEBUG__", client=debug_engine)
 
-    prev_node: Step
-    select: dict[SourceConfig, list[str]]
-    cleaning_dict: dict[str, str] | None = None
-    batch_size: int | None = None
-    threshold: float | None = None
-    combine_type: Literal["concat", "explode", "set_agg"] = "concat"
-
-    @property
-    def name(self) -> str:
-        """Resolution name for node generating this input for the next step."""
-        return self.prev_node.name
-
-    @field_validator("cleaning_dict")
-    @classmethod
-    def validate_cleaning_dict(cls, v: dict[str, str] | None) -> str | None:
-        """Validate cleaning as valid SQL."""
-        if v is None:
-            return v
-
-        for alias, sql in v.items():
-            if sql is not None:
-                try:
-                    stmt = parse_one(sql, dialect="duckdb")
-                except errors.ParseError as e:
-                    raise ValueError(f"Invalid SQL in cleaning_dict: {alias}") from e
-
-                for node in stmt.walk():
-                    if isinstance(node, expressions.Column) and node.name == "id":
-                        raise ValueError(
-                            "Cannot transform 'id' column in cleaning_dict. "
-                            "It is always selected by default."
-                        )
-
-        return v
-
-    @model_validator(mode="after")
-    def validate_all_input(self) -> "StepInput":
-        """Verify select statement is valid given previous node."""
-        if isinstance(self.prev_node, IndexStep):
-            if (
-                len(self.select) > 1
-                or list(self.select.keys())[0] != self.prev_node.source_config
-            ):
-                raise ValueError(
-                    f"Can only select from source {self.prev_node.source_config.name}"
+    debug_outputs = {}
+    for step_name in sequence[start_index:end_index]:
+        node = dag.nodes[step_name]
+        if step_name in debug_options.override_sources and isinstance(node, IndexStep):
+            with debug_engine.connect() as conn:
+                debug_options.override_sources[step_name].write_database(
+                    table_name=step_name,
+                    connection=conn,
+                    if_table_exists="replace",
                 )
-        else:
-            for source in self.select:
-                if str(source.name) not in self.prev_node.sources:
-                    raise ValueError(
-                        f"Cannot select {source.name} from {self.prev_node.name}."
-                        f"Available sources are {self.prev_node.sources}."
-                    )
-        return self
-
-
-class IndexStep(Step):
-    """Index step."""
-
-    source_config: SourceConfig
-    batch_size: int | None = Field(default=None)
-
-    @model_validator(mode="before")
-    @classmethod
-    def source_to_attributes(cls, data: dict[str, Any]) -> dict[str, Any]:
-        """Convert source config to name and sources attributes."""
-        if "source_config" not in data:
-            raise ValueError("SourceConfig must be provided")
-
-        if not isinstance(data["source_config"], SourceConfig):
-            raise ValueError("SourceConfig must be of type SourceConfig")
-
-        data["name"] = str(data["source_config"].name)
-        data["sources"] = {str(data["source_config"].name)}
-        return data
-
-    @property
-    def inputs(self) -> list[StepInput]:
-        """Return all inputs to this step."""
-        return []
-
-    def run(self) -> Table:
-        """Run indexing step."""
-        data_hashes = self.source_config.hash_data(batch_size=self.batch_size)
-        _handler.index(source_config=self.source_config, data_hashes=data_hashes)
-
-        return data_hashes
-
-
-class ModelStep(Step):
-    """Base class for model steps."""
-
-    description: str
-    left: StepInput
-    settings: dict[str, Any]
-    truth: float
-
-    @model_validator(mode="after")
-    def init_sources(self) -> "ModelStep":
-        """Add sources inherited from all inputs."""
-        for step_input in self.inputs:
-            self.sources.update(step_input.prev_node.sources)
-
-        return self
-
-    def query(self, step_input: StepInput) -> pl.DataFrame:
-        """Retrieve data for declared step input.
-
-        Args:
-            step_input: Declared input to this DAG step.
-
-        Returns:
-            Polars dataframe with retrieved results.
-        """
-        selectors: list[Selector] = []
-
-        for source, fields in step_input.select.items():
-            field_lookup: dict[str, SourceField] = {
-                field.name: field for field in source.index_fields
-            }
-
-            selected_fields: list[SourceField] = []
-            for field in fields:
-                selected_fields.append(field_lookup[field])
-
-            selectors.append(Selector(source=source, fields=selected_fields))
-
-        return query(
-            selectors,
-            return_leaf_id=False,
-            return_type="polars",
-            threshold=step_input.threshold,
-            resolution=step_input.name,
-            batch_size=step_input.batch_size,
-            combine_type=step_input.combine_type,
-        )
-
-    def clean(self, data: pl.DataFrame, step_input: StepInput) -> pl.DataFrame:
-        """Clean data using DuckDB with the provided cleaning SQL."""
-        return clean(data, step_input.cleaning_dict)
-
-
-class DedupeStep(ModelStep):
-    """Deduplication step."""
-
-    model_class: type[Deduper]
-
-    @property
-    def inputs(self) -> list[StepInput]:
-        """Return all inputs to this step."""
-        return [self.left]
-
-    def run(self) -> Results:
-        """Run full deduping pipeline and store results."""
-        left_raw = self.query(self.left)
-        left_clean = self.clean(left_raw, self.left)
-
-        deduper = make_model(
-            name=self.name,
-            description=self.description,
-            model_class=self.model_class,
-            model_settings=self.settings,
-            left_data=left_clean,
-            left_resolution=self.left.name,
-        )
-
-        results = deduper.run()
-        results.to_matchbox()
-        deduper.truth = self.truth
-        return results
-
-
-class LinkStep(ModelStep):
-    """Linking step."""
-
-    model_class: type[Linker]
-    right: StepInput
-
-    @property
-    def inputs(self) -> list[StepInput]:
-        """Return all `StepInputs` to this step."""
-        return [self.left, self.right]
-
-    def run(self) -> Results:
-        """Run whole linking step."""
-        left_raw = self.query(self.left)
-        left_clean = self.clean(left_raw, self.left)
-
-        right_raw = self.query(self.right)
-        right_clean = self.clean(right_raw, self.right)
-
-        linker = make_model(
-            name=self.name,
-            description=self.description,
-            model_class=self.model_class,
-            model_settings=self.settings,
-            left_data=left_clean,
-            left_resolution=self.left.name,
-            right_data=right_clean,
-            right_resolution=self.right.name,
-        )
-
-        results = linker.run()
-        results.to_matchbox()
-        linker.truth = self.truth
-        return results
-
-
-class DAG:
-    """Self-sufficient pipeline of indexing, deduping and linking steps."""
-
-    def __init__(self):
-        """Initialise DAG object."""
-        self.nodes: dict[ResolutionName, Step] = {}
-        self.graph: dict[ResolutionName, list[ResolutionName]] = {}
-        self.sequence: list[ResolutionName] = []
-        self.debug_outputs: dict[ResolutionName, Table | Results] = {}
-
-    def _validate_node(self, name: ResolutionName) -> None:
-        """Validate that a node name is unique in the DAG."""
-        if name in self.nodes:
-            raise ValueError(f"Name '{name}' is already taken in the DAG")
-
-    def _validate_inputs(self, step: Step) -> None:
-        """Validate that all inputs to a step are already in the DAG."""
-        for step_input in step.inputs:
-            if step_input.name not in self.nodes:
-                raise ValueError(f"Dependency {step_input.name} not added to DAG")
-
-    def _build_inverse_graph(self) -> tuple[dict[str, list[str]], str]:
-        """Build inverse graph and find the apex node.
-
-        Returns:
-            tuple: (inverse_graph, apex_node)
-
-                * inverse_graph: Dictionary mapping nodes to their parent nodes
-                * apex_node: The root node of the DAG
-
-        Raises:
-            ValueError: If the DAG has multiple disconnected components
-        """
-        inverse_graph = defaultdict(list)
-        for node in self.graph:
-            for neighbor in self.graph[node]:
-                inverse_graph[neighbor].append(node)
-
-        apex_nodes = {node for node in self.graph if node not in inverse_graph}
-        if len(apex_nodes) > 1:
-            raise ValueError("Some models or sources are disconnected")
-        elif not apex_nodes:
-            raise ValueError("No root node found, DAG might contain cycles")
-        else:
-            return inverse_graph, apex_nodes.pop()
-
-    def add_sources(
-        self, *source_configs: SourceConfig, batch_size: int | None = None
-    ) -> tuple[IndexStep]:
-        """Add sources to DAG.
-
-        Args:
-            source_configs: All sources to add.
-            batch_size: Batch size for indexing.
-        """
-        index_steps = tuple(
-            IndexStep(source_config=source_config, batch_size=batch_size)
-            for source_config in source_configs
-        )
-        self.add_steps(*index_steps)
-        return index_steps
-
-    def add_steps(self, *steps: Step) -> None:
-        """Add dedupers and linkers to DAG, and register sources available to steps.
-
-        Args:
-            steps: Dedupe and link steps.
-        """
-        for step in steps:
-            self._validate_node(step.name)
-            self._validate_inputs(step)
-            self.nodes[step.name] = step
-            self.graph[step.name] = [step_input.name for step_input in step.inputs]
-
-    def prepare(self) -> None:
-        """Determine order of execution of steps."""
-        self.sequence = []
-
-        _, apex = self._build_inverse_graph()
-
-        def depth_first(node: str, sequence: list):
-            sequence.append(node)
-            for neighbour in self.graph[node]:
-                if neighbour not in sequence:
-                    depth_first(neighbour, sequence)
-
-        inverse_sequence = []
-        depth_first(apex, inverse_sequence)
-        self.sequence = list(reversed(inverse_sequence))
-
-    def draw(
-        self,
-        start_time: datetime.datetime | None = None,
-        doing: ResolutionName | None = None,
-        skipped: list[ResolutionName] | None = None,
-    ) -> str:
-        """Create a string representation of the DAG as a tree structure.
-
-        If `start_time` is provided, it will show the status of each node
-        based on the last run time. The status indicators are:
-
-        * ✅ Done
-        * 🔄 Working
-        * ⏸️ Awaiting
-        * ⏭️ Skipped
-
-        Args:
-            start_time: Start time of the DAG run. Used to calculate node status.
-            doing: Name of the node currently being processed (if any).
-            skipped: List of node names that were skipped.
-
-        Returns:
-            String representation of the DAG with status indicators.
-        """
-        _, root_name = self._build_inverse_graph()
-        skipped = skipped or []
-
-        def _get_node_status(name: ResolutionName) -> str:
-            """Determine the status indicator for a node."""
-            if name in skipped:
-                return "⏭️"
-            elif doing and name == doing:
-                return "🔄"
-            elif (
-                (node := self.nodes.get(name))
-                and node.last_run
-                and node.last_run > start_time
-            ):
-                return "✅"
-            else:
-                return "⏸️"
-
-        # Add status indicator if start_time is provided
-        if start_time is not None:
-            status = _get_node_status(root_name)
-            result = [f"{status} {root_name}"]
-        else:
-            result = [root_name]
-
-        visited = set([root_name])
-
-        def format_children(node: ResolutionName, prefix=""):
-            """Recursively format the children of a node."""
-            children = []
-            # Get all outgoing edges from this node
-            for target in self.graph.get(node, []):
-                if target not in visited:
-                    children.append(target)
-                    visited.add(target)
-
-            # Format each child
-            for i, child in enumerate(children):
-                is_last = i == len(children) - 1
-
-                # Add status indicator if start_time is provided
-                if start_time is not None:
-                    status = _get_node_status(child)
-                    child_display = f"{status} {child}"
-                else:
-                    child_display = child
-
-                if is_last:
-                    result.append(f"{prefix}└── {child_display}")
-                    format_children(child, prefix + "    ")
-                else:
-                    result.append(f"{prefix}├── {child_display}")
-                    format_children(child, prefix + "│   ")
-
-        format_children(root_name)
-
-        return "\n".join(result)
-
-    def run(self, debug_options: DAGDebugOptions | None = None):
-        """Run entire DAG.
-
-        Args:
-            debug_options: configuration options for debug run
-        """
-        debug_options = debug_options or DAGDebugOptions()
-        start_time = datetime.datetime.now()
-
-        self.prepare()
-
-        # Identify skipped nodes
-        skipped_nodes = []
-        if debug_options.start:
-            try:
-                start_index = self.sequence.index(debug_options.start)
-                skipped_nodes = self.sequence[:start_index]
-            except ValueError as e:
-                raise ValueError(f"Step {debug_options.start} not in DAG") from e
-        else:
-            start_index = 0
-
-        # Determine end index
-        if debug_options.finish:
-            try:
-                end_index = self.sequence.index(debug_options.finish) + 1
-                skipped_nodes.extend(self.sequence[end_index:])
-            except ValueError as e:
-                raise ValueError(f"Step {debug_options.finish} not in DAG") from e
-        else:
-            end_index = len(self.sequence)
-
-        self.debug_outputs.clear()
-
-        # Create debug warehouse if needed
-        if len(debug_options.override_sources):
-            debug_sqlite_uri = "sqlite:///:memory:"
-            debug_engine = create_engine(debug_sqlite_uri)
-            debug_location = RelationalDBLocation(name="__DEBUG__", client=debug_engine)
-
-        for step_name in self.sequence[start_index:end_index]:
-            node = self.nodes[step_name]
-            if step_name in debug_options.override_sources and isinstance(
-                node, IndexStep
-            ):
-                with debug_engine.connect() as conn:
-                    debug_options.override_sources[step_name].write_database(
-                        table_name=step_name,
-                        connection=conn,
-                        if_table_exists="replace",
-                    )
-                node = IndexStep(
-                    source_config=SourceConfig(
-                        location=debug_location,
-                        name=step_name,
-                        extract_transform=f"select * from {step_name}",
-                        key_field=node.source_config.key_field,
-                        index_fields=node.source_config.index_fields,
-                    )
-                )
-
-            logger.info(
-                "\n"
-                + self.draw(
-                    start_time=start_time, doing=node.name, skipped=skipped_nodes
+            node = IndexStep(
+                source_config=SourceConfig(
+                    location=debug_location,
+                    name=step_name,
+                    extract_transform=f"select * from {step_name}",
+                    key_field=node.source_config.key_field,
+                    index_fields=node.source_config.index_fields,
                 )
             )
-            try:
-                if debug_options.keep_outputs:
-                    self.debug_outputs[step_name] = node.run()
-                else:
-                    node.run()
-                node.last_run = datetime.datetime.now()
-            except Exception as e:
-                logger.error(f"❌ {node.name} failed: {e}")
-                raise e
 
-        logger.info("\n" + self.draw(start_time=start_time, skipped=skipped_nodes))
+        logger.info(
+            "\n" + draw(start_time=start_time, doing=node.name, skipped=skipped_nodes)
+        )
+        try:
+            if debug_options.keep_outputs:
+                debug_outputs[step_name] = run_step(node)
+            else:
+                run_step(node)
+            node.last_run = datetime.datetime.now()
+        except Exception as e:
+            logger.error(f"❌ {node.name} failed: {e}")
+            raise e
+
+    logger.info("\n" + draw(start_time=start_time, skipped=skipped_nodes))
+    return debug_outputs

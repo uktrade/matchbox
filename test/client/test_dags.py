@@ -13,9 +13,9 @@ from matchbox.client.dags import (
     LinkStep,
     StepInput,
 )
-from matchbox.client.helpers.selector import Selector
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.queries import Selector
 from matchbox.common.factories.sources import source_factory
 from matchbox.common.sources import SourceConfig
 

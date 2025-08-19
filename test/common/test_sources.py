@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 from sqlglot import select
 from sqlglot.errors import ParseError
 
-from matchbox.client.helpers.selector import Match
+from matchbox.client.queries import Match
 from matchbox.common.dtos import DataTypes
 from matchbox.common.exceptions import (
     MatchboxSourceClientError,

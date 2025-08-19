@@ -192,7 +192,7 @@ A [`DedupeStep`][matchbox.client.dags.DedupeStep] requires:
 - A `left` input, defined as a [`StepInput`][matchbox.client.dags.StepInput] that specifies:
     - The previous step (`prev_node`)
     - Which fields to select (`select`)
-    - Cleaning operations to apply ([`cleaning_dict`][matchbox.client.helpers.selector.clean])
+    - Cleaning operations to apply ([`cleaning_dict`][matchbox.client.queries.clean])
     - Optional batch size
 - A unique `name` for the step
 - A `description` explaining the purpose of the step
@@ -349,7 +349,7 @@ A [`LinkStep`][matchbox.client.dags.LinkStep] requires:
 - A `left` and `right` input, defined as a [`StepInput`][matchbox.client.dags.StepInput] that specifies:
     - The previous step (`prev_node`)
     - Which fields to select (`select`)
-    - Cleaning operations to apply ([`cleaning_dict`][matchbox.client.helpers.selector.clean])
+    - Cleaning operations to apply ([`cleaning_dict`][matchbox.client.queries.clean])
     - Optional batch size
 - A unique `name` for the step
 - A `description` explaining the purpose of the step
@@ -357,7 +357,7 @@ A [`LinkStep`][matchbox.client.dags.LinkStep] requires:
 - Configuration `settings` for the algorithm
 - A `truth` threshold (a float between `0.0` and `1.0`) above which a match is considered "true"
 
-As with deduplication, the `cleaning_dict` maps field aliases to DuckDB SQL expressions that can reference input columns. See [On cleaning](#on-cleaning) for how to specify this functionality, or check the documentation for ([`clean()`][matchbox.client.helpers.selector.clean])
+As with deduplication, the `cleaning_dict` maps field aliases to DuckDB SQL expressions that can reference input columns. See [On cleaning](#on-cleaning) for how to specify this functionality, or check the documentation for ([`clean()`][matchbox.client.queries.clean])
 
 ### Available linker types
 

@@ -12,10 +12,10 @@ from sqlalchemy import create_engine
 from sqlglot import errors, expressions, parse_one
 
 from matchbox.client import _handler
-from matchbox.client.helpers.selector import Selector, clean, query
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.models.models import make_model
+from matchbox.client.queries import Selector, clean, query
 from matchbox.client.results import Results
 from matchbox.common.graph import ResolutionName, SourceResolutionName
 from matchbox.common.logging import logger

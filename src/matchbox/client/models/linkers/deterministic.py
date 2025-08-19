@@ -5,8 +5,8 @@ from typing import Iterable
 import polars as pl
 from pydantic import Field, field_validator
 
-from matchbox.client.helpers import comparison
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
+from matchbox.client.models.models import comparison
 
 
 class DeterministicSettings(LinkerSettings):

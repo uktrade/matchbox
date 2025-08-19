@@ -6,7 +6,12 @@ from pydantic import BaseModel
 
 from matchbox.client import _handler
 from matchbox.client.models.models import Model
+from matchbox.common.dtos import ModelConfig
 from matchbox.common.sources import SourceConfig
+
+# TODO: how do we return a DAG from the server?
+# Improve model
+# Remove visualisation
 
 
 class Version(BaseModel):
@@ -49,6 +54,18 @@ class Version(BaseModel):
             raise ValueError("Model not run.")
 
         _handler.create_model(version_id=self.id, model_config=self.model_config)
+
+    def get_source(self, resolution_name: str) -> SourceConfig | None:
+        """Retrieve source config by resolution name."""
+        return _handler.get_source_config(name=resolution_name)
+
+    def get_model(self, resolution_name: str) -> ModelConfig | None:
+        """Retrieve model config by resolution name."""
+        return _handler.get_model(name=resolution_name)
+
+    def get_dag(self):
+        """Return complete DAG from a current version."""
+        return _handler.get_dag(version_id=self.id)
 
     def set_current(self, resolution_name: str) -> None:
         """Mark version as current for its collection and point to a resolution."""
@@ -104,9 +121,7 @@ class Collection(BaseModel):
 
     def current_version(self) -> Version | None:
         """Retrieve current version for this collection, if there is one."""
-        if version_id := _handler.get_version(collection_id=self.get_id()):
-            return Version(id=version_id)
-        return None
+        return _handler.get_version(collection_id=self.get_id())
 
     def new_version(self) -> Version:
         """Create a new version for this collection."""

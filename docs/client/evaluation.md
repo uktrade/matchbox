@@ -65,7 +65,7 @@ df = query(select("source", client=engine))
 
 model = make_model(
     name="model_name",
-    description=f"description",
+    description="description",
     model_class=NaiveDeduper,
     model_settings={
         "id": "id",

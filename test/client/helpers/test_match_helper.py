@@ -4,7 +4,7 @@ from respx import MockRouter
 from sqlalchemy import Engine
 
 from matchbox import match
-from matchbox.client.helpers.selector import Match
+from matchbox.client.queries import Match
 from matchbox.common.dtos import BackendResourceType, NotFoundError
 from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,

@@ -6,9 +6,10 @@ from httpx import Response
 from respx import MockRouter
 from sqlalchemy import Engine
 
+from matchbox.client import select
 from matchbox.client._handler import create_client
 from matchbox.client._settings import ClientSettings
-from matchbox.client.helpers import comparison, select
+from matchbox.client.models.models import comparison
 from matchbox.common.dtos import BackendResourceType, NotFoundError
 from matchbox.common.exceptions import MatchboxSourceNotFoundError
 from matchbox.common.factories.sources import (

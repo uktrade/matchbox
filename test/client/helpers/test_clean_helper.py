@@ -2,7 +2,7 @@ import polars as pl
 import pytest
 from sqlglot.errors import ParseError
 
-from matchbox.client.helpers.selector import clean
+from matchbox.client.queries import clean
 
 
 @pytest.mark.parametrize(

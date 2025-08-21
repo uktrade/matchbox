@@ -6,8 +6,8 @@ import duckdb
 import polars as pl
 from pydantic import BaseModel, Field, field_validator
 
-from matchbox.client.helpers import comparison
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
+from matchbox.client.models.models import comparison
 
 
 class WeightedComparison(BaseModel):

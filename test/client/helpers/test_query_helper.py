@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from httpx import Response
 from numpy import ndarray
@@ -7,7 +10,7 @@ from sqlalchemy import Engine
 
 from matchbox import query
 from matchbox.client.helpers import select
-from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
+from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import BackendResourceType, NotFoundError
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.factories.sources import source_factory, source_from_tuple
@@ -32,20 +35,29 @@ def test_query_no_resolution_ok_various_params(
         return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
     )
 
+    # Create mock table that matches parquet schema (int32/string dictionary)
+    id_array = pa.array([1, 2], type=pa.int64())
+    key_array = pa.array(["0", "1"], type=pa.large_string())
+
+    # Create dictionary with int32 indices and string values (parquet compatible)
+    source_indices = pa.array([0, 0], type=pa.int32())
+    source_dict = pa.array(["foo"], type=pa.string())
+    source_array = pa.DictionaryArray.from_arrays(source_indices, source_dict)
+
+    mock_table = pa.table([id_array, key_array, source_array], schema=SCHEMA_QUERY)
+
+    # Create parquet buffer instead of Arrow IPC
+    parquet_buffer = BytesIO()
+    pq.write_table(mock_table, parquet_buffer)
+    parquet_buffer.seek(0)
+
     query_route = matchbox_api.get("/query").mock(
         return_value=Response(
             200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"key": "0", "id": 1},
-                        {"key": "1", "id": 2},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
+            content=parquet_buffer.read(),
         )
-    )
+    )  # The query route mock above will handle both calls automatically
+    # since respx allows multiple calls to the same route
 
     selectors = select({"foo": ["a", "b"]}, client=sqlite_warehouse)
 
@@ -54,8 +66,10 @@ def test_query_no_resolution_ok_various_params(
     assert len(results) == 2
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
-    assert dict(query_route.calls.last.request.url.params) == {
-        "source": testkit.source_config.name,
+    # Check first call (without threshold)
+    first_call_params = dict(query_route.calls[0].request.url.params)
+    assert first_call_params == {
+        "sources": testkit.source_config.name,
         "return_leaf_id": "False",
     }
 
@@ -66,8 +80,10 @@ def test_query_no_resolution_ok_various_params(
     assert len(results) == 2
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
-    assert dict(query_route.calls.last.request.url.params) == {
-        "source": testkit.source_config.name,
+    # Check second call (with threshold)
+    second_call_params = dict(query_route.calls[1].request.url.params)
+    assert second_call_params == {
+        "sources": testkit.source_config.name,
         "threshold": "50",
         "return_leaf_id": "False",
     }
@@ -101,34 +117,31 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
         return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
     )
 
+    # Create combined mock table for both sources using parquet-compatible schema
+    id_array = pa.array([1, 2, 1, 2], type=pa.int64())
+    key_array = pa.array(["0", "1", "2", "3"], type=pa.large_string())
+
+    # Create categorical source array with parquet-compatible types
+    source_indices = pa.array([0, 0, 1, 1], type=pa.int32())
+    source_dict = pa.array(
+        [testkit1.source_config.name, testkit2.source_config.name], type=pa.string()
+    )
+    source_array = pa.DictionaryArray.from_arrays(source_indices, source_dict)
+
+    combined_mock_table = pa.table(
+        [id_array, key_array, source_array], schema=SCHEMA_QUERY
+    )
+
+    # Mock for multi-source query - use general matching
+    combined_parquet_buffer = BytesIO()
+    pq.write_table(combined_mock_table, combined_parquet_buffer)
+    combined_parquet_buffer.seek(0)
+
     query_route = matchbox_api.get("/query").mock(
-        side_effect=[
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            {"key": "0", "id": 1},
-                            {"key": "1", "id": 2},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            {"key": "2", "id": 1},
-                            {"key": "3", "id": 2},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-        ]
-        * 2  # 2 calls to `query()` in this test, each querying server twice
+        return_value=Response(
+            200,
+            content=combined_parquet_buffer.read(),
+        )
     )
 
     sels = select("foo", {"foo2": ["c"]}, client=sqlite_warehouse)
@@ -146,18 +159,21 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
         "id",
     } == set(results.columns)
 
-    assert dict(query_route.calls[-2].request.url.params) == {
-        "source": testkit1.source_config.name,
-        "resolution": DEFAULT_RESOLUTION,
-        "return_leaf_id": "False",
-    }
-    assert dict(query_route.calls[-1].request.url.params) == {
-        "source": testkit2.source_config.name,
-        "resolution": DEFAULT_RESOLUTION,
-        "return_leaf_id": "False",
+    # Check that the multi-source query was made correctly
+    from urllib.parse import parse_qs, urlparse
+
+    last_request_url = str(query_route.calls.last.request.url)
+    parsed_url = urlparse(last_request_url)
+    url_params = parse_qs(parsed_url.query)
+
+    assert url_params == {
+        "sources": [testkit1.source_config.name, testkit2.source_config.name],
+        "resolution": [DEFAULT_RESOLUTION],
+        "return_leaf_id": ["False"],
     }
 
     # It also works with the selectors specified separately
+    # But with the optimization, this also makes a single multi-source call
     query([sels[0]], [sels[1]], return_leaf_id=False)
 
 
@@ -195,41 +211,34 @@ def test_query_combine_type(
         return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
     )
 
+    # Create combined mock table for multi-source query using parquet-compatible schema
+    id_array = pa.array([1, 1, 2, 2, 2, 3], type=pa.int64())
+    key_array = pa.array(["0", "1", "2", "3", "3", "4"], type=pa.large_string())
+
+    # Create categorical source array with parquet-compatible types
+    source_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.int32())
+    source_dict = pa.array(
+        [testkit1.source_config.name, testkit2.source_config.name], type=pa.string()
+    )
+    source_array = pa.DictionaryArray.from_arrays(source_indices, source_dict)
+
+    combined_mock_table = pa.table(
+        [id_array, key_array, source_array], schema=SCHEMA_QUERY
+    )
+
+    # Create parquet buffer for mock response
+    combined_parquet_buffer2 = BytesIO()
+    pq.write_table(combined_mock_table, combined_parquet_buffer2)
+    combined_parquet_buffer2.seek(0)
+
     matchbox_api.get("/query").mock(
-        side_effect=[
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            {"key": "0", "id": 1},
-                            {"key": "1", "id": 1},
-                            {"key": "2", "id": 2},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-            Response(
-                200,
-                content=table_to_buffer(
-                    pa.Table.from_pylist(
-                        [
-                            # Creating a duplicate value for the same Matchbox ID
-                            {"key": "3", "id": 2},
-                            {"key": "3", "id": 2},
-                            {"key": "4", "id": 3},
-                        ],
-                        schema=SCHEMA_QUERY,
-                    )
-                ).read(),
-            ),
-        ]  # two sources to query
+        return_value=Response(
+            200,
+            content=combined_parquet_buffer2.read(),
+        )
     )
 
     sels = select("foo", "bar", client=sqlite_warehouse)
-
-    # Validate results
     results = query(sels, combine_type=combine_type, return_leaf_id=False)
 
     if combine_type == "set_agg":

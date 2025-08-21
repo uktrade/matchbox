@@ -34,25 +34,44 @@ def key_field_map(
     source_mb_ids: list[ArrowTable] = []
     source_to_key_field: dict[str, str] = {}
 
+    # Store source names and key field mappings
+    source_names = [s.name for s in sources]
     for s in sources:
-        # Get Matchbox IDs from backend
+        source_to_key_field[s.name] = s.key_field.name
+
+    if len(sources) == 1:
+        # Single source - make individual call
         source_mb_ids.append(
             _handler.query(
-                source=s.name,
+                sources=[sources[0].name],
                 resolution=resolution,
                 return_leaf_id=False,
             )
         )
+    else:
+        # Multiple sources - make single multi-source call
+        combined_result = _handler.query(
+            sources=source_names,
+            resolution=resolution,
+            return_leaf_id=False,
+        )
 
-        source_to_key_field[s.name] = s.key_field.name
+        # Split the combined result by source
+        import polars as pl
+
+        combined_df = pl.from_arrow(combined_result)
+        for source_name in source_names:
+            source_data = combined_df.filter(pl.col("source") == source_name).to_arrow()
+            source_mb_ids.append(source_data)
 
     # Join Matchbox IDs to form mapping table
-    mapping = source_mb_ids[0]
+    mapping = source_mb_ids[0].select(["id", "key"])
     mapping = mapping.rename_columns({"key": sources[0].qualified_key})
     if len(sources) > 1:
         for s, mb_ids in zip(sources[1:], source_mb_ids[1:], strict=True):
+            mb_ids_selected = mb_ids.select(["id", "key"])
             mapping = mapping.join(
-                right_table=mb_ids, keys="id", join_type="full outer"
+                right_table=mb_ids_selected, keys="id", join_type="full outer"
             )
             mapping = mapping.rename_columns({"key": s.qualified_key})
 

@@ -313,23 +313,31 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
 def test_query(test_client: TestClient):
     # Mock backend
     mock_backend = Mock()
-    mock_backend.query = Mock(
-        return_value=pa.Table.from_pylist(
-            [
-                {"keys": "a", "id": 1},
-                {"keys": "b", "id": 2},
-            ],
-            schema=SCHEMA_QUERY,
-        )
+
+    # Create test data with proper schema including categorical source
+    # Create dictionary array directly with large_string values
+    indices = pa.array([0, 0], type=pa.uint32())
+    dictionary = pa.array(["foo"], type=pa.large_string())
+    source_dict = pa.DictionaryArray.from_arrays(indices, dictionary)
+
+    mock_table = pa.Table.from_arrays(
+        [
+            pa.array([1, 2], type=pa.int64()),
+            pa.array(["a", "b"], type=pa.large_string()),
+            source_dict,
+        ],
+        schema=SCHEMA_QUERY,
     )
+
+    mock_backend.query = Mock(return_value=mock_table)
 
     # Override app dependencies with mocks
     app.dependency_overrides[backend] = lambda: mock_backend
 
-    # Hit endpoint
+    # Hit endpoint with sources parameter (now a list)
     response = test_client.get(
         "/query",
-        params={"source": "foo", "return_leaf_id": False},
+        params={"sources": ["foo"], "return_leaf_id": False},
     )
 
     # Process response
@@ -338,7 +346,14 @@ def test_query(test_client: TestClient):
 
     # Check response
     assert response.status_code == 200
-    assert table.schema.equals(SCHEMA_QUERY)
+    # Check that we have the right columns
+    assert len(table.schema) == 3
+    assert table.schema.names == ["id", "key", "source"]
+    assert table.schema.field("id").type == pa.int64()
+    assert table.schema.field("key").type == pa.large_string()
+    assert table.schema.field("source").type.equals(
+        pa.dictionary(pa.uint32(), pa.large_string())
+    )
 
 
 def test_query_404_resolution(test_client: TestClient):
@@ -351,7 +366,7 @@ def test_query_404_resolution(test_client: TestClient):
     # Hit endpoint
     response = test_client.get(
         "/query",
-        params={"source": "foo", "resolution": "bar", "return_leaf_id": True},
+        params={"sources": ["foo"], "resolution": "bar", "return_leaf_id": True},
     )
 
     # Check response
@@ -368,7 +383,7 @@ def test_query_404_source(test_client: TestClient):
     # Hit endpoint
     response = test_client.get(
         "/query",
-        params={"source": "foo", "return_leaf_id": True},
+        params={"sources": ["foo"], "return_leaf_id": True},
     )
 
     # Check response

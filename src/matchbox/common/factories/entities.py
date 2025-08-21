@@ -291,12 +291,12 @@ class SourceKeyMixin:
                 raise ValueError(f"SourceConfig not found: {source_name}")
 
             # Get rows for this entity in this source
-            df = source.data.to_pandas()
-            entity_rows = df[df["key"].isin(keys)]
+            df = pl.from_arrow(source.data)
+            entity_rows = df.filter(pl.col("key").is_in(keys))
 
             # Get unique values for each feature in this source
             values[source_name] = {
-                feature.name: sorted(entity_rows[feature.name].unique())
+                feature.name: sorted(entity_rows[feature.name].unique().to_list())
                 for feature in source.features
             }
 
@@ -473,33 +473,43 @@ def query_to_cluster_entities(
     Returns:
         A set of ClusterEntity objects
     """
-    # Convert polars to pandas for compatibility with existing logic
-    if isinstance(query, pl.DataFrame):
-        query = query.to_pandas()
-    elif isinstance(query, pa.Table):
-        query = query.to_pandas()
+    # Convert to polars for efficient processing (avoids pandas uint32 issues)
+    if isinstance(query, pa.Table):
+        query_df = pl.from_arrow(query)
+    elif isinstance(query, pd.DataFrame):
+        query_df = pl.from_pandas(query)
+    else:
+        query_df = query
 
     must_have_fields = set(["id"] + list(keys.values()))
-    if not must_have_fields.issubset(query.columns):
+    if not must_have_fields.issubset(query_df.columns):
         raise ValueError(
-            f"Fields {must_have_fields.difference(query.columns)} must be included "
+            f"Fields {must_have_fields.difference(query_df.columns)} must be included "
             "in the query and are missing."
         )
 
-    def _create_cluster_entity(group: pd.DataFrame) -> ClusterEntity:
-        entity_refs = {
-            source: frozenset(group[key_field].dropna().values)
-            for source, key_field in keys.items()
-            if not group[key_field].dropna().empty
-        }
+    def _create_cluster_entity(group_df: pl.DataFrame) -> ClusterEntity:
+        # Get the cluster ID (should be the same for all rows in the group)
+        cluster_id = group_df["id"][0]
+
+        entity_refs = {}
+        for source, key_field in keys.items():
+            # Get non-null values for this key field
+            values = group_df.filter(pl.col(key_field).is_not_null())[key_field]
+            if len(values) > 0:
+                entity_refs[source] = frozenset(values.to_list())
 
         return ClusterEntity(
-            id=group.name,
+            id=cluster_id,
             keys=EntityReference(entity_refs),
         )
 
-    result = query.groupby("id").apply(_create_cluster_entity, include_groups=False)
-    return set(result.tolist())
+    # Group by cluster ID and create ClusterEntity for each group
+    result = []
+    for _cluster_id, group_df in query_df.group_by("id"):
+        result.append(_create_cluster_entity(group_df))
+
+    return set(result)
 
 
 @cache

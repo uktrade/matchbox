@@ -198,16 +198,27 @@ def _process_selectors(
 
     For batched queries, yield from it.
     """
-    selector_results: list[PolarsDataFrame] = []
-    for selector in selectors:
-        mb_ids = pl.from_arrow(
-            _handler.query(
-                source=selector.source.name,
-                resolution=resolution,
-                threshold=threshold,
-                return_leaf_id=return_leaf_id,
-            )
+    # Group selectors by resolution to make efficient multi-source queries
+    if not selectors:
+        return
+
+    # Make single multi-source query with all selectors
+    source_names = [selector.source.name for selector in selectors]
+
+    # Make single multi-source API call
+    mb_ids = pl.from_arrow(
+        _handler.query(
+            sources=source_names,
+            resolution=resolution,
+            threshold=threshold,
+            return_leaf_id=return_leaf_id,
         )
+    )
+
+    # Process each selector with the multi-source result
+    for selector in selectors:
+        # Filter the multi-source results to this selector's source
+        source_filtered_ids = mb_ids.filter(pl.col("source") == selector.source.name)
 
         raw_batches = selector.source.query(
             qualify_names=True,
@@ -218,15 +229,17 @@ def _process_selectors(
         processed_batches = [
             _process_query_result(
                 data=b,
+                mb_ids=source_filtered_ids,
                 selector=selector,
-                mb_ids=mb_ids,
                 return_leaf_id=return_leaf_id,
             )
             for b in raw_batches
         ]
-        selector_results.append(pl.concat(processed_batches, how="vertical"))
 
-    return selector_results
+        # Concatenate all batches for this selector and yield
+        if processed_batches:
+            selector_result = pl.concat(processed_batches, how="vertical")
+            yield selector_result
 
 
 def query(

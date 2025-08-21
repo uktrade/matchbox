@@ -1180,7 +1180,9 @@ class TestQueryFunction:
 
     def test_query_source_only(self, populated_postgres_db: MatchboxPostgres):
         """Should query source data without resolution."""
-        result = query("source_a", resolution=None, threshold=None, limit=None)
+        result = query(
+            sources=["source_a"], resolution=None, threshold=None, limit=None
+        )
 
         # Should return all keys from source_a with their cluster assignments
         assert result.shape[0] == 6
@@ -1206,7 +1208,9 @@ class TestQueryFunction:
 
     def test_query_source_b_only(self, populated_postgres_db: MatchboxPostgres):
         """Should query source_b which has one key per cluster."""
-        result = query("source_b", resolution=None, threshold=None, limit=None)
+        result = query(
+            sources=["source_b"], resolution=None, threshold=None, limit=None
+        )
 
         # Should return all keys from source_b
         assert result.shape[0] == 5
@@ -1225,7 +1229,9 @@ class TestQueryFunction:
 
     def test_query_through_deduper(self, populated_postgres_db: MatchboxPostgres):
         """Should query source through its deduper resolution."""
-        result = query("source_a", resolution="dedupe_a", threshold=None, limit=None)
+        result = query(
+            sources=["source_a"], resolution="dedupe_a", threshold=None, limit=None
+        )
 
         # Should return all 6 keys, but some mapped to dedupe clusters
         assert result.shape[0] == 6
@@ -1246,7 +1252,9 @@ class TestQueryFunction:
     ):
         """Should query source through deduper with threshold override."""
         # Test with threshold=90 (higher than dedupe_a's clusters)
-        result = query("source_a", resolution="dedupe_a", threshold=90, limit=None)
+        result = query(
+            sources=["source_a"], resolution="dedupe_a", threshold=90, limit=None
+        )
 
         # Should return all 6 keys, but no dedupe clusters qualify
         assert result.shape[0] == 6
@@ -1261,7 +1269,9 @@ class TestQueryFunction:
 
     def test_query_through_linker(self, populated_postgres_db: MatchboxPostgres):
         """Should query source through complex linker resolution."""
-        result = query("source_a", resolution="linker_ab", threshold=None, limit=None)
+        result = query(
+            sources=["source_a"], resolution="linker_ab", threshold=None, limit=None
+        )
 
         # Should return all 6 keys with linker cluster assignments
         assert result.shape[0] == 6
@@ -1294,8 +1304,12 @@ class TestQueryFunction:
         self, populated_postgres_db: MatchboxPostgres
     ):
         """Should query both sources through linker with consistent results."""
-        result_a = query("source_a", resolution="linker_ab", threshold=80, limit=None)
-        result_b = query("source_b", resolution="linker_ab", threshold=80, limit=None)
+        result_a = query(
+            sources=["source_a"], resolution="linker_ab", threshold=80, limit=None
+        )
+        result_b = query(
+            sources=["source_b"], resolution="linker_ab", threshold=80, limit=None
+        )
 
         # Both should return their respective key counts
         assert result_a.shape[0] == 6  # source_a keys
@@ -1338,7 +1352,7 @@ class TestQueryFunction:
 
     def test_query_with_limit(self, populated_postgres_db: MatchboxPostgres):
         """Should respect limit parameter."""
-        result = query("source_a", resolution=None, threshold=None, limit=3)
+        result = query(sources=["source_a"], resolution=None, threshold=None, limit=3)
 
         # Should return only 3 rows
         assert result.shape[0] == 3
@@ -1350,7 +1364,9 @@ class TestQueryFunction:
     ):
         """Should handle case where multiple keys belong to same cluster."""
         # This tests the scenario causing your test failure
-        result = query("source_a", resolution="dedupe_a", threshold=80, limit=None)
+        result = query(
+            sources=["source_a"], resolution="dedupe_a", threshold=80, limit=None
+        )
 
         # source_a has 6 keys but some share clusters:
         # - keys 1,2 both in cluster 101 → both map to C301

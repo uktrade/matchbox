@@ -202,9 +202,7 @@ def _process_selectors(
     if not selectors:
         return
 
-    # For now, make a single multi-source query with all selectors
-    # TODO: In the future, we might want to group by resolution
-    # if different resolutions are used
+    # Make single multi-source query with all selectors
     source_names = [selector.source.name for selector in selectors]
 
     # Make single multi-source API call

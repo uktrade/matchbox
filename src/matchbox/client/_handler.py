@@ -438,7 +438,8 @@ def sample_for_eval(n: int, resolution: ModelResolutionName, user_id: int) -> Ta
         params=url_params({"n": n, "resolution": resolution, "user_id": user_id}),
     )
 
-    return read_table(BytesIO(res.content))
+    buffer = BytesIO(res.content)
+    return read_table(buffer)
 
 
 def compare_models(resolutions: list[ModelResolutionName]) -> ModelComparison:

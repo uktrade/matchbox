@@ -312,7 +312,7 @@ def test_query(test_client: TestClient):
 
     # Create test data with proper schema including categorical source
     # Create dictionary array directly with large_string values
-    indices = pa.array([0, 0], type=pa.int32())
+    indices = pa.array([0, 0], type=pa.uint32())
     dictionary = pa.array(["foo"], type=pa.large_string())
     source_dict = pa.DictionaryArray.from_arrays(indices, dictionary)
 
@@ -348,9 +348,7 @@ def test_query(test_client: TestClient):
     assert table.schema.field("id").type == pa.int64()
     assert table.schema.field("key").type == pa.large_string()
     assert table.schema.field("source").type.equals(
-        pa.dictionary(pa.int32(), pa.string())
-    ) or table.schema.field("source").type.equals(
-        pa.dictionary(pa.int32(), pa.large_string())
+        pa.dictionary(pa.uint32(), pa.large_string())
     )
 
 

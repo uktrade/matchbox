@@ -62,8 +62,8 @@ def test_key_field_map(
     )
 
     # Create mock table for foo source (for single-source queries)
-    indices_foo = pa.array([0, 0, 0], type=pa.int32())
-    dictionary_foo = pa.array(["foo"], type=pa.string())
+    indices_foo = pa.array([0, 0, 0], type=pa.uint32())
+    dictionary_foo = pa.array(["foo"], type=pa.large_string())
     source_dict_foo = pa.DictionaryArray.from_arrays(indices_foo, dictionary_foo)
 
     foo_table = pa.Table.from_arrays(
@@ -83,8 +83,8 @@ def test_key_field_map(
     )
 
     # Create combined mock table for multi-source queries
-    combined_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.int32())
-    combined_dictionary = pa.array(["foo", "bar"], type=pa.string())
+    combined_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.uint32())
+    combined_dictionary = pa.array(["foo", "bar"], type=pa.large_string())
     combined_source_dict = pa.DictionaryArray.from_arrays(
         combined_indices, combined_dictionary
     )

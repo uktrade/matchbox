@@ -5,7 +5,6 @@ from io import BytesIO
 from typing import Final
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 from pyarrow import Schema
 
 from matchbox.common.exceptions import MatchboxArrowSchemaMismatch
@@ -74,9 +73,15 @@ class JudgementsZipFilenames(StrEnum):
 
 
 def table_to_buffer(table: pa.Table) -> BytesIO:
-    """Converts an Arrow table to a BytesIO buffer."""
+    """Converts an Arrow table to a BytesIO buffer using Arrow IPC format.
+
+    Uses Arrow IPC format instead of parquet to preserve exact schema fidelity,
+    including uint32 dictionary indices and large_string values.
+    """
     sink = BytesIO()
-    pq.write_table(table, sink)
+    writer = pa.ipc.new_file(sink, table.schema)
+    writer.write_table(table)
+    writer.close()
     sink.seek(0)
     return sink
 

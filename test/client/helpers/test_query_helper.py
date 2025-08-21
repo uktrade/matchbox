@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from httpx import Response
 from numpy import ndarray
@@ -7,7 +10,7 @@ from sqlalchemy import Engine
 
 from matchbox import query
 from matchbox.client.helpers import select
-from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
+from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import BackendResourceType, NotFoundError
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.factories.sources import source_factory, source_from_tuple
@@ -32,39 +35,29 @@ def test_query_no_resolution_ok_various_params(
         return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
     )
 
-    # Create mock table with proper schema including categorical source
-    # Need to match exact dictionary type from SCHEMA_QUERY
-    indices = pa.array([0, 0], type=pa.int32())
-    dictionary = pa.array(["foo"], type=pa.string())
-    source_dict = pa.DictionaryArray.from_arrays(indices, dictionary)
+    # Create mock table that matches parquet schema (int32/string dictionary)
+    id_array = pa.array([1, 2], type=pa.int64())
+    key_array = pa.array(["0", "1"], type=pa.large_string())
 
-    mock_table = pa.Table.from_arrays(
-        [
-            pa.array([1, 2], type=pa.int64()),
-            pa.array(["0", "1"], type=pa.large_string()),
-            source_dict,
-        ],
-        schema=SCHEMA_QUERY,
-    )
+    # Create dictionary with int32 indices and string values (parquet compatible)
+    source_indices = pa.array([0, 0], type=pa.int32())
+    source_dict = pa.array(["foo"], type=pa.string())
+    source_array = pa.DictionaryArray.from_arrays(source_indices, source_dict)
+
+    mock_table = pa.table([id_array, key_array, source_array], schema=SCHEMA_QUERY)
+
+    # Create parquet buffer instead of Arrow IPC
+    parquet_buffer = BytesIO()
+    pq.write_table(mock_table, parquet_buffer)
+    parquet_buffer.seek(0)
 
     query_route = matchbox_api.get("/query").mock(
         return_value=Response(
             200,
-            content=table_to_buffer(mock_table).read(),
+            content=parquet_buffer.read(),
         )
-    )
-
-    # For now, remove the problematic threshold route
-    # TODO: Fix parameter matching for threshold route
-    # threshold_query_route = matchbox_api.get(
-    #     "/query",
-    #     params={"sources": "foo", "return_leaf_id": "False", "threshold": "50"},
-    # ).mock(
-    #     return_value=Response(
-    #         200,
-    #         content=table_to_buffer(mock_table).read(),
-    #     )
-    # )
+    )  # The query route mock above will handle both calls automatically
+    # since respx allows multiple calls to the same route
 
     selectors = select({"foo": ["a", "b"]}, client=sqlite_warehouse)
 
@@ -124,29 +117,30 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
         return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
     )
 
-    # Create combined mock table for both sources
-    combined_indices = pa.array([0, 0, 1, 1], type=pa.int32())
-    combined_dictionary = pa.array(
+    # Create combined mock table for both sources using parquet-compatible schema
+    id_array = pa.array([1, 2, 1, 2], type=pa.int64())
+    key_array = pa.array(["0", "1", "2", "3"], type=pa.large_string())
+
+    # Create categorical source array with parquet-compatible types
+    source_indices = pa.array([0, 0, 1, 1], type=pa.int32())
+    source_dict = pa.array(
         [testkit1.source_config.name, testkit2.source_config.name], type=pa.string()
     )
-    combined_source_dict = pa.DictionaryArray.from_arrays(
-        combined_indices, combined_dictionary
-    )
+    source_array = pa.DictionaryArray.from_arrays(source_indices, source_dict)
 
-    combined_mock_table = pa.Table.from_arrays(
-        [
-            pa.array([1, 2, 1, 2], type=pa.int64()),
-            pa.array(["0", "1", "2", "3"], type=pa.large_string()),
-            combined_source_dict,
-        ],
-        schema=SCHEMA_QUERY,
+    combined_mock_table = pa.table(
+        [id_array, key_array, source_array], schema=SCHEMA_QUERY
     )
 
     # Mock for multi-source query - use general matching
+    combined_parquet_buffer = BytesIO()
+    pq.write_table(combined_mock_table, combined_parquet_buffer)
+    combined_parquet_buffer.seek(0)
+
     query_route = matchbox_api.get("/query").mock(
         return_value=Response(
             200,
-            content=table_to_buffer(combined_mock_table).read(),
+            content=combined_parquet_buffer.read(),
         )
     )
 
@@ -217,34 +211,34 @@ def test_query_combine_type(
         return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
     )
 
-    # Create combined mock table for multi-source query
-    combined_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.int32())
-    combined_dictionary = pa.array(
+    # Create combined mock table for multi-source query using parquet-compatible schema
+    id_array = pa.array([1, 1, 2, 2, 2, 3], type=pa.int64())
+    key_array = pa.array(["0", "1", "2", "3", "3", "4"], type=pa.large_string())
+
+    # Create categorical source array with parquet-compatible types
+    source_indices = pa.array([0, 0, 0, 1, 1, 1], type=pa.int32())
+    source_dict = pa.array(
         [testkit1.source_config.name, testkit2.source_config.name], type=pa.string()
     )
-    combined_source_dict = pa.DictionaryArray.from_arrays(
-        combined_indices, combined_dictionary
+    source_array = pa.DictionaryArray.from_arrays(source_indices, source_dict)
+
+    combined_mock_table = pa.table(
+        [id_array, key_array, source_array], schema=SCHEMA_QUERY
     )
 
-    combined_mock_table = pa.Table.from_arrays(
-        [
-            pa.array([1, 1, 2, 2, 2, 3], type=pa.int64()),
-            pa.array(["0", "1", "2", "3", "3", "4"], type=pa.large_string()),
-            combined_source_dict,
-        ],
-        schema=SCHEMA_QUERY,
-    )
+    # Create parquet buffer for mock response
+    combined_parquet_buffer2 = BytesIO()
+    pq.write_table(combined_mock_table, combined_parquet_buffer2)
+    combined_parquet_buffer2.seek(0)
 
     matchbox_api.get("/query").mock(
         return_value=Response(
             200,
-            content=table_to_buffer(combined_mock_table).read(),
+            content=combined_parquet_buffer2.read(),
         )
     )
 
     sels = select("foo", "bar", client=sqlite_warehouse)
-
-    # Validate results
     results = query(sels, combine_type=combine_type, return_leaf_id=False)
 
     if combine_type == "set_agg":

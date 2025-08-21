@@ -532,51 +532,33 @@ def query(
                 stmt=stmt, connection=conn.dbapi_connection, return_type="polars"
             ).rename({"root_id": "id"})
 
-        # Add source identification column using Polars
-        # Create a mapping from source_config_id to source name
-        source_id_to_name = {
-            config.source_config_id: sources[i]
-            for i, config in enumerate(source_configs)
-        }
-
-        # Add source column to results using Polars map functionality
-        id_results = id_results.with_columns(
-            pl.col("source_config_id")
-            .map_elements(lambda x: source_id_to_name.get(x), return_dtype=pl.String)
-            .alias("source")
+        # Add source identification column using Polars join (faster than map_elements)
+        # Create a mapping DataFrame for efficient joining
+        source_mapping_df = pl.DataFrame(
+            {
+                "source_config_id": [
+                    config.source_config_id for config in source_configs
+                ],
+                "source": [sources[i] for i in range(len(source_configs))],
+            }
         )
+
+        # Join to add source names and cast to categorical for efficient encoding
+        id_results = id_results.join(
+            source_mapping_df, on="source_config_id", how="left"
+        ).with_columns(pl.col("source").cast(pl.Categorical))
 
         # Select final columns
         selection = ["id", "key", "source"]
         if return_leaf_id:
             selection.append("leaf_id")
 
-        # Cast source column to large_string in Polars before Arrow conversion
-        # This ensures Polars produces large_string type when converting to Arrow
-        final_df = id_results.select(selection).with_columns(
-            pl.col("source").cast(pl.Utf8).alias("source")
-        )
+        final_df = id_results.select(selection)
 
-        # Convert to Arrow - this will now produce large_string for the source column
-        arrow_table = final_df.to_arrow()
-
-        # Convert source column to categorical for efficient storage
-        source_col_idx = arrow_table.schema.get_field_index("source")
-        source_column = arrow_table.column(source_col_idx)
-
-        # Encode as dictionary with string values (cast from large_string)
-        categorical_source = pa.compute.dictionary_encode(source_column)
-        # Cast dictionary values to string for consistency with SCHEMA_QUERY
-        categorical_source = pa.compute.cast(
-            categorical_source, pa.dictionary(pa.int32(), pa.string())
-        )
-
-        # Replace the source column with the categorical version
-        arrow_table = arrow_table.set_column(
-            source_col_idx, "source", categorical_source
-        )
-
-        return arrow_table
+        # Convert to Arrow - Polars creates dictionary<indices=int32, values=string>
+        # which is compatible with parquet format for efficient file sizes.
+        # Note: parquet would downgrade uint32/large_string anyway for compatibility.
+        return final_df.to_arrow()
 
 
 def get_parent_clusters_and_leaves(

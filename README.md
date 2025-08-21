@@ -58,3 +58,20 @@ To run the server, see the [server installation documentation](https://uktrade.g
 ## Development
 
 See our full development guide and coding standards on our [contribution guide](https://uktrade.github.io/matchbox/contributing/).
+
+## Local development with Datadog
+
+When iterating the Datadog configuration, environment variables can be set in several ways:
+
+1. **Datadog configuration**: Create a `.datadog.env` file with your Datadog API key and other agent settings
+2. **Compose override**: Use `docker-compose.override.yml` for local-specific variable overrides
+
+Variables in `.datadog.env` will override any defaults set in the compose file.
+
+Example `.datadog.env`:
+
+```
+DD_API_KEY=your_api_key_here
+```
+
+The Docker Compose file will automatically set `DD_ENV=local-{username}` for local development isolation.

@@ -5,9 +5,6 @@ This document describes how you can get started with developing Matchbox.
 * [Python 3.11+](https://www.python.org)
 * [uv](https://docs.astral.sh/uv/)
 * [Docker](https://www.docker.com)
-* [TruffleHog](https://github.com/trufflesecurity/trufflehog)
-* [PostgreSQL](https://www.postgresql.org)
-* [pre-commit](https://pre-commit.com)
 * [just](https://just.systems/man/en/)
 
 ## Setup
@@ -37,6 +34,10 @@ just -l
 ```
 
 ## Run tests
+
+!!! note
+
+    Your `.env` file needs to be correctly configured for tests to be loaded.
 
 A just task is provided to run all tests.
 
@@ -107,7 +108,7 @@ just migration-apply
 
 ## Debugging
 
-We have a VSCode default debugging profile called "API debug", which allows to e.g. set breakpoints on the API when running tests. After running this profile, change your `.env` file  as follows:
+We have a VSCode default debugging profile called "API debug", which allows you to set breakpoints on the API when running tests. After running this profile, change your `.env` file  as follows:
 
 - Change the `MB__CLIENT__API_ROOT` variable to redirect tests to use the debug port (`8080`)
 - Disable time-outs by commenting out the `MB__CLIENT__TIMEOUT` variable

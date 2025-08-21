@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 from httpx import Response
@@ -13,6 +14,7 @@ from matchbox.common.dtos import (
     ModelAncestor,
     NotFoundError,
     ResolutionOperationStatus,
+    UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -145,33 +147,36 @@ def test_results_setter(matchbox_api: MockRouter):
     ).mock(
         return_value=Response(
             202,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="awaiting_upload",
+                stage=UploadStage.AWAITING_UPLOAD,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
     upload_route = matchbox_api.post("/upload/test-upload-id").mock(
         return_value=Response(
             202,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="processing",
+                stage=UploadStage.PROCESSING,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
     status_route = matchbox_api.get("/upload/test-upload-id/status").mock(
         return_value=Response(
             200,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="complete",
+                stage=UploadStage.COMPLETE,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
@@ -200,11 +205,12 @@ def test_results_setter_upload_failure(matchbox_api: MockRouter):
     ).mock(
         return_value=Response(
             202,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="awaiting_upload",
+                stage=UploadStage.AWAITING_UPLOAD,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
@@ -212,12 +218,13 @@ def test_results_setter_upload_failure(matchbox_api: MockRouter):
     upload_route = matchbox_api.post("/upload/test-upload-id").mock(
         return_value=Response(
             400,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="failed",
+                stage=UploadStage.FAILED,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
                 details="Invalid data format",
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 

@@ -1,5 +1,6 @@
 """API routes for the Matchbox server."""
 
+from datetime import datetime
 from importlib.metadata import version
 from typing import Annotated
 
@@ -14,6 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -27,6 +29,7 @@ from matchbox.common.dtos import (
     LoginResult,
     NotFoundError,
     OKMessage,
+    UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -37,16 +40,16 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.graph import ResolutionGraph, ResolutionName, SourceResolutionName
 from matchbox.common.sources import Match
-from matchbox.server.api.arrow import table_to_s3
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
+    SettingsDependency,
     UploadTrackerDependency,
     authorisation_dependencies,
     lifespan,
 )
 from matchbox.server.api.routers import eval, models, resolutions, sources
-from matchbox.server.api.uploads import process_upload
+from matchbox.server.uploads import process_upload, process_upload_celery, table_to_s3
 
 app = FastAPI(
     title="matchbox API",
@@ -62,7 +65,9 @@ app.include_router(eval.router)
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc):
     """Overwrite the default JSON schema for an `HTTPException`."""
-    return JSONResponse(content=exc.detail, status_code=exc.status_code)
+    return JSONResponse(
+        content=jsonable_encoder(exc.detail), status_code=exc.status_code
+    )
 
 
 @app.middleware("http")
@@ -107,9 +112,10 @@ def login(
     dependencies=[Depends(authorisation_dependencies)],
 )
 def upload_file(
-    background_tasks: BackgroundTasks,
     backend: BackendDependency,
     upload_tracker: UploadTrackerDependency,
+    settings: SettingsDependency,
+    background_tasks: BackgroundTasks,
     upload_id: str,
     file: UploadFile,
 ) -> UploadStatus:
@@ -125,13 +131,14 @@ def upload_file(
     * Uploaded data doesn't match the metadata schema
     """
     # Get and validate cache entry
-    source_upload = upload_tracker.get(upload_id=upload_id)
-    if not source_upload:
+    upload_entry = upload_tracker.get(upload_id=upload_id)
+    if not upload_entry:
         raise HTTPException(
             status_code=400,
             detail=UploadStatus(
                 id=upload_id,
-                status="failed",
+                update_timestamp=datetime.now(),
+                stage="unknown",
                 details=(
                     "Upload ID not found or expired. Entries expire after 30 minutes "
                     "of inactivity, including failed processes."
@@ -139,11 +146,11 @@ def upload_file(
             ).model_dump(),
         )
 
-    # Check if already processing
-    if source_upload.status.status != "awaiting_upload":
+    # Ensure tracker is expecting file
+    if upload_entry.status.stage != UploadStage.AWAITING_UPLOAD:
         raise HTTPException(
             status_code=400,
-            detail=source_upload.status.model_dump(),
+            detail=upload_entry.status.model_dump(),
         )
 
     # Upload to S3
@@ -157,32 +164,47 @@ def upload_file(
             bucket=bucket,
             key=key,
             file=file,
-            expected_schema=source_upload.upload_type.schema,
+            expected_schema=upload_entry.status.entity.schema,
         )
     except MatchboxServerFileError as e:
-        upload_tracker.update_status(upload_id, "failed", details=str(e))
+        upload_tracker.update(upload_id, UploadStage.FAILED, details=str(e))
+        updated_entry = upload_tracker.get(upload_id)
         raise HTTPException(
             status_code=400,
-            detail=source_upload.status.model_dump(),
+            detail=updated_entry.status.model_dump(),
         ) from e
 
-    upload_tracker.update_status(upload_id, "queued")
+    upload_tracker.update(upload_id, UploadStage.QUEUED)
 
     # Start background processing
-    background_tasks.add_task(
-        process_upload,
-        backend=backend,
-        upload_id=upload_id,
-        bucket=bucket,
-        key=key,
-        tracker=upload_tracker,
-        heartbeat_seconds=60,
-    )
+    match settings.task_runner:
+        case "api":
+            background_tasks.add_task(
+                process_upload,
+                backend=backend,
+                tracker=upload_tracker,
+                s3_client=client,
+                upload_type=upload_entry.status.entity,
+                resolution_name=upload_entry.metadata.name,
+                upload_id=upload_id,
+                bucket=bucket,
+                filename=key,
+            )
+        case "celery":
+            process_upload_celery.delay(
+                upload_type=upload_entry.status.entity,
+                resolution_name=upload_entry.metadata.name,
+                upload_id=upload_id,
+                bucket=bucket,
+                filename=key,
+            )
+        case _:
+            raise RuntimeError("Unsupported task runner.")
 
     source_upload = upload_tracker.get(upload_id)
 
     # Check for error in async task
-    if source_upload.status.status == "failed":
+    if source_upload.status.stage == UploadStage.FAILED:
         raise HTTPException(
             status_code=400,
             detail=source_upload.status.model_dump(),
@@ -215,7 +237,8 @@ def get_upload_status(
             status_code=400,
             detail=UploadStatus(
                 id=upload_id,
-                status="failed",
+                stage="unknown",
+                update_timestamp=datetime.now(),
                 details=(
                     "Upload ID not found or expired. Entries expire after 30 minutes "
                     "of inactivity, including failed processes."

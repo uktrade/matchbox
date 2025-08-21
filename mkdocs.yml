@@ -35,6 +35,7 @@ nav:
   - Server: 
     - Overview: api/server/index.md
     - API: api/server/api.md
+    - Uploads: api/server/uploads.md
     - Backends:
       - PostgreSQL: api/server/backends/postgresql.md
   - Common: 

@@ -3,12 +3,12 @@
 import json
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 import boto3
 from botocore.exceptions import ClientError
 from pyarrow import Table
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.dtos import ModelAncestor, ModelConfig
@@ -113,9 +113,24 @@ class MatchboxServerSettings(BaseSettings):
     batch_size: int = Field(default=250_000)
     backend_type: MatchboxBackends
     datastore: MatchboxDatastoreSettings
+    task_runner: Literal["api", "celery"]
+    redis_uri: str | None
+    uploads_expiry_minutes: int | None
     authorisation: bool = False
     public_key: SecretStr | None = Field(default=None)
     log_level: LogLevelType = "INFO"
+
+    @model_validator(mode="after")
+    def check_settings(self) -> Self:
+        """Check that legal combinations of settings are provided."""
+        if self.task_runner == "celery" and self.redis_uri is None:
+            raise ValueError("A Redis URI must be set if using Celery as task runner.")
+        if self.task_runner == "celery" and self.uploads_expiry_minutes is None:
+            raise ValueError(
+                "Upload expiration must be set if using Celery as task runner."
+            )
+
+        return self
 
 
 class BackendManager:

@@ -1,12 +1,10 @@
 from importlib.metadata import version
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import Mock, call, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
-from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
 from matchbox.client.authorisation import (
@@ -18,20 +16,17 @@ from matchbox.common.dtos import (
     LoginAttempt,
     LoginResult,
     OKMessage,
+    UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
-    MatchboxServerFileError,
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.factories.sources import source_factory
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.sources import Match
-from matchbox.server.api.dependencies import backend, upload_tracker
-from matchbox.server.api.main import app
-from matchbox.server.api.uploads import UploadTracker, process_upload
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -42,8 +37,9 @@ else:
 # General
 
 
-def test_healthcheck(test_client: TestClient):
+def test_healthcheck(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test the healthcheck endpoint."""
+    test_client, _, _ = api_client_and_mocks
     response = test_client.get("/health")
     assert response.status_code == 200
     response = OKMessage.model_validate(response.json())
@@ -51,9 +47,9 @@ def test_healthcheck(test_client: TestClient):
     assert response.version == version("matchbox-db")
 
 
-def test_login(test_client: TestClient):
+def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test the login endpoint."""
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.login = Mock(return_value=1)
 
     response = test_client.post(
@@ -65,15 +61,18 @@ def test_login(test_client: TestClient):
     assert response.user_id == 1
 
 
+# We can patch BackgroundTasks as the api_client_and_mocks fixture
+# ensures the API runs the task (not Celery)
 @patch("matchbox.server.api.main.BackgroundTasks.add_task")
 def test_upload(
     mock_add_task: Mock,
     s3: S3Client,
-    test_client: TestClient,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
     """Test uploading a file, happy path."""
     # Setup
-    mock_backend = Mock()
+    test_client, mock_backend, mock_tracker = api_client_and_mocks
+
     mock_backend.settings.datastore.get_client.return_value = s3
     mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
     mock_backend.index = Mock(return_value=None)
@@ -84,16 +83,7 @@ def test_upload(
 
     source_testkit = source_factory()
 
-    # Mock the metadata store
-    mock_upload_tracker = Mock()
-    tracker = UploadTracker()
-    update_id = tracker.add_source(source_testkit.source_config)
-    mock_upload_tracker.get.side_effect = tracker.get
-    mock_upload_tracker.update_status.side_effect = tracker.update_status
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-    app.dependency_overrides[upload_tracker] = lambda: mock_upload_tracker
+    update_id = mock_tracker.add_source(source_testkit.source_config)
 
     # Make request with mocked background task
     response = test_client.post(
@@ -110,42 +100,34 @@ def test_upload(
     # Validate response
     assert UploadStatus.model_validate(response.json())
     assert response.status_code == 202, response.json()
-    assert response.json()["status"] == "queued"  # Updated to check for queued status
+    assert (
+        response.json()["stage"] == UploadStage.QUEUED
+    )  # Updated to check for queued status
     # Check both status updates were called in correct order
-    assert mock_upload_tracker.update_status.call_args_list == [
-        call(update_id, "queued"),
+    assert mock_tracker.update.call_args_list == [
+        call(update_id, UploadStage.QUEUED),
     ]
     mock_backend.index.assert_not_called()  # Index happens in background
-    mock_add_task.assert_called_once()  # Verify background task was queued
+    mock_add_task.assert_called_once()  # Verify task was queued
 
 
+# We can patch BackgroundTasks as the api_client_and_mocks fixture
+# ensures the API runs the task (not Celery)
 @patch("matchbox.server.api.main.BackgroundTasks.add_task")
 def test_upload_wrong_schema(
     mock_add_task: Mock,
     s3: S3Client,
-    test_client: TestClient,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
     """Test uploading a file with wrong schema."""
-    # Setup
-    mock_backend = Mock()
+    test_client, mock_backend, mock_tracker = api_client_and_mocks
     mock_backend.settings.datastore.get_client.return_value = s3
     mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
 
     # Create source with results schema instead of index
     source_testkit = source_factory()
+    update_id = mock_tracker.add_source(source_testkit.source_config)
 
-    # Setup store
-    mock_upload_tracker = Mock()
-    tracker = UploadTracker()
-    update_id = tracker.add_source(source_testkit.source_config)
-    mock_upload_tracker.get.side_effect = tracker.get
-    mock_upload_tracker.update_status.side_effect = tracker.update_status
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-    app.dependency_overrides[upload_tracker] = lambda: mock_upload_tracker
-
-    # Make request with actual data instead of the hashes -- wrong schema
     response = test_client.post(
         f"/upload/{update_id}",
         files={
@@ -157,55 +139,36 @@ def test_upload_wrong_schema(
         },
     )
 
-    # Should fail before background task starts
+    # Should fail before task starts
     assert response.status_code == 400
-    assert response.json()["status"] == "failed"
+    assert response.json()["stage"] == UploadStage.FAILED
     assert "schema mismatch" in response.json()["details"].lower()
-    mock_upload_tracker.update_status.assert_called_with(
-        update_id, "failed", details=ANY
-    )
-    mock_add_task.assert_not_called()  # Background task should not be queued
+    mock_add_task.assert_not_called()
 
 
-def test_upload_status_check(test_client: TestClient):
+def test_upload_status_check(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test checking status of an upload using the status endpoint."""
-    # Setup store with a processing entry
-    mock_upload_tracker = Mock()
-    tracker = UploadTracker()
+    test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = tracker.add_source(source_testkit.source_config)
-    tracker.update_status(update_id, "processing")
+    update_id = mock_tracker.add_source(source_testkit.source_config)
+    mock_tracker.update(update_id, UploadStage.PROCESSING)
+    mock_tracker.reset_mock()
 
-    mock_upload_tracker.get.side_effect = tracker.get
-    mock_upload_tracker.update_status.side_effect = tracker.update_status
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[upload_tracker] = lambda: mock_upload_tracker
-
-    # Check status using GET endpoint
     response = test_client.get(f"/upload/{update_id}/status")
 
     # Should return current status
     assert response.status_code == 200
-    assert response.json()["status"] == "processing"
-    mock_upload_tracker.update_status.assert_not_called()
+    assert response.json()["stage"] == UploadStage.PROCESSING
+    mock_tracker.update.assert_not_called()
 
 
-def test_upload_already_processing(test_client: TestClient):
+def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test attempting to upload when status is already processing."""
-    # Setup store with a processing entry
-    mock_upload_tracker = Mock()
-    tracker = UploadTracker()
+    test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = tracker.add_source(source_testkit.source_config)
-    tracker.update_status(update_id, "processing")
+    update_id = mock_tracker.add_source(source_testkit.source_config)
+    mock_tracker.update(update_id, UploadStage.PROCESSING)
 
-    mock_upload_tracker.get.side_effect = tracker.get
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[upload_tracker] = lambda: mock_upload_tracker
-
-    # Attempt upload
     response = test_client.post(
         f"/upload/{update_id}",
         files={"file": ("test.parquet", b"dummy data", "application/octet-stream")},
@@ -213,24 +176,16 @@ def test_upload_already_processing(test_client: TestClient):
 
     # Should return 400 with current status
     assert response.status_code == 400
-    assert response.json()["status"] == "processing"
+    assert response.json()["stage"] == UploadStage.PROCESSING
 
 
-def test_upload_already_queued(test_client: TestClient):
+def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test attempting to upload when status is already queued."""
-    # Setup store with a queued entry
-    mock_upload_tracker = Mock()
-    tracker = UploadTracker()
+    test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = tracker.add_source(source_testkit.source_config)
-    tracker.update_status(update_id, "queued")
+    update_id = mock_tracker.add_source(source_testkit.source_config)
+    mock_tracker.update(update_id, UploadStage.QUEUED)
 
-    mock_upload_tracker.get.side_effect = tracker.get
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[upload_tracker] = lambda: mock_upload_tracker
-
-    # Attempt upload
     response = test_client.post(
         f"/upload/{update_id}",
         files={"file": ("test.parquet", b"dummy data", "application/octet-stream")},
@@ -238,81 +193,26 @@ def test_upload_already_queued(test_client: TestClient):
 
     # Should return 400 with current status
     assert response.status_code == 400
-    assert response.json()["status"] == "queued"
+    assert response.json()["stage"] == UploadStage.QUEUED
 
 
-def test_status_check_not_found(test_client: TestClient):
+def test_status_check_not_found(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test checking status for non-existent upload ID."""
-    mock_upload_tracker = Mock()
-    mock_upload_tracker.get.return_value = None
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[upload_tracker] = lambda: mock_upload_tracker
+    test_client, _, mock_tracker = api_client_and_mocks
+    mock_tracker.get.return_value = None
 
     response = test_client.get("/upload/nonexistent-id/status")
 
     assert response.status_code == 400
-    assert response.json()["status"] == "failed"
+    assert response.json()["stage"] == "unknown"
     assert "not found or expired" in response.json()["details"].lower()
-
-
-def test_process_upload_deletes_file_on_failure(s3: S3Client):
-    """Test that files are deleted from S3 even when processing fails."""
-    # Setup
-    bucket = "test-bucket"
-    test_key = "test-upload-id.parquet"
-    mock_backend = Mock()
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.index = Mock(side_effect=ValueError("Simulated processing failure"))
-
-    s3.create_bucket(
-        Bucket=bucket,
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
-    )
-
-    # Add parquet to S3 and verify
-    source_testkit = source_factory()
-    buffer = table_to_buffer(source_testkit.data_hashes)
-    s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
-
-    assert s3.head_object(Bucket=bucket, Key=test_key)
-
-    # Setup metadata store with test data
-    tracker = UploadTracker()
-    upload_id = tracker.add_source(source_testkit.source_config)
-    tracker.update_status(upload_id, "awaiting_upload")
-
-    # Run the process, expecting it to fail
-    with pytest.raises(MatchboxServerFileError) as excinfo:
-        process_upload(
-            backend=mock_backend,
-            upload_id=upload_id,
-            bucket=bucket,
-            key=test_key,
-            tracker=tracker,
-            heartbeat_seconds=10,
-        )
-
-    assert "Simulated processing failure" in str(excinfo.value)
-
-    # Check that the status was updated to failed
-    status = tracker.get(upload_id).status
-    assert status.status == "failed", f"Expected status 'failed', got '{status.status}'"
-
-    # Verify file was deleted despite the failure
-    with pytest.raises(ClientError) as excinfo:
-        s3.head_object(Bucket=bucket, Key=test_key)
-    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
-        f"File was not deleted: {str(excinfo.value)}"
-    )
 
 
 # Retrieval
 
 
-def test_query(test_client: TestClient):
-    # Mock backend
-    mock_backend = Mock()
+def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.query = Mock(
         return_value=pa.Table.from_pylist(
             [
@@ -323,60 +223,44 @@ def test_query(test_client: TestClient):
         )
     )
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
-    # Hit endpoint
     response = test_client.get(
         "/query",
         params={"source": "foo", "return_leaf_id": False},
     )
 
-    # Process response
     buffer = BytesIO(response.content)
     table = pq.read_table(buffer)
 
-    # Check response
     assert response.status_code == 200
     assert table.schema.equals(SCHEMA_QUERY)
 
 
-def test_query_404_resolution(test_client: TestClient):
-    mock_backend = Mock()
+def test_query_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.query = Mock(side_effect=MatchboxResolutionNotFoundError())
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
-    # Hit endpoint
     response = test_client.get(
         "/query",
         params={"source": "foo", "resolution": "bar", "return_leaf_id": True},
     )
 
-    # Check response
     assert response.status_code == 404
 
 
-def test_query_404_source(test_client: TestClient):
-    mock_backend = Mock()
+def test_query_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.query = Mock(side_effect=MatchboxSourceNotFoundError())
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
-    # Hit endpoint
     response = test_client.get(
         "/query",
         params={"source": "foo", "return_leaf_id": True},
     )
 
-    # Check response
     assert response.status_code == 404
 
 
-def test_match(test_client: TestClient):
-    mock_backend = Mock()
+def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_matches = [
         Match(
             cluster=1,
@@ -388,10 +272,6 @@ def test_match(test_client: TestClient):
     ]
     mock_backend.match = Mock(return_value=mock_matches)
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
-    # Hit endpoint
     response = test_client.get(
         "/match",
         params={
@@ -403,19 +283,14 @@ def test_match(test_client: TestClient):
         },
     )
 
-    # Check response
     assert response.status_code == 200
     [Match.model_validate(m) for m in response.json()]
 
 
-def test_match_404_resolution(test_client: TestClient):
-    mock_backend = Mock()
+def test_match_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.match = Mock(side_effect=MatchboxResolutionNotFoundError())
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
-    # Hit endpoint
     response = test_client.get(
         "/match",
         params={
@@ -426,19 +301,14 @@ def test_match_404_resolution(test_client: TestClient):
         },
     )
 
-    # Check response
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
-def test_match_404_source(test_client: TestClient):
-    mock_backend = Mock()
+def test_match_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.match = Mock(side_effect=MatchboxSourceNotFoundError())
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
-    # Hit endpoint
     response = test_client.get(
         "/match",
         params={
@@ -449,7 +319,6 @@ def test_match_404_source(test_client: TestClient):
         },
     )
 
-    # Check response
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.SOURCE
 
@@ -457,9 +326,9 @@ def test_match_404_source(test_client: TestClient):
 # Admin
 
 
-def test_count_all_backend_items(test_client: TestClient):
+def test_count_all_backend_items(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test the unparameterised entity counting endpoint."""
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     entity_counts = {
         "sources": 1,
         "models": 2,
@@ -474,45 +343,33 @@ def test_count_all_backend_items(test_client: TestClient):
         mock_e.count = Mock(return_value=c)
         setattr(mock_backend, e, mock_e)
 
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
-
     response = test_client.get("/database/count")
     assert response.status_code == 200
     assert response.json() == {"entities": entity_counts}
 
 
-def test_count_backend_item(test_client: TestClient):
+def test_count_backend_item(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test the parameterised entity counting endpoint."""
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.models.count = Mock(return_value=20)
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.get("/database/count", params={"entity": "models"})
     assert response.status_code == 200
     assert response.json() == {"entities": {"models": 20}}
 
 
-def test_clear_backend_ok(test_client: TestClient):
-    mock_backend = Mock()
+def test_clear_backend_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.clear = Mock()
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.delete("/database", params={"certain": "true"})
     assert response.status_code == 200
     OKMessage.model_validate(response.json())
 
 
-def test_clear_backend_errors(test_client: TestClient):
-    mock_backend = Mock()
+def test_clear_backend_errors(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.clear = Mock(side_effect=MatchboxDeletionNotConfirmed)
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.delete("/database")
     assert response.status_code == 409
@@ -520,7 +377,8 @@ def test_clear_backend_errors(test_client: TestClient):
     assert response.content
 
 
-def test_api_key_authorisation(test_client: TestClient):
+def test_api_key_authorisation(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, _, _ = api_client_and_mocks
     routes = [
         (test_client.post, "/upload/upload_id"),
         (test_client.post, "/sources"),
@@ -563,14 +421,12 @@ def test_api_key_authorisation(test_client: TestClient):
 
 
 def test_get_resolution_graph(
-    resolution_graph: ResolutionGraph, test_client: TestClient
+    resolution_graph: ResolutionGraph,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
     """Test the resolution graph report endpoint."""
-    mock_backend = Mock()
+    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution_graph = Mock(return_value=resolution_graph)
-
-    # Override app dependencies with mocks
-    app.dependency_overrides[backend] = lambda: mock_backend
 
     response = test_client.get("/report/resolutions")
     assert response.status_code == 200

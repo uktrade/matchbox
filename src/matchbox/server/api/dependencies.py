@@ -21,13 +21,13 @@ from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
 
 from matchbox.common.logging import ASIMFormatter
-from matchbox.server.api.uploads import UploadTracker
 from matchbox.server.base import (
     MatchboxDBAdapter,
     MatchboxServerSettings,
     get_backend_settings,
     settings_to_backend,
 )
+from matchbox.server.uploads import UploadTracker, settings_to_upload_tracker
 
 
 class ZipResponse(Response):
@@ -44,7 +44,7 @@ class ParquetResponse(Response):
 
 SETTINGS: MatchboxServerSettings | None = None
 BACKEND: MatchboxDBAdapter | None = None
-UPLOAD_TRACKER = UploadTracker(expiry_minutes=30)
+UPLOAD_TRACKER: UploadTracker | None = None
 JWT_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
 
 
@@ -75,10 +75,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Set up the backend
     global SETTINGS
     global BACKEND
+    global UPLOAD_TRACKER
 
     SettingsClass = get_backend_settings(MatchboxServerSettings().backend_type)
     SETTINGS = SettingsClass()
     BACKEND = settings_to_backend(SETTINGS)
+    UPLOAD_TRACKER = settings_to_upload_tracker(SETTINGS)
 
     # Define common formatter
     formatter = ASIMFormatter()

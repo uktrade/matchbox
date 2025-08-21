@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,7 @@ from matchbox.common.dtos import (
     BackendResourceType,
     BackendUploadType,
     NotFoundError,
+    UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -33,11 +35,12 @@ def test_index_success(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     source_route = matchbox_api.post("/sources").mock(
         return_value=Response(
             202,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="awaiting_upload",
+                stage=UploadStage.AWAITING_UPLOAD,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.INDEX,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
@@ -45,9 +48,12 @@ def test_index_success(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     upload_route = matchbox_api.post("/upload/test-upload-id").mock(
         return_value=Response(
             202,
-            json=UploadStatus(
-                id="test-upload-id", status="complete", entity=BackendUploadType.INDEX
-            ).model_dump(),
+            content=UploadStatus(
+                id="test-upload-id",
+                stage=UploadStage.COMPLETE,
+                update_timestamp=datetime.now(),
+                entity=BackendUploadType.INDEX,
+            ).model_dump_json(),
         )
     )
 
@@ -77,11 +83,12 @@ def test_index_upload_failure(matchbox_api: MockRouter, sqlite_warehouse: Engine
     source_route = matchbox_api.post("/sources").mock(
         return_value=Response(
             202,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="awaiting_upload",
+                stage=UploadStage.AWAITING_UPLOAD,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.INDEX,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
@@ -89,12 +96,13 @@ def test_index_upload_failure(matchbox_api: MockRouter, sqlite_warehouse: Engine
     upload_route = matchbox_api.post("/upload/test-upload-id").mock(
         return_value=Response(
             400,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="failed",
+                stage=UploadStage.FAILED,
+                update_timestamp=datetime.now(),
                 details="Invalid schema",
                 entity=BackendUploadType.INDEX,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
@@ -127,20 +135,24 @@ def test_index_with_batch_size(matchbox_api: MockRouter, sqlite_warehouse: Engin
     source_route = matchbox_api.post("/sources").mock(
         return_value=Response(
             202,
-            json=UploadStatus(
+            content=UploadStatus(
                 id="test-upload-id",
-                status="awaiting_upload",
+                stage=UploadStage.AWAITING_UPLOAD,
+                update_timestamp=datetime.now(),
                 entity=BackendUploadType.INDEX,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
 
     upload_route = matchbox_api.post("/upload/test-upload-id").mock(
         return_value=Response(
             202,
-            json=UploadStatus(
-                id="test-upload-id", status="complete", entity=BackendUploadType.INDEX
-            ).model_dump(),
+            content=UploadStatus(
+                id="test-upload-id",
+                stage=UploadStage.COMPLETE,
+                update_timestamp=datetime.now(),
+                entity=BackendUploadType.INDEX,
+            ).model_dump_json(),
         )
     )
 

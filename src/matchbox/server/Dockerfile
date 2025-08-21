@@ -40,7 +40,6 @@ ENV PATH="/code/.venv/bin:$PATH"
 FROM base AS dev
 
 COPY ./environments/$ENV_FILE /code/.env
-CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/matchbox/server/api"]
 
 # Production stage: no environment variables (they come from the infrastructure) and no hot reloading
 FROM base AS prod

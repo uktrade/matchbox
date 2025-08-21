@@ -50,7 +50,7 @@ Perhaps you're testing the API and want to put a realistic `SourceConfig` in the
 source_testkit = source_factory()
 
 # Setup store
-tracker = UploadTracker()
+tracker = InMemoryUploadTracker()
 upload_id = tracker.add_source(source_testkit.source_config)
 ```
 

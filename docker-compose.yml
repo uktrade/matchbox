@@ -1,5 +1,5 @@
 services:
-  server-warehouse:
+  warehouse:
     image: postgres:17
     restart: always
     ports:
@@ -10,7 +10,7 @@ services:
       - POSTGRES_USER=warehouse_user
       - POSTGRES_PASSWORD=warehouse_password
       - POSTGRES_DB=warehouse
-  server-filestorage:
+  filestorage:
     image: minio/minio:latest
     restart: always
     volumes:
@@ -27,26 +27,23 @@ services:
     environment:
       MINIO_ROOT_USER: ${MB__SERVER__DATASTORE__ACCESS_KEY_ID}
       MINIO_ROOT_PASSWORD: ${MB__SERVER__DATASTORE__SECRET_ACCESS_KEY}
-  server-api:
+  api:
     build:
       context: .
       args:
-        ENV_FILE: server.env
+        ENV_FILE: containers.env
         MB_VERSION: ${MB_VERSION-0.0.0dev0}
       dockerfile: src/matchbox/server/Dockerfile
       target: dev
     ports:
       - "${MB__DEV__API_PORT-8000}:8000"
+    command: fastapi dev --host 0.0.0.0 src/matchbox/server/api
     depends_on:
-      server-postgres:
-        condition: service_started
-        required: true
-      server-warehouse:
-        condition: service_started
-        required: true
-      server-filestorage:
-        condition: service_started
-        required: true
+      - postgres
+      - warehouse
+      - filestorage
+      - redis
+      - worker
     develop:
       # https://docs.docker.com/compose/file-watch/#compose-watch-versus-bind-mounts
       watch:
@@ -58,7 +55,7 @@ services:
         # Rebuild the image on changes to the `pyproject.toml`
         - action: rebuild
           path: ./pyproject.toml
-  server-postgres:
+  postgres:
     image: postgres:17
     restart: always
     ports:
@@ -69,6 +66,38 @@ services:
       - POSTGRES_DB=matchbox
       - POSTGRES_PASSWORD=matchbox_password
       - POSTGRES_USER=matchbox_user
+  redis:
+    image: redis:8
+    restart: always
+    ports:
+      - "${MB__DEV__REDIS_PORT:-6379}:6379"
+  worker:
+    build:
+      context: .
+      dockerfile: src/matchbox/server/Dockerfile
+      target: dev
+      args:
+        ENV_FILE: containers.env
+        MB_VERSION: ${MB_VERSION-0.0.0dev0}
+    command: celery -A matchbox.server.uploads.celery worker --loglevel=info
+    depends_on:
+      - postgres
+      - filestorage
+      - redis
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+  flower:
+    image: mher/flower
+    container_name: flower
+    ports:
+      - "${MB__DEV__FLOWER_PORT:-5555}:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0 
+    command: celery flower --broker=${CELERY_BROKER_URL}
+    depends_on:
+      - redis
+
+
 volumes:
   warehouse_data:
   matchbox_data:

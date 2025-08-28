@@ -1,0 +1,69 @@
+/* Entity Resolution UI Styles */
+
+Screen {
+    align: center top;
+}
+
+#main-container {
+    width: 95%;
+    min-width: 80;
+    height: 1fr;
+}
+
+#help-dialog {
+    width: 80;
+    height: 30;
+    background: $surface;
+    border: thick $primary;
+}
+
+#help-title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin: 1;
+}
+
+#help-content {
+    margin: 1 2;
+    height: 20;
+}
+
+#close-help {
+    margin: 1 2;
+    width: 20;
+}
+
+.status-bar {
+    layout: horizontal;
+    height: 3;
+    background: $panel;
+    padding: 1;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#status-left {
+    width: 1fr;
+    text-align: left;
+}
+
+#status-right {
+    width: auto;
+    text-align: right;
+}
+
+#record-table {
+    height: 1fr;
+    width: 100%;
+}
+
+.command-area {
+    height: 3;
+    background: $panel;
+    padding: 1;
+}
+
+
+/* Dynamic group styles will be generated at runtime */
+/* No need for hardcoded group-a through group-g classes */

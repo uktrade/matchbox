@@ -22,6 +22,10 @@ notebooks/tmp*
 # Documentation
 site/
 
+# AI agents in root
+/CLAUDE.md
+/GEMINI.md
+
 ##########################
 # Boilerplate .gitignore #
 ##########################

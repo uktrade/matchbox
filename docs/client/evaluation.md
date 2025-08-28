@@ -9,14 +9,16 @@ To calculate these, we need a **ground truth** - a set of correct matches create
 
 ## Creating validation data
 
-Matchbox provides a simple UI to help you create this validation data. Here’s how it works:
+Matchbox provides a terminal-based UI to help you create this validation data. Here's how it works:
 
-1. **Launch the UI** and choose a model resolution to sample clusters from.
-2. **Set your username**, either automatically (supplied by your Matchbox installation) or manually using the `MB__CLIENT__USER` environment variable.
-3. Matchbox will **download a few clusters** for you to review. It avoids clusters you’ve already judged and focuses on ones the model is unsure about (those near the model's truth threshold).
-4. In the UI, you’ll review each cluster:
-   * Confirm it as correct, or
-   * Split it into smaller, more accurate clusters.
+1. **Launch the evaluation tool** using `matchbox eval start --resolution <resolution_name> --samples <number> --user <your_username>`
+    a. You can also set yours username with the `MB__CLIENT__USER` environment variable.
+2. Matchbox will **download clusters** for you to review. It avoids clusters you've already judged and focuses on ones the model is unsure about.
+3. In the terminal interface, you'll review each cluster:
+   * Use keyboard commands like `b+1,3,5` to assign rows 1, 3, and 5 to group B
+   * Use extended groups like `aa+7` for more complex splits
+   * Navigate with arrow keys between entities
+   * Press `?` or `F1` for help with commands
 
 Once enough users have reviewed clusters, this data can be used to evaluate model performance.
 

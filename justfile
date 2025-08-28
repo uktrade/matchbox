@@ -53,10 +53,6 @@ migration-generate descriptive-message:
 migration-reset:
     uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" downgrade base
 
-# Run evaluation app
-eval:
-    streamlit run src/matchbox/client/eval/ui.py
-
-# Run evaluation app with some mock data
-eval-mock:
-    uv run python src/matchbox/client/eval/mock_ui.py
+# Run evaluation app with scenario data
+eval scenario="":
+    uv run python test/scripts/eval.py {{scenario}}

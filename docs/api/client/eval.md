@@ -1,6 +1,6 @@
 # Evaluation
 
-::: matchbox.client.eval
+::: matchbox.client.cli.eval
     options:
         show_root_heading: true
         show_root_full_path: true

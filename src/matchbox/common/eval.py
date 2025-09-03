@@ -1,5 +1,7 @@
 """Common operations to produce model evaluation scores."""
 
+import logging
+import math
 from itertools import chain, combinations
 from typing import TypeAlias
 
@@ -9,10 +11,44 @@ from pydantic import BaseModel, Field, field_validator
 
 from matchbox.common.graph import ModelResolutionName
 
+logger = logging.getLogger(__name__)
+
+
+def wilson_confidence_interval(
+    successes: int, trials: int, confidence: float = 0.95
+) -> float:
+    """Calculate Wilson confidence interval half-width for a proportion.
+
+    Args:
+        successes: Number of successes
+        trials: Total number of trials
+        confidence: Confidence level (default 0.95 for 95% CI)
+
+    Returns:
+        Half-width of the confidence interval
+    """
+    if trials == 0:
+        return 0.0
+
+    # Z-score for confidence level (1.96 for 95%)
+    z = 1.96 if confidence == 0.95 else 2.576  # 99% confidence
+
+    p = successes / trials
+    n = trials
+
+    # Wilson score interval formula
+    denominator = 1 + (z * z) / n
+    variance = (p * (1 - p) / n) + (z * z) / (4 * n * n)
+    half_width = (z * math.sqrt(variance)) / denominator
+
+    return half_width
+
+
 Pair: TypeAlias = tuple[int, int]
 Pairs: TypeAlias = set[Pair]
 
 PrecisionRecall: TypeAlias = tuple[float, float]
+PrecisionRecallWithCI: TypeAlias = tuple[float, float, float, float]  # p, r, p_ci, r_ci
 ModelComparison: TypeAlias = dict[ModelResolutionName, PrecisionRecall]
 
 
@@ -40,7 +76,7 @@ class Judgement(BaseModel):
 
 def precision_recall(
     models_root_leaf: list[Table], judgements: Table, expansion: Table
-) -> list[PrecisionRecall]:
+) -> list[PrecisionRecallWithCI]:
     """From models and eval data, compute scores inspired by precision-recall.
 
     This function does the following:
@@ -66,7 +102,8 @@ def precision_recall(
         expansion: Dataframe following `matchbox.common.arrow.SCHEMA_CLUSTER_EXPANSION`.
 
     Returns:
-        List of tuples of precision and recall scores, one per model.
+        List of tuples of (precision, recall, precision_ci, recall_ci), one per model.
+        CI values are Wilson confidence interval half-widths.
     """
     leaves_per_set: list[set[int]] = []  # one entry for each model, one for judgements
     pairs_per_model: list[Pairs] = []
@@ -123,16 +160,30 @@ def precision_recall(
         and validation_net_count[(a, b)] > 0
     }
 
-    # Compute PR scores for each model
-    pr_scores: list[PrecisionRecall] = []
+    # Compute PR scores with confidence intervals for each model
+    pr_scores: list[PrecisionRecallWithCI] = []
     for model_pairs in pairs_per_model:
         true_positive_pairs = model_pairs & validation_pairs
-        pr_scores.append(
-            (
-                len(true_positive_pairs) / len(model_pairs),
-                len(true_positive_pairs) / len(validation_pairs),
-            )
+
+        # Calculate precision and recall
+        if len(model_pairs) > 0:
+            precision = len(true_positive_pairs) / len(model_pairs)
+        else:
+            precision = 0.0
+        if len(validation_pairs) > 0:
+            recall = len(true_positive_pairs) / len(validation_pairs)
+        else:
+            recall = 0.0
+
+        # Calculate Wilson confidence intervals
+        precision_ci = wilson_confidence_interval(
+            len(true_positive_pairs), len(model_pairs)
         )
+        recall_ci = wilson_confidence_interval(
+            len(true_positive_pairs), len(validation_pairs)
+        )
+
+        pr_scores.append((precision, recall, precision_ci, recall_ci))
 
     return pr_scores
 

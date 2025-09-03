@@ -278,7 +278,7 @@ def test_dedupe_step_run(
             description=d_foo.description,
             model_class=d_foo.model_class,
             model_settings=d_foo.settings,
-            left_data=query_mock.return_value,
+            left_data=query_mock.return_value.drop(),
             left_resolution=d_foo.left.name,
         )
         model_mock.run.assert_called_once()
@@ -286,6 +286,24 @@ def test_dedupe_step_run(
         # Results are stored
         model_mock.run().to_matchbox.assert_called_once()
         assert model_mock.truth == 1
+
+        # Test for_eval=True behaviour
+        query_mock.reset_mock()
+        model_mock.reset_mock()
+        results_mock.model = Mock()
+
+        d_foo.run(for_eval=True)
+
+        # Verify query called with return_leaf_id=True for evaluation
+        query_mock.assert_called_once_with(
+            [Selector(source=foo, fields=[])],
+            return_type="polars",
+            return_leaf_id=True,
+            threshold=d_foo.left.threshold,
+            resolution=d_foo.left.name,
+            batch_size=100 if batched else None,
+            combine_type="concat",
+        )
 
 
 @pytest.mark.parametrize(
@@ -376,9 +394,9 @@ def test_link_step_run(
             description=foo_bar.description,
             model_class=foo_bar.model_class,
             model_settings=foo_bar.settings,
-            left_data=query_mock.return_value,
+            left_data=query_mock.return_value.drop(),
             left_resolution=foo_bar.left.name,
-            right_data=query_mock.return_value,
+            right_data=query_mock.return_value.drop(),
             right_resolution=foo_bar.right.name,
         )
         model_mock.run.assert_called_once()
@@ -386,6 +404,34 @@ def test_link_step_run(
         # Results are stored
         model_mock.run().to_matchbox.assert_called_once()
         assert model_mock.truth == 1
+
+        # Test for_eval=True behaviour
+        query_mock.reset_mock()
+        model_mock.reset_mock()
+        results_mock.model = Mock()
+
+        foo_bar.run(for_eval=True)
+
+        # Verify both queries called with return_leaf_id=True for evaluation
+        assert query_mock.call_count == 2
+        assert query_mock.call_args_list[0] == call(
+            [Selector(source=foo, fields=foo.index_fields)],
+            return_type="polars",
+            return_leaf_id=True,
+            threshold=foo_bar.left.threshold,
+            resolution=foo_bar.left.name,
+            batch_size=100 if batched else None,
+            combine_type="concat",
+        )
+        assert query_mock.call_args_list[1] == call(
+            [Selector(source=bar, fields=[])],
+            return_type="polars",
+            return_leaf_id=True,
+            threshold=foo_bar.right.threshold,
+            resolution=foo_bar.right.name,
+            batch_size=100 if batched else None,
+            combine_type="concat",
+        )
 
 
 @patch("matchbox.client.dags._handler.index")
@@ -720,9 +766,9 @@ def test_dag_draw(sqlite_warehouse: Engine):
     # Check that tree has correct formatting with tree characters
     tree_chars = ["└──", "├──", "│"]
     has_tree_chars = any(char in tree_str for char in tree_chars)
-    assert has_tree_chars, (
-        "Tree representation doesn't use expected formatting characters"
-    )
+    assert (
+        has_tree_chars
+    ), "Tree representation doesn't use expected formatting characters"
 
     # Test 2: Drawing with timestamps (status indicators)
     # Set d_foo as processing and foo_bar as completed
@@ -751,9 +797,9 @@ def test_dag_draw(sqlite_warehouse: Engine):
     # Test 3: Check that node names are still present with status indicators
     for node in node_names:
         node_present = any(node in line for line in status_lines)
-        assert node_present, (
-            f"Node {node} not found in the tree representation with status indicators"
-        )
+        assert (
+            node_present
+        ), f"Node {node} not found in the tree representation with status indicators"
 
     # Test 4: Drawing with skipped nodes
     skipped_nodes = [foo.name, d_foo.name]

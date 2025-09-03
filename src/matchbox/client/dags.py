@@ -160,11 +160,14 @@ class ModelStep(Step):
 
         return self
 
-    def query(self, step_input: StepInput) -> pl.DataFrame:
+    def query(self, step_input: StepInput, for_eval: bool = False) -> pl.DataFrame:
         """Retrieve data for declared step input.
 
         Args:
             step_input: Declared input to this DAG step.
+            for_eval: Whether this query is for evaluation purposes.
+                If True, ModelStep.run() returns Results compatible with
+                [EvalData](matchbox.client.cli.eval.EvalData)
 
         Returns:
             Polars dataframe with retrieved results.
@@ -184,7 +187,7 @@ class ModelStep(Step):
 
         return query(
             selectors,
-            return_leaf_id=False,
+            return_leaf_id=for_eval,
             return_type="polars",
             threshold=step_input.threshold,
             resolution=step_input.name,
@@ -207,10 +210,16 @@ class DedupeStep(ModelStep):
         """Return all inputs to this step."""
         return [self.left]
 
-    def run(self) -> Results:
-        """Run full deduping pipeline and store results."""
-        left_raw = self.query(self.left)
-        left_clean = self.clean(left_raw, self.left)
+    def run(self, for_eval: bool = False) -> Results:
+        """Run full deduping pipeline and store results.
+
+        Args:
+            for_eval: Whether this query is for evaluation purposes.
+                If True, ModelStep.run() returns Results compatible with
+                [EvalData](matchbox.client.cli.eval.EvalData)
+        """
+        left_raw = self.query(self.left, for_eval=for_eval)
+        left_clean = self.clean(left_raw.drop("leaf_id", strict=False), self.left)
 
         deduper = make_model(
             name=self.name,
@@ -224,6 +233,15 @@ class DedupeStep(ModelStep):
         results = deduper.run()
         results.to_matchbox()
         deduper.truth = self.truth
+
+        if for_eval:
+            results.model.left_data = left_clean.join(
+                left_raw.select(["id", "leaf_id"]), on="id", how="left"
+            )
+            results.model.right_data = left_clean.join(
+                left_raw.select(["id", "leaf_id"]), on="id", how="left"
+            )
+
         return results
 
 
@@ -238,13 +256,19 @@ class LinkStep(ModelStep):
         """Return all `StepInputs` to this step."""
         return [self.left, self.right]
 
-    def run(self) -> Results:
-        """Run whole linking step."""
-        left_raw = self.query(self.left)
-        left_clean = self.clean(left_raw, self.left)
+    def run(self, for_eval: bool = False) -> Results:
+        """Run whole linking step and store results.
 
-        right_raw = self.query(self.right)
-        right_clean = self.clean(right_raw, self.right)
+        Args:
+            for_eval: Whether this query is for evaluation purposes.
+                If True, ModelStep.run() returns Results compatible with
+                [EvalData](matchbox.client.cli.eval.EvalData)
+        """
+        left_raw = self.query(self.left, for_eval=for_eval)
+        left_clean = self.clean(left_raw.drop("leaf_id", strict=False), self.left)
+
+        right_raw = self.query(self.right, for_eval=for_eval)
+        right_clean = self.clean(right_raw.drop("leaf_id", strict=False), self.right)
 
         linker = make_model(
             name=self.name,
@@ -260,6 +284,15 @@ class LinkStep(ModelStep):
         results = linker.run()
         results.to_matchbox()
         linker.truth = self.truth
+
+        if for_eval:
+            results.model.left_data = left_clean.join(
+                left_raw.select(["id", "leaf_id"]), on="id", how="left"
+            )
+            results.model.right_data = right_clean.join(
+                right_raw.select(["id", "leaf_id"]), on="id", how="left"
+            )
+
         return results
 
 

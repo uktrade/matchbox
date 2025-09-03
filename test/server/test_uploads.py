@@ -264,13 +264,13 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
 
     # Check that the status was updated to failed
     status = tracker.get(upload_id).status
-    assert status.stage == UploadStage.FAILED, (
-        f"Expected status 'failed', got '{status.stage}'"
-    )
+    assert (
+        status.stage == UploadStage.FAILED
+    ), f"Expected status 'failed', got '{status.stage}'"
 
     # Verify file was deleted despite the failure
     with pytest.raises(ClientError) as excinfo:
         s3.head_object(Bucket=bucket, Key=test_key)
-    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
-        f"File was not deleted: {str(excinfo.value)}"
-    )
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(
+        excinfo.value
+    ), f"File was not deleted: {str(excinfo.value)}"

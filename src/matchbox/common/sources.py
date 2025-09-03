@@ -3,15 +3,12 @@
 import re
 import textwrap
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from functools import wraps
 from typing import (
     Any,
-    Callable,
-    Generator,
-    Iterable,
-    Iterator,
     Literal,
     ParamSpec,
     Self,
@@ -38,7 +35,9 @@ from matchbox.common.db import (
     validate_sql_for_data_extraction,
 )
 from matchbox.common.dtos import DataTypes
-from matchbox.common.exceptions import MatchboxSourceClientError
+from matchbox.common.exceptions import (
+    MatchboxSourceClientError,
+)
 from matchbox.common.graph import SourceResolutionName
 from matchbox.common.hash import HashMethod, hash_rows
 from matchbox.common.logging import logger

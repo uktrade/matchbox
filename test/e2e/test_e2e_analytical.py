@@ -522,19 +522,19 @@ class TestE2EAnalyticalUser:
 
         counts = _handler.count_backend_items()
         assert counts["entities"]["sources"] == source_config_count
-        assert counts["entities"]["models"] == model_count - 1, (
-            "Expected one less model after deleting the final linker"
-        )
+        assert (
+            counts["entities"]["models"] == model_count - 1
+        ), "Expected one less model after deleting the final linker"
 
         # Delete a source resolution
         delete_resolution(name=crn_source_name, certain=True)
 
         counts = _handler.count_backend_items()
-        assert counts["entities"]["sources"] == source_config_count - 1, (
-            "Expected one less source after deleting crn source"
-        )
-        assert counts["entities"]["models"] == model_count - 4, (
-            "Expected all CRN descendant models to be deleted"
-        )
+        assert (
+            counts["entities"]["sources"] == source_config_count - 1
+        ), "Expected one less source after deleting crn source"
+        assert (
+            counts["entities"]["models"] == model_count - 4
+        ), "Expected all CRN descendant models to be deleted"
 
         logging.debug("E2E test completed successfully!")

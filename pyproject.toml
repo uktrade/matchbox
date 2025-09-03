@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.28.0",
     "matplotlib>=3.9.2",
     "pandas>=2.2.3",
+    "plotext>=5.3.2",
     "polars-hash>=0.5.3",
     "polars>=1.32.3",
     "psycopg[binary, pool]>=3.2.6",
@@ -23,10 +24,14 @@ dependencies = [
     "pydantic>=2.9.2",
     "rich>=13.9.4",
     "rustworkx>=0.15.1",
+    "scipy>=1.16.1",
     "splink>=4.0.5,<4.1.0",
     "sqlalchemy>=2.0.35",
     "sqlglot[rs]>=26.12.1",
     "tenacity>=9.1.2",
+    "textual-plotext>=1.0.1",
+    "textual>=0.87.1",
+    "typer>=0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -39,9 +44,6 @@ server = [
     "python-multipart>=0.0.18",
     "redis>=5.2.1",
     "tomli>=2.0.1",
-]
-eval = [
-    "streamlit>=1.45.0",
 ]
 
 [dependency-groups]
@@ -56,11 +58,11 @@ dev = [
     "mkdocstrings[python]>=0.27.0",
     "moto[s3]>=5.0.26",
     "pre-commit>=3.8.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "pytest-env>=1.1.5",
     "pytest>=8.3.3",
     "respx>=0.22.0",
-    "ruff>=0.9.0",
     "setuptools-scm>=8.3.1",
     "snakeviz>=2.2.2",
     "tomli-w>=1.1.0",
@@ -69,6 +71,9 @@ typing = [
     "boto3-stubs[s3]>=1.35.99",
     "pyarrow-stubs>=17.16",
 ]
+
+[project.scripts]
+matchbox = "matchbox.client.cli.main:app"
 
 [project.urls]
 "Documentation" = "https://uktrade.github.io/matchbox/"
@@ -107,6 +112,14 @@ select = [
     "B",
     "D"
 ]
+# Stricter rules for the CLI
+extend-select = [
+    "UP",
+    "TID",
+    "BLE",
+    "PLC",
+    "SIM"
+]
 ignore = []
 fixable = ["ALL"]
 unfixable = []
@@ -117,6 +130,8 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "**/{test,docs}/*" = ["D"]
+# Ignore the new, stricter rules everywhere except the CLI
+"!**/{src/matchbox,test}/client/cli/*" = ["UP", "TID", "BLE", "PLC", "SIM"]
 
 [tool.ruff.format]
 quote-style = "double"

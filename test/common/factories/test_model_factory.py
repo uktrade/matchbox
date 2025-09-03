@@ -121,18 +121,18 @@ def test_model_type_creation(
     if expected_type == "linker":
         left_ids = set(model.left_query["id"].to_pylist())
         right_ids = set(model.right_query["id"].to_pylist())
-        assert not (left_ids & right_ids), (
-            "Left and right IDs should be disjoint in linker"
-        )
+        assert not (
+            left_ids & right_ids
+        ), "Left and right IDs should be disjoint in linker"
 
         prob_left_ids = set(model.probabilities["left_id"].to_pylist())
         prob_right_ids = set(model.probabilities["right_id"].to_pylist())
-        assert prob_left_ids <= left_ids, (
-            "Probability left IDs should be subset of left IDs"
-        )
-        assert prob_right_ids <= right_ids, (
-            "Probability right IDs should be subset of right IDs"
-        )
+        assert (
+            prob_left_ids <= left_ids
+        ), "Probability left IDs should be subset of left IDs"
+        assert (
+            prob_right_ids <= right_ids
+        ), "Probability right IDs should be subset of right IDs"
 
 
 @pytest.mark.parametrize(
@@ -497,9 +497,9 @@ def test_model_factory_with_sources(source_config: dict, expected_checks: dict) 
         set(left_testkit.entities)
         | set(right_testkit.entities if right_testkit else {})
     )
-    assert input_keys == sum(model.entities), (
-        "Model entities should preserve all source keys"
-    )
+    assert input_keys == sum(
+        model.entities
+    ), "Model entities should preserve all source keys"
 
 
 @pytest.mark.parametrize(

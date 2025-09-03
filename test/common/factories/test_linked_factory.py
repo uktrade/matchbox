@@ -349,9 +349,9 @@ def test_linked_sources_entity_hierarchy():
             ]
 
             # Each cluster entity must have at least one parent
-            assert len(matching_parents) > 0, (
-                f"ClusterEntity in {source_name} has no parent in true_entities"
-            )
+            assert (
+                len(matching_parents) > 0
+            ), f"ClusterEntity in {source_name} has no parent in true_entities"
 
             # The source keys from the cluster entity should be a subset of
             # at least one true entity's keys
@@ -424,9 +424,9 @@ def test_linked_sources_entity_count_behavior():
     override_source_b = [
         e for e in linked_override.true_entities if "source_b" in e.keys
     ]
-    assert len(override_source_a) == 15, (
-        "SourceConfig A should be overridden to 15 entities"
-    )
-    assert len(override_source_b) == 15, (
-        "SourceConfig B should be overridden to 15 entities"
-    )
+    assert (
+        len(override_source_a) == 15
+    ), "SourceConfig A should be overridden to 15 entities"
+    assert (
+        len(override_source_b) == 15
+    ), "SourceConfig B should be overridden to 15 entities"

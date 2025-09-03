@@ -9,14 +9,16 @@ To calculate these, we need a **ground truth** - a set of correct matches create
 
 ## Creating validation data
 
-Matchbox provides a simple UI to help you create this validation data. Here’s how it works:
+Matchbox provides a terminal-based UI to help you create this validation data. Here's how it works:
 
-1. **Launch the UI** and choose a model resolution to sample clusters from.
-2. **Set your username**, either automatically (supplied by your Matchbox installation) or manually using the `MB__CLIENT__USER` environment variable.
-3. Matchbox will **download a few clusters** for you to review. It avoids clusters you’ve already judged and focuses on ones the model is unsure about (those near the model's truth threshold).
-4. In the UI, you’ll review each cluster:
-   * Confirm it as correct, or
-   * Split it into smaller, more accurate clusters.
+1. **Launch the evaluation tool** using `matchbox eval start --resolution <resolution_name> --samples <number> --user <your_username>`
+    a. You can also set yours username with the `MB__CLIENT__USER` environment variable.
+2. Matchbox will **download clusters** for you to review. It avoids clusters you've already judged and focuses on ones the model is unsure about.
+3. In the terminal interface, you'll review each cluster:
+   * Use keyboard commands like `b+1,3,5` to assign rows 1, 3, and 5 to group B
+   * Use extended groups like `aa+7` for more complex splits
+   * Navigate with arrow keys between entities
+   * Press `?` or `F1` for help with commands
 
 Once enough users have reviewed clusters, this data can be used to evaluate model performance.
 
@@ -78,23 +80,35 @@ model = make_model(
 results = model.run()
 ```
 
-Download validation data:
+Download validation data and create evaluation object:
 
 ```python
-from matchbox.client.eval import EvalData
-eval_data = EvalData()
+from matchbox.client.cli.eval import EvalData
+eval_data = EvalData.from_results(results)
 ```
 
 Plot a precision-recall curve:
 
 ```python
-eval_data.pr_curve(results)
+# Matplotlib version (for notebooks)
+fig = eval_data.pr_curve_mpl()
+
+# Plotext version (for terminals) 
+plot_str = eval_data.pr_curve_pltx()
+print(plot_str)
 ```
 
-Or get precision and recall at a specific threshold:
+Or get precision and recall at specific thresholds:
 
 ```python
-p, r = eval_data.precision_recall(results, threshold=0.5)
+# Get precision/recall at one or more thresholds
+pr_results = eval_data.precision_recall([0.5])
+threshold, p, r, p_ci, r_ci = pr_results[0]
+
+# Or multiple thresholds at once
+pr_results = eval_data.precision_recall([0.3, 0.5, 0.7])
+for threshold, p, r, p_ci, r_ci in pr_results:
+    print(f"At {threshold}: P={p:.2f} R={r:.2f}")
 ```
 
 !!! tip "Deterministic models"

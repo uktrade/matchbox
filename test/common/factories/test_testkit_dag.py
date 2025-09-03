@@ -203,15 +203,15 @@ def test_testkit_dag_model_chain(
 
         if not expected_sources:  # Standalone case
             assert None in sources_dict, f"{name} should have standalone sources"
-            assert linked_key not in sources_dict, (
-                f"{name} should not use linked sources"
-            )
+            assert (
+                linked_key not in sources_dict
+            ), f"{name} should not use linked sources"
         else:  # Linked sources case
             assert linked_key in sources_dict, f"{name} should use linked sources"
             actual_sources = {s.split("@")[0] for s in sources_dict[linked_key]}
-            assert actual_sources == set(expected_sources), (
-                f"{name} expected sources {expected_sources}, got {actual_sources}"
-            )
+            assert actual_sources == set(
+                expected_sources
+            ), f"{name} expected sources {expected_sources}, got {actual_sources}"
 
 
 def test_testkit_dag_multiple_linked_sources():

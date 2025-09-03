@@ -147,4 +147,14 @@ We commit as frequently as possible. We keep our commits as atomic as possible. 
 
 ### AI
 
-In order to help reviewers prioritise their time appropriately, we expect any use of AI to be declared in your PR comment.
+In order to help reviewers prioritise their time appropriately, we expect any use of AI to be declared in your PR comment. 
+
+#### Agents
+
+Any agentic AI configuration should be stored in `.agents`. For tools that require this configuration be in the project root, such as Claude Code, the file can symlinked and added to `.gitignore`.
+
+```shell
+ln -s .agents/CLAUDE.md CLAUDE.md
+```
+
+Matchbox is an open source library that welcomes submissions from any developer, whether working alone, or as part of an organisation. We take no stance on how or where you use AI as long as your contributions meets our standards. Nevertheless, we remind contributors that they should always honour any AI usage policies they have agreed to before our own. 

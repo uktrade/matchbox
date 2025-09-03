@@ -161,9 +161,9 @@ def test_complete_model_upload_process(
 
         current_attempt += 1
 
-    assert current_attempt < max_attempts, (
-        "Timed out waiting for processing to complete"
-    )
+    assert (
+        current_attempt < max_attempts
+    ), "Timed out waiting for processing to complete"
     assert stage == UploadStage.COMPLETE
     assert response.status_code == 200
 

@@ -1,35 +1,35 @@
 """Functions to index data sources to the Matchbox server."""
 
 from matchbox.client import _handler
-from matchbox.common.sources import Location, SourceConfig
+from matchbox.client.sources import Location, Source
 
 
 def index(
-    source_config: SourceConfig,
+    source: Source,
     batch_size: int | None = None,
 ) -> None:
     """Indexes data in Matchbox.
 
     Args:
-        source_config: A SourceConfig with client set
+        source: A Source
         batch_size: the size of each batch when fetching data from the warehouse,
             which helps reduce the load on the database. Default is None.
     """
-    if not source_config.location.client:
+    if not source.location.client:
         raise ValueError("Source client not set")
 
-    data_hashes = source_config.hash_data(batch_size=batch_size)
-    _handler.index(source_config=source_config, data_hashes=data_hashes)
+    data_hashes = source.hash_data(batch_size=batch_size)
+    _handler.index(source_config=source.config, data_hashes=data_hashes)
 
 
 def get_source(
     name: str,
-    location: Location | None = None,
+    location: Location,
     extract_transform: str | None = None,
     key_field: str | None = None,
     index_fields: list[str] | None = None,
-) -> SourceConfig:
-    """Get a SourceConfig for an existing source.
+) -> Source:
+    """Get a Source for an existing source.
 
     Args:
         name: The name of the source resolution.
@@ -48,7 +48,7 @@ def get_source(
     config = _handler.get_source_config(name=name)
 
     validations = [
-        (location, config.location, "location"),
+        (location.config, config.location_config, "location"),
         (extract_transform, config.extract_transform, "extract/transform"),
         (key_field, config.key_field, "key field"),
     ]
@@ -64,4 +64,10 @@ def get_source(
             f"Source {name} does not match the provided index fields: {index_fields}"
         )
 
-    return config
+    return Source(
+        location=location,
+        name=config.name,
+        extract_transform=config.extract_transform,
+        key_field=config.key_field,
+        index_fields=config.index_fields,
+    )

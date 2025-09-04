@@ -29,8 +29,7 @@ def test_get_samples(
         name="foo",
         location_name="db",
         engine=sqlite_warehouse,
-    )
-    testkit_foo.write_to_location(sqlite_warehouse)
+    ).write_to_location()
     source_foo = testkit_foo.source_config
 
     testkit_bar = source_from_tuple(
@@ -39,8 +38,7 @@ def test_get_samples(
         name="bar",
         location_name="db",
         engine=sqlite_warehouse,
-    )
-    testkit_bar.write_to_location(sqlite_warehouse)
+    ).write_to_location()
     source_bar = testkit_bar.source_config
 
     # This will be excluded as the location name differs
@@ -50,8 +48,7 @@ def test_get_samples(
         name="baz",
         location_name="db_other",
         engine=sqlite_warehouse,
-    )
-    testkit_baz.write_to_location(sqlite_warehouse)
+    ).write_to_location()
     source_baz = testkit_baz.source_config
 
     matchbox_api.get("/sources/foo").mock(

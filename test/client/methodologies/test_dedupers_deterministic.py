@@ -15,9 +15,8 @@ from matchbox.common.factories.sources import (
     SourceTestkitParameters,
     linked_sources_factory,
 )
-from matchbox.common.sources import SourceConfig
 
-DeduperConfigurator = Callable[[SourceConfig], dict[str, Any]]
+DeduperConfigurator = Callable[[SourceTestkit], dict[str, Any]]
 
 # Methodology configuration adapters
 

@@ -8,6 +8,7 @@ from matchbox.client import _handler
 from matchbox.client.dags import DAG, DedupeStep, IndexStep, StepInput
 from matchbox.client.eval import EvalData, compare_models, get_samples
 from matchbox.client.models.dedupers import NaiveDeduper
+from matchbox.client.sources import RelationalDBLocation, Source
 from matchbox.common.arrow import SCHEMA_CLUSTER_EXPANSION, SCHEMA_JUDGEMENTS
 from matchbox.common.eval import Judgement
 from matchbox.common.factories.sources import (
@@ -17,7 +18,6 @@ from matchbox.common.factories.sources import (
     SuffixRule,
     linked_sources_factory,
 )
-from matchbox.common.sources import RelationalDBLocation, SourceConfig
 
 
 @pytest.mark.docker
@@ -76,7 +76,7 @@ class TestE2EModelEvaluation:
 
         # Create tables in warehouse
         for source_testkit in linked_testkit.sources.values():
-            source_testkit.write_to_location(client=postgres_warehouse, set_client=True)
+            source_testkit.write_to_location()
 
         # Clear matchbox database before test
         response = matchbox_client.delete("/database", params={"certain": "true"})
@@ -86,7 +86,7 @@ class TestE2EModelEvaluation:
         dw_loc = RelationalDBLocation(name="postgres", client=postgres_warehouse)
         batch_size = 1000
 
-        source_a_config = SourceConfig.new(
+        source_a = Source(
             location=dw_loc,
             name="source_a",
             extract_transform="""
@@ -97,18 +97,19 @@ class TestE2EModelEvaluation:
                 from
                     source_a;
             """,
+            infer_types=True,
             key_field="id",
             index_fields=["company_name", "registration_id"],
         )
-        self.__class__.source_a_config = source_a_config
+        self.__class__.source_a = source_a
 
-        i_source_a = IndexStep(source_config=source_a_config, batch_size=batch_size)
+        i_source_a = IndexStep(source=source_a, batch_size=batch_size)
 
         self.__class__.final_resolution = "final"
         dedupe_a = DedupeStep(
             left=StepInput(
                 prev_node=i_source_a,
-                select={source_a_config: ["company_name", "registration_id"]},
+                select={source_a: ["company_name", "registration_id"]},
                 batch_size=batch_size,
             ),
             name=self.final_resolution,
@@ -116,7 +117,7 @@ class TestE2EModelEvaluation:
             model_class=NaiveDeduper,
             settings={
                 "id": "id",
-                "unique_fields": [source_a_config.f("registration_id")],
+                "unique_fields": [source_a.f("registration_id")],
             },
             truth=1.0,
         )
@@ -170,7 +171,7 @@ class TestE2EModelEvaluation:
 
         # Create and run a deduper model locally
         queried_source = query(
-            select(self.source_a_config.name, client=self.engine),
+            select(self.source_a.config.name, client=self.engine),
             return_type="polars",
         )
         deduper = make_model(
@@ -179,10 +180,10 @@ class TestE2EModelEvaluation:
             model_class=NaiveDeduper,
             model_settings={
                 "id": "id",
-                "unique_fields": [self.source_a_config.f("registration_id")],
+                "unique_fields": [self.source_a.f("registration_id")],
             },
             left_data=queried_source,
-            left_resolution=self.source_a_config.name,
+            left_resolution=self.source_a.config.name,
         )
 
         results = deduper.run()

@@ -9,11 +9,11 @@ from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.exc import SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
+from matchbox.common.dtos import SourceConfig
 from matchbox.common.exceptions import MatchboxResolutionAlreadyExists
 from matchbox.common.graph import ModelResolutionName, ResolutionNodeType
 from matchbox.common.hash import IntMap, hash_arrow_table
 from matchbox.common.logging import logger
-from matchbox.common.sources import SourceConfig
 from matchbox.common.transform import Cluster, DisjointSet
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (

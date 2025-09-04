@@ -11,6 +11,7 @@ from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
 from matchbox.client.helpers import select
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.sources import RelationalDBLocation, Source
 from matchbox.common.factories.sources import (
     FeatureConfig,
     LinkedSourcesTestkit,
@@ -18,7 +19,6 @@ from matchbox.common.factories.sources import (
     SuffixRule,
     linked_sources_factory,
 )
-from matchbox.common.sources import RelationalDBLocation, SourceConfig
 
 
 @pytest.mark.docker
@@ -35,12 +35,6 @@ class TestE2EPipelineBuilder:
 
         Removes company suffixes (Ltd, Limited) and normalises whitespace
         from the company_name field.
-
-        Args:
-            source_config: Source configuration containing field information
-
-        Returns:
-            Dict mapping field aliases to cleaning SQL expressions
         """
 
         return f"""
@@ -121,7 +115,7 @@ class TestE2EPipelineBuilder:
 
         # Setup - Create tables in warehouse
         for source_testkit in self.linked_testkit.sources.values():
-            source_testkit.write_to_location(client=postgres_warehouse, set_client=True)
+            source_testkit.write_to_location()
 
         # Clear matchbox database before test
         response = matchbox_client.delete("/database", params={"certain": "true"})
@@ -149,7 +143,7 @@ class TestE2EPipelineBuilder:
         batch_size = 1000
 
         # Create source configs
-        source_a_config = SourceConfig.new(
+        source_a = Source(
             location=dw_loc,
             name="source_a",
             extract_transform="""
@@ -160,11 +154,12 @@ class TestE2EPipelineBuilder:
                 from
                     source_a;
             """,
+            infer_types=True,
             key_field="id",
             index_fields=["company_name", "registration_id"],
         )
 
-        source_b_config = SourceConfig.new(
+        source_b = Source(
             location=dw_loc,
             name="source_b",
             extract_transform="""
@@ -175,23 +170,24 @@ class TestE2EPipelineBuilder:
                 from
                     source_b;
             """,
+            infer_types=True,
             key_field="id",
             index_fields=["company_name", "registration_id"],
         )
 
         # === DAG DEFINITION ===
         # Index steps
-        i_source_a = IndexStep(source_config=source_a_config, batch_size=batch_size)
-        i_source_b = IndexStep(source_config=source_b_config, batch_size=batch_size)
+        i_source_a = IndexStep(source=source_a, batch_size=batch_size)
+        i_source_b = IndexStep(source=source_b, batch_size=batch_size)
 
         # Dedupe steps
         dedupe_a = DedupeStep(
             left=StepInput(
                 prev_node=i_source_a,
-                select={source_a_config: ["company_name", "registration_id"]},
+                select={source_a: ["company_name", "registration_id"]},
                 cleaning_dict={
                     "company_name": self._clean_company_name(
-                        source_a_config.f("company_name")
+                        source_a.f("company_name")
                     ),
                 },
                 batch_size=batch_size,
@@ -201,7 +197,7 @@ class TestE2EPipelineBuilder:
             model_class=NaiveDeduper,
             settings={
                 "id": "id",
-                "unique_fields": [source_a_config.f("registration_id")],
+                "unique_fields": [source_a.f("registration_id")],
             },
             truth=1.0,
         )
@@ -209,10 +205,10 @@ class TestE2EPipelineBuilder:
         dedupe_b = DedupeStep(
             left=StepInput(
                 prev_node=i_source_b,
-                select={source_b_config: ["company_name", "registration_id"]},
+                select={source_b: ["company_name", "registration_id"]},
                 cleaning_dict={
                     "company_name": self._clean_company_name(
-                        source_b_config.f("company_name")
+                        source_b.f("company_name")
                     ),
                 },
                 batch_size=batch_size,
@@ -222,7 +218,7 @@ class TestE2EPipelineBuilder:
             model_class=NaiveDeduper,
             settings={
                 "id": "id",
-                "unique_fields": [source_b_config.f("registration_id")],
+                "unique_fields": [source_b.f("registration_id")],
             },
             truth=1.0,
         )
@@ -231,23 +227,23 @@ class TestE2EPipelineBuilder:
         link_ab = LinkStep(
             left=StepInput(
                 prev_node=dedupe_a,
-                select={source_a_config: ["company_name", "registration_id"]},
+                select={source_a: ["company_name", "registration_id"]},
                 cleaning_dict={
                     "company_name": self._clean_company_name(
-                        source_a_config.f("company_name")
+                        source_a.f("company_name")
                     ),
-                    "registration_id": source_a_config.f("registration_id"),
+                    "registration_id": source_a.f("registration_id"),
                 },
                 batch_size=batch_size,
             ),
             right=StepInput(
                 prev_node=dedupe_b,
-                select={source_b_config: ["company_name", "registration_id"]},
+                select={source_b: ["company_name", "registration_id"]},
                 cleaning_dict={
                     "company_name": self._clean_company_name(
-                        source_b_config.f("company_name")
+                        source_b.f("company_name")
                     ),
-                    "registration_id": source_b_config.f("registration_id"),
+                    "registration_id": source_b.f("registration_id"),
                 },
                 batch_size=batch_size,
             ),
@@ -277,8 +273,8 @@ class TestE2EPipelineBuilder:
         final_df = query(
             select(
                 {
-                    source_a_config.name: ["id", "company_name", "registration_id"],
-                    source_b_config.name: ["id", "company_name", "registration_id"],
+                    source_a.config.name: ["id", "company_name", "registration_id"],
+                    source_b.config.name: ["id", "company_name", "registration_id"],
                 },
                 client=self.warehouse_engine,
             ),
@@ -295,11 +291,11 @@ class TestE2EPipelineBuilder:
 
         # mb.match works too
         matches = mb_match(
-            source_a_config.name,
-            source=source_b_config.name,
+            source_a.config.name,
+            source=source_b.config.name,
             resolution="__DEFAULT__",
-            key=final_df.filter(pl.col(source_b_config.qualified_key).is_not_null())[
-                source_b_config.qualified_key
+            key=final_df.filter(pl.col(source_b.config.qualified_key).is_not_null())[
+                source_b.config.qualified_key
             ][0],
         )
         assert len(matches) >= 1
@@ -313,8 +309,8 @@ class TestE2EPipelineBuilder:
         final_df_second = query(
             select(
                 {
-                    source_a_config.name: ["company_name", "registration_id"],
-                    source_b_config.name: ["company_name", "registration_id"],
+                    source_a.config.name: ["company_name", "registration_id"],
+                    source_b.config.name: ["company_name", "registration_id"],
                 },
                 client=self.warehouse_engine,
             ),

@@ -18,12 +18,12 @@ from pydantic import BaseModel
 from matchbox.common.dtos import (
     BackendUploadType,
     ModelConfig,
+    SourceConfig,
     UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.logging import logger
-from matchbox.common.sources import SourceConfig
 from matchbox.server.base import (
     MatchboxDBAdapter,
     MatchboxServerSettings,

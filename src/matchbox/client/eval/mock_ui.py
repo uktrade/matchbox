@@ -41,12 +41,10 @@ def setup_mock_database():
         data_keys=["1", "2", "3", "4"],
         name="foo",
         engine=warehouse,
-    )
-    testkit_foo.write_to_location(warehouse)
-    foo = testkit_foo.source_config
-    foo.location.add_client(warehouse)
+    ).write_to_location()
+    foo = testkit_foo.source
 
-    index(source_config=foo)
+    index(source=foo)
 
     testkit_bar = source_from_tuple(
         data_tuple=(
@@ -57,8 +55,7 @@ def setup_mock_database():
         data_keys=["a", "b", "c"],
         name="bar",
         engine=warehouse,
-    )
-    testkit_bar.write_to_location(warehouse)
+    ).write_to_location()
 
     bar = testkit_bar.source_config
     bar.location.add_client(warehouse)

@@ -15,6 +15,7 @@ from matchbox.common.dtos import (
     BackendResourceType,
     LoginAttempt,
     LoginResult,
+    Match,
     OKMessage,
     UploadStage,
     UploadStatus,
@@ -26,7 +27,6 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.factories.sources import source_factory
 from matchbox.common.graph import ResolutionGraph
-from matchbox.common.sources import Match
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client

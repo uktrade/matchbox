@@ -5,7 +5,7 @@ from faker import Faker
 from sqlalchemy import create_engine
 
 from matchbox.common.arrow import SCHEMA_INDEX
-from matchbox.common.dtos import DataTypes
+from matchbox.common.dtos import DataTypes, LocationConfig, LocationType
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -17,7 +17,6 @@ from matchbox.common.factories.sources import (
     source_factory,
     source_from_tuple,
 )
-from matchbox.common.sources import RelationalDBLocation
 
 
 def test_source_factory_default():
@@ -127,7 +126,7 @@ def test_source_factory_data_hashes_integrity():
 
 
 def test_source_testkit_to_mock():
-    """Test that SourceTestkit.mock creates a correctly configured mock."""
+    """SourceTestkit.mock_client_source creates a correctly configured mock."""
     # Create a source testkit with some test data
     features = [
         FeatureConfig(
@@ -142,7 +141,7 @@ def test_source_testkit_to_mock():
     )
 
     # Create the mock
-    mock_source = source_testkit.mock
+    mock_source = source_testkit.mock_client_source
 
     # Test that method calls are tracked
     mock_source.hash_data()
@@ -151,19 +150,6 @@ def test_source_testkit_to_mock():
 
     # Test method return values
     assert mock_source.hash_data() == source_testkit.data_hashes
-
-    # Test model dump methods
-    original_dump = source_testkit.source_config.model_dump()
-    mock_dump = mock_source.model_dump()
-    assert mock_dump == original_dump
-
-    original_json = source_testkit.source_config.model_dump_json()
-    mock_json = mock_source.model_dump_json()
-    assert mock_json == original_json
-
-    # Verify side effect functions were set correctly
-    mock_source.model_dump.assert_called_once()
-    mock_source.model_dump_json.assert_called_once()
 
 
 def test_source_factory_mock_properties():
@@ -194,8 +180,8 @@ def test_source_factory_mock_properties():
     ).source_config
 
     # Location should be consistent
-    expected_location = RelationalDBLocation(name=location_name)
-    assert source_config.location == expected_location
+    expected_location = LocationConfig(type=LocationType.RDBMS, name=location_name)
+    assert source_config.location_config == expected_location
 
     # Check indexed fields configuration
     assert len(source_config.index_fields) == len(features)
@@ -210,7 +196,7 @@ def test_source_factory_mock_properties():
     # Verify source properties are preserved through model_dump
     dump = source_config.model_dump()
     assert dump["name"] == name
-    assert str(dump["location"]["name"]) == location_name
+    assert str(dump["location_config"]["name"]) == location_name
     assert dump["key_field"] == {"name": "key", "type": DataTypes.STRING}
     assert dump["index_fields"] == tuple(
         {"name": f.name, "type": f.datatype} for f in features

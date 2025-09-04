@@ -27,6 +27,7 @@ from matchbox.common.dtos import (
     CountResult,
     LoginAttempt,
     LoginResult,
+    Match,
     NotFoundError,
     OKMessage,
     UploadStage,
@@ -39,7 +40,6 @@ from matchbox.common.exceptions import (
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.graph import ResolutionGraph, ResolutionName, SourceResolutionName
-from matchbox.common.sources import Match
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,

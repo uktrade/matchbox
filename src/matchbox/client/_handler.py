@@ -33,9 +33,11 @@ from matchbox.common.dtos import (
     BackendResourceType,
     LoginAttempt,
     LoginResult,
+    Match,
     ModelConfig,
     NotFoundError,
     ResolutionOperationStatus,
+    SourceConfig,
     UploadStage,
     UploadStatus,
 )
@@ -60,7 +62,6 @@ from matchbox.common.graph import (
 )
 from matchbox.common.hash import hash_to_base64
 from matchbox.common.logging import logger
-from matchbox.common.sources import Match, SourceConfig
 
 URLEncodeHandledType = str | int | float | bytes
 
@@ -265,7 +266,7 @@ def match(
 
 @http_retry
 def index(source_config: SourceConfig, data_hashes: Table) -> UploadStatus:
-    """Index from a SourceConfig in Matchbox."""
+    """Index hashes from a SourceConfig."""
     log_prefix = f"Index {source_config.name}"
 
     buffer = table_to_buffer(table=data_hashes)

@@ -26,7 +26,7 @@ def key_field_map(
         sources = [s for s in sources if s.name in source_filter]
 
     if location_names:
-        sources = [s for s in sources if s.location.name in location_names]
+        sources = [s for s in sources if s.location_config.name in location_names]
 
     if not sources:
         raise MatchboxSourceNotFoundError("No compatible source was found")

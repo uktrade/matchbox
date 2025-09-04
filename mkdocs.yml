@@ -25,6 +25,7 @@ nav:
 - API reference:
   - Client:
     - Overview: api/client/index.md
+    - Sources: api/client/sources.md
     - DAGs: api/client/dags.md
     - Evaluation: api/client/eval.md
     - Helpers: api/client/helpers.md
@@ -52,7 +53,6 @@ nav:
     - Hashing: api/common/hash.md
     - Logging: api/common/logging.md
     - Transform: api/common/transform.md
-    - Sources: api/common/sources.md
     - DTOs: api/common/dtos.md
     - Arrow: api/common/arrow.md
 - Contributing:

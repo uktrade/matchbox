@@ -79,7 +79,7 @@ def _testkitdag_to_location(client: Engine, dag: TestkitDAG) -> None:
     * Updates the client of all sources in the DAG
     """
     for source_testkit in dag.sources.values():
-        source_testkit.write_to_location(client=client, set_client=True)
+        source_testkit.write_to_location(set_client=client)
 
 
 # Scenario builders
@@ -519,6 +519,10 @@ def setup_scenario(
     if cache_key in _DATABASE_SNAPSHOTS_CACHE:
         # Load cached snapshot and DAG
         dag, snapshot = _DATABASE_SNAPSHOTS_CACHE[cache_key]
+        # Because the location client can't be deep-copied, this will reuse an
+        # old engine, with the same URL as `warehouse`, but a different object
+        # Thus, in _testkitdag_to_location we need to overwrite all testkits with
+        # our new warehouse object
         dag = dag.model_copy(deep=True)
 
         # Restore backend and write sources to warehouse

@@ -21,12 +21,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import BYTEA, TEXT, insert
 from sqlalchemy.orm import Session, relationship
 
+from matchbox.common.dtos import LocationConfig
+from matchbox.common.dtos import SourceConfig as CommonSourceConfig
+from matchbox.common.dtos import SourceField as CommonSourceField
 from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.graph import ResolutionName
-from matchbox.common.sources import SourceConfig as CommonSourceConfig
-from matchbox.common.sources import SourceField as CommonSourceField
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
 
@@ -449,8 +450,8 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
         """Create a SourceConfigs instance from a CommonSource object."""
         return cls(
             resolution_id=resolution.resolution_id,
-            location_type=source_config.location.type,
-            location_name=str(source_config.location.name),
+            location_type=str(source_config.location_config.type),
+            location_name=str(source_config.location_config.name),
             extract_transform=source_config.extract_transform,
             key_field=SourceFields(
                 index=0,
@@ -471,10 +472,9 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
         """Convert ORM source to a matchbox.common SourceConfig object."""
         return CommonSourceConfig(
             name=self.name,
-            location={
-                "type": self.location_type,
-                "name": self.location_name,
-            },
+            location_config=LocationConfig(
+                type=self.location_type, name=self.location_name
+            ),
             extract_transform=self.extract_transform,
             key_field=CommonSourceField(
                 name=self.key_field.name, type=self.key_field.type

@@ -111,7 +111,7 @@ class TestE2EAnalyticalUser:
 
         # Setup code - Create tables in warehouse
         for source_testkit in self.linked_testkit.sources.values():
-            source_testkit.write_to_location(client=postgres_warehouse, set_client=True)
+            source_testkit.write_to_location()
 
         # Clear matchbox database before test
         response = matchbox_client.delete("/database", params={"certain": "true"})
@@ -179,8 +179,8 @@ class TestE2EAnalyticalUser:
 
         # Index all sources in the PostgreSQL database
         for source_testkit in self.linked_testkit.sources.values():
-            source = source_testkit.source_config
-            index(source_config=source)
+            source = source_testkit.source
+            index(source=source)
             logging.debug(f"Indexed source: {source.name}")
 
         # === DEDUPLICATION PHASE ===

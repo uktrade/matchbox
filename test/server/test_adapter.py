@@ -14,7 +14,13 @@ from matchbox.common.arrow import (
     SCHEMA_QUERY,
     SCHEMA_QUERY_WITH_LEAVES,
 )
-from matchbox.common.dtos import ModelConfig, ModelType
+from matchbox.common.dtos import (
+    LocationConfig,
+    LocationType,
+    Match,
+    ModelConfig,
+    ModelType,
+)
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
@@ -32,7 +38,6 @@ from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
 from matchbox.common.graph import ResolutionGraph
 from matchbox.common.hash import HASH_FUNC
-from matchbox.common.sources import Match, RelationalDBLocation
 from matchbox.server.base import MatchboxDBAdapter
 
 backends = [
@@ -476,10 +481,15 @@ class TestMatchboxBackend:
             crn_testkit: SourceTestkit = dag.sources.get("crn")
 
             crn_source_1 = crn_testkit.source_config.model_copy(
-                update={"location": RelationalDBLocation(name="postgres")}
+                update={
+                    "location": LocationConfig(type=LocationType.RDBMS, name="postgres")
+                }
             )
             crn_source_2 = crn_testkit.source_config.model_copy(
-                deep=True, update={"location": RelationalDBLocation(name="mongodb")}
+                deep=True,
+                update={
+                    "location": LocationConfig(type=LocationType.RDBMS, name="mongodb")
+                },
             )
 
             self.backend.index(crn_source_1, crn_testkit.data_hashes)

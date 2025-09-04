@@ -3,7 +3,7 @@
 import warnings
 from functools import cache, wraps
 from itertools import product
-from typing import Any, Callable, ParamSpec, TypeVar
+from typing import Any, Callable, ParamSpec, Self, TypeVar
 from unittest.mock import Mock, create_autospec
 
 import pandas as pd
@@ -15,8 +15,13 @@ from sqlalchemy import Engine, create_engine
 from sqlglot import cast, select
 from sqlglot.expressions import column
 
+from matchbox.client.sources import RelationalDBLocation, Source
 from matchbox.common.arrow import SCHEMA_INDEX
-from matchbox.common.dtos import DataTypes
+from matchbox.common.dtos import (
+    DataTypes,
+    SourceConfig,
+    SourceField,
+)
 from matchbox.common.factories.entities import (
     ClusterEntity,
     EntityReference,
@@ -29,11 +34,6 @@ from matchbox.common.factories.entities import (
 )
 from matchbox.common.graph import SourceResolutionName
 from matchbox.common.hash import hash_values
-from matchbox.common.sources import (
-    RelationalDBLocation,
-    SourceConfig,
-    SourceField,
-)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -86,9 +86,7 @@ class SourceTestkit(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    source_config: SourceConfig = Field(
-        description="The real generated SourceConfig object."
-    )
+    source: Source = Field(description="The real generated Source object.")
     features: tuple[FeatureConfig, ...] | None = Field(
         description=(
             "The features used to generate the data. "
@@ -108,17 +106,18 @@ class SourceTestkit(BaseModel):
         return self.source_config.name
 
     @property
-    def mock(self) -> Mock:
+    def source_config(self) -> SourceConfig:
+        """Return the SourceConfig from the source."""
+        return self.source.config
+
+    @property
+    def mock_client_source(self) -> Mock:
         """Create a mock SourceConfig object with this testkit's configuration."""
-        mock_source_config = create_autospec(self.source_config)
+        mock_source = create_autospec(Source)
 
-        mock_source_config.hash_data.return_value = self.data_hashes
-        mock_source_config.model_dump.side_effect = self.source_config.model_dump
-        mock_source_config.model_dump_json.side_effect = (
-            self.source_config.model_dump_json
-        )
+        mock_source.hash_data.return_value = self.data_hashes
 
-        return mock_source_config
+        return mock_source
 
     @property
     def query(self) -> pa.Table:
@@ -132,23 +131,22 @@ class SourceTestkit(BaseModel):
             [self.data["id"], self.data["key"]], names=["id", "key"]
         )
 
-    def write_to_location(self, client: Any, set_client: bool = False) -> None:
+    def write_to_location(self, set_client: Any | None = None) -> Self:
         """Write the data to the SourceConfig's location.
 
-        The client isn't set in testkits, so it must be provided here.
-
         Args:
-            client: Client to use for the location.
-            set_client: Whether to set the client on the SourceConfig.
-                Offered here for convenience as it's often the next step.
+            set_client: client to replace existing source client
         """
+        if set_client:
+            self.source.location.client = set_client
+
         pl.from_arrow(self.data).write_database(
             table_name=self.source_config.name,
-            connection=client,
+            connection=self.source.location.client,
             if_table_exists="replace",
         )
-        if set_client:
-            self.source_config.location.add_client(client)
+
+        return self
 
 
 class LinkedSourcesTestkit(BaseModel):
@@ -235,18 +233,12 @@ class LinkedSourcesTestkit(BaseModel):
             ),
         )
 
-    def write_to_location(self, client: Any, set_client: bool = False) -> None:
-        """Write the data to the SourceConfig's location.
-
-        The client isn't set in testkits, so it must be provided here.
-
-        Args:
-            client: Client to use for the location.
-            set_client: Whether to set the client on the SourceConfig.
-                Offered here for convenience as it's often the next step.
-        """
+    def write_to_location(self) -> Self:
+        """Write the data to the SourceConfig's location."""
         for source_testkit in self.sources.values():
-            source_testkit.write_to_location(client, set_client)
+            source_testkit.write_to_location()
+
+        return self
 
 
 def generate_rows(
@@ -550,8 +542,8 @@ def source_factory(
     )
 
     # Create source config
-    source_config = SourceConfig(
-        location=RelationalDBLocation(name=location_name),
+    source = Source(
+        location=RelationalDBLocation(name=location_name, client=engine),
         name=name,
         extract_transform=select(
             cast(column(key_field.name), "string").as_(key_field.name),
@@ -564,7 +556,7 @@ def source_factory(
     )
 
     return SourceTestkit(
-        source_config=source_config,
+        source=source,
         features=features,
         data=data,
         data_hashes=data_hashes,
@@ -616,8 +608,8 @@ def source_from_tuple(
     )
 
     # Create source config
-    source_config = SourceConfig(
-        location=RelationalDBLocation(name=location_name),
+    source = Source(
+        location=RelationalDBLocation(name=location_name, client=engine),
         name=name,
         extract_transform=select(
             cast(column(key_field.name), "string").as_(key_field.name),
@@ -646,7 +638,7 @@ def source_from_tuple(
     data = raw_data.append_column("id", [entity_ids]).append_column("key", raw_keys)
 
     return SourceTestkit(
-        source_config=source_config,
+        source=source,
         data=data,
         data_hashes=data_hashes,
         entities=tuple(sorted(results_entities)),
@@ -828,8 +820,10 @@ def linked_sources_factory(
         )
 
         # Create source config
-        source_config = SourceConfig(
-            location=RelationalDBLocation(name=str(parameters.name)),
+        source = Source(
+            location=RelationalDBLocation(
+                name=str(parameters.name), client=parameters.engine
+            ),
             name=parameters.name,
             extract_transform=select(
                 cast(column(key_field.name), "string").as_(key_field.name),
@@ -843,7 +837,7 @@ def linked_sources_factory(
 
         # Add source to linked.sources
         linked.sources[parameters.name] = SourceTestkit(
-            source_config=source_config,
+            source=source,
             features=tuple(parameters.features),
             data=data,
             data_hashes=data_hashes,

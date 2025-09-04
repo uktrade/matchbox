@@ -26,7 +26,7 @@ from matchbox.client import clean
 from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
 from matchbox.client.models.dedupers.naive import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.common.sources import SourceConfig, RelationalDBLocation
+from matchbox.client.sources import Source, RelationalDBLocation
 
 # Configure logging
 logging.basicConfig(
@@ -56,10 +56,10 @@ The `key_field` is the field in your source that contains some unique code that 
 
 === "Example"
     ```python
-    from matchbox.common.sources import SourceConfig, RelationalDBLocation
+    from matchbox.client.sources import Source, RelationalDBLocation
     
     # Companies House data
-    companies_house = SourceConfig.new(
+    companies_house = Source(
         name="companies_house",
         location=RelationalDBLocation(name="dbname", client=engine),
         extract_transform="""
@@ -71,12 +71,13 @@ The `key_field` is the field in your source that contains some unique code that 
             from
                 companieshouse.companies;
         """,
+        infer_types=True,
         index_fields=["company_name", "company_number", "postcode"],
         key_field="id",
     )
     
     # Exporters data
-    exporters = SourceConfig.new(
+    exporters = Source(
         name="hmrc_exporters",
         location=RelationalDBLocation(name="dbname", client=engine),
         extract_transform="""
@@ -87,14 +88,15 @@ The `key_field` is the field in your source that contains some unique code that 
             from
                 hmrc.trade__exporters;
         """,
+        infer_types=True,
         index_fields=["company_name", "postcode"],
         key_field="id",
     )
     ```
 
-Each [`SourceConfig`][matchbox.common.sources.SourceConfig] object requires:
+Each [`Source`][matchbox.client.sources.Source] object requires:
 
-- A `location`, such as [`RelationalDBLocation`][matchbox.common.sources.RelationalDBLocation]. This will need a `type`, a `name`, and `client`, the type of which changes depending on the type of location you're using
+- A `location`, such as [`RelationalDBLocation`][matchbox.client.sources.RelationalDBLocation]. This will need a `type`, a `name`, and `client`, the type of which changes depending on the type of location you're using
     - The name of a location is a way of tagging it, such that later on you can filter source configs you want to retrieve from the server
     - For a relational database, a SQLAlchemy engine is your client
 - An `extract_transform` string, which will take data from the location and transform it into your key and index fields. Its syntax will depend on the type of location
@@ -104,7 +106,7 @@ Each [`SourceConfig`][matchbox.common.sources.SourceConfig] object requires:
 - A key field (`key_field`) that uniquely identifies each record
     - This must be found in the result of the `extract_transform` logic
 
-If a `SourceConfig` has already been created you can fetch it, with optional validation, from the server.
+If a `Source` has already been created you can fetch it, with optional validation, from the server.
 
 === "Example"
     ```python
@@ -256,7 +258,7 @@ And the raw data it outputs might look like this:
 
 Note how the fields specified in select are "qualified" with the source they came from.
 
-Next, `StepInput.cleaning_dict` will be applied. Each of its keys will be an output column defined by the SQL in its value. `SourceConfig.f()` is provided as a convenient way to select fields qualified by a source.
+Next, `StepInput.cleaning_dict` will be applied. Each of its keys will be an output column defined by the SQL in its value. `Source.f()` is provided as a convenient way to select fields qualified by a source.
 
 The rules for the cleaning dictionary are:
 

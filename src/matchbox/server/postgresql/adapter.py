@@ -9,8 +9,10 @@ from sqlalchemy import and_, bindparam, delete, func, or_, select
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
+    Match,
     ModelConfig,
     ModelType,
+    SourceConfig,
 )
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.eval import ModelComparison
@@ -28,7 +30,6 @@ from matchbox.common.graph import (
     ResolutionNodeType,
     SourceResolutionName,
 )
-from matchbox.common.sources import Match, SourceConfig
 from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
 from matchbox.server.postgresql.db import (
     MBDB,

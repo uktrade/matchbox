@@ -11,7 +11,7 @@ from pyarrow import Table
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from matchbox.common.dtos import ModelConfig
+from matchbox.common.dtos import Match, ModelConfig, SourceConfig
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.graph import (
     ModelResolutionName,
@@ -20,7 +20,6 @@ from matchbox.common.graph import (
     SourceResolutionName,
 )
 from matchbox.common.logging import LogLevelType
-from matchbox.common.sources import Match, SourceConfig
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client

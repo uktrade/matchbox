@@ -9,7 +9,6 @@ from sqlalchemy import and_, bindparam, delete, func, or_, select
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
-    ModelAncestor,
     ModelConfig,
     ModelType,
 )
@@ -43,7 +42,6 @@ from matchbox.server.postgresql.orm import (
     EvalJudgements,
     PKSpace,
     Probabilities,
-    ResolutionFrom,
     Resolutions,
     Results,
     SourceConfigs,
@@ -473,58 +471,6 @@ class MatchboxPostgres(MatchboxDBAdapter):
     def get_model_truth(self, name: ModelResolutionName) -> int:  # noqa: D102
         resolution = Resolutions.from_name(name=name, res_type="model")
         return resolution.truth
-
-    def get_model_ancestors(self, name: ModelResolutionName) -> list[ModelAncestor]:  # noqa: D102
-        resolution = Resolutions.from_name(name=name, res_type="model")
-        return [
-            ModelAncestor(name=resolution.name, truth=resolution.truth)
-            for resolution in resolution.ancestors
-        ]
-
-    def set_model_ancestors_cache(  # noqa: D102
-        self,
-        name: ModelResolutionName,
-        ancestors_cache: list[ModelAncestor],
-    ) -> None:
-        resolution = Resolutions.from_name(name=name, res_type="model")
-        with MBDB.get_session() as session:
-            ancestor_names = [ancestor.name for ancestor in ancestors_cache]
-            name_to_id = dict(
-                session.query(Resolutions.name, Resolutions.resolution_id)
-                .filter(Resolutions.name.in_(ancestor_names))
-                .all()
-            )
-
-            for ancestor in ancestors_cache:
-                parent_id = name_to_id.get(ancestor.name)
-                if parent_id is None:
-                    raise ValueError(f"Model '{ancestor.name}' not found in database")
-
-                session.execute(
-                    ResolutionFrom.__table__.update()
-                    .where(ResolutionFrom.parent == parent_id)
-                    .where(ResolutionFrom.child == resolution.resolution_id)
-                    .values(truth_cache=ancestor.truth)
-                )
-
-            session.commit()
-
-    def get_model_ancestors_cache(  # noqa: D102
-        self, name: ModelResolutionName
-    ) -> list[ModelAncestor]:
-        resolution = Resolutions.from_name(name=name, res_type="model")
-        with MBDB.get_session() as session:
-            query = (
-                select(Resolutions.name, ResolutionFrom.truth_cache)
-                .join(Resolutions, Resolutions.resolution_id == ResolutionFrom.parent)
-                .where(ResolutionFrom.child == resolution.resolution_id)
-                .where(ResolutionFrom.truth_cache.isnot(None))
-            )
-
-            return [
-                ModelAncestor(name=name, truth=truth)
-                for name, truth in session.execute(query).all()
-            ]
 
     def delete_resolution(self, name: ResolutionName, certain: bool = False) -> None:  # noqa: D102
         resolution = Resolutions.from_name(name=name)

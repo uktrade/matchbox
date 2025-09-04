@@ -33,7 +33,6 @@ from matchbox.common.dtos import (
     BackendResourceType,
     LoginAttempt,
     LoginResult,
-    ModelAncestor,
     ModelConfig,
     NotFoundError,
     ResolutionOperationStatus,
@@ -428,41 +427,6 @@ def get_model_truth(name: ModelResolutionName) -> int:
 
     res = CLIENT.get(f"/models/{name}/truth")
     return res.json()
-
-
-@http_retry
-def get_model_ancestors(name: ModelResolutionName) -> list[ModelAncestor]:
-    """Get the ancestors of a model in Matchbox."""
-    log_prefix = f"Model {name}"
-    logger.debug("Retrieving ancestors", prefix=log_prefix)
-
-    res = CLIENT.get(f"/models/{name}/ancestors")
-    return [ModelAncestor.model_validate(m) for m in res.json()]
-
-
-@http_retry
-def set_model_ancestors_cache(
-    name: ModelResolutionName, ancestors: list[ModelAncestor]
-) -> ResolutionOperationStatus:
-    """Set the ancestors cache for a model in Matchbox."""
-    log_prefix = f"Model {name}"
-    logger.debug("Setting ancestors cached truth values", prefix=log_prefix)
-
-    res = CLIENT.post(
-        f"/models/{name}/ancestors_cache",
-        json=[a.model_dump() for a in ancestors],
-    )
-    return ResolutionOperationStatus.model_validate(res.json())
-
-
-@http_retry
-def get_model_ancestors_cache(name: ModelResolutionName) -> list[ModelAncestor]:
-    """Get the ancestors cache for a model in Matchbox."""
-    log_prefix = f"Model {name}"
-    logger.debug("Getting ancestors cached truth values", prefix=log_prefix)
-
-    res = CLIENT.get(f"/models/{name}/ancestors_cache")
-    return [ModelAncestor.model_validate(m) for m in res.json()]
 
 
 @http_retry

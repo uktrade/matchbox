@@ -8,7 +8,7 @@ from matchbox.client import _handler
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.results import Results
-from matchbox.common.dtos import ModelAncestor, ModelConfig, ModelType
+from matchbox.common.dtos import ModelConfig, ModelType
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.graph import ModelResolutionName, ResolutionName
 from matchbox.common.logging import logger
@@ -91,17 +91,6 @@ class Model:
                 name=self.model_config.name
             )
         }
-
-    @ancestors_cache.setter
-    def ancestors_cache(self, ancestors_cache: dict[str, float]) -> None:
-        """Set the ancestors cache of the model."""
-        _handler.set_model_ancestors_cache(
-            name=self.model_config.name,
-            ancestors=[
-                ModelAncestor(name=k, truth=_truth_float_to_int(v))
-                for k, v in ancestors_cache.items()
-            ],
-        )
 
     def delete(self, certain: bool = False) -> bool:
         """Delete the model from the database."""

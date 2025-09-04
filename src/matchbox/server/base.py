@@ -11,7 +11,7 @@ from pyarrow import Table
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from matchbox.common.dtos import ModelAncestor, ModelConfig
+from matchbox.common.dtos import ModelConfig
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.graph import (
     ModelResolutionName,
@@ -453,45 +453,6 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def get_model_truth(self, name: ModelResolutionName) -> float:
         """Gets the current truth threshold for this model."""
-        ...
-
-    @abstractmethod
-    def get_model_ancestors(self, name: ModelResolutionName) -> list[ModelAncestor]:
-        """Gets the current truth values of all ancestors.
-
-        Returns a list of ModelAncestor objects mapping model resolution names to
-        their current truth thresholds.
-
-        Unlike ancestors_cache which returns cached values, this property returns
-        the current truth values of all ancestor models.
-        """
-        ...
-
-    @abstractmethod
-    def set_model_ancestors_cache(
-        self, name: ModelResolutionName, ancestors_cache: list[ModelAncestor]
-    ) -> None:
-        """Updates the cached ancestor thresholds.
-
-        Args:
-            name: The name of the model to update
-            ancestors_cache: List of ModelAncestor objects mapping model resolution
-                names to their truth thresholds
-        """
-        ...
-
-    @abstractmethod
-    def get_model_ancestors_cache(
-        self, name: ModelResolutionName
-    ) -> list[ModelAncestor]:
-        """Gets the cached ancestor thresholds.
-
-        Returns a list of ModelAncestor objects mapping model resolution names to
-        their cached truth thresholds.
-
-        This is required because each point of truth needs to be stable, so we choose
-        when to update it, caching the ancestor's values in the model itself.
-        """
         ...
 
     @abstractmethod

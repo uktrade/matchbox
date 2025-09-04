@@ -14,7 +14,6 @@ from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
-    ModelAncestor,
     ModelConfig,
     NotFoundError,
     ResolutionOperationStatus,
@@ -184,87 +183,6 @@ def get_truth(backend: BackendDependency, name: ModelResolutionName) -> float:
     """Get truth data for a model."""
     try:
         return backend.get_model_truth(name=name)
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-
-
-@router.get(
-    "/{name}/ancestors",
-    responses={404: {"model": NotFoundError}},
-)
-def get_ancestors(
-    backend: BackendDependency, name: ModelResolutionName
-) -> list[ModelAncestor]:
-    """Get the ancestors for a model."""
-    try:
-        return backend.get_model_ancestors(name=name)
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-
-
-@router.patch(
-    "/{name}/ancestors_cache",
-    responses={
-        404: {"model": NotFoundError},
-        500: {
-            "model": ResolutionOperationStatus,
-            **ResolutionOperationStatus.status_500_examples(),
-        },
-    },
-    dependencies=[Depends(authorisation_dependencies)],
-)
-def set_ancestors_cache(
-    backend: BackendDependency,
-    name: ModelResolutionName,
-    ancestors: list[ModelAncestor],
-):
-    """Update the cached ancestors for a model."""
-    try:
-        backend.set_model_ancestors_cache(name=name, ancestors_cache=ancestors)
-        return ResolutionOperationStatus(
-            success=True,
-            name=name,
-            operation=CRUDOperation.UPDATE,
-        )
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResolutionOperationStatus(
-                success=False,
-                name=name,
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
-
-
-@router.get(
-    "/{name}/ancestors_cache",
-    responses={404: {"model": NotFoundError}},
-)
-def get_ancestors_cache(
-    backend: BackendDependency, name: ModelResolutionName
-) -> list[ModelAncestor]:
-    """Get the cached ancestors for a model."""
-    try:
-        return backend.get_model_ancestors_cache(name=name)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,

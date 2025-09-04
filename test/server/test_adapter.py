@@ -14,7 +14,7 @@ from matchbox.common.arrow import (
     SCHEMA_QUERY,
     SCHEMA_QUERY_WITH_LEAVES,
 )
-from matchbox.common.dtos import ModelAncestor, ModelConfig, ModelType
+from matchbox.common.dtos import ModelConfig, ModelType
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
@@ -421,52 +421,6 @@ class TestMatchboxBackend:
 
             # Check difference
             assert pre_truth != post_truth
-
-    def test_model_ancestors(self):
-        """Test that a model's ancestors can be retrieved."""
-        with self.scenario(self.backend, "link"):
-            linker_name = "deterministic_naive_test.crn_naive_test.duns"
-            linker_ancestors = self.backend.get_model_ancestors(name=linker_name)
-
-            assert [
-                isinstance(ancestor, ModelAncestor) for ancestor in linker_ancestors
-            ]
-
-            # Not all ancestors have truth values, but one must
-            truth_found = False
-            for ancestor in linker_ancestors:
-                if isinstance(ancestor.truth, int):
-                    truth_found = True
-
-            assert truth_found
-
-    def test_model_ancestors_cache(self):
-        """Test that a model's ancestors cache can be set and retrieved."""
-        with self.scenario(self.backend, "link"):
-            linker_name = "deterministic_naive_test.crn_naive_test.duns"
-
-            # Retrieve
-            pre_ancestors_cache = self.backend.get_model_ancestors_cache(
-                name=linker_name
-            )
-
-            # Set
-            updated_ancestors_cache = [
-                ModelAncestor(name=ancestor.name, truth=90)
-                for ancestor in pre_ancestors_cache
-            ]
-            self.backend.set_model_ancestors_cache(
-                name=linker_name, ancestors_cache=updated_ancestors_cache
-            )
-
-            # Retrieve again
-            post_ancestors_cache = self.backend.get_model_ancestors_cache(
-                name=linker_name
-            )
-
-            # Check difference
-            assert pre_ancestors_cache != post_ancestors_cache
-            assert post_ancestors_cache == updated_ancestors_cache
 
     def test_index(self):
         """Test that indexing data works."""

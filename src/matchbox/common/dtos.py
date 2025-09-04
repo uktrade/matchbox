@@ -123,15 +123,6 @@ class ModelConfig(BaseModel):
         )
 
 
-class ModelAncestor(BaseModel):
-    """A model's ancestor and its truth value."""
-
-    name: ModelResolutionName = Field(..., description="Name of the ancestor model")
-    truth: int | None = Field(
-        default=None, description="Truth threshold value", ge=0, le=100, strict=True
-    )
-
-
 class ResolutionOperationStatus(BaseModel):
     """Status response for any resolution operation."""
 

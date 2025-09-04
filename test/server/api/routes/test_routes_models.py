@@ -10,7 +10,6 @@ from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
-    ModelAncestor,
     NotFoundError,
     ResolutionOperationStatus,
     UploadStage,
@@ -298,70 +297,6 @@ def test_get_truth(
     assert response.json() == 95
 
 
-def test_get_ancestors(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    testkit = model_factory()
-    mock_ancestors = [
-        ModelAncestor(name="parent_model", truth=70),
-        ModelAncestor(name="grandparent_model", truth=97),
-    ]
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_model_ancestors = Mock(return_value=mock_ancestors)
-
-    response = test_client.get(f"/models/{testkit.model.model_config.name}/ancestors")
-
-    assert response.status_code == 200
-    assert len(response.json()) == 2
-    assert [ModelAncestor.model_validate(a) for a in response.json()] == mock_ancestors
-
-
-def test_get_ancestors_cache(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test retrieving the ancestors cache for a model."""
-    testkit = model_factory()
-    mock_ancestors = [
-        ModelAncestor(name="parent_model", truth=70),
-        ModelAncestor(name="grandparent_model", truth=80),
-    ]
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_model_ancestors_cache = Mock(return_value=mock_ancestors)
-
-    response = test_client.get(
-        f"/models/{testkit.model.model_config.name}/ancestors_cache"
-    )
-
-    assert response.status_code == 200
-    assert len(response.json()) == 2
-    assert [ModelAncestor.model_validate(a) for a in response.json()] == mock_ancestors
-
-
-def test_set_ancestors_cache(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test setting the ancestors cache for a model."""
-    testkit = model_factory()
-    test_client, mock_backend, _ = api_client_and_mocks
-
-    ancestors_data = [
-        ModelAncestor(name="parent_model", truth=70),
-        ModelAncestor(name="grandparent_model", truth=80),
-    ]
-
-    response = test_client.patch(
-        f"/models/{testkit.model.model_config.name}/ancestors_cache",
-        json=[a.model_dump() for a in ancestors_data],
-    )
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    assert response.json()["operation"] == CRUDOperation.UPDATE
-    mock_backend.set_model_ancestors_cache.assert_called_once_with(
-        name=testkit.model.model_config.name, ancestors_cache=ancestors_data
-    )
-
-
 @pytest.mark.parametrize(
     "endpoint",
     ["results", "truth", "ancestors", "ancestors_cache"],
@@ -384,16 +319,7 @@ def test_model_get_endpoints_404(
 
 @pytest.mark.parametrize(
     ("endpoint", "payload"),
-    [
-        ("truth", 95),
-        (
-            "ancestors_cache",
-            [
-                ModelAncestor(name="parent_model", truth=70).model_dump(),
-                ModelAncestor(name="grandparent_model", truth=80).model_dump(),
-            ],
-        ),
-    ],
+    [("truth", 95)],
 )
 def test_model_patch_endpoints_404(
     endpoint: str,

@@ -299,7 +299,7 @@ def test_get_truth(
 
 @pytest.mark.parametrize(
     "endpoint",
-    ["results", "truth", "ancestors", "ancestors_cache"],
+    ["results", "truth"],
 )
 def test_model_get_endpoints_404(
     endpoint: str,

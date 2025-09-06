@@ -34,8 +34,10 @@ def test_query_no_resolution_ok_various_params(
     ).write_to_location()
 
     # Mock API
-    matchbox_api.get(f"/resolutions/{testkit.source_config.name}").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit.source.name}").mock(
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     query_route = matchbox_api.get("/query").mock(
@@ -61,7 +63,7 @@ def test_query_no_resolution_ok_various_params(
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
-        "source": testkit.source_config.name,
+        "source": testkit.source.name,
         "return_leaf_id": "False",
     }
 
@@ -73,7 +75,7 @@ def test_query_no_resolution_ok_various_params(
     assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
-        "source": testkit.source_config.name,
+        "source": testkit.source.name,
         "threshold": "50",
         "return_leaf_id": "False",
     }
@@ -97,12 +99,16 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
     ).write_to_location()
 
     # Mock API
-    matchbox_api.get(f"/resolutions/{testkit1.source_config.name}").mock(
-        return_value=Response(200, json=testkit1.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit1.source.name}").mock(
+        return_value=Response(
+            200, json=testkit1.source.to_resolution().model_dump(mode="json")
+        )
     )
 
-    matchbox_api.get(f"/resolutions/{testkit2.source_config.name}").mock(
-        return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit2.source.name}").mock(
+        return_value=Response(
+            200, json=testkit2.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     query_route = matchbox_api.get("/query").mock(
@@ -151,12 +157,12 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
     } == set(results.columns)
 
     assert dict(query_route.calls[-2].request.url.params) == {
-        "source": testkit1.source_config.name,
+        "source": testkit1.source.name,
         "resolution": DEFAULT_RESOLUTION,
         "return_leaf_id": "False",
     }
     assert dict(query_route.calls[-1].request.url.params) == {
-        "source": testkit2.source_config.name,
+        "source": testkit2.source.name,
         "resolution": DEFAULT_RESOLUTION,
         "return_leaf_id": "False",
     }
@@ -189,12 +195,16 @@ def test_query_combine_type(
     ).write_to_location()
 
     # Mock API
-    matchbox_api.get(f"/resolutions/{testkit1.source_config.name}").mock(
-        return_value=Response(200, json=testkit1.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit1.source.name}").mock(
+        return_value=Response(
+            200, json=testkit1.source.to_resolution().model_dump(mode="json")
+        )
     )
 
-    matchbox_api.get(f"/resolutions/{testkit2.source_config.name}").mock(
-        return_value=Response(200, json=testkit2.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit2.source.name}").mock(
+        return_value=Response(
+            200, json=testkit2.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     matchbox_api.get("/query").mock(
@@ -256,8 +266,10 @@ def test_query_404_resolution(matchbox_api: MockRouter, sqlite_warehouse: Engine
     testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
 
     # Mock API
-    matchbox_api.get(f"/resolutions/{testkit.source_config.name}").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit.source.name}").mock(
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     matchbox_api.get("/query").mock(
@@ -284,8 +296,10 @@ def test_query_empty_results_raises_exception(
     testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
 
     # Mock API
-    matchbox_api.get(f"/resolutions/{testkit.source_config.name}").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit.source.name}").mock(
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     # Mock empty results

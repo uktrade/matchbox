@@ -11,9 +11,8 @@ from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     Match,
     ModelAncestor,
-    ModelConfig,
     ModelType,
-    SourceConfig,
+    Resolution,
 )
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.eval import ModelComparison
@@ -226,22 +225,29 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Data management
 
-    def index(self, source_config: SourceConfig, data_hashes: Table) -> None:  # noqa: D102
+    def index(self, resolution: Resolution, data_hashes: Table) -> None:  # noqa: D102
         insert_source(
-            source_config=source_config,
+            resolution=resolution,
             data_hashes=data_hashes,
             batch_size=self.settings.batch_size,
         )
 
-    def get_source_config(self, name: SourceResolutionName) -> SourceConfig:  # noqa: D102
+    def get_source_config(self, name: SourceResolutionName) -> Resolution:  # noqa: D102
         with MBDB.get_session() as session:
             if source := get_source_config(name, session):
-                return source.to_dto()
+                resolution = Resolutions.from_name(name=name, res_type="source")
+                return Resolution(
+                    name=resolution.name,
+                    description=resolution.description,
+                    truth=resolution.truth,
+                    resolution_type="source",
+                    config=source.to_source_config(),
+                )
 
     def get_resolution_source_configs(  # noqa: D102
         self,
         name: ModelResolutionName,
-    ) -> list[SourceConfig]:
+    ) -> list[Resolution]:
         with MBDB.get_session() as session:
             # Find resolution by name
             resolution: Resolutions | None = (
@@ -392,7 +398,8 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Model management
 
-    def insert_model(self, model_config: ModelConfig) -> None:  # noqa: D102
+    def insert_model(self, resolution: "Resolution") -> None:  # noqa: D102
+        model_config = resolution.config
         with MBDB.get_session() as session:
             left_resolution = (
                 session.query(Resolutions)
@@ -428,15 +435,22 @@ class MatchboxPostgres(MatchboxDBAdapter):
                     )
 
         insert_model(
-            name=model_config.name,
+            name=resolution.name,
             left=left_resolution,
             right=right_resolution,
-            description=model_config.description,
+            description=resolution.description,
         )
 
-    def get_model(self, name: ModelResolutionName) -> ModelConfig:  # noqa: D102
+    def get_model(self, name: ModelResolutionName) -> Resolution:  # noqa: D102
         resolution = Resolutions.from_name(name=name, res_type="model")
-        return get_model_config(resolution=resolution)
+        model_config = get_model_config(resolution=resolution)
+        return Resolution(
+            name=resolution.name,
+            description=resolution.description,
+            truth=resolution.truth,
+            resolution_type="model",
+            config=model_config,
+        )
 
     def set_model_results(self, name: ModelResolutionName, results: Table) -> None:  # noqa: D102
         resolution = Resolutions.from_name(name=name, res_type="model")

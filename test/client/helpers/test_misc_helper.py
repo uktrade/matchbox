@@ -58,8 +58,10 @@ def test_select_default_engine(
     ).write_to_location()
 
     # Mock API
-    matchbox_api.get(f"/resolutions/{testkit.source_config.name}").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+    matchbox_api.get(f"/resolutions/{testkit.source.to_resolution().name}").mock(
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     # Select sources
@@ -81,8 +83,8 @@ def test_select_mixed_style(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     """We can select specific columns from some of the sources"""
     linked = linked_sources_factory(engine=sqlite_warehouse).write_to_location()
 
-    source1 = linked.sources["crn"].source_config
-    source2 = linked.sources["cdms"].source_config
+    source1 = linked.sources["crn"].source.to_resolution()
+    source2 = linked.sources["cdms"].source.to_resolution()
 
     # Mock API
     matchbox_api.get(f"/resolutions/{source1.name}").mock(

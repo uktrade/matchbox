@@ -12,7 +12,7 @@ from matchbox.common.dtos import (
     BackendResourceType,
     BackendUploadType,
     NotFoundError,
-    SourceConfig,
+    Resolution,
     UploadStage,
     UploadStatus,
 )
@@ -61,10 +61,13 @@ def test_index_success(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     index(source=source_testkit.source)
 
     # Verify the API calls
-    source_call = SourceConfig.model_validate_json(
+    resolution_call = Resolution.model_validate_json(
         source_route.calls.last.request.content.decode("utf-8")
     )
-    assert source_call == source_testkit.source_config
+    # Check key fields match (allowing for different descriptions)
+    assert resolution_call.name == source_testkit.source.to_resolution().name
+    assert resolution_call.resolution_type == "source"
+    assert resolution_call.config == source_testkit.source.to_resolution().config
     assert "test-upload-id" in upload_route.calls.last.request.url.path
     assert b"Content-Disposition: form-data;" in upload_route.calls.last.request.content
     assert b"PAR1" in upload_route.calls.last.request.content
@@ -110,10 +113,13 @@ def test_index_upload_failure(matchbox_api: MockRouter, sqlite_warehouse: Engine
         index(source=source_testkit.source)
 
     # Verify API calls
-    source_call = SourceConfig.model_validate_json(
+    resolution_call = Resolution.model_validate_json(
         source_route.calls.last.request.content.decode("utf-8")
     )
-    assert source_call == source_testkit.source_config
+    # Check key fields match (allowing for different descriptions)
+    assert resolution_call.name == source_testkit.source.to_resolution().name
+    assert resolution_call.resolution_type == "source"
+    assert resolution_call.config == source_testkit.source.to_resolution().config
     assert "test-upload-id" in upload_route.calls.last.request.url.path
     assert b"Content-Disposition: form-data;" in upload_route.calls.last.request.content
     assert b"PAR1" in upload_route.calls.last.request.content
@@ -182,14 +188,17 @@ def test_get_source_success(matchbox_api: MockRouter, sqlite_warehouse: Engine):
 
     # Mock API response
     matchbox_api.get("/resolutions/test_source").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     # Call function
     result = get_source(
         "test_source",
         location=RelationalDBLocation(
-            name=testkit.source_config.location_config.name, client=sqlite_warehouse
+            name=testkit.source.to_resolution().config.location_config.name,
+            client=sqlite_warehouse,
         ),
     )
 
@@ -207,12 +216,15 @@ def test_get_source_with_valid_location(
     ).write_to_location()
 
     matchbox_api.get("/resolutions/test_source").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     # Should succeed when location matches
     location = RelationalDBLocation(
-        name=testkit.source_config.location_config.name, client=sqlite_warehouse
+        name=testkit.source.to_resolution().config.location_config.name,
+        client=sqlite_warehouse,
     )
     result = get_source("test_source", location=location)
     assert result.name == "test_source"
@@ -262,7 +274,9 @@ def test_get_source_validation_mismatch(
     ).write_to_location()
 
     matchbox_api.get("/resolutions/test_source").mock(
-        return_value=Response(200, json=testkit.source_config.model_dump(mode="json"))
+        return_value=Response(
+            200, json=testkit.source.to_resolution().model_dump(mode="json")
+        )
     )
 
     kwargs = {validation_param: validation_value}

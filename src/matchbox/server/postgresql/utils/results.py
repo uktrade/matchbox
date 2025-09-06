@@ -87,8 +87,6 @@ def get_model_config(resolution: Resolutions) -> ModelConfig:
         )
 
         return ModelConfig(
-            name=resolution.name,
-            description=resolution.description or "",
             type=ModelType.DEDUPER if source_info.right is None else ModelType.LINKER,
             left_resolution=left.name,
             right_resolution=right.name if source_info.right else None,

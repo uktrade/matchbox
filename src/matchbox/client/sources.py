@@ -13,6 +13,7 @@ from typing import (
     ParamSpec,
     Self,
     TypeVar,
+    overload,
 )
 
 import polars as pl
@@ -30,6 +31,7 @@ from matchbox.common.dtos import (
     DataTypes,
     LocationConfig,
     LocationType,
+    Resolution,
     SourceConfig,
     SourceField,
 )
@@ -43,6 +45,7 @@ from matchbox.common.logging import logger
 T = TypeVar("T")
 P = ParamSpec("P")
 R = TypeVar("R")
+F = TypeVar("F")
 
 
 def requires_client(method: Callable[..., T]) -> Callable[..., T]:
@@ -299,6 +302,30 @@ def location_type_to_class(location_type: LocationType) -> type[Location]:
 class Source:
     """Client-side wrapper for source configs."""
 
+    @overload
+    def __init__(
+        self,
+        location: Location,
+        name: str,
+        extract_transform: str,
+        key_field: str,
+        index_fields: list[str],
+        description: str | None = None,
+        infer_types: bool = True,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        location: Location,
+        name: str,
+        extract_transform: str,
+        key_field: SourceField,
+        index_fields: list[SourceField],
+        description: str | None = None,
+        infer_types: bool = False,
+    ) -> None: ...
+
     def __init__(
         self,
         location: Location,
@@ -307,38 +334,102 @@ class Source:
         key_field: str | SourceField,
         index_fields: list[str] | list[SourceField],
         description: str | None = None,
-        truth: int | None = None,
-        infer_types=False,
+        infer_types: bool = False,
     ):
-        """Initialise source."""
+        """Initialise source.
+
+        Args:
+            location: The location where the source data is stored.
+            name: The name of the source.
+            description: An optional description of the source.
+            extract_transform: The extract/transform logic to apply to the source data.
+            key_field: The name of the field to use as the key, or a SourceField
+                instance defining the key field. This is the unique identifier we'll
+                use to refer to matched data in the source.
+            index_fields: The names of the fields to use as index fields, or a list
+                of SourceField instances defining the index fields. These are the
+                fields you plan to match on.
+            infer_types: Whether to infer data types for the fields from the source.
+                If False, you must provide SourceField instances for key_field and
+                index_fields.
+        """
         if not location.validate_extract_transform(extract_transform):
             raise MatchboxSourceExtractTransformError
 
         self.location = location
+        self.name = name
+        self.description = description
 
         if infer_types:
+            self._validate_fields(key_field, index_fields, str)
+
             # Assumes client has been set on location
             inferred_types = location.infer_types(extract_transform)
             remote_fields = {
                 field_name: SourceField(name=field_name, type=dtype)
                 for field_name, dtype in inferred_types.items()
             }
-
             typed_key_field = SourceField(name=key_field, type=DataTypes.STRING)
             typed_index_fields = tuple(remote_fields[field] for field in index_fields)
         else:
-            typed_key_field = key_field
-            typed_index_fields = index_fields
+            typed_key_field, typed_index_fields = self._validate_fields(
+                key_field, index_fields, SourceField
+            )
 
         self.config = SourceConfig(
             location_config=location.config,
-            name=name,
-            description=description,
-            truth=truth,
             extract_transform=extract_transform,
             key_field=typed_key_field,
             index_fields=typed_index_fields,
         )
+
+    def _validate_fields(
+        self,
+        key_field: Any,
+        index_fields: list[Any],
+        type_check: type[str] | type[SourceField],
+    ) -> tuple[F, tuple[F, ...]]:
+        """Validate that fields match the expected type (str or SourceField)."""
+        if not isinstance(key_field, type_check):
+            raise ValueError(
+                f"Expected {type_check.__name__}, got {type(key_field).__name__}"
+            )
+
+        if not all(isinstance(f, type_check) for f in index_fields):
+            raise ValueError(
+                f"All index_fields must be {type_check.__name__} instances"
+            )
+
+        return key_field, tuple(index_fields)
+
+    def to_resolution(self) -> Resolution:
+        """Convert to Resolution for API calls."""
+        return Resolution(
+            name=self.name,
+            description=self.description,
+            truth=None,
+            resolution_type="source",
+            config=self.config,
+        )
+
+    @classmethod
+    def from_resolution(cls, resolution: Resolution, location: Location) -> "Source":
+        """Reconstruct from Resolution."""
+        assert resolution.resolution_type == "source", (
+            "Resolution must be of type 'source'"
+        )
+        assert isinstance(resolution.config, SourceConfig), (
+            "Config must be SourceConfig"
+        )
+
+        # Create a new Source instance
+        source = cls.__new__(cls)  # Create without calling __init__
+        source.location = location
+        source.name = resolution.name
+        source.description = resolution.description
+        source.config = resolution.config
+
+        return source
 
     def __hash__(self) -> int:
         """Return a hash of the Source based on its config."""
@@ -349,19 +440,6 @@ class Source:
         if not isinstance(other, Source):
             return False
         return self.config == other.config
-
-    @classmethod
-    def from_config(cls, config: SourceConfig, client: Any):
-        """Initialise source from SourceConfig and client."""
-        return cls(
-            location=Location.from_config(config.location_config, client=client),
-            name=config.name,
-            description=config.description,
-            truth=config.truth,
-            extract_transform=config.extract_transform,
-            key_field=config.key_field,
-            index_fields=config.index_fields,
-        )
 
     def query(
         self,
@@ -386,7 +464,7 @@ class Source:
         if qualify_names:
 
             def _rename(c: str) -> str:
-                return self.config.name + "_" + c
+                return self.name + "_" + c
 
         all_fields = self.config.index_fields + tuple([self.config.key_field])
         schema_overrides = {field.name: field.type.to_dtype() for field in all_fields}
@@ -460,20 +538,34 @@ class Source:
 
         return processed_df.group_by("hash").agg(pl.col("keys")).to_arrow()
 
-    @property
-    def name(self) -> str:
-        """Returns name of underlying source config."""
-        return self.config.name
+    # Note: name, description, truth are now instance variables, not properties
 
     @property
-    def description(self) -> str | None:
-        """Returns description of underlying source config."""
-        return self.config.description
+    def prefix(self) -> str:
+        """Get the prefix for the source."""
+        return self.name + "_"
 
     @property
-    def truth(self) -> int | None:
-        """Returns truth threshold of underlying source config."""
-        return self.config.truth
+    def qualified_key(self) -> str:
+        """Get the qualified key for the source."""
+        return self.qualify_field(self.config.key_field.name)
+
+    @property
+    def qualified_index_fields(self) -> list[str]:
+        """Get the qualified index fields for the source."""
+        return [self.qualify_field(field.name) for field in self.config.index_fields]
+
+    def qualify_field(self, field: str) -> str:
+        """Qualify field names with the source name.
+
+        Args:
+            field: The field name to qualify.
+
+        Returns:
+            A single qualified field.
+
+        """
+        return self.prefix + field
 
     def f(self, fields: str | Iterable[str]) -> str | list[str]:
         """Qualify one or more field names with the source name.
@@ -486,5 +578,5 @@ class Source:
 
         """
         if isinstance(fields, str):
-            return self.config.qualify_field(fields)
-        return [self.config.qualify_field(field_name) for field_name in fields]
+            return self.qualify_field(fields)
+        return [self.qualify_field(field_name) for field_name in fields]

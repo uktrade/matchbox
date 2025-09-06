@@ -10,7 +10,13 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from matchbox.common.arrow import table_to_buffer
-from matchbox.common.dtos import BackendUploadType, ModelConfig, ModelType, UploadStage
+from matchbox.common.dtos import (
+    BackendUploadType,
+    ModelConfig,
+    ModelType,
+    Resolution,
+    UploadStage,
+)
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
@@ -133,12 +139,16 @@ class TestUploadTracker:
 
     def test_basic_upload_tracking(self):
         """Test adding upload to tracker and retrieving."""
-        source = source_factory().source_config
-        model = ModelConfig(
+        source = source_factory().source.to_resolution()
+        model = Resolution(
             name="name",
             description="description",
-            type=ModelType.DEDUPER,
-            left_resolution="resolution",
+            truth=None,
+            resolution_type="model",
+            config=ModelConfig(
+                type=ModelType.DEDUPER,
+                left_resolution="resolution",
+            ),
         )
 
         # Add the source and the model
@@ -167,7 +177,7 @@ class TestUploadTracker:
 
     def test_status_management(self):
         """Test status update functionality."""
-        source = source_factory().source_config
+        source = source_factory().source.to_resolution()
 
         # Create entry and verify initial status
         upload_id = self.tracker.add_source(source)
@@ -192,7 +202,7 @@ class TestUploadTracker:
     @patch("matchbox.server.uploads.datetime")
     def test_timestamp_updates(self, mock_datetime: Mock):
         """Test that timestamps update correctly on different operations."""
-        source = source_factory().source_config
+        source = source_factory().source.to_resolution()
 
         creation_timestamp = datetime(2024, 1, 1, 12, 0)
         get_timestamp = datetime(2024, 1, 1, 12, 15)
@@ -244,7 +254,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     assert s3.head_object(Bucket=bucket, Key=test_key)
 
     # Setup metadata store with test data
-    upload_id = tracker.add_source(source_testkit.source_config)
+    upload_id = tracker.add_source(source_testkit.source.to_resolution())
     tracker.update(upload_id, UploadStage.AWAITING_UPLOAD)
 
     # Run the process, expecting it to fail

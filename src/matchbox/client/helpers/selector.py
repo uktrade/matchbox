@@ -62,7 +62,9 @@ class Selector(BaseModel):
         source_config = _handler.get_source_config(name=name)
         field_map = {
             f.name: f
-            for f in set((source_config.key_field,) + source_config.index_fields)
+            for f in set(
+                (source_config.config.key_field,) + source_config.config.index_fields
+            )
         }
 
         # Handle field selection
@@ -70,10 +72,15 @@ class Selector(BaseModel):
             selected_fields = [field_map[f] for f in fields]
         else:
             selected_fields = list(
-                source_config.index_fields
+                source_config.config.index_fields
             )  # Must actively select key
 
-        source = Source.from_config(config=source_config, client=client)
+        from matchbox.client.sources import Location
+
+        location = Location.from_config(
+            source_config.config.location_config, client=client
+        )
+        source = Source.from_resolution(resolution=source_config, location=location)
 
         return cls(source=source, fields=selected_fields)
 
@@ -155,7 +162,7 @@ def _process_query_result(
     # Join data with matchbox IDs
     joined_table = data.join(
         other=mb_ids,
-        left_on=selector.source.config.qualified_key,
+        left_on=f"{selector.source.name}_{selector.source.config.key_field.name}",
         right_on="key",
         how="inner",
     )
@@ -191,7 +198,7 @@ def _process_selectors(
     for selector in selectors:
         mb_ids = pl.from_arrow(
             _handler.query(
-                source=selector.source.config.name,
+                source=selector.source.name,
                 resolution=resolution,
                 threshold=threshold,
                 return_leaf_id=return_leaf_id,

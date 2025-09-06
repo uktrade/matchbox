@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.exc import SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
-from matchbox.common.dtos import SourceConfig
+from matchbox.common.dtos import Resolution
 from matchbox.common.exceptions import MatchboxResolutionAlreadyExists
 from matchbox.common.graph import ModelResolutionName, ResolutionNodeType
 from matchbox.common.hash import IntMap, hash_arrow_table
@@ -36,10 +36,11 @@ from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leave
 
 
 def insert_source(
-    source_config: SourceConfig, data_hashes: pa.Table, batch_size: int
+    resolution: Resolution, data_hashes: pa.Table, batch_size: int
 ) -> None:
     """Indexes a source within Matchbox."""
-    log_prefix = f"Index {source_config.name}"
+    log_prefix = f"Index {resolution.name}"
+    source_config = resolution.config
     content_hash = hash_arrow_table(data_hashes)
 
     with MBDB.get_session() as session:
@@ -47,34 +48,34 @@ def insert_source(
 
         # Check if resolution already exists
         existing_resolution = (
-            session.query(Resolutions).filter_by(name=source_config.name).first()
+            session.query(Resolutions).filter_by(name=resolution.name).first()
         )
 
         if existing_resolution:
-            resolution = existing_resolution
+            db_resolution = existing_resolution
             # Check if the content hash is the same
-            if resolution.hash == content_hash:
+            if db_resolution.hash == content_hash:
                 logger.info("Source data matches index. Finished", prefix=log_prefix)
                 return
         else:
             # Create new resolution without content hash
-            resolution = Resolutions(
-                name=source_config.name,
-                description=source_config.description,
-                truth=source_config.truth,
+            db_resolution = Resolutions(
+                name=resolution.name,
+                description=resolution.description,
+                truth=resolution.truth,
                 hash=None,
                 type=ResolutionNodeType.SOURCE.value,
             )
-            session.add(resolution)
+            session.add(db_resolution)
             session.flush()
 
         # Store resolution ID for later use
-        resolution_id: int = resolution.resolution_id
+        resolution_id: int = db_resolution.resolution_id
 
         # Check if source already exists
         existing_source = (
             session.query(SourceConfigs)
-            .filter_by(resolution_id=resolution.resolution_id)
+            .filter_by(resolution_id=db_resolution.resolution_id)
             .first()
         )
 
@@ -84,7 +85,7 @@ def insert_source(
             session.flush()
 
         # Create new source with relationship to resolution
-        source_obj = SourceConfigs.from_dto(resolution, source_config)
+        source_obj = SourceConfigs.from_dto(db_resolution, source_config)
         session.add(source_obj)
         session.commit()
 

@@ -8,10 +8,9 @@ from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
-    ModelConfig,
     NotFoundError,
+    Resolution,
     ResolutionOperationStatus,
-    SourceConfig,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
@@ -44,13 +43,11 @@ router = APIRouter(prefix="/resolutions", tags=["resolution"])
 def create_resolution(
     backend: BackendDependency,
     upload_tracker: UploadTrackerDependency,
-    resolution: Annotated[
-        Union[SourceConfig, ModelConfig], Body(discriminator="resolution_type")
-    ],
+    resolution: Resolution,
     response: Response,
 ) -> Union[ResolutionOperationStatus, UploadStatus]:
     """Create a resolution (model or source)."""
-    if isinstance(resolution, SourceConfig):
+    if resolution.resolution_type == "source":
         upload_id = upload_tracker.add_source(metadata=resolution)
         response.status_code = status.HTTP_202_ACCEPTED
         return upload_tracker.get(upload_id=upload_id).status
@@ -78,9 +75,7 @@ def create_resolution(
     "/{name}",
     responses={404: {"model": NotFoundError}},
 )
-def get_resolution(
-    backend: BackendDependency, name: ResolutionName
-) -> Union[ModelConfig, SourceConfig]:
+def get_resolution(backend: BackendDependency, name: ResolutionName) -> Resolution:
     """Get a resolution (model or source) from the backend."""
     try:
         return backend.get_model(name=name)
@@ -103,7 +98,7 @@ def get_resolution(
 def get_resolution_source_configs(
     backend: BackendDependency,
     name: ResolutionName,
-) -> list[SourceConfig]:
+) -> list[Resolution]:
     """Get all sources in scope for a resolution."""
     try:
         return backend.get_resolution_source_configs(name=name)
@@ -174,7 +169,7 @@ def set_results(
 ) -> UploadStatus:
     """Create an upload task for model results."""
     try:
-        metadata = backend.get_model(name=name)
+        resolution = backend.get_model(name=name)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,
@@ -183,7 +178,7 @@ def set_results(
             ).model_dump(),
         ) from e
 
-    upload_id = upload_tracker.add_model(metadata=metadata)
+    upload_id = upload_tracker.add_model(metadata=resolution)
     return upload_tracker.get(upload_id=upload_id).status
 
 

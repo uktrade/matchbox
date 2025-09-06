@@ -102,7 +102,7 @@ class StepInput(BaseModel):
                 or list(self.select.keys())[0] != self.prev_node.source
             ):
                 raise ValueError(
-                    f"Can only select from source {self.prev_node.source.config.name}"
+                    f"Can only select from source {self.prev_node.source.name}"
                 )
         else:
             for source in self.select:
@@ -126,8 +126,8 @@ class IndexStep(Step):
     @classmethod
     def source_to_attributes(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Convert source config to name and sources attributes."""
-        data["name"] = str(data["source"].config.name)
-        data["sources"] = {str(data["source"].config.name)}
+        data["name"] = str(data["source"].name)
+        data["sources"] = {str(data["source"].name)}
         return data
 
     @property
@@ -138,7 +138,11 @@ class IndexStep(Step):
     def run(self) -> Table:
         """Run indexing step."""
         data_hashes = self.source.hash_data(batch_size=self.batch_size)
-        _handler.index(source_config=self.source.config, data_hashes=data_hashes)
+        _handler.index(
+            source_config=self.source.config,
+            data_hashes=data_hashes,
+            source_name=self.source.name,
+        )
 
         return data_hashes
 

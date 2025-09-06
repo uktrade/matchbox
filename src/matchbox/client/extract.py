@@ -26,7 +26,9 @@ def key_field_map(
         sources = [s for s in sources if s.name in source_filter]
 
     if location_names:
-        sources = [s for s in sources if s.location_config.name in location_names]
+        sources = [
+            s for s in sources if s.config.location_config.name in location_names
+        ]
 
     if not sources:
         raise MatchboxSourceNotFoundError("No compatible source was found")
@@ -44,16 +46,18 @@ def key_field_map(
             )
         )
 
-        source_to_key_field[s.name] = s.key_field.name
+        source_to_key_field[s.name] = s.config.key_field.name
 
     # Join Matchbox IDs to form mapping table
     mapping = source_mb_ids[0]
-    mapping = mapping.rename_columns({"key": sources[0].qualified_key})
+    qualified_key = sources[0].name + "_" + sources[0].config.key_field.name
+    mapping = mapping.rename_columns({"key": qualified_key})
     if len(sources) > 1:
         for s, mb_ids in zip(sources[1:], source_mb_ids[1:], strict=True):
             mapping = mapping.join(
                 right_table=mb_ids, keys="id", join_type="full outer"
             )
-            mapping = mapping.rename_columns({"key": s.qualified_key})
+            qualified_key = s.name + "_" + s.config.key_field.name
+            mapping = mapping.rename_columns({"key": qualified_key})
 
     return mapping

@@ -140,8 +140,8 @@ class Results(BaseModel):
             pl.from_arrow(self.probabilities)
             .with_columns(
                 [
-                    pl.lit(self.model.model_config.left_resolution).alias("left"),
-                    pl.lit(self.model.model_config.right_resolution).alias("right"),
+                    pl.lit(self.model.config.left_resolution).alias("left"),
+                    pl.lit(self.model.config.right_resolution).alias("right"),
                     pl.lit(self.metadata.name).alias("model"),
                 ]
             )

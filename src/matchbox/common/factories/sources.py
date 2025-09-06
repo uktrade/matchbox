@@ -86,7 +86,9 @@ class SourceTestkit(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    source: Source = Field(description="The real generated Source object.")
+    source: Source = Field(
+        description="The Source object containing config and convenience methods."
+    )
     features: tuple[FeatureConfig, ...] | None = Field(
         description=(
             "The features used to generate the data. "
@@ -102,8 +104,8 @@ class SourceTestkit(BaseModel):
 
     @property
     def name(self) -> str:
-        """Return the resolution name of the SourceConfig."""
-        return self.source_config.name
+        """Return the source name."""
+        return self.source.name
 
     @property
     def source_config(self) -> SourceConfig:
@@ -141,7 +143,7 @@ class SourceTestkit(BaseModel):
             self.source.location.client = set_client
 
         pl.from_arrow(self.data).write_database(
-            table_name=self.source_config.name,
+            table_name=self.source.name,
             connection=self.source.location.client,
             if_table_exists="replace",
         )

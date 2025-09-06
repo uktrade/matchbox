@@ -30,7 +30,7 @@ def test_get_samples(
         location_name="db",
         engine=sqlite_warehouse,
     ).write_to_location()
-    source_foo = testkit_foo.source_config
+    source_foo = testkit_foo.source.to_resolution()
 
     testkit_bar = source_from_tuple(
         data_tuple=({"col": 1}, {"col": 2}, {"col": 3}, {"col": 4}),
@@ -39,7 +39,7 @@ def test_get_samples(
         location_name="db",
         engine=sqlite_warehouse,
     ).write_to_location()
-    source_bar = testkit_bar.source_config
+    source_bar = testkit_bar.source.to_resolution()
 
     # This will be excluded as the location name differs
     testkit_baz = source_from_tuple(
@@ -49,7 +49,7 @@ def test_get_samples(
         location_name="db_other",
         engine=sqlite_warehouse,
     ).write_to_location()
-    source_baz = testkit_baz.source_config
+    source_baz = testkit_baz.source.to_resolution()
 
     matchbox_api.get("/resolutions/foo").mock(
         return_value=Response(200, content=source_foo.model_dump_json())

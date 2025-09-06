@@ -11,7 +11,12 @@ from pyarrow import Table
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from matchbox.common.dtos import Match, ModelAncestor, ModelConfig, SourceConfig
+from matchbox.common.dtos import (
+    Match,
+    ModelAncestor,
+    Resolution,
+    SourceConfig,
+)
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.graph import (
     ModelResolutionName,
@@ -304,14 +309,14 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_source_config(self, name: SourceResolutionName) -> SourceConfig:
+    def get_source_config(self, name: SourceResolutionName) -> Resolution:
         """Get a source configuration from its resolution name.
 
         Args:
             name: The name resolution name for the source
 
         Returns:
-            A SourceConfig object
+            A Resolution object
         """
         ...
 
@@ -319,7 +324,7 @@ class MatchboxDBAdapter(ABC):
     def get_resolution_source_configs(
         self,
         name: ResolutionName,
-    ) -> list[SourceConfig]:
+    ) -> list[Resolution]:
         """Get a list of source configurations queriable from a resolution.
 
         Args:
@@ -415,11 +420,11 @@ class MatchboxDBAdapter(ABC):
     # Model management
 
     @abstractmethod
-    def insert_model(self, model_config: ModelConfig) -> None:
+    def insert_model(self, resolution: "Resolution") -> None:
         """Writes a model to Matchbox.
 
         Args:
-            model_config: ModelConfig object with the model's metadata
+            resolution: Resolution object with the model's metadata
 
         Raises:
             MatchboxDataNotFound: If, for a linker, the source models weren't found in
@@ -430,7 +435,7 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_model(self, name: ModelResolutionName) -> ModelConfig:
+    def get_model(self, name: ModelResolutionName) -> Resolution:
         """Get a model from the database."""
         ...
 

@@ -8,6 +8,7 @@ import pyarrow as pa
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine
 
+from matchbox.common.dtos import Resolution
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import FeatureConfig, SuffixRule
 from matchbox.common.factories.models import query_to_model_factory
@@ -123,7 +124,7 @@ def create_index_scenario(
     # Index sources in backend
     for source_testkit in dag.sources.values():
         backend.index(
-            source_config=source_testkit.source_config,
+            resolution=source_testkit.source.to_resolution(),
             data_hashes=source_testkit.data_hashes,
         )
 
@@ -148,26 +149,33 @@ def create_dedupe_scenario(
 
     # Create and add deduplication models
     for testkit in dag.sources.values():
-        source = testkit.source_config
-        name = f"naive_test.{source.name}"
+        resolution = testkit.source.to_resolution()
+        name = f"naive_test_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=source.name,
+            left_resolution=resolution.name,
             left_query=source_query,
-            left_keys={source.name: "key"},
+            left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=name,
-            description=f"Deduplication of {source.name}",
+            description=f"Deduplication of {resolution.name}",
             prob_range=(1.0, 1.0),
             seed=seed,
         )
 
         # Add to backend and DAG
-        backend.insert_model(model_config=model_testkit.model.model_config)
+        model_resolution = Resolution(
+            name=model_testkit.model.name,
+            description=model_testkit.model.description,
+            truth=model_testkit.model.truth,
+            resolution_type="model",
+            config=model_testkit.model.config,
+        )
+        backend.insert_model(resolution=model_resolution)
         backend.set_model_results(name=name, results=model_testkit.probabilities)
         dag.add_model(model_testkit)
 
@@ -192,27 +200,34 @@ def create_probabilistic_dedupe_scenario(
 
     # Create and add deduplication models
     for testkit in dag.sources.values():
-        source = testkit.source_config
-        name = f"probabilistic_test.{source.name}"
+        resolution = testkit.source.to_resolution()
+        name = f"probabilistic_test_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=source.name,
+            left_resolution=resolution.name,
             left_query=source_query,
-            left_keys={source.name: "key"},
+            left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=name,
-            description=f"Probabilistic deduplication of {source.name}",
+            description=f"Probabilistic deduplication of {resolution.name}",
             prob_range=(0.5, 0.99),
             seed=seed,
         )
         model_testkit.threshold = 50
 
         # Add to backend and DAG
-        backend.insert_model(model_config=model_testkit.model.model_config)
+        model_resolution = Resolution(
+            name=model_testkit.model.name,
+            description=model_testkit.model.description,
+            truth=model_testkit.model.truth,
+            resolution_type="model",
+            config=model_testkit.model.config,
+        )
+        backend.insert_model(resolution=model_resolution)
         backend.set_model_results(name=name, results=model_testkit.probabilities)
         backend.set_model_truth(name=name, truth=50)
         dag.add_model(model_testkit)
@@ -237,9 +252,9 @@ def create_link_scenario(
     linked = dag.linked[linked_key]
 
     # Extract models for linking
-    crn_model = dag.models["naive_test.crn"]
-    duns_model = dag.models["naive_test.duns"]
-    cdms_model = dag.models["naive_test.cdms"]
+    crn_model = dag.models["naive_test_crn"]
+    duns_model = dag.models["naive_test_duns"]
+    cdms_model = dag.models["naive_test_cdms"]
 
     # Query data for each resolution
     crn_query = backend.query(source="crn", resolution=crn_model.name)
@@ -247,7 +262,7 @@ def create_link_scenario(
     cdms_query = backend.query(source="cdms", resolution=cdms_model.name)
 
     # Create CRN-DUNS link
-    crn_duns_name = "deterministic_naive_test.crn_naive_test.duns"
+    crn_duns_name = "deterministic_naive_test_crn_naive_test_duns"
     crn_duns_model = query_to_model_factory(
         left_resolution=crn_model.name,
         left_query=crn_query,
@@ -263,12 +278,19 @@ def create_link_scenario(
     )
 
     # Add to backend and DAG
-    backend.insert_model(model_config=crn_duns_model.model.model_config)
+    crn_duns_resolution = Resolution(
+        name=crn_duns_model.model.name,
+        description=crn_duns_model.model.description,
+        truth=crn_duns_model.model.truth,
+        resolution_type="model",
+        config=crn_duns_model.model.config,
+    )
+    backend.insert_model(resolution=crn_duns_resolution)
     backend.set_model_results(name=crn_duns_name, results=crn_duns_model.probabilities)
     dag.add_model(crn_duns_model)
 
     # Create CRN-CDMS link
-    crn_cdms_name = "probabilistic_naive_test.crn_naive_test.cdms"
+    crn_cdms_name = "probabilistic_naive_test_crn_naive_test_cdms"
     crn_cdms_model = query_to_model_factory(
         left_resolution=crn_model.name,
         left_query=crn_query,
@@ -282,7 +304,14 @@ def create_link_scenario(
         seed=seed,
     )
 
-    backend.insert_model(model_config=crn_cdms_model.model.model_config)
+    crn_cdms_resolution = Resolution(
+        name=crn_cdms_model.model.name,
+        description=crn_cdms_model.model.description,
+        truth=crn_cdms_model.model.truth,
+        resolution_type="model",
+        config=crn_cdms_model.model.config,
+    )
+    backend.insert_model(resolution=crn_cdms_resolution)
     backend.set_model_results(name=crn_cdms_name, results=crn_cdms_model.probabilities)
     backend.set_model_truth(name=crn_cdms_name, truth=75)
     dag.add_model(crn_cdms_model)
@@ -316,7 +345,14 @@ def create_link_scenario(
         seed=seed,
     )
 
-    backend.insert_model(model_config=final_join_model.model.model_config)
+    final_join_resolution = Resolution(
+        name=final_join_model.model.name,
+        description=final_join_model.model.description,
+        truth=final_join_model.model.truth,
+        resolution_type="model",
+        config=final_join_model.model.config,
+    )
+    backend.insert_model(resolution=final_join_resolution)
     backend.set_model_results(
         name=final_join_name, results=final_join_model.probabilities
     )
@@ -359,38 +395,38 @@ def create_alt_dedupe_scenario(
     # Index sources in backend
     for source_testkit in dag.sources.values():
         backend.index(
-            source_config=source_testkit.source_config,
+            resolution=source_testkit.source.to_resolution(),
             data_hashes=source_testkit.data_hashes,
         )
 
     # Create and add deduplication models
     for testkit in dag.sources.values():
-        source = testkit.source_config
-        model_name1 = f"dedupe.{source.name}"
-        model_name2 = f"dedupe2.{source.name}"
+        resolution = testkit.source.to_resolution()
+        model_name1 = f"dedupe_{resolution.name}"
+        model_name2 = f"dedupe2_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit1 = query_to_model_factory(
-            left_resolution=source.name,
+            left_resolution=resolution.name,
             left_query=source_query,
-            left_keys={source.name: "key"},
+            left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=model_name1,
-            description=f"Deduplication of {source.name}",
+            description=f"Deduplication of {resolution.name}",
             prob_range=(0.5, 1.0),
             seed=seed,
         )
 
         model_testkit2 = query_to_model_factory(
-            left_resolution=source.name,
+            left_resolution=resolution.name,
             left_query=source_query,
-            left_keys={source.name: "key"},
+            left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=model_name2,
-            description=f"Deduplication of {source.name}",
+            description=f"Deduplication of {resolution.name}",
             prob_range=(0.5, 1.0),
             seed=seed,
         )
@@ -402,7 +438,14 @@ def create_alt_dedupe_scenario(
             model.threshold = threshold
 
             # Add both models to backend and DAG
-            backend.insert_model(model_config=model.model.model_config)
+            model_resolution = Resolution(
+                name=model.model.name,
+                description=model.model.description,
+                truth=model.model.truth,
+                resolution_type="model",
+                config=model.model.config,
+            )
+            backend.insert_model(resolution=model_resolution)
             backend.set_model_results(name=model.name, results=model.probabilities)
             backend.set_model_truth(name=model.name, truth=threshold)
 
@@ -457,26 +500,26 @@ def create_convergent_scenario(
     # Index sources in backend
     for source_testkit in dag.sources.values():
         backend.index(
-            source_config=source_testkit.source_config,
+            resolution=source_testkit.source.to_resolution(),
             data_hashes=source_testkit.data_hashes,
         )
 
     # Create and add deduplication models
     for testkit in dag.sources.values():
-        source = testkit.source_config
-        name = f"naive_test.{source.name}"
+        resolution = testkit.source.to_resolution()
+        name = f"naive_test_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=source.name)
+        source_query = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=source.name,
+            left_resolution=resolution.name,
             left_query=source_query,
-            left_keys={source.name: "key"},
+            left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=name,
-            description=f"Deduplication of {source.name}",
+            description=f"Deduplication of {resolution.name}",
             prob_range=(1.0, 1.0),
             seed=seed,
         )

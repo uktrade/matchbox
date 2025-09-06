@@ -273,8 +273,8 @@ class TestE2EPipelineBuilder:
         final_df = query(
             select(
                 {
-                    source_a.config.name: ["id", "company_name", "registration_id"],
-                    source_b.config.name: ["id", "company_name", "registration_id"],
+                    source_a.name: ["id", "company_name", "registration_id"],
+                    source_b.name: ["id", "company_name", "registration_id"],
                 },
                 client=self.warehouse_engine,
             ),
@@ -291,12 +291,12 @@ class TestE2EPipelineBuilder:
 
         # mb.match works too
         matches = mb_match(
-            source_a.config.name,
-            source=source_b.config.name,
+            source_a.name,
+            source=source_b.name,
             resolution="__DEFAULT__",
-            key=final_df.filter(pl.col(source_b.config.qualified_key).is_not_null())[
-                source_b.config.qualified_key
-            ][0],
+            key=final_df.filter(
+                pl.col(source_b.f(source_b.config.key_field.name)).is_not_null()
+            )[source_b.f(source_b.config.key_field.name)][0],
         )
         assert len(matches) >= 1
         assert matches[0].cluster
@@ -309,8 +309,8 @@ class TestE2EPipelineBuilder:
         final_df_second = query(
             select(
                 {
-                    source_a.config.name: ["company_name", "registration_id"],
-                    source_b.config.name: ["company_name", "registration_id"],
+                    source_a.name: ["company_name", "registration_id"],
+                    source_b.name: ["company_name", "registration_id"],
                 },
                 client=self.warehouse_engine,
             ),

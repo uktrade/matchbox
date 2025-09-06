@@ -264,7 +264,7 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine):
             text_col,
             INSTR(text_col, 'a') as position_of_a
         FROM
-            "{source_testkit.source_config.name}"
+            "{source_testkit.source.to_resolution().name}"
     """
 
     # This should work since INSTR is valid SQLite

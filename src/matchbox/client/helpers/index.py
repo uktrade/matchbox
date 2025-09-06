@@ -19,7 +19,9 @@ def index(
         raise ValueError("Source client not set")
 
     data_hashes = source.hash_data(batch_size=batch_size)
-    _handler.index(source_config=source.config, data_hashes=data_hashes)
+    _handler.index(
+        source_config=source.config, data_hashes=data_hashes, source_name=source.name
+    )
 
 
 def get_source(
@@ -43,14 +45,14 @@ def get_source(
             against the index fields.
 
     Returns:
-        A SourceConfig object.
+        A Source object.
     """
-    config = _handler.get_source_config(name=name)
+    resolution = _handler.get_source_config(name=name)
 
     validations = [
-        (location.config, config.location_config, "location"),
-        (extract_transform, config.extract_transform, "extract/transform"),
-        (key_field, config.key_field, "key field"),
+        (location.config, resolution.config.location_config, "location"),
+        (extract_transform, resolution.config.extract_transform, "extract/transform"),
+        (key_field, resolution.config.key_field, "key field"),
     ]
 
     for provided, actual, field_name in validations:
@@ -59,15 +61,18 @@ def get_source(
                 f"Source {name} does not match the provided {field_name}: {provided}"
             )
 
-    if index_fields is not None and set(config.index_fields) != set(index_fields):
+    if index_fields is not None and set(resolution.config.index_fields) != set(
+        index_fields
+    ):
         raise ValueError(
             f"Source {name} does not match the provided index fields: {index_fields}"
         )
 
     return Source(
         location=location,
-        name=config.name,
-        extract_transform=config.extract_transform,
-        key_field=config.key_field,
-        index_fields=config.index_fields,
+        name=resolution.name,
+        description=resolution.description,
+        extract_transform=resolution.config.extract_transform,
+        key_field=resolution.config.key_field,
+        index_fields=resolution.config.index_fields,
     )

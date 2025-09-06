@@ -172,12 +172,13 @@ def test_source_factory_mock_properties():
     location_name = "custom_name"
     engine = create_engine("sqlite:///:memory:")
 
-    source_config = source_factory(
+    source_testkit = source_factory(
         features=features,
         name=name,
         location_name=location_name,
         engine=engine,
-    ).source_config
+    )
+    source_config = source_testkit.source_config
 
     # Location should be consistent
     expected_location = LocationConfig(type=LocationType.RDBMS, name=location_name)
@@ -190,12 +191,11 @@ def test_source_factory_mock_properties():
         assert index_field.type == feature.datatype
 
     # Check default resolution name and default key field
-    assert source_config.name == name
+    assert source_testkit.source.name == name
     assert source_config.key_field.name == "key"
 
     # Verify source properties are preserved through model_dump
     dump = source_config.model_dump()
-    assert dump["name"] == name
     assert str(dump["location_config"]["name"]) == location_name
     assert dump["key_field"] == {"name": "key", "type": DataTypes.STRING}
     assert dump["index_fields"] == tuple(

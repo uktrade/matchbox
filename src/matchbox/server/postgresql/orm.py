@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import BYTEA, TEXT, insert
 from sqlalchemy.orm import Session, relationship
 
-from matchbox.common.dtos import LocationConfig
+from matchbox.common.dtos import LocationConfig, Resolution
 from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.dtos import SourceField as CommonSourceField
 from matchbox.common.exceptions import (
@@ -468,12 +468,9 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
             ],
         )
 
-    def to_dto(self) -> CommonSourceConfig:
+    def to_source_config(self) -> CommonSourceConfig:
         """Convert ORM source to a matchbox.common SourceConfig object."""
         return CommonSourceConfig(
-            name=self.name,
-            description=self.source_resolution.description,
-            truth=self.source_resolution.truth,
             location_config=LocationConfig(
                 type=self.location_type, name=self.location_name
             ),
@@ -488,6 +485,16 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
                 )
                 for field in self.index_fields
             ],
+        )
+
+    def to_dto(self) -> Resolution:
+        """Convert ORM source to a matchbox.common Resolution object."""
+        return Resolution(
+            name=self.name,
+            description=self.source_resolution.description,
+            truth=self.source_resolution.truth,
+            resolution_type="source",
+            config=self.to_source_config(),
         )
 
 

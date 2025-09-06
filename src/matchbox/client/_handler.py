@@ -5,7 +5,6 @@ import zipfile
 from collections.abc import Iterable
 from importlib.metadata import version
 from io import BytesIO
-from typing import Union
 
 import httpx
 from pyarrow import Table
@@ -35,8 +34,8 @@ from matchbox.common.dtos import (
     LoginAttempt,
     LoginResult,
     Match,
-    ModelConfig,
     NotFoundError,
+    Resolution,
     ResolutionOperationStatus,
     SourceConfig,
     UploadStage,
@@ -266,18 +265,27 @@ def match(
 
 
 @http_retry
-def index(source_config: SourceConfig, data_hashes: Table) -> UploadStatus:
+def index(
+    source_config: SourceConfig, data_hashes: Table, source_name: str
+) -> UploadStatus:
     """Index hashes from a SourceConfig."""
-    log_prefix = f"Index {source_config.name}"
+    log_prefix = f"Index {source_name}"
 
     buffer = table_to_buffer(table=data_hashes)
 
     # Upload metadata
     logger.debug("Uploading metadata", prefix=log_prefix)
 
-    metadata_res = CLIENT.post(
-        "/resolutions", json=source_config.model_dump(mode="json")
+    # Create Resolution object for API
+    resolution = Resolution(
+        name=source_name,
+        description=None,
+        truth=None,
+        resolution_type="source",
+        config=source_config,
     )
+
+    metadata_res = CLIENT.post("/resolutions", json=resolution.model_dump(mode="json"))
 
     upload = UploadStatus.model_validate(metadata_res.json())
 
@@ -308,23 +316,23 @@ def index(source_config: SourceConfig, data_hashes: Table) -> UploadStatus:
 
 
 @http_retry
-def get_source_config(name: SourceResolutionName) -> SourceConfig:
+def get_source_config(name: SourceResolutionName) -> Resolution:
     log_prefix = f"SourceConfig {name}"
     logger.debug("Retrieving", prefix=log_prefix)
 
     res = CLIENT.get(f"/resolutions/{name}")
 
-    return SourceConfig.model_validate(res.json())
+    return Resolution.model_validate(res.json())
 
 
 @http_retry
-def get_resolution_source_configs(name: ModelResolutionName) -> list[SourceConfig]:
+def get_resolution_source_configs(name: ModelResolutionName) -> list[Resolution]:
     log_prefix = f"Resolution {name}"
     logger.debug("Retrieving", prefix=log_prefix)
 
     res = CLIENT.get(f"/resolutions/{name}/sources")
 
-    return [SourceConfig.model_validate(s) for s in res.json()]
+    return [Resolution.model_validate(s) for s in res.json()]
 
 
 @http_retry
@@ -342,29 +350,27 @@ def get_resolution_graph() -> ResolutionGraph:
 
 @http_retry
 def create_resolution(
-    resolution: SourceConfig | ModelConfig,
+    resolution: Resolution,
 ) -> ResolutionOperationStatus | UploadStatus:
     """Create a resolution (model or source)."""
     log_prefix = f"Resolution {resolution.name}"
     logger.debug("Creating", prefix=log_prefix)
 
     res = CLIENT.post("/resolutions", json=resolution.model_dump())
-    if isinstance(resolution, SourceConfig):
+    if resolution.resolution_type == "source":
         return UploadStatus.model_validate(res.json())
     return ResolutionOperationStatus.model_validate(res.json())
 
 
 @http_retry
-def get_resolution(name: ResolutionName) -> Union[ModelConfig, SourceConfig, None]:
+def get_resolution(name: ResolutionName) -> Resolution | None:
     """Get a resolution from Matchbox."""
     log_prefix = f"Resolution {name}"
     logger.debug("Retrieving metadata", prefix=log_prefix)
 
     try:
         res = CLIENT.get(f"/resolutions/{name}")
-        if res.json().get("resolution_type") == "model":
-            return ModelConfig.model_validate(res.json())
-        return SourceConfig.model_validate(res.json())
+        return Resolution.model_validate(res.json())
     except MatchboxResolutionNotFoundError:
         return None
 

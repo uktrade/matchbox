@@ -171,7 +171,7 @@ class TestE2EModelEvaluation:
 
         # Create and run a deduper model locally
         queried_source = query(
-            select(self.source_a.config.name, client=self.engine),
+            select(self.source_a.name, client=self.engine),
             return_type="polars",
         )
         deduper = make_model(
@@ -183,7 +183,7 @@ class TestE2EModelEvaluation:
                 "unique_fields": [self.source_a.f("registration_id")],
             },
             left_data=queried_source,
-            left_resolution=self.source_a.config.name,
+            left_resolution=self.source_a.name,
         )
 
         results = deduper.run()

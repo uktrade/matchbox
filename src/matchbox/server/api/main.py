@@ -27,6 +27,7 @@ from matchbox.common.dtos import (
     CountResult,
     LoginAttempt,
     LoginResult,
+    Match,
     NotFoundError,
     OKMessage,
     UploadStage,
@@ -39,7 +40,6 @@ from matchbox.common.exceptions import (
     MatchboxSourceNotFoundError,
 )
 from matchbox.common.graph import ResolutionGraph, ResolutionName, SourceResolutionName
-from matchbox.common.sources import Match
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
@@ -48,7 +48,7 @@ from matchbox.server.api.dependencies import (
     authorisation_dependencies,
     lifespan,
 )
-from matchbox.server.api.routers import eval, models, resolutions, sources
+from matchbox.server.api.routers import eval, resolution
 from matchbox.server.uploads import process_upload, process_upload_celery, table_to_s3
 
 app = FastAPI(
@@ -56,9 +56,7 @@ app = FastAPI(
     version=version("matchbox_db"),
     lifespan=lifespan,
 )
-app.include_router(models.router)
-app.include_router(sources.router)
-app.include_router(resolutions.router)
+app.include_router(resolution.router)
 app.include_router(eval.router)
 
 

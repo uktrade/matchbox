@@ -17,12 +17,15 @@ from matchbox.common.factories.sources import source_factory
 def test_match_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     """The client can perform the right call for matching."""
     # Set up mocks
-    source_testkit = source_factory(engine=sqlite_warehouse, name="source")
-    source_testkit.write_to_location(sqlite_warehouse, set_client=True)
-    target1_testkit = source_factory(engine=sqlite_warehouse, name="target1")
-    target1_testkit.write_to_location(sqlite_warehouse, set_client=True)
-    target2_testkit = source_factory(engine=sqlite_warehouse, name="target2")
-    target2_testkit.write_to_location(sqlite_warehouse, set_client=True)
+    source_testkit = source_factory(
+        engine=sqlite_warehouse, name="source"
+    ).write_to_location()
+    target1_testkit = source_factory(
+        engine=sqlite_warehouse, name="target1"
+    ).write_to_location()
+    target2_testkit = source_factory(
+        engine=sqlite_warehouse, name="target2"
+    ).write_to_location()
 
     mock_match1 = Match(
         cluster=1,
@@ -46,19 +49,23 @@ def test_match_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     match_route = matchbox_api.get("/match").mock(
         return_value=Response(200, content=serialised_matches)
     )
-    matchbox_api.get(f"/sources/{source_testkit.source_config.name}").mock(
+    matchbox_api.get(f"/resolutions/{source_testkit.source.to_resolution().name}").mock(
         return_value=Response(
-            200, json=source_testkit.source_config.model_dump(mode="json")
+            200, json=source_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
-    matchbox_api.get(f"/sources/{target1_testkit.source_config.name}").mock(
+    matchbox_api.get(
+        f"/resolutions/{target1_testkit.source.to_resolution().name}"
+    ).mock(
         return_value=Response(
-            200, json=target1_testkit.source_config.model_dump(mode="json")
+            200, json=target1_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
-    matchbox_api.get(f"/sources/{target2_testkit.source_config.name}").mock(
+    matchbox_api.get(
+        f"/resolutions/{target2_testkit.source.to_resolution().name}"
+    ).mock(
         return_value=Response(
-            200, json=target2_testkit.source_config.model_dump(mode="json")
+            200, json=target2_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
 
@@ -101,14 +108,14 @@ def test_match_404_resolution(matchbox_api: MockRouter, sqlite_warehouse: Engine
             ).model_dump(),
         )
     )
-    matchbox_api.get(f"/sources/{source_testkit.source_config.name}").mock(
+    matchbox_api.get(f"/resolutions/{source_testkit.source.to_resolution().name}").mock(
         return_value=Response(
-            200, json=source_testkit.source_config.model_dump(mode="json")
+            200, json=source_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
-    matchbox_api.get(f"/sources/{target_testkit.source_config.name}").mock(
+    matchbox_api.get(f"/resolutions/{target_testkit.source.to_resolution().name}").mock(
         return_value=Response(
-            200, json=target_testkit.source_config.model_dump(mode="json")
+            200, json=target_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
 
@@ -126,7 +133,7 @@ def test_match_404_source(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     """The client can handle a source not found error."""
     target_testkit = source_factory(engine=sqlite_warehouse, name="target")
 
-    matchbox_api.get("/sources/source").mock(
+    matchbox_api.get("/resolutions/source").mock(
         return_value=Response(
             404,
             json=NotFoundError(
@@ -135,9 +142,9 @@ def test_match_404_source(matchbox_api: MockRouter, sqlite_warehouse: Engine):
             ).model_dump(),
         )
     )
-    matchbox_api.get(f"/sources/{target_testkit.source_config.name}").mock(
+    matchbox_api.get(f"/resolutions/{target_testkit.source.to_resolution().name}").mock(
         return_value=Response(
-            200, json=target_testkit.source_config.model_dump(mode="json")
+            200, json=target_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
 
@@ -156,21 +163,23 @@ def test_match_empty_results_raises_exception(
 ):
     """Test that match raises MatchboxEmptyServerResponse when no matches are found."""
     # Set up mocks
-    source_testkit = source_factory(engine=sqlite_warehouse, name="source")
-    source_testkit.write_to_location(sqlite_warehouse, set_client=True)
-    target_testkit = source_factory(engine=sqlite_warehouse, name="target")
-    target_testkit.write_to_location(sqlite_warehouse, set_client=True)
+    source_testkit = source_factory(
+        engine=sqlite_warehouse, name="source"
+    ).write_to_location()
+    target_testkit = source_factory(
+        engine=sqlite_warehouse, name="target"
+    ).write_to_location()
 
     # Mock empty match results
     matchbox_api.get("/match").mock(return_value=Response(200, content="[]"))
-    matchbox_api.get(f"/sources/{source_testkit.source_config.name}").mock(
+    matchbox_api.get(f"/resolutions/{source_testkit.source.to_resolution().name}").mock(
         return_value=Response(
-            200, json=source_testkit.source_config.model_dump(mode="json")
+            200, json=source_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
-    matchbox_api.get(f"/sources/{target_testkit.source_config.name}").mock(
+    matchbox_api.get(f"/resolutions/{target_testkit.source.to_resolution().name}").mock(
         return_value=Response(
-            200, json=target_testkit.source_config.model_dump(mode="json")
+            200, json=target_testkit.source.to_resolution().model_dump(mode="json")
         )
     )
 

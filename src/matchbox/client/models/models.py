@@ -1,6 +1,6 @@
 """Functions and classes to define, run and register models."""
 
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar, overload
 
 import polars as pl
 
@@ -8,9 +8,9 @@ from matchbox.client import _handler
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.results import Results
-from matchbox.common.dtos import ModelAncestor, ModelConfig, ModelType
+from matchbox.common.dtos import ModelConfig, ModelType, Resolution
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
-from matchbox.common.graph import ModelResolutionName, ResolutionName
+from matchbox.common.graph import ModelResolutionName, ResolutionName, ResolutionType
 from matchbox.common.logging import logger
 
 P = ParamSpec("P")
@@ -20,99 +20,159 @@ R = TypeVar("R")
 class Model:
     """Unified model class for both linking and deduping operations."""
 
+    @overload
     def __init__(
         self,
-        metadata: ModelConfig,
-        model_instance: Linker | Deduper,
+        name: str,
+        description: str | None,
+        model_instance: Deduper,
+        left_resolution: ResolutionName,
         left_data: pl.DataFrame,
+        right_resolution: None = None,
+        right_data: None = None,
+        truth: float = 1.0,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        name: str,
+        description: str | None,
+        model_instance: Linker,
+        left_resolution: ResolutionName,
+        left_data: pl.DataFrame,
+        right_resolution: ResolutionName,
+        right_data: pl.DataFrame,
+        truth: float = 1.0,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        name: str,
+        description: str | None,
+        model_instance: Linker | Deduper,
+        left_resolution: ResolutionName,
+        left_data: pl.DataFrame,
+        right_resolution: ResolutionName | None = None,
         right_data: pl.DataFrame | None = None,
+        truth: float = 1.0,
     ):
-        """Create a new model instance."""
-        self.model_config = metadata
+        """Create a new model instance.
+
+        Args:
+            name: Unique name for the model
+            description: Optional description of the model
+            truth: Truth threshold. Defaults to 1.0. Can be set later after analysis.
+            model_instance: Instance of Linker or Deduper
+            left_resolution: The name of the resolution that produced left_data. This is
+                the only resolution for deduping.
+            left_data: Primary data for the model. This is the only data for deduping.
+            right_resolution: The name of the resolution that produced right_data.
+                Required for linking
+            right_data: Secondary data for the model. Required for linking
+        """
+        self.name = name
+        self.description = description
         self.model_instance = model_instance
         self.left_data = left_data
         self.right_data = right_data
 
+        self._truth: int = _truth_float_to_int(truth)
+
+        model_type: ModelType = (
+            ModelType.LINKER
+            if isinstance(model_instance, Linker)
+            else ModelType.DEDUPER
+        )
+
+        self.config = ModelConfig(
+            type=model_type,
+            left_resolution=left_resolution,
+            right_resolution=right_resolution,
+        )
+
+    def to_resolution(self) -> Resolution:
+        """Convert to Resolution for API calls."""
+        return Resolution(
+            name=self.name,
+            description=self.description,
+            truth=self._truth,
+            resolution_type=ResolutionType.MODEL,
+            config=self.config,
+        )
+
+    @classmethod
+    def from_resolution(
+        cls,
+        resolution: Resolution,
+        model_instance: Linker | Deduper,
+        left_data: pl.DataFrame,
+        right_data: pl.DataFrame | None = None,
+    ) -> "Model":
+        """Reconstruct from Resolution."""
+        assert resolution.resolution_type == ResolutionType.MODEL, (
+            "Resolution must be of type 'model'"
+        )
+        assert isinstance(resolution.config, ModelConfig), "Config must be ModelConfig"
+        return cls(
+            name=resolution.name,
+            description=resolution.description,
+            truth=resolution.truth,
+            metadata=resolution.config,
+            model_instance=model_instance,
+            left_data=left_data,
+            right_data=right_data,
+        )
+
     def insert_model(self) -> None:
         """Insert the model into the backend database."""
-        if model_config := _handler.get_model(name=self.model_config.name):
-            if model_config != self.model_config:
+        resolution = self.to_resolution()
+        if existing_resolution := _handler.get_resolution(name=self.name):
+            # Check if config matches
+            if existing_resolution.config != self.config:
                 raise ValueError(
-                    f"Model {self.model_config.name} already exists with "
-                    "different configuration. Please delete the existing model "
+                    f"Resolution {self.name} already exists with different "
+                    "configuration. Please delete the existing resolution "
                     "or use a different name. "
                 )
-            log_prefix = f"Model {model_config.name}"
+            log_prefix = f"Resolution {self.name}"
             logger.warning("Already exists. Passing.", prefix=log_prefix)
         else:
-            _handler.insert_model(model_config=self.model_config)
+            _handler.create_resolution(resolution=resolution)
 
     @property
     def results(self) -> Results:
         """Retrieve results associated with the model from the database."""
-        results = _handler.get_model_results(name=self.model_config.name)
-        return Results(probabilities=results, metadata=self.model_config)
+        results = _handler.get_results(name=self.name)
+        return Results(probabilities=results, metadata=self.config)
 
     @results.setter
     def results(self, results: Results) -> None:
         """Write results associated with the model to the database."""
         if results.probabilities.shape[0] > 0:
-            _handler.add_model_results(
-                name=self.model_config.name, results=results.probabilities
-            )
+            _handler.set_results(name=self.name, results=results.probabilities)
 
     @property
-    def truth(self) -> float:
-        """Retrieve the truth threshold for the model."""
-        truth = _handler.get_model_truth(name=self.model_config.name)
-        return _truth_int_to_float(truth)
+    def truth(self) -> float | None:
+        """Returns the truth threshold for the model as a float."""
+        if self._truth is not None:
+            return _truth_int_to_float(self._truth)
+        return None
 
     @truth.setter
     def truth(self, truth: float) -> None:
         """Set the truth threshold for the model."""
-        _handler.set_model_truth(
-            name=self.model_config.name, truth=_truth_float_to_int(truth)
-        )
-
-    @property
-    def ancestors(self) -> dict[str, float]:
-        """Retrieve the ancestors of the model."""
-        return {
-            ancestor.name: _truth_int_to_float(ancestor.truth)
-            for ancestor in _handler.get_model_ancestors(name=self.model_config.name)
-        }
-
-    @property
-    def ancestors_cache(self) -> dict[str, float]:
-        """Retrieve the ancestors cache of the model."""
-        return {
-            ancestor.name: _truth_int_to_float(ancestor.truth)
-            for ancestor in _handler.get_model_ancestors_cache(
-                name=self.model_config.name
-            )
-        }
-
-    @ancestors_cache.setter
-    def ancestors_cache(self, ancestors_cache: dict[str, float]) -> None:
-        """Set the ancestors cache of the model."""
-        _handler.set_model_ancestors_cache(
-            name=self.model_config.name,
-            ancestors=[
-                ModelAncestor(name=k, truth=_truth_float_to_int(v))
-                for k, v in ancestors_cache.items()
-            ],
-        )
+        self._truth = _truth_float_to_int(truth)
+        _handler.set_truth(name=self.name, truth=self._truth)
 
     def delete(self, certain: bool = False) -> bool:
         """Delete the model from the database."""
-        result = _handler.delete_resolution(
-            name=self.model_config.name, certain=certain
-        )
+        result = _handler.delete_resolution(name=self.name, certain=certain)
         return result.success
 
     def run(self) -> Results:
         """Execute the model pipeline and return results."""
-        if self.model_config.type == ModelType.LINKER:
+        if self.config.type == ModelType.LINKER:
             if self.right_data is None:
                 raise MatchboxResolutionNotFoundError("Right data required for linking")
 
@@ -125,7 +185,7 @@ class Model:
         return Results(
             probabilities=results,
             model=self,
-            metadata=self.model_config,
+            metadata=self.config,
         )
 
 
@@ -158,11 +218,6 @@ def make_model(
         ModelType.LINKER if issubclass(model_class, Linker) else ModelType.DEDUPER
     )
 
-    if model_type == ModelType.LINKER and (
-        right_data is None or right_resolution is None
-    ):
-        raise ValueError("Linking requires both right_data and right_resolution")
-
     model_instance = model_class.from_settings(**model_settings)
 
     if model_type == ModelType.LINKER:
@@ -170,18 +225,13 @@ def make_model(
     else:
         model_instance.prepare(data=left_data)
 
-    metadata = ModelConfig(
+    return Model(
         name=name,
         description=description,
-        type=model_type.value,
-        left_resolution=left_resolution,
-        right_resolution=right_resolution,
-    )
-
-    return Model(
-        metadata=metadata,
         model_instance=model_instance,
+        left_resolution=left_resolution,
         left_data=left_data,
+        right_resolution=right_resolution,
         right_data=right_data,
     )
 

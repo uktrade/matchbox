@@ -108,7 +108,7 @@ Adding a `Model`.
 
 ```python
 model_testkit = model_factory()
-backend.insert_model(model_config=model_testkit.model.model_config)
+backend.insert_model(model_config=model_testkit.model.config)
 ```
 
 Inserting results.
@@ -116,7 +116,7 @@ Inserting results.
 ```python
 model_testkit = model_factory()
 backend.set_model_results(
-    name=model_testkit.model.model_config.name, 
+    name=model_testkit.model.config.name, 
     results=model_testkit.probabilities
 )
 ```
@@ -137,9 +137,9 @@ model_testkit = model_factory(
     true_entities=linked_testkit.true_entities,
 )
 
-backend.insert_model(model_config=model_testkit.model.model_config)
+backend.insert_model(model_config=model_testkit.model.config)
 backend.set_model_results(
-    name=model_testkit.model.model_config.name, 
+    name=model_testkit.model.config.name, 
     results=model_testkit.probabilities
 )
 ```

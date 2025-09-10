@@ -29,9 +29,8 @@ def test_get_samples(
         name="foo",
         location_name="db",
         engine=sqlite_warehouse,
-    )
-    testkit_foo.write_to_location(sqlite_warehouse)
-    source_foo = testkit_foo.source_config
+    ).write_to_location()
+    source_foo = testkit_foo.source.to_resolution()
 
     testkit_bar = source_from_tuple(
         data_tuple=({"col": 1}, {"col": 2}, {"col": 3}, {"col": 4}),
@@ -39,9 +38,8 @@ def test_get_samples(
         name="bar",
         location_name="db",
         engine=sqlite_warehouse,
-    )
-    testkit_bar.write_to_location(sqlite_warehouse)
-    source_bar = testkit_bar.source_config
+    ).write_to_location()
+    source_bar = testkit_bar.source.to_resolution()
 
     # This will be excluded as the location name differs
     testkit_baz = source_from_tuple(
@@ -50,17 +48,16 @@ def test_get_samples(
         name="baz",
         location_name="db_other",
         engine=sqlite_warehouse,
-    )
-    testkit_baz.write_to_location(sqlite_warehouse)
-    source_baz = testkit_baz.source_config
+    ).write_to_location()
+    source_baz = testkit_baz.source.to_resolution()
 
-    matchbox_api.get("/sources/foo").mock(
+    matchbox_api.get("/resolutions/foo").mock(
         return_value=Response(200, content=source_foo.model_dump_json())
     )
-    matchbox_api.get("/sources/bar").mock(
+    matchbox_api.get("/resolutions/bar").mock(
         return_value=Response(200, content=source_bar.model_dump_json())
     )
-    matchbox_api.get("/sources/baz").mock(
+    matchbox_api.get("/resolutions/baz").mock(
         return_value=Response(200, content=source_baz.model_dump_json())
     )
 

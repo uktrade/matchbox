@@ -1,0 +1,20 @@
+set working-directory := "../../../.."
+
+default:
+    just -f src/matchbox/server/postgresql/justfile -l
+
+# Bring the database up to the latest migration script (the head)
+apply:
+    uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" upgrade head
+
+# Check if migration-generate would produce a migration script without creating one
+check:
+    uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" check
+
+# Autogenerate a new migration (keep your descriptive message brief as it is appended to the filename)
+generate descriptive-message:
+    uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" revision --autogenerate -m "{{descriptive-message}}"
+
+# Reset the DB to the base state
+reset:
+    uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" downgrade base

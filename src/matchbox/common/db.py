@@ -1,12 +1,13 @@
 """Common database utilities for Matchbox."""
 
 from collections.abc import Callable, Iterator
+from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    TypeAlias,
     TypeVar,
-    get_args,
     overload,
 )
 
@@ -24,8 +25,16 @@ if TYPE_CHECKING:
 else:
     ADBCConnection = Any
 
-ReturnTypeStr = Literal["arrow", "pandas", "polars"]
-QueryReturnType = ArrowTable | PandasDataFrame | PolarsDataFrame
+
+class QueryReturnType(StrEnum):
+    """Enumeration of dataframe types to return from query."""
+
+    PANDAS = "pandas"
+    POLARS = "polars"
+    ARROW = "arrow"
+
+
+QueryReturnClass: TypeAlias = ArrowTable | PandasDataFrame | PolarsDataFrame
 
 T = TypeVar("T")
 
@@ -34,41 +43,41 @@ T = TypeVar("T")
 def sql_to_df(
     stmt: str,
     connection: Engine | ADBCConnection,
-    return_type: Literal["arrow", "pandas", "polars"],
+    return_type: QueryReturnType,
     *,
     return_batches: Literal[False] = False,
     batch_size: int | None = None,
     rename: dict[str, str] | Callable | None = None,
     schema_overrides: dict[str, pl.DataType] | None = None,
     execute_options: dict[str, Any] | None = None,
-) -> QueryReturnType: ...
+) -> QueryReturnClass: ...
 
 
 @overload
 def sql_to_df(
     stmt: str,
     connection: Engine | ADBCConnection,
-    return_type: Literal["arrow", "pandas", "polars"],
+    return_type: QueryReturnType,
     *,
     return_batches: Literal[True],
     batch_size: int | None = None,
     rename: dict[str, str] | Callable | None = None,
     schema_overrides: dict[str, pl.DataType] | None = None,
     execute_options: dict[str, Any] | None = None,
-) -> Iterator[QueryReturnType]: ...
+) -> Iterator[QueryReturnClass]: ...
 
 
 def sql_to_df(
     stmt: str,
     connection: Engine | ADBCConnection,
-    return_type: ReturnTypeStr = "pandas",
+    return_type: QueryReturnType = QueryReturnType.PANDAS,
     *,
     return_batches: bool = False,
     batch_size: int | None = None,
     rename: dict[str, str] | Callable | None = None,
     schema_overrides: dict[str, pl.DataType] | None = None,
     execute_options: dict[str, Any] | None = None,
-) -> QueryReturnType | Iterator[QueryReturnType]:
+) -> QueryReturnClass | Iterator[QueryReturnClass]:
     """Executes the given SQLAlchemy statement or SQL string using Polars.
 
     Args:
@@ -103,26 +112,26 @@ def sql_to_df(
             * If batch_size and return_batches are either both set or both unset.
 
     """
-    if return_type not in get_args(ReturnTypeStr):
-        raise ValueError(f"return_type of {return_type} not valid")
-
     if not batch_size and return_batches:
         raise ValueError("A batch size must be specified if return_batches is True")
 
     if batch_size and not return_batches:
         raise ValueError("Cannot set a batch size if return_batches if False")
 
-    def _to_format(results: PolarsDataFrame) -> QueryReturnType:
+    def _to_format(results: PolarsDataFrame) -> QueryReturnClass:
         """Convert the results to the specified format."""
         if rename:
             results = results.rename(rename)
 
-        if return_type == "polars":
-            return results
-        elif return_type == "arrow":
-            return results.to_arrow()
-        elif return_type == "pandas":
-            return results.to_pandas()
+        match return_type:
+            case QueryReturnType.POLARS:
+                return results
+            case QueryReturnType.PANDAS:
+                return results.to_pandas()
+            case QueryReturnType.ARROW:
+                return results.to_arrow()
+            case _:
+                raise ValueError("Unknown return type specified.")
 
     res = pl.read_database(
         query=stmt,

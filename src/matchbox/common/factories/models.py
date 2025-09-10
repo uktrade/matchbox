@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeVar
 from unittest.mock import Mock, PropertyMock, create_autospec
 
 import numpy as np
+import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
 import rustworkx as rx
@@ -23,7 +24,6 @@ from matchbox.client.models.models import Model
 from matchbox.client.results import Results
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.dtos import (
-    ModelConfig,
     ModelType,
 )
 from matchbox.common.factories.entities import (
@@ -545,7 +545,7 @@ class ModelTestkit(BaseModel):
     @property
     def name(self) -> str:
         """Return the full name of the Model."""
-        return self.model.model_config.name
+        return self.model.name
 
     @property
     def entities(self) -> tuple[ClusterEntity, ...]:
@@ -606,7 +606,7 @@ class ModelTestkit(BaseModel):
         mock_model = create_autospec(Model)
 
         # Set basic attributes
-        mock_model.model_config = self.model
+        mock_model.config = self.model
         mock_model.left_data = DataFrame()  # Default empty DataFrame
         mock_model.right_data = (
             DataFrame() if self.model.type == ModelType.LINKER else None
@@ -630,9 +630,14 @@ class ModelTestkit(BaseModel):
         return mock_model
 
     @property
+    def data(self) -> pa.Table:
+        """Return the probabilities data table."""
+        return self.probabilities
+
+    @property
     def query(self) -> pa.Table:
-        """Return a PyArrow table in the same format at matchbox.query()."""
-        if self.model.model_config.type == ModelType.DEDUPER:
+        """Return a PyArrow table in the same format as matchbox queries."""
+        if self.model.config.type == ModelType.DEDUPER:
             query = self.left_query
         else:
             query = pa.concat_tables(
@@ -805,19 +810,22 @@ def model_factory(
         model_type = resolved_model_type
 
     # ==== Model creation ====
-    metadata = ModelConfig(
+    model_instance = (
+        create_autospec(Linker, instance=True)
+        if model_type == ModelType.LINKER
+        else create_autospec(Deduper, instance=True)
+    )
+    model = Model(
         name=name or generator.unique.word(),
         description=description or generator.sentence(),
-        type=model_type,
+        truth=1.0,
+        model_instance=model_instance,
         left_resolution=left_resolution,
+        left_data=pl.from_arrow(left_query),
         right_resolution=right_resolution,
-    )
-
-    model = Model(
-        metadata=metadata,
-        model_instance=Mock(),
-        left_data=left_query,
-        right_data=right_query,
+        right_data=pl.from_arrow(right_query)
+        if model_type == ModelType.LINKER
+        else None,
     )
 
     # ==== Entity and probability generation ====
@@ -906,9 +914,6 @@ def query_to_model_factory(
     generator = Faker()
     generator.seed_instance(seed)
 
-    # Determine model type based on inputs
-    model_type = ModelType.LINKER if right_query is not None else ModelType.DEDUPER
-
     # Create left and right ClusterEntity sets
     left_clusters = query_to_cluster_entities(left_query, left_keys)
 
@@ -918,20 +923,20 @@ def query_to_model_factory(
         right_clusters = None
 
     # Create model metadata
-    metadata = ModelConfig(
+    model_instance = (
+        create_autospec(Linker, instance=True)
+        if right_query is not None
+        else create_autospec(Deduper, instance=True)
+    )
+    model = Model(
         name=name or generator.unique.word(),
         description=description or generator.sentence(),
-        type=model_type,
+        truth=1.0,
+        model_instance=model_instance,
         left_resolution=left_resolution,
+        left_data=pl.from_arrow(left_query),
         right_resolution=right_resolution,
-    )
-
-    # Create model instance
-    model = Model(
-        metadata=metadata,
-        model_instance=Mock(),
-        left_data=left_query,
-        right_data=right_query,
+        right_data=pl.from_arrow(right_query) if right_query is not None else None,
     )
 
     # Generate probabilities

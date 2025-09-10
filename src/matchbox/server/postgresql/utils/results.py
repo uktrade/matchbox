@@ -5,7 +5,7 @@ from typing import NamedTuple
 from sqlalchemy import select
 
 from matchbox.common.dtos import ModelConfig, ModelType
-from matchbox.common.graph import ResolutionNodeType
+from matchbox.common.graph import ResolutionType
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     ResolutionFrom,
@@ -41,9 +41,9 @@ def _get_model_parents(resolution_id: int) -> tuple[bytes, bytes | None]:
         p1_id, p1_type = p1
         p2_id, p2_type = p2
         # Put source first if it exists
-        if p1_type == ResolutionNodeType.SOURCE:
+        if p1_type == ResolutionType.SOURCE:
             return p1_id, p2_id
-        elif p2_type == ResolutionNodeType.SOURCE:
+        elif p2_type == ResolutionType.SOURCE:
             return p2_id, p1_id
         # Both models, maintain original order
         return p1_id, p2_id
@@ -75,7 +75,7 @@ def _get_source_info(resolution_id: int) -> SourceInfo:
 
 def get_model_config(resolution: Resolutions) -> ModelConfig:
     """Get metadata for a model resolution."""
-    if resolution.type != ResolutionNodeType.MODEL:
+    if resolution.type != ResolutionType.MODEL:
         raise ValueError("Expected resolution of type model")
 
     source_info: SourceInfo = _get_source_info(resolution_id=resolution.resolution_id)
@@ -87,8 +87,6 @@ def get_model_config(resolution: Resolutions) -> ModelConfig:
         )
 
         return ModelConfig(
-            name=resolution.name,
-            description=resolution.description or "",
             type=ModelType.DEDUPER if source_info.right is None else ModelType.LINKER,
             left_resolution=left.name,
             right_resolution=right.name if source_info.right else None,

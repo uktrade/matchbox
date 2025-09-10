@@ -30,6 +30,6 @@ repos:
     - id: alembic
       name: Alembic
       description: "Check for missing migrations"
-      entry: just migration-check
+      entry: just migrate check
       language: system
       pass_filenames: false

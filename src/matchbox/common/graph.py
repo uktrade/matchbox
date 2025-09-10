@@ -18,12 +18,11 @@ ResolutionName = SourceResolutionName | ModelResolutionName
 DEFAULT_RESOLUTION: ResolutionName = "__DEFAULT__"
 
 
-class ResolutionNodeType(StrEnum):
+class ResolutionType(StrEnum):
     """Types of nodes in a resolution."""
 
     SOURCE = "source"
     MODEL = "model"
-    HUMAN = "human"
 
 
 class ResolutionNode(BaseModel):
@@ -33,7 +32,7 @@ class ResolutionNode(BaseModel):
 
     id: int
     name: ResolutionName
-    type: ResolutionNodeType
+    type: ResolutionType
 
 
 class ResolutionEdge(BaseModel):

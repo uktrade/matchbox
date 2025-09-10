@@ -55,13 +55,16 @@ Choosing the right threshold for your model involves balancing precision and rec
 To evaluate this in code, first you need to build and run a model outside of a DAG:
 
 ```python
-from matchbox import make_model, query, select
+from matchbox import make_model
+from matchbox.client.queries import Query
+from matchbox.client.sources import Source
 from matchbox.client.models.dedupers import NaiveDeduper
 from sqlalchemy import create_engine
 
 engine = create_engine('postgresql://')
 
-df = query(select("source", client=engine))
+source = Source(...) # source parameters must be completed
+df = Query(source).run()
 
 model = make_model(
     name="model_name",

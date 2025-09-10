@@ -11,10 +11,11 @@ import polars as pl
 from polars.datatypes import String
 from sqlalchemy import create_engine
 
-from matchbox import index, make_model, query, select
+from matchbox import index, make_model
 from matchbox.client._handler import create_client
 from matchbox.client._settings import settings as client_settings
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.queries import Query
 from matchbox.common.factories.sources import source_from_tuple
 from matchbox.common.graph import DEFAULT_RESOLUTION
 
@@ -41,12 +42,10 @@ def setup_mock_database():
         data_keys=["1", "2", "3", "4"],
         name="foo",
         engine=warehouse,
-    )
-    testkit_foo.write_to_location(warehouse)
-    foo = testkit_foo.source_config
-    foo.location.add_client(warehouse)
+    ).write_to_location()
+    foo = testkit_foo.source
 
-    index(source_config=foo)
+    index(source=foo)
 
     testkit_bar = source_from_tuple(
         data_tuple=(
@@ -57,15 +56,14 @@ def setup_mock_database():
         data_keys=["a", "b", "c"],
         name="bar",
         engine=warehouse,
-    )
-    testkit_bar.write_to_location(warehouse)
+    ).write_to_location()
 
-    bar = testkit_bar.source_config
+    bar = testkit_bar.source
     bar.location.add_client(warehouse)
-    index(source_config=bar)
+    index(source=bar)
 
-    foo_df = query(select("foo", client=warehouse), return_type="polars")
-    bar_df = query(select("bar", client=warehouse), return_type="polars")
+    foo_df = Query(foo).run()
+    bar_df = Query(bar).run()
 
     foo_df = foo_df.with_columns(
         pl.col("foo_name")

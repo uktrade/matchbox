@@ -87,8 +87,8 @@ class TestkitDAG(BaseModel):
         self.root_source_names[name] = set()
 
         # Validate dependencies
-        left_res = testkit.model.model_config.left_resolution
-        right_res = testkit.model.model_config.right_resolution
+        left_res = testkit.model.config.left_resolution
+        right_res = testkit.model.config.right_resolution
         self._validate_dependencies(left_res, right_res)
 
         # Track dependencies based on left/right resolution

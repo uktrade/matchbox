@@ -9,6 +9,7 @@ import pyarrow as pa
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine
 
+from matchbox.client.queries import Query
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import FeatureConfig, SuffixRule
 from matchbox.common.factories.models import query_to_model_factory
@@ -154,12 +155,12 @@ def create_dedupe_scenario(
         name = f"naive_test_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=resolution.name)
+        source_data = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=resolution.name,
-            left_query=source_query,
+            left_query=Query(testkit.source),
+            left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=name,
@@ -198,12 +199,12 @@ def create_probabilistic_dedupe_scenario(
         name = f"probabilistic_test_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=resolution.name)
+        source_data = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=resolution.name,
-            left_query=source_query,
+            left_query=Query(testkit.source),
+            left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=name,
@@ -244,18 +245,18 @@ def create_link_scenario(
     cdms_model = dag.models["naive_test_cdms"]
 
     # Query data for each resolution
-    crn_query = backend.query(source="crn", resolution=crn_model.name)
-    duns_query = backend.query(source="duns", resolution=duns_model.name)
-    cdms_query = backend.query(source="cdms", resolution=cdms_model.name)
+    crn_data = backend.query(source="crn", resolution=crn_model.name)
+    duns_data = backend.query(source="duns", resolution=duns_model.name)
+    cdms_data = backend.query(source="cdms", resolution=cdms_model.name)
 
     # Create CRN-DUNS link
     crn_duns_name = "deterministic_naive_test_crn_naive_test_duns"
     crn_duns_model = query_to_model_factory(
-        left_resolution=crn_model.name,
-        left_query=crn_query,
+        left_query=Query(dag.sources["crn"].source, model=crn_model.model),
+        left_data=crn_data,
         left_keys={"crn": "key"},
-        right_resolution=duns_model.name,
-        right_query=duns_query,
+        right_query=Query(dag.sources["duns"], model=duns_model.model),
+        right_data=duns_data,
         right_keys={"duns": "key"},
         true_entities=tuple(linked.true_entities),
         name=crn_duns_name,
@@ -272,11 +273,11 @@ def create_link_scenario(
     # Create CRN-CDMS link
     crn_cdms_name = "probabilistic_naive_test_crn_naive_test_cdms"
     crn_cdms_model = query_to_model_factory(
-        left_resolution=crn_model.name,
-        left_query=crn_query,
+        left_query=Query(dag.sources["crn"].source, model=crn_model.model),
+        left_data=crn_data,
         left_keys={"crn": "key"},
-        right_resolution=cdms_model.name,
-        right_query=cdms_query,
+        right_query=Query(dag.sources["cdms"].source, model=cdms_model.model),
+        right_data=cdms_data,
         right_keys={"cdms": "key"},
         true_entities=tuple(linked.true_entities),
         name=crn_cdms_name,
@@ -292,26 +293,30 @@ def create_link_scenario(
 
     # Create final join
     # Query the previous link's results
-    crn_cdms_query_crn_only = backend.query(
+    crn_cdms_data_crn_only = backend.query(
         source="crn", resolution=crn_cdms_name
     ).rename_columns(["id", "keys_crn"])
-    crn_cdms_query_cdms_only = backend.query(
+    crn_cdms_data_cdms_only = backend.query(
         source="cdms", resolution=crn_cdms_name
     ).rename_columns(["id", "keys_cdms"])
-    crn_cdms_query = pa.concat_tables(
-        [crn_cdms_query_crn_only, crn_cdms_query_cdms_only],
+    crn_cdms_data = pa.concat_tables(
+        [crn_cdms_data_crn_only, crn_cdms_data_cdms_only],
         promote_options="default",
     ).combine_chunks()
 
-    duns_query_linked = backend.query(source="duns", resolution=duns_model.name)
+    duns_data_linked = backend.query(source="duns", resolution=duns_model.name)
 
     final_join_name = "final_join"
     final_join_model = query_to_model_factory(
-        left_resolution=crn_cdms_name,
-        left_query=crn_cdms_query,
+        left_query=Query(
+            dag.sources["crn"].source,
+            dag.sources["cdms"].source,
+            model=crn_cdms_model.model,
+        ),
+        left_data=crn_cdms_data,
         left_keys={"crn": "keys_crn", "cdms": "keys_cdms"},
-        right_resolution=duns_model.name,
-        right_query=duns_query_linked,
+        right_query=Query(dag.sources["duns"].source, model=duns_model.model),
+        right_data=duns_data_linked,
         right_keys={"duns": "key"},
         true_entities=tuple(linked.true_entities),
         name=final_join_name,
@@ -375,12 +380,12 @@ def create_alt_dedupe_scenario(
         model_name2 = f"dedupe2_{resolution.name}"
 
         # Query the raw data
-        source_query = backend.query(source=resolution.name)
+        source_data = backend.query(source=resolution.name)
 
         # Build model testkit using query data
         model_testkit1 = query_to_model_factory(
-            left_resolution=resolution.name,
-            left_query=source_query,
+            left_query=Query(testkit.source),
+            left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=model_name1,
@@ -390,8 +395,8 @@ def create_alt_dedupe_scenario(
         )
 
         model_testkit2 = query_to_model_factory(
-            left_resolution=resolution.name,
-            left_query=source_query,
+            left_query=Query(testkit.source),
+            left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=model_name2,
@@ -477,8 +482,8 @@ def create_convergent_scenario(
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_resolution=resolution.name,
-            left_query=source_query,
+            left_query=Query(testkit.source),
+            left_data=source_query,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
             name=name,

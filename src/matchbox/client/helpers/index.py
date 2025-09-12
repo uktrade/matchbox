@@ -4,24 +4,6 @@ from matchbox.client import _handler
 from matchbox.client.sources import Location, Source
 
 
-def index(
-    source: Source,
-    batch_size: int | None = None,
-) -> None:
-    """Indexes data in Matchbox.
-
-    Args:
-        source: A Source
-        batch_size: the size of each batch when fetching data from the warehouse,
-            which helps reduce the load on the database. Default is None.
-    """
-    if not source.location.client:
-        raise ValueError("Source client not set")
-
-    data_hashes = source.hash_data(batch_size=batch_size)
-    _handler.index(source=source, data_hashes=data_hashes)
-
-
 def get_source(
     name: str,
     location: Location,

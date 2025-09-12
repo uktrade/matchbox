@@ -55,7 +55,7 @@ Choosing the right threshold for your model involves balancing precision and rec
 To evaluate this in code, first you need to build and run a model outside of a DAG:
 
 ```python
-from matchbox import make_model
+from matchbox.client.models import Model
 from matchbox.client.queries import Query
 from matchbox.client.sources import Source
 from matchbox.client.models.dedupers import NaiveDeduper
@@ -64,9 +64,8 @@ from sqlalchemy import create_engine
 engine = create_engine('postgresql://')
 
 source = Source(...) # source parameters must be completed
-df = Query(source).run()
 
-model = make_model(
+model = Model(
     name="model_name",
     description=f"description",
     model_class=NaiveDeduper,
@@ -74,8 +73,7 @@ model = make_model(
         "id": "id",
         "unique_fields": ["field1", "field2"],
     },
-    left_data=df,
-    left_resolution="source",
+    left_query=Query(source)
 )
 
 results = model.run()

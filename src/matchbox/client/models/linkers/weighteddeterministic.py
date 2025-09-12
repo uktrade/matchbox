@@ -1,7 +1,5 @@
 """A linking methodology that applies different weights to field comparisons."""
 
-from typing import Any
-
 import duckdb
 import polars as pl
 from pydantic import BaseModel, Field, field_validator
@@ -79,27 +77,6 @@ class WeightedDeterministicLinker(Linker):
 
     _id_dtype_l: pl.DataType
     _id_dtype_r: pl.DataType
-
-    @classmethod
-    def from_settings(
-        cls,
-        left_id: str,
-        right_id: str,
-        weighted_comparisons: list[dict[str, Any]],
-        threshold: float,
-    ) -> "WeightedDeterministicLinker":
-        """Create a WeightedDeterministicLinker from a settings dictionary."""
-        settings = WeightedDeterministicSettings(
-            left_id=left_id,
-            right_id=right_id,
-            # No change in weighted_comparisons data, just validates the input list
-            weighted_comparisons=[
-                WeightedComparison.model_validate(comparison)
-                for comparison in weighted_comparisons
-            ],
-            threshold=threshold,
-        )
-        return cls(settings=settings)
 
     def prepare(self, left: pl.DataFrame, right: pl.DataFrame) -> None:
         """Prepare the linker for linking."""

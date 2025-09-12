@@ -6,7 +6,7 @@ from httpx import Response
 from respx import MockRouter
 from sqlalchemy import Engine, create_engine
 
-from matchbox.client.helpers.index import get_source, index
+from matchbox.client.helpers.index import get_source
 from matchbox.client.sources import RelationalDBLocation, Source
 from matchbox.common.dtos import (
     BackendResourceType,
@@ -58,8 +58,9 @@ def test_index_success(matchbox_api: MockRouter, sqlite_warehouse: Engine):
         )
     )
 
-    # Call the index function
-    index(source=source_testkit.source)
+    # Index the source
+    source_testkit.source.run()
+    source_testkit.source.sync()
 
     # Verify the API calls
     resolution_call = Resolution.model_validate_json(
@@ -111,7 +112,8 @@ def test_index_upload_failure(matchbox_api: MockRouter, sqlite_warehouse: Engine
 
     # Verify the error is propagated
     with pytest.raises(MatchboxServerFileError):
-        index(source=source_testkit.source)
+        source_testkit.source.run()
+        source_testkit.source.sync()
 
     # Verify API calls
     resolution_call = Resolution.model_validate_json(
@@ -126,8 +128,8 @@ def test_index_upload_failure(matchbox_api: MockRouter, sqlite_warehouse: Engine
     assert b"PAR1" in upload_route.calls.last.request.content
 
 
-def test_index_with_batch_size(matchbox_api: MockRouter, sqlite_warehouse: Engine):
-    """Test that batch_size is passed correctly to hash_data when indexing."""
+def test_index_with_batch_size(sqlite_warehouse: Engine):
+    """Test that batch_size is passed correctly to hash_data when hashing."""
     # Dummy data and source
     source_testkit = source_from_tuple(
         data_tuple=({"company_name": "Company A"}, {"company_name": "Company B"}),
@@ -136,48 +138,16 @@ def test_index_with_batch_size(matchbox_api: MockRouter, sqlite_warehouse: Engin
         engine=sqlite_warehouse,
     ).write_to_location()
 
-    # Mock the API endpoints
-    source_route = matchbox_api.post("/resolutions").mock(
-        return_value=Response(
-            202,
-            content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.AWAITING_UPLOAD,
-                update_timestamp=datetime.now(),
-                entity=BackendUploadType.INDEX,
-            ).model_dump_json(),
-        )
-    )
-
-    upload_route = matchbox_api.post("/upload/test-upload-id").mock(
-        return_value=Response(
-            202,
-            content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.COMPLETE,
-                update_timestamp=datetime.now(),
-                entity=BackendUploadType.INDEX,
-            ).model_dump_json(),
-        )
-    )
-
     # Spy on the hash_data method to verify batch_size
     with patch.object(
         Source, "hash_data", wraps=source_testkit.source.hash_data
     ) as spy_hash_data:
         # Call index with batch_size
-        index(
-            source=source_testkit.source,
-            batch_size=1,
-        )
+        source_testkit.source.run()
 
         # Verify batch_size was passed to hash_data
         spy_hash_data.assert_called_once()
         assert spy_hash_data.call_args.kwargs["batch_size"] == 1
-
-        # Verify endpoints were called only once, despite multiple batches
-        assert source_route.call_count == 1
-        assert upload_route.call_count == 1
 
 
 def test_get_source_success(matchbox_api: MockRouter, sqlite_warehouse: Engine):

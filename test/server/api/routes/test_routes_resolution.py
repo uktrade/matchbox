@@ -149,7 +149,7 @@ def test_complete_model_upload_process(
     assert response.json()["name"] == testkit.model.name
 
     # Step 2: Initialize results upload
-    response = test_client.post(f"/resolutions/{testkit.model.name}/results")
+    response = test_client.post(f"/resolutions/{testkit.model.name}/data")
     assert response.status_code == 202
     upload_id = response.json()["id"]
     assert response.json()["stage"] == UploadStage.AWAITING_UPLOAD
@@ -206,7 +206,7 @@ def test_complete_model_upload_process(
     )  # Check results data matches
 
     # Step 6: Verify we can retrieve the results
-    response = test_client.get(f"/resolutions/{testkit.model.name}/results")
+    response = test_client.get(f"/resolutions/{testkit.model.name}/data")
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"
 
@@ -246,7 +246,7 @@ def test_set_results(
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
 
-    response = test_client.post(f"/resolutions/{testkit.model.name}/results")
+    response = test_client.post(f"/resolutions/{testkit.model.name}/data")
 
     assert response.status_code == 202
     assert response.json()["stage"] == UploadStage.AWAITING_UPLOAD
@@ -259,7 +259,7 @@ def test_set_results_model_not_found(
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(side_effect=MatchboxResolutionNotFoundError())
 
-    response = test_client.post("/resolutions/nonexistent-model/results")
+    response = test_client.post("/resolutions/nonexistent-model/data")
 
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.RESOLUTION
@@ -272,7 +272,7 @@ def test_get_results(
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_model_data = Mock(return_value=testkit.probabilities)
 
-    response = test_client.get(f"/resolutions/{testkit.model.name}/results")
+    response = test_client.get(f"/resolutions/{testkit.model.name}/data")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"

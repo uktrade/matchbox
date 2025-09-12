@@ -22,12 +22,6 @@ class NaiveDeduper(Deduper):
 
     _id_dtype: pl.DataType
 
-    @classmethod
-    def from_settings(cls, id: str, unique_fields: list[str]) -> "NaiveDeduper":
-        """Create a NaiveDeduper from a settings dictionary."""
-        settings = NaiveSettings(id=id, unique_fields=unique_fields)
-        return cls(settings=settings)
-
     def prepare(self, data: pl.DataFrame) -> None:
         """Prepare the deduper for deduplication."""
         pass

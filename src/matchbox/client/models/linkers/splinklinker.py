@@ -166,27 +166,6 @@ class SplinkLinker(Linker):
     _id_dtype_l: pl.DataType
     _id_dtype_r: pl.DataType
 
-    @classmethod
-    def from_settings(
-        cls,
-        left_id: str,
-        right_id: str,
-        linker_training_functions: list[dict[str, Any]],
-        linker_settings: SettingsCreator,
-        threshold: float,
-    ) -> "SplinkLinker":
-        """Create a SplinkLinker from a settings dictionary."""
-        settings = SplinkSettings(
-            left_id=left_id,
-            right_id=right_id,
-            linker_training_functions=[
-                SplinkLinkerFunction(**func) for func in linker_training_functions
-            ],
-            linker_settings=linker_settings,
-            threshold=threshold,
-        )
-        return cls(settings=settings)
-
     def prepare(self, left: pl.DataFrame, right: pl.DataFrame) -> None:
         """Prepare the linker for linking."""
         if (set(left.columns) != set(right.columns)) or not left.dtypes == right.dtypes:

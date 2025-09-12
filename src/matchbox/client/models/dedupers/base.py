@@ -32,17 +32,6 @@ class Deduper(BaseModel, ABC):
 
     settings: DeduperSettings
 
-    @classmethod
-    @abstractmethod
-    def from_settings(cls) -> "Deduper":
-        """Create a Deduper from a settings dictionary."""
-        raise NotImplementedError(
-            """\
-            Must implement method to instantiate from settings \
-            -- consider creating a pydantic model to enforce shape.
-        """
-        )
-
     @abstractmethod
     def prepare(self, data: pl.DataFrame) -> None:
         """Prepare the deduper for deduplication."""

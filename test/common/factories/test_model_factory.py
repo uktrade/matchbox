@@ -2,6 +2,7 @@ from typing import Any, Literal
 
 import pytest
 
+from matchbox.client.queries import Query
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.factories.models import (
     generate_dummy_probabilities,
@@ -538,27 +539,27 @@ def test_query_to_model_factory_validation():
     true_entities = tuple(linked.true_entities)
 
     # Extract query and keys for our function
-    left_query = left_testkit.query
+    left_data = left_testkit.query
     left_keys = {"crn": "key"}
 
     # Test invalid probability range
     with pytest.raises(ValueError, match="Probabilities must be increasing values"):
         query_to_model_factory(
-            left_resolution="crn",
-            left_query=left_query,
+            left_query=Query(left_testkit.source),
+            left_data=left_data,
             left_keys=left_keys,
             true_entities=true_entities,
             prob_range=(0.9, 0.8),
         )
 
     # Test inconsistent right-side arguments
-    with pytest.raises(ValueError, match="all of right_resolution, right_query"):
+    with pytest.raises(ValueError, match="all of right_"):
         query_to_model_factory(
-            left_resolution="crn",
-            left_query=left_query,
+            left_query=Query(left_testkit.source),
+            left_data=left_data,
             left_keys=left_keys,
             true_entities=true_entities,
-            right_resolution="right",
+            right_query=Query(linked.sources["duns"].source),
         )
 
 
@@ -603,28 +604,29 @@ def test_query_to_model_factory_creation(
 
     # Get left source
     left_testkit = linked.sources["crn"]
-    left_query = left_testkit.query
+    left_data = left_testkit.query
     left_keys = {"crn": "key"}
 
     # Setup right query if needed
-    right_query = None
+    right_testkit = None
+    right_data = None
     right_keys = None
-    right_resolution = None
+    right_query = None
 
     if test_config["right_args"]:
         right_testkit = linked.sources["cdms"]
-        right_query = right_testkit.query
+        right_data = right_testkit.query
         right_keys = {"cdms": "key"}
-        right_resolution = "cdms"
+        right_query = Query(right_testkit.source)
 
     # Create the model using our function
     model = query_to_model_factory(
-        left_resolution="crn",
-        left_query=left_query,
+        left_query=Query(left_testkit.source),
+        left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
-        right_resolution=right_resolution,
         right_query=right_query,
+        right_data=right_data,
         right_keys=right_keys,
         prob_range=test_config["prob_range"],
         seed=42,
@@ -660,21 +662,21 @@ def test_query_to_model_factory_seed_behavior(
 
     # Get source
     left_testkit = linked.sources["crn"]
-    left_query = left_testkit.query
+    left_data = left_testkit.query
     left_keys = {"crn": "key"}
 
     # Create two models with different seeds
     model1 = query_to_model_factory(
-        left_resolution="crn",
-        left_query=left_query,
+        left_query=Query(left_testkit.source),
+        left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
         seed=seed1,
     )
 
     model2 = query_to_model_factory(
-        left_resolution="crn",
-        left_query=left_query,
+        left_query=Query(left_testkit.source),
+        left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
         seed=seed2,
@@ -706,19 +708,19 @@ def test_query_to_model_factory_compare_with_model_factory():
     )
 
     # Extract queries for our new function
-    left_query = linked.sources["crn"].query
-    right_query = linked.sources["cdms"].query
+    left_data = linked.sources["crn"].query
+    right_data = linked.sources["cdms"].query
     left_keys = {"crn": "key"}
     right_keys = {"cdms": "key"}
 
     # Create model using query_to_model_factory
     query_model = query_to_model_factory(
-        left_resolution="crn",
-        left_query=left_query,
+        left_query=Query(linked.sources["crn"].source),
+        left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
-        right_resolution="cdms",
-        right_query=right_query,
+        right_query=Query(linked.sources["cdms"].source),
+        right_data=right_data,
         right_keys=right_keys,
         seed=42,
     )

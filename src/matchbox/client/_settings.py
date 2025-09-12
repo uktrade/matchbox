@@ -14,6 +14,7 @@ class ClientSettings(BaseSettings):
     default_warehouse: str | None = None
     jwt: str | None = None
     user: str | None = None
+    batch_size: int = 250_000
 
     model_config = SettingsConfigDict(
         extra="ignore",

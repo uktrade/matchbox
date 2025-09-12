@@ -14,11 +14,13 @@ from typing import (
 )
 
 import polars as pl
+import pyarrow as pa
 import sqlglot
 from pyarrow import Table as ArrowTable
 from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
+from matchbox.client import _handler
 from matchbox.common.db import (
     QueryReturnClass,
     QueryReturnType,
@@ -576,3 +578,36 @@ class Source:
 
         """
         return self.config.f(self.name, fields)
+
+    def run(self, batch_size: int | None = None) -> pa.Table:
+        """Download and cache the hashes to be indexed on the server.
+
+        Args:
+            batch_size: the size of each batch when fetching data from the warehouse,
+                which helps reduce the load on the database. Default is None.
+
+        """
+        if not self.location.client:
+            raise ValueError("Source client not set")
+        self.hashes = self.hash_data(batch_size=batch_size)
+
+        return self.hashes
+
+    def sync(self) -> None:
+        """Send the source config and hashes to the server."""
+        resolution = self.to_resolution()
+        if existing_resolution := _handler.get_resolution(name=self.name):
+            # Check if config matches
+            if existing_resolution.config != self.config:
+                raise ValueError(
+                    f"Resolution {self.name} already exists with different "
+                    "configuration. Please delete the existing resolution "
+                    "or use a different name. "
+                )
+            log_prefix = f"Resolution {self.name}"
+            logger.warning("Already exists. Passing.", prefix=log_prefix)
+        else:
+            _handler.create_resolution(resolution=resolution)
+
+        if self.hashes:
+            _handler.set_hashes(name=self.name, hashes=self.hashes)

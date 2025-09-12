@@ -1,16 +1,23 @@
 """Definition of model inputs."""
 
+from typing import TYPE_CHECKING, Any
+
 import polars as pl
 from polars import DataFrame as PolarsDataFrame
 
 from matchbox.client import _handler
-from matchbox.client.models import Model
+from matchbox.client.helpers import clean
 from matchbox.client.sources import Source
 from matchbox.common.db import QueryReturnClass, QueryReturnType
 from matchbox.common.dtos import (
     QueryCombineType,
     QueryConfig,
 )
+
+if TYPE_CHECKING:
+    from matchbox.client.models import Model
+else:
+    Model = Any
 
 
 class Query:
@@ -130,6 +137,8 @@ class Query:
                         pl.col(col).unique() for col in result.columns if col != "id"
                     ]
                     result = result.group_by("id").agg(agg_expressions)
+
+        result = clean(result, self.config.cleaning)
 
         match return_type:
             case QueryReturnType.POLARS:

@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from typing import Any
 
-import polars as pl
 import pytest
 from splink import SettingsCreator
 from splink import blocking_rule_library as brl
@@ -11,7 +10,7 @@ from splink import comparison_library as cl
 from splink.internals.blocking_rule_creator import BlockingRuleCreator
 from splink.internals.comparison_creator import ComparisonCreator
 
-from matchbox import make_model
+from matchbox.client.models import Model
 from matchbox.client.models.linkers.base import Linker
 from matchbox.client.models.linkers.deterministic import (
     DeterministicLinker,
@@ -22,6 +21,7 @@ from matchbox.client.models.linkers.weighteddeterministic import (
     WeightedDeterministicLinker,
     WeightedDeterministicSettings,
 )
+from matchbox.client.queries import Query
 from matchbox.client.results import Results
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.sources import (
@@ -254,15 +254,13 @@ def test_exact_match_linking(Linker: Linker, configure_linker: LinkerConfigurato
     )
 
     # Configure and run the linker
-    linker = make_model(
+    linker = Model(
         name="exact_match_linker",
         description="Linking with exact matches",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_data=pl.from_arrow(left_source.query).drop("key"),
-        left_resolution="source_left",
-        right_data=pl.from_arrow(right_source.query).drop("key"),
-        right_resolution="source_right",
+        left_query=Query(left_source),
+        right_query=Query(right_source),
     )
     results: Results = linker.run()
 
@@ -315,15 +313,13 @@ def test_exact_match_with_duplicates_linking(
     right_source = linked.sources["source_right"]
 
     # Configure and run the linker
-    linker = make_model(
+    linker = Model(
         name="exact_match_linker",
         description="Linking with exact matches",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_data=pl.from_arrow(left_source.query).drop("key"),
-        left_resolution="source_left",
-        right_data=pl.from_arrow(right_source.query).drop("key"),
-        right_resolution="source_right",
+        left_query=Query(left_source),
+        right_query=Query(right_source),
     )
     results: Results = linker.run()
 
@@ -379,15 +375,13 @@ def test_partial_entity_linking(Linker: Linker, configure_linker: LinkerConfigur
     right_source = linked.sources["source_right"]
 
     # Configure and run the linker
-    linker = make_model(
+    linker = Model(
         name="partial_match_linker",
         description="Linking with partial entity coverage",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_data=pl.from_arrow(left_source.query).drop("key"),
-        left_resolution="source_left",
-        right_data=pl.from_arrow(right_source.query).drop("key"),
-        right_resolution="source_right",
+        left_query=Query(left_source),
+        right_query=Query(right_source),
     )
     results = linker.run()
 
@@ -437,15 +431,13 @@ def test_no_matching_entities_linking(
         assert l_col.isdisjoint(r_col)
 
     # Configure and run the linker
-    linker = make_model(
+    linker = Model(
         name="no_match_linker",
         description="Linking with no matching entities",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_data=pl.from_arrow(left_source.query).drop("key"),
-        left_resolution="source_left",
-        right_data=pl.from_arrow(right_source.query).drop("key"),
-        right_resolution="source_right",
+        left_query=Query(left_source),
+        right_query=Query(right_source),
     )
     results = linker.run()
 

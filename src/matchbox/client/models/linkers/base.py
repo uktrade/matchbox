@@ -33,17 +33,6 @@ class Linker(BaseModel, ABC):
 
     settings: LinkerSettings
 
-    @classmethod
-    @abstractmethod
-    def from_settings(cls) -> "Linker":
-        """Create a Linker from a settings dictionary."""
-        raise NotImplementedError(
-            """\
-            Must implement method to instantiate from settings \
-            -- consider creating a pydantic model to enforce shape.
-        """
-        )
-
     @abstractmethod
     def prepare(self, left: pl.DataFrame, right: pl.DataFrame) -> None:
         """Prepare the linker for linking."""

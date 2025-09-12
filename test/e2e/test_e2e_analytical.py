@@ -4,9 +4,10 @@ import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
 
-from matchbox import clean, index, make_model
+from matchbox import clean
 from matchbox.client import _handler
 from matchbox.client.helpers import delete_resolution
+from matchbox.client.models import Model
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.queries import Query
@@ -181,7 +182,8 @@ class TestE2EAnalyticalUser:
         # Index all sources in the PostgreSQL database
         for source_testkit in self.linked_testkit.sources.values():
             source = source_testkit.source
-            index(source=source)
+            source.run()
+            source.sync()
             logging.debug(f"Indexed source: {source.name}")
 
         # === DEDUPLICATION PHASE ===
@@ -202,7 +204,6 @@ class TestE2EAnalyticalUser:
 
             # Apply cleaning
             cleaning_dict = self._get_cleaning_dict(source.prefix, df.columns)
-            cleaned = clean(df, cleaning_dict)
 
             # Get feature names with prefix for deduplication
             feature_names = [
@@ -211,7 +212,7 @@ class TestE2EAnalyticalUser:
 
             # Create and run a deduper model
             deduper_name = f"deduper_{source.name}"
-            deduper = make_model(
+            deduper = Model(
                 name=deduper_name,
                 description=f"Deduplication of {source.name}",
                 model_class=NaiveDeduper,
@@ -219,8 +220,7 @@ class TestE2EAnalyticalUser:
                     "id": "id",
                     "unique_fields": feature_names,
                 },
-                left_data=cleaned,
-                left_resolution=source_testkit.source.name,
+                left_query=Query(source_testkit.source, cleaning=cleaning_dict),
             )
 
             # Run the deduper and store results
@@ -237,8 +237,8 @@ class TestE2EAnalyticalUser:
 
             assert identical, f"Deduplication of {source.name} failed: {report}"
 
-            results.to_matchbox()
             deduper.truth = 1.0
+            deduper.sync()
 
             logging.debug(f"Successfully deduplicated {source.name}")
 
@@ -270,7 +270,8 @@ class TestE2EAnalyticalUser:
             right_source = right_testkit.source
 
             # Query deduplicated data
-            left_raw_df = Query(left_source, model=dedupers[left_source.name]).run()
+            left_query = Query(left_source, model=dedupers[left_source.name])
+            left_raw_df = left_query.run()
 
             left_clusters = query_to_cluster_entities(
                 query=left_raw_df,
@@ -278,7 +279,8 @@ class TestE2EAnalyticalUser:
             )
             left_df = left_raw_df.drop(left_source.qualified_key)
 
-            right_raw_df = Query(right_source, model=dedupers[right_source.name]).run()
+            right_query = Query(right_source, model=dedupers[right_source.name])
+            right_raw_df = right_query.run()
             right_clusters = query_to_cluster_entities(
                 query=right_raw_df,
                 keys={right_source.name: right_source.qualified_key},
@@ -289,12 +291,12 @@ class TestE2EAnalyticalUser:
             left_cleaning_dict = self._get_cleaning_dict(
                 left_source.prefix, left_df.columns
             )
-            left_cleaned = clean(left_df, left_cleaning_dict)
+            clean(left_df, left_cleaning_dict)
 
             right_cleaning_dict = self._get_cleaning_dict(
                 right_source.prefix, right_df.columns
             )
-            right_cleaned = clean(right_df, right_cleaning_dict)
+            clean(right_df, right_cleaning_dict)
 
             # Build comparison clause
             comparison_clause = (
@@ -304,7 +306,7 @@ class TestE2EAnalyticalUser:
 
             # Create and run linker model
             linker_name = f"linker_{left_source.name}_{right_source.name}"
-            linker = make_model(
+            linker = Model(
                 name=linker_name,
                 description=f"Linking {left_testkit.name} and {right_testkit.name}",
                 model_class=DeterministicLinker,
@@ -313,10 +315,8 @@ class TestE2EAnalyticalUser:
                     "right_id": "id",
                     "comparisons": comparison_clause,
                 },
-                left_data=left_cleaned,
-                left_resolution=deduper_names[left_source.name],
-                right_data=right_cleaned,
-                right_resolution=deduper_names[right_source.name],
+                left_query=left_query,
+                right_query=right_query,
             )
 
             # Run the linker and store results
@@ -340,8 +340,8 @@ class TestE2EAnalyticalUser:
                 f"{report_counts}"
             )
 
-            results.to_matchbox()
             linker.truth = 1.0
+            linker.sync()
 
             logging.debug(
                 f"Successfully linked {left_testkit.name} and {right_testkit.name}"
@@ -359,7 +359,8 @@ class TestE2EAnalyticalUser:
         first_pair = (crn_source.name, duns_source.name)
 
         # Query data from the first linked pair and the third source
-        left_raw_df = Query(crn_source, duns_source, model=linkers[first_pair]).run()
+        left_query = Query(crn_source, duns_source, model=linkers[first_pair])
+        left_raw_df = left_query.run()
         left_clusters = query_to_cluster_entities(
             query=left_raw_df,
             keys={
@@ -369,7 +370,8 @@ class TestE2EAnalyticalUser:
         )
         left_df = left_raw_df.drop(crn_source.qualified_key, duns_source.qualified_key)
 
-        right_raw_df = Query(cdms_source, model=dedupers[cdms_source.name]).run()
+        right_query = Query(cdms_source, model=dedupers[cdms_source.name])
+        right_raw_df = right_query.run()
         right_clusters = query_to_cluster_entities(
             query=right_raw_df,
             keys={cdms_source.name: cdms_source.qualified_key},
@@ -378,16 +380,14 @@ class TestE2EAnalyticalUser:
 
         # Apply cleaning
         left_cleaning_dict = self._get_cleaning_dict(crn_source.prefix, left_df.columns)
-        left_cleaned = clean(left_df, left_cleaning_dict)
 
         right_cleaning_dict = self._get_cleaning_dict(
             cdms_source.prefix, right_df.columns
         )
-        right_cleaned = clean(right_df, right_cleaning_dict)
 
         # Create and run final linker with the common "crn" field
         final_linker_name = "__DEFAULT__"
-        final_linker = make_model(
+        final_linker = Model(
             name=final_linker_name,
             description="Final linking of all sources",
             model_class=DeterministicLinker,
@@ -398,10 +398,8 @@ class TestE2EAnalyticalUser:
                     f"l.{crn_source.prefix}crn = r.{cdms_source.prefix}crn"
                 ],
             },
-            left_data=left_cleaned,
-            left_resolution=linker_names[first_pair],
-            right_data=right_cleaned,
-            right_resolution=deduper_names[cdms_source.name],
+            left_query=left_query,
+            right_query=right_query,
         )
 
         # Run the final linker and store results
@@ -422,8 +420,8 @@ class TestE2EAnalyticalUser:
 
         assert identical, f"Final linking failed: {report_counts}"
 
-        results.to_matchbox()
         final_linker.truth = 1.0
+        final_linker.sync()
 
         logging.debug("Successfully linked all sources")
 

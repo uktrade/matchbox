@@ -1,20 +1,41 @@
 """Functions and classes to define, run and register models."""
 
-from typing import Any, ParamSpec, TypeVar, overload
+import inspect
+from typing import ParamSpec, TypeVar, overload
 
 import polars as pl
 
 from matchbox.client import _handler
-from matchbox.client.models.dedupers.base import Deduper
-from matchbox.client.models.linkers.base import Linker
+from matchbox.client._settings import settings
+from matchbox.client.models import dedupers, linkers
+from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
+from matchbox.client.models.linkers.base import Linker, LinkerSettings
+from matchbox.client.queries import Query
 from matchbox.client.results import Results
 from matchbox.common.dtos import ModelConfig, ModelType, Resolution
-from matchbox.common.exceptions import MatchboxResolutionNotFoundError
-from matchbox.common.graph import ModelResolutionName, ResolutionName, ResolutionType
+from matchbox.common.graph import ResolutionType
 from matchbox.common.logging import logger
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+default_dedupers = {
+    name: obj for name, obj in inspect.getmembers(dedupers, inspect.isclass)
+}
+default_linkers = {
+    name: obj for name, obj in inspect.getmembers(linkers, inspect.isclass)
+}
+
+
+_MODEL_CLASSES = {**default_dedupers, **default_linkers}
+
+
+def add_model_class(ModelClass: type[Linker] | type[Deduper]) -> None:
+    """Add custom deduper or linker."""
+    if issubclass(ModelClass, Linker) or issubclass(ModelClass, Deduper):
+        _MODEL_CLASSES[ModelClass.__name__] = ModelClass
+    else:
+        raise ValueError("The argument is not a proper subclass of Deduper or Linker.")
 
 
 class Model:
@@ -25,11 +46,10 @@ class Model:
         self,
         name: str,
         description: str | None,
-        model_instance: Deduper,
-        left_resolution: ResolutionName,
-        left_data: pl.DataFrame,
-        right_resolution: None = None,
-        right_data: None = None,
+        model_class: type[Deduper],
+        model_settings: DeduperSettings | dict,
+        left_query: Query,
+        right_query: None = None,
         truth: float = 1.0,
     ) -> None: ...
 
@@ -38,11 +58,10 @@ class Model:
         self,
         name: str,
         description: str | None,
-        model_instance: Linker,
-        left_resolution: ResolutionName,
-        left_data: pl.DataFrame,
-        right_resolution: ResolutionName,
-        right_data: pl.DataFrame,
+        model_class: type[Linker],
+        model_settings: LinkerSettings | dict,
+        left_query: Query,
+        right_query: Query,
         truth: float = 1.0,
     ) -> None: ...
 
@@ -50,11 +69,10 @@ class Model:
         self,
         name: str,
         description: str | None,
-        model_instance: Linker | Deduper,
-        left_resolution: ResolutionName,
-        left_data: pl.DataFrame,
-        right_resolution: ResolutionName | None = None,
-        right_data: pl.DataFrame | None = None,
+        model_class: type[Deduper] | type[Linker] | str,
+        model_settings: DeduperSettings | LinkerSettings | dict,
+        left_query: Query,
+        right_query: Query | None = None,
         truth: float = 1.0,
     ):
         """Create a new model instance.
@@ -63,32 +81,33 @@ class Model:
             name: Unique name for the model
             description: Optional description of the model
             truth: Truth threshold. Defaults to 1.0. Can be set later after analysis.
-            model_instance: Instance of Linker or Deduper
-            left_resolution: The name of the resolution that produced left_data. This is
-                the only resolution for deduping.
-            left_data: Primary data for the model. This is the only data for deduping.
-            right_resolution: The name of the resolution that produced right_data.
-                Required for linking
-            right_data: Secondary data for the model. Required for linking
+            model_class: Class of Linker or Deduper, or its name.
+            model_settings: Appropriate settings object to pass to model class.
+            left_query: The query that will get the data to deduplicate, or the data to
+                link on the left.
+            right_query: The query that will get the data to link on the right.
         """
         self.name = name
         self.description = description
-        self.model_instance = model_instance
-        self.left_data = left_data
-        self.right_data = right_data
-
         self._truth: int = _truth_float_to_int(truth)
+        self.left_query = left_query
+        self.right_query = right_query
+        self.results: Results | None = None
+
+        if isinstance(model_class, str):
+            model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
+        self.model_instance = model_class(settings=model_settings)
 
         model_type: ModelType = (
-            ModelType.LINKER
-            if isinstance(model_instance, Linker)
-            else ModelType.DEDUPER
+            ModelType.LINKER if issubclass(model_class, Linker) else ModelType.DEDUPER
         )
 
         self.config = ModelConfig(
             type=model_type,
-            left_resolution=left_resolution,
-            right_resolution=right_resolution,
+            model_class=model_class.__name__,
+            model_settings=model_settings.model_dump_json(),
+            left_query=left_query.config,
+            right_query=right_query.config,
         )
 
     def to_resolution(self) -> Resolution:
@@ -101,31 +120,72 @@ class Model:
             config=self.config,
         )
 
-    @classmethod
-    def from_resolution(
-        cls,
-        resolution: Resolution,
-        model_instance: Linker | Deduper,
-        left_data: pl.DataFrame,
-        right_data: pl.DataFrame | None = None,
-    ) -> "Model":
+    def from_resolution(cls, resolution: Resolution) -> "Model":
         """Reconstruct from Resolution."""
-        assert resolution.resolution_type == ResolutionType.MODEL, (
+        assert resolution.resolution_type == "model", (
             "Resolution must be of type 'model'"
         )
         assert isinstance(resolution.config, ModelConfig), "Config must be ModelConfig"
         return cls(
             name=resolution.name,
             description=resolution.description,
+            model_class=resolution.config.model_class,
+            model_settings=resolution.config.model_settings,
+            left_query=resolution.config.left_query,
+            right_query=resolution.config.right_query,
             truth=resolution.truth,
-            metadata=resolution.config,
-            model_instance=model_instance,
-            left_data=left_data,
-            right_data=right_data,
         )
 
-    def insert_model(self) -> None:
-        """Insert the model into the backend database."""
+    @property
+    def truth(self) -> float | None:
+        """Returns the truth threshold for the model as a float."""
+        if self._truth is not None:
+            return _truth_int_to_float(self._truth)
+        return None
+
+    @truth.setter
+    def truth(self, truth: float) -> None:
+        """Set the truth threshold for the model."""
+        self._truth = _truth_float_to_int(truth)
+
+    def delete(self, certain: bool = False) -> bool:
+        """Delete the model from the database."""
+        result = _handler.delete_resolution(name=self.name, certain=certain)
+        return result.success
+
+    def run(self, for_validation: bool = False) -> Results:
+        """Execute the model pipeline and return results.
+
+        Args:
+            for_validation: Whether to download and store extra data to explore and
+                    score results.
+        """
+        left_df: pl.DataFrame = self.left_query.run(
+            return_leaf_id=for_validation, batch_size=settings.batch_size
+        )
+
+        if self.config.type == ModelType.LINKER:
+            right_df: pl.DataFrame = self.right_query.run(return_leaf_id=for_validation)
+
+            self.model_instance.prepare(left_df, right_df)
+            results = self.model_instance.link(left=left_df, right=right_df)
+        else:
+            self.model_instance.prepare(left_df)
+            results = self.model_instance.dedupe(data=self.left_data)
+
+        if not for_validation:
+            self.results = Results(probabilities=results)
+        else:
+            self.results = Results(
+                probabilities=results,
+                left_data=left_df.to_arrow(),
+                right_data=right_df.to_arrow(),
+            )
+
+        return self.results
+
+    def sync(self) -> None:
+        """Send the model config, truth and results to the server."""
         resolution = self.to_resolution()
         if existing_resolution := _handler.get_resolution(name=self.name):
             # Check if config matches
@@ -140,100 +200,15 @@ class Model:
         else:
             _handler.create_resolution(resolution=resolution)
 
-    @property
-    def results(self) -> Results:
+        _handler.set_truth(name=self.name, truth=self._truth)
+
+        if self.results:
+            _handler.set_results(name=self.name, results=self.results.probabilities)
+
+    def download_results(self) -> Results:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(name=self.name)
         return Results(probabilities=results, metadata=self.config)
-
-    @results.setter
-    def results(self, results: Results) -> None:
-        """Write results associated with the model to the database."""
-        if results.probabilities.shape[0] > 0:
-            _handler.set_results(name=self.name, results=results.probabilities)
-
-    @property
-    def truth(self) -> float | None:
-        """Returns the truth threshold for the model as a float."""
-        if self._truth is not None:
-            return _truth_int_to_float(self._truth)
-        return None
-
-    @truth.setter
-    def truth(self, truth: float) -> None:
-        """Set the truth threshold for the model."""
-        self._truth = _truth_float_to_int(truth)
-        _handler.set_truth(name=self.name, truth=self._truth)
-
-    def delete(self, certain: bool = False) -> bool:
-        """Delete the model from the database."""
-        result = _handler.delete_resolution(name=self.name, certain=certain)
-        return result.success
-
-    def run(self) -> Results:
-        """Execute the model pipeline and return results."""
-        if self.config.type == ModelType.LINKER:
-            if self.right_data is None:
-                raise MatchboxResolutionNotFoundError("Right data required for linking")
-
-            results = self.model_instance.link(
-                left=self.left_data, right=self.right_data
-            )
-        else:
-            results = self.model_instance.dedupe(data=self.left_data)
-
-        return Results(
-            probabilities=results,
-            model=self,
-            metadata=self.config,
-        )
-
-
-def make_model(
-    name: ModelResolutionName,
-    description: str,
-    model_class: type[Linker] | type[Deduper],
-    model_settings: dict[str, Any],
-    left_data: pl.DataFrame,
-    left_resolution: ResolutionName,
-    right_data: pl.DataFrame | None = None,
-    right_resolution: ResolutionName | None = None,
-) -> Model:
-    """Create a unified model instance for either linking or deduping operations.
-
-    Args:
-        name: Your unique identifier for the model
-        description: Description of the model run
-        model_class: Either Linker or Deduper class
-        model_settings: Configuration settings for the model
-        left_data: Primary data
-        left_resolution: Resolution name for primary model or source
-        right_data: Secondary data (linking only)
-        right_resolution: Resolution name for secondary model or source (linking only)
-
-    Returns:
-        Model: Configured model instance ready for execution
-    """
-    model_type = (
-        ModelType.LINKER if issubclass(model_class, Linker) else ModelType.DEDUPER
-    )
-
-    model_instance = model_class.from_settings(**model_settings)
-
-    if model_type == ModelType.LINKER:
-        model_instance.prepare(left=left_data, right=right_data)
-    else:
-        model_instance.prepare(data=left_data)
-
-    return Model(
-        name=name,
-        description=description,
-        model_instance=model_instance,
-        left_resolution=left_resolution,
-        left_data=left_data,
-        right_resolution=right_resolution,
-        right_data=right_data,
-    )
 
 
 def _truth_float_to_int(truth: float) -> int:

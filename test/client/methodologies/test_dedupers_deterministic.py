@@ -3,12 +3,12 @@
 from collections.abc import Callable
 from typing import Any
 
-import polars as pl
 import pytest
 
-from matchbox import make_model
+from matchbox.client.models import Model
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.dedupers.naive import NaiveDeduper, NaiveSettings
+from matchbox.client.queries import Query
 from matchbox.client.results import Results
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.sources import (
@@ -83,13 +83,12 @@ def test_no_deduplication(Deduper: Deduper, configure_deduper: DeduperConfigurat
     source = linked.sources["source_exact"]
 
     # Configure and run the deduper
-    deduper = make_model(
+    deduper = Model(
         name="exact_deduper",
         description="Deduplication of exact duplicates",
         model_class=Deduper,
         model_settings=configure_deduper(source),
-        left_data=pl.from_arrow(source.query).drop("key"),
-        left_resolution="source_exact",
+        left_query=Query(source),
     )
     results: Results = deduper.run()
 
@@ -133,13 +132,12 @@ def test_exact_duplicate_deduplication(
     source = linked.sources["source_exact"]
 
     # Configure and run the deduper
-    deduper = make_model(
+    deduper = Model(
         name="exact_deduper",
         description="Deduplication of exact duplicates",
         model_class=Deduper,
         model_settings=configure_deduper(source),
-        left_data=pl.from_arrow(source.query).drop("key"),
-        left_resolution="source_exact",
+        left_query=Query(source),
     )
     results: Results = deduper.run()
 

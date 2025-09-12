@@ -18,7 +18,6 @@ from tenacity import (
 
 from matchbox.client._settings import ClientSettings, settings
 from matchbox.client.authorisation import generate_json_web_token
-from matchbox.client.sources import Source
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
     SCHEMA_JUDGEMENTS,
@@ -262,49 +261,7 @@ def match(
     return matches
 
 
-# Data management
-
-
-@http_retry
-def index(source: Source, data_hashes: Table) -> UploadStatus:
-    """Index hashes from a SourceConfig."""
-    log_prefix = f"Index {source.name}"
-
-    buffer = table_to_buffer(table=data_hashes)
-
-    # Upload metadata
-    logger.debug("Uploading metadata", prefix=log_prefix)
-
-    metadata_res = CLIENT.post(
-        "/resolutions", json=source.to_resolution().model_dump(mode="json")
-    )
-
-    upload = UploadStatus.model_validate(metadata_res.json())
-
-    # Upload data
-    logger.debug("Uploading data", prefix=log_prefix)
-
-    upload_res = CLIENT.post(
-        f"/upload/{upload.id}",
-        files={"file": (f"{upload.id}.parquet", buffer, "application/octet-stream")},
-    )
-
-    # Poll until complete with retry/timeout configuration
-    status = UploadStatus.model_validate(upload_res.json())
-    while status.stage not in [UploadStage.COMPLETE, UploadStage.FAILED]:
-        status_res = CLIENT.get(f"/upload/{upload.id}/status")
-        status = UploadStatus.model_validate(status_res.json())
-
-        logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)
-
-        if status.stage == UploadStage.FAILED:
-            raise MatchboxServerFileError(status.details)
-
-        time.sleep(settings.retry_delay)
-
-    logger.debug("Finished")
-
-    return status
+# Resolution management
 
 
 @http_retry
@@ -342,9 +299,6 @@ def get_resolution_graph() -> ResolutionGraph:
     return ResolutionGraph.model_validate(res.json())
 
 
-# Resolution management
-
-
 @http_retry
 def create_resolution(
     resolution: Resolution,
@@ -373,15 +327,17 @@ def get_resolution(name: ResolutionName) -> Resolution | None:
 
 
 @http_retry
-def set_results(name: ModelResolutionName, results: Table) -> UploadStatus:
-    """Upload model results in Matchbox."""
+def set_data(
+    name: ResolutionName, data: Table, resolution_type: ResolutionType
+) -> UploadStatus:
+    """Upload source hashes or model results to server."""
     log_prefix = f"Model {name}"
     logger.debug("Uploading results", prefix=log_prefix)
 
-    buffer = table_to_buffer(table=results)
+    buffer = table_to_buffer(table=data)
 
     # Initialise upload
-    metadata_res = CLIENT.post(f"/resolutions/{name}/results")
+    metadata_res = CLIENT.post(f"/resolutions/{name}/data")
 
     upload = UploadStatus.model_validate(metadata_res.json())
 
@@ -417,7 +373,7 @@ def get_results(name: ModelResolutionName) -> Table:
     log_prefix = f"Model {name}"
     logger.debug("Retrieving results", prefix=log_prefix)
 
-    res = CLIENT.get(f"/resolutions/{name}/results")
+    res = CLIENT.get(f"/resolutions/{name}/data")
     buffer = BytesIO(res.content)
     return read_table(buffer)
 

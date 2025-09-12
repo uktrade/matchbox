@@ -18,9 +18,11 @@ from pandas import DataFrame
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import create_engine
 
-from matchbox.client.models.dedupers.base import Deduper
-from matchbox.client.models.linkers.base import Linker
+from matchbox.client.models import add_model_class
+from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
+from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.models.models import Model
+from matchbox.client.queries import Query
 from matchbox.client.results import Results
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.dtos import (
@@ -41,12 +43,39 @@ from matchbox.common.factories.sources import (
 )
 from matchbox.common.graph import (
     ModelResolutionName,
-    ResolutionName,
     SourceResolutionName,
 )
 from matchbox.common.transform import DisjointSet, graph_results
 
 T = TypeVar("T", bound=Hashable)
+
+
+class MockDeduper(Deduper):
+    """Mock deduper that does nothing."""
+
+    def prepare(self, left: pl.DataFrame) -> None:
+        """Mock prepare method."""
+        return self
+
+    def link(self, left: pl.DataFrame) -> pl.DataFrame:
+        """Mock link method."""
+        return pl.from_arrow(pa.Table.from_pylist([], schema=SCHEMA_RESULTS))
+
+
+class MockLinker(Linker):
+    """Mock linker that does nothing."""
+
+    def prepare(self, left: pl.DataFrame, right: pl.DataFrame) -> None:
+        """Mock prepare method."""
+        return self
+
+    def link(self, left: pl.DataFrame, right: pl.DataFrame) -> pl.DataFrame:
+        """Mock link method."""
+        return pl.from_arrow(pa.Table.from_pylist([], schema=SCHEMA_RESULTS))
+
+
+add_model_class(MockDeduper)
+add_model_class(MockLinker)
 
 
 def component_report(all_nodes: list[Any], table: pa.Table) -> dict:
@@ -621,10 +650,10 @@ class ModelTestkit(BaseModel):
 
         # Mock the model instance based on type
         if self.model.type == ModelType.LINKER:
-            mock_model.model_instance = create_autospec(Linker)
+            mock_model.model_instance = MockLinker
             mock_model.model_instance.link.return_value = self.data
         else:
-            mock_model.model_instance = create_autospec(Deduper)
+            mock_model.model_instance = MockDeduper
             mock_model.model_instance.dedupe.return_value = self.data
 
         return mock_model
@@ -726,18 +755,14 @@ def model_factory(
     # ==== SourceConfig configuration ====
     if left_testkit is not None:
         # Using provided sources
-        left_resolution = left_testkit.name
-        left_query = left_testkit.query
         left_entities = left_testkit.entities
 
         if right_testkit is not None:
             model_type = ModelType.LINKER
-            right_resolution = right_testkit.name
-            right_query = right_testkit.query
             right_entities = right_testkit.entities
         else:
             model_type = ModelType.DEDUPER
-            right_resolution = right_query = right_entities = None
+            right_entities = None
     else:
         # Create default sources
         engine = create_engine("sqlite:///:memory:")
@@ -761,7 +786,6 @@ def model_factory(
         }
 
         # Configure left source
-        left_resolution = generator.unique.word()
         left_parameters = SourceTestkitParameters(
             name="crn",
             engine=engine,
@@ -780,7 +804,6 @@ def model_factory(
         # Configure sources based on model type
         source_parameters = [left_parameters]
         if resolved_model_type == ModelType.LINKER:
-            right_resolution = generator.unique.word()
             source_parameters.append(
                 SourceTestkitParameters(
                     name="cdms",
@@ -789,7 +812,7 @@ def model_factory(
                 )
             )
         else:
-            right_resolution = right_query = right_entities = None
+            right_entities = None
 
         # Generate linked sources
         linked = linked_sources_factory(
@@ -810,22 +833,19 @@ def model_factory(
         model_type = resolved_model_type
 
     # ==== Model creation ====
-    model_instance = (
-        create_autospec(Linker, instance=True)
+    model_class = MockLinker if model_type == ModelType.LINKER else MockDeduper
+    model_settings = (
+        LinkerSettings(left_id="left", right_id="right")
         if model_type == ModelType.LINKER
-        else create_autospec(Deduper, instance=True)
+        else DeduperSettings(id="key")
     )
     model = Model(
         name=name or generator.unique.word(),
         description=description or generator.sentence(),
-        truth=1.0,
-        model_instance=model_instance,
-        left_resolution=left_resolution,
-        left_data=pl.from_arrow(left_query),
-        right_resolution=right_resolution,
-        right_data=pl.from_arrow(right_query)
-        if model_type == ModelType.LINKER
-        else None,
+        model_class=model_class,
+        model_settings=model_settings,
+        left_query=Query(left_testkit.source),
+        right_query=Query(right_testkit.source),
     )
 
     # ==== Entity and probability generation ====
@@ -863,14 +883,14 @@ def model_factory(
 
 
 def query_to_model_factory(
-    left_resolution: ResolutionName,
-    left_query: pa.Table,
+    left_query: Query,
+    left_data: pa.Table,
     left_keys: dict[SourceResolutionName, str],
     true_entities: tuple[SourceEntity, ...],
     name: ModelResolutionName | None = None,
     description: str | None = None,
-    right_resolution: ResolutionName | None = None,
-    right_query: pa.Table | None = None,
+    right_query: Query | None = None,
+    right_data: pa.Table | None = None,
     right_keys: dict[SourceResolutionName, str] | None = None,
     prob_range: tuple[float, float] = (0.8, 1.0),
     seed: int = 42,
@@ -878,16 +898,16 @@ def query_to_model_factory(
     """Turns raw queries from Matchbox into ModelTestkits.
 
     Args:
-        left_resolution: Name of the resolution used for the left query
-        left_query: PyArrow table with left query data
+        left_query: Query generating left data
+        left_data: PyArrow table with left query data
         left_keys: Dictionary mapping source resolution names to key field names
             in left query
         true_entities: Ground truth SourceEntity objects to use for generating
             probabilities
         name: Name of the model
         description: Description of the model
-        right_resolution: Name of the resolution used for the right query
-        right_query: PyArrow table with right query data, if creating a linker
+        right_query: Query generating right data
+        right_data: PyArrow table with right query data, if creating a linker
         right_keys: Dictionary mapping source resolution names to key field names
             in right query
         prob_range: Range of probabilities to generate
@@ -901,13 +921,13 @@ def query_to_model_factory(
         raise ValueError("Probabilities must be increasing values between 0 and 1")
 
     # Check if right-side arguments are consistently provided
-    right_args = [right_resolution, right_query, right_keys]
+    right_args = [right_query, right_data, right_keys]
     if any(arg is not None for arg in right_args) and not all(
         arg is not None for arg in right_args
     ):
         raise ValueError(
-            "When providing right-side arguments, all of right_resolution, "
-            "right_query, and right_keys must be provided"
+            "When providing right-side arguments, all of right_query, "
+            "right_data, and right_keys must be provided"
         )
 
     # Create a Faker instance with the seed
@@ -915,28 +935,28 @@ def query_to_model_factory(
     generator.seed_instance(seed)
 
     # Create left and right ClusterEntity sets
-    left_clusters = query_to_cluster_entities(left_query, left_keys)
+    left_clusters = query_to_cluster_entities(left_data, left_keys)
 
-    if right_query is not None and right_keys is not None:
-        right_clusters = query_to_cluster_entities(right_query, right_keys)
+    if right_data is not None and right_keys is not None:
+        right_clusters = query_to_cluster_entities(right_data, right_keys)
     else:
         right_clusters = None
 
     # Create model metadata
-    model_instance = (
-        create_autospec(Linker, instance=True)
-        if right_query is not None
-        else create_autospec(Deduper, instance=True)
+    model_class = MockLinker if right_data is not None else MockDeduper
+    model_settings = (
+        LinkerSettings(left_id="left", right_id="right")
+        if right_data is not None
+        else DeduperSettings(id="key")
     )
+
     model = Model(
         name=name or generator.unique.word(),
         description=description or generator.sentence(),
-        truth=1.0,
-        model_instance=model_instance,
-        left_resolution=left_resolution,
-        left_data=pl.from_arrow(left_query),
-        right_resolution=right_resolution,
-        right_data=pl.from_arrow(right_query) if right_query is not None else None,
+        model_class=model_class,
+        model_settings=model_settings,
+        left_query=left_query,
+        right_query=right_query,
     )
 
     # Generate probabilities
@@ -951,9 +971,9 @@ def query_to_model_factory(
     # Create ModelTestkit
     return ModelTestkit(
         model=model,
-        left_query=left_query,
+        left_query=left_data,
         left_clusters={entity.id: entity for entity in left_clusters},
-        right_query=right_query,
+        right_query=right_data,
         right_clusters={entity.id: entity for entity in right_clusters}
         if right_clusters
         else None,

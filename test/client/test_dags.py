@@ -216,16 +216,16 @@ def test_dedupe_step_run(
 ):
     """Tests that a dedupe step orchestrates lower-level API correctly."""
     with (
-        patch("matchbox.client.dags.make_model") as make_model_mock,
+        patch("matchbox.client.dags.Model.__new__") as make_model_mock,
         patch("matchbox.client.dags.Query.run"),
     ):
         # Complete mock set up
         model_mock = Mock()
+        model_mock.sync = Mock()
         model_mock.name = "model_name"
         make_model_mock.return_value = model_mock
 
         results_mock = Mock()
-        results_mock.to_matchbox = Mock()
 
         model_mock.run = Mock(return_value=results_mock)
 
@@ -268,16 +268,16 @@ def test_link_step_run(
 ):
     """Tests that a link step orchestrates lower-level API correctly."""
     with (
-        patch("matchbox.client.dags.make_model") as make_model_mock,
+        patch("matchbox.client.dags.Model.__new__") as make_model_mock,
         patch("matchbox.client.dags.Query.run"),
     ):
         # Complete mock set up
         model_mock = Mock()
+        model_mock.sync = Mock()
         model_mock.name = "model_name"
         make_model_mock.return_value = model_mock
 
         results_mock = Mock()
-        results_mock.to_matchbox = Mock()
 
         model_mock.run = Mock(return_value=results_mock)
 

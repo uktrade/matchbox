@@ -7,7 +7,7 @@ from matchbox.common.graph import (
     ResolutionNode,
 )
 from matchbox.common.graph import (
-    ResolutionNodeType as ResType,
+    ResolutionType as ResType,
 )
 
 

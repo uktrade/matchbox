@@ -11,16 +11,16 @@ from pyarrow import Table
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from matchbox.common.dtos import ModelAncestor, ModelConfig
+from matchbox.common.dtos import Match, Resolution
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.graph import (
     ModelResolutionName,
     ResolutionGraph,
     ResolutionName,
+    ResolutionType,
     SourceResolutionName,
 )
 from matchbox.common.logging import LogLevelType
-from matchbox.common.sources import Match, SourceConfig
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -248,7 +248,7 @@ class MatchboxDBAdapter(ABC):
         resolution: ResolutionName | None = None,
         threshold: int | None = None,
         return_leaf_id: bool = False,
-        limit: int = None,
+        limit: int | None = None,
     ) -> Table:
         """Queries the database from an optional point of truth.
 
@@ -292,44 +292,98 @@ class MatchboxDBAdapter(ABC):
         """
         ...
 
-    # Data management
+    # Resolution management
 
     @abstractmethod
-    def index(self, source_config: SourceConfig, data_hashes: Table) -> None:
-        """Indexes a source in your warehouse to Matchbox.
+    def insert_resolution(self, resolution: "Resolution") -> None:
+        """Writes a resolution to Matchbox.
 
         Args:
-            source_config: The source configuration to index.
-            data_hashes: The Arrow table with the hash of each data row
+            resolution: Resolution object with a source or model config
+
+        Raises:
+            MatchboxModelConfigError: If the configuration is invalid, such as
+                the ModelConfig's resolutions sharing ancestors
         """
         ...
 
     @abstractmethod
-    def get_source_config(self, name: SourceResolutionName) -> SourceConfig:
-        """Get a source configuration from its resolution name.
+    def get_resolution(
+        self, name: ResolutionName, validate: ResolutionType | None = None
+    ) -> Resolution:
+        """Get a resolution from its name.
 
         Args:
             name: The name resolution name for the source
+            validate: The expected type of the resolution
 
         Returns:
-            A SourceConfig object
+            A Resolution object
         """
         ...
 
     @abstractmethod
-    def get_resolution_source_configs(
-        self,
-        name: ResolutionName,
-    ) -> list[SourceConfig]:
+    def delete_resolution(self, name: ResolutionName, certain: bool) -> None:
+        """Delete a resolution from the database.
+
+        Args:
+            name: The name of the resolution to delete.
+            certain: Whether to delete the model without confirmation.
+        """
+        ...
+
+    @abstractmethod
+    def get_leaf_source_resolutions(self, name: ResolutionName) -> list[Resolution]:
         """Get a list of source configurations queriable from a resolution.
 
         Args:
             name: Name of the resolution to query.
 
         Returns:
-            List of relevant SourceConfig objects.
+            List of relevant Resolution objects.
         """
         ...
+
+    @abstractmethod
+    def get_resolution_graph(self) -> ResolutionGraph:
+        """Get the full resolution graph."""
+        ...
+
+    # Data insertion
+
+    @abstractmethod
+    def insert_source_data(
+        self, name: SourceResolutionName, data_hashes: Table
+    ) -> None:
+        """Inserts hash data for a source resolution.
+
+        Args:
+            name: The name of the source resolution to index.
+            data_hashes: The Arrow table with the hash of each data row
+        """
+        ...
+
+    @abstractmethod
+    def insert_model_data(self, name: ModelResolutionName, results: Table) -> None:
+        """Inserts results data for a model resolution."""
+        ...
+
+    @abstractmethod
+    def get_model_data(self, name: ModelResolutionName) -> Table:
+        """Get the results for a model resolution."""
+        ...
+
+    @abstractmethod
+    def set_model_truth(self, name: ModelResolutionName, truth: int) -> None:
+        """Sets the truth threshold for this model, changing the default clusters."""
+        ...
+
+    @abstractmethod
+    def get_model_truth(self, name: ModelResolutionName) -> int:
+        """Gets the current truth threshold for this model."""
+        ...
+
+    # Data management
 
     @abstractmethod
     def validate_ids(self, ids: list[int]) -> bool:
@@ -365,11 +419,6 @@ class MatchboxDBAdapter(ABC):
         Returns:
             A dictionary mapping IDs to hashes.
         """
-        ...
-
-    @abstractmethod
-    def get_resolution_graph(self) -> ResolutionGraph:
-        """Get the full resolution graph."""
         ...
 
     @abstractmethod
@@ -413,103 +462,16 @@ class MatchboxDBAdapter(ABC):
         """
         ...
 
-    # Model management
-
-    @abstractmethod
-    def insert_model(self, model_config: ModelConfig) -> None:
-        """Writes a model to Matchbox.
-
-        Args:
-            model_config: ModelConfig object with the model's metadata
-
-        Raises:
-            MatchboxDataNotFound: If, for a linker, the source models weren't found in
-                the database
-            MatchboxModelConfigError: If the model configuration is invalid, such as
-                the resolutions sharing ancestors
-        """
-        ...
-
-    @abstractmethod
-    def get_model(self, name: ModelResolutionName) -> ModelConfig:
-        """Get a model from the database."""
-        ...
-
-    @abstractmethod
-    def set_model_results(self, name: ModelResolutionName, results: Table) -> None:
-        """Set the results for a model."""
-        ...
-
-    @abstractmethod
-    def get_model_results(self, name: ModelResolutionName) -> Table:
-        """Get the results for a model."""
-        ...
-
-    @abstractmethod
-    def set_model_truth(self, name: ModelResolutionName, truth: float) -> None:
-        """Sets the truth threshold for this model, changing the default clusters."""
-        ...
-
-    @abstractmethod
-    def get_model_truth(self, name: ModelResolutionName) -> float:
-        """Gets the current truth threshold for this model."""
-        ...
-
-    @abstractmethod
-    def get_model_ancestors(self, name: ModelResolutionName) -> list[ModelAncestor]:
-        """Gets the current truth values of all ancestors.
-
-        Returns a list of ModelAncestor objects mapping model resolution names to
-        their current truth thresholds.
-
-        Unlike ancestors_cache which returns cached values, this property returns
-        the current truth values of all ancestor models.
-        """
-        ...
-
-    @abstractmethod
-    def set_model_ancestors_cache(
-        self, name: ModelResolutionName, ancestors_cache: list[ModelAncestor]
-    ) -> None:
-        """Updates the cached ancestor thresholds.
-
-        Args:
-            name: The name of the model to update
-            ancestors_cache: List of ModelAncestor objects mapping model resolution
-                names to their truth thresholds
-        """
-        ...
-
-    @abstractmethod
-    def get_model_ancestors_cache(
-        self, name: ModelResolutionName
-    ) -> list[ModelAncestor]:
-        """Gets the cached ancestor thresholds.
-
-        Returns a list of ModelAncestor objects mapping model resolution names to
-        their cached truth thresholds.
-
-        This is required because each point of truth needs to be stable, so we choose
-        when to update it, caching the ancestor's values in the model itself.
-        """
-        ...
-
-    @abstractmethod
-    def delete_resolution(self, name: ResolutionName, certain: bool) -> None:
-        """Delete a resolution from the database.
-
-        Args:
-            name: The name of the resolution to delete.
-            certain: Whether to delete the model without confirmation.
-        """
-        ...
+    # User management
 
     @abstractmethod
     def login(self, user_name: str) -> int:
         """Receives a user name and returns user ID."""
 
+    # Evaluation management
+
     @abstractmethod
-    def insert_judgement(judgement: Judgement) -> None:
+    def insert_judgement(self, judgement: Judgement) -> None:
         """Adds an evaluation judgement to the database.
 
         Args:

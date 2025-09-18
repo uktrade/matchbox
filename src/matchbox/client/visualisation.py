@@ -6,7 +6,7 @@ from matplotlib.figure import Figure
 from rustworkx.visualization import mpl_draw
 
 from matchbox.client._handler import get_resolution_graph
-from matchbox.common.graph import ResolutionName, ResolutionNodeType
+from matchbox.common.graph import ResolutionName, ResolutionType
 
 
 def draw_resolution_graph(contains: ResolutionName | None = None) -> Figure:
@@ -62,7 +62,7 @@ def draw_resolution_graph(contains: ResolutionName | None = None) -> Figure:
         source_nodes = [
             node
             for node in subgraph.node_indices()
-            if subgraph[node]["type"] == ResolutionNodeType.SOURCE.value
+            if subgraph[node]["type"] == ResolutionType.SOURCE.value
         ]
         layers = rx.layers(subgraph, source_nodes, index_output=True)
 
@@ -80,7 +80,7 @@ def draw_resolution_graph(contains: ResolutionName | None = None) -> Figure:
 
         colors = [
             (0.2, 0.6, 1.0, 0.8)  # RGBA blue
-            if subgraph[i]["type"] == ResolutionNodeType.SOURCE.value
+            if subgraph[i]["type"] == ResolutionType.SOURCE.value
             else (1.0, 0.4, 0.2, 0.8)  # RGBA orange
             for i in subgraph.node_indices()
         ]

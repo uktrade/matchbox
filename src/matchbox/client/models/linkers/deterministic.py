@@ -44,16 +44,6 @@ class DeterministicLinker(Linker):
 
     settings: DeterministicSettings
 
-    @classmethod
-    def from_settings(
-        cls, left_id: str, right_id: str, comparisons: str
-    ) -> "DeterministicLinker":
-        """Create a DeterministicLinker from a settings dictionary."""
-        settings = DeterministicSettings(
-            left_id=left_id, right_id=right_id, comparisons=comparisons
-        )
-        return cls(settings=settings)
-
     def prepare(self, left: pl.DataFrame, right: pl.DataFrame) -> None:
         """Prepare the linker for linking."""
         pass

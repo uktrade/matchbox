@@ -3,7 +3,7 @@ name = "matchbox-db"
 dynamic = ["version"]
 description = "A framework for orchestrating and comparing data linking and deduplication methodologies."
 authors = [{ name="Department for Business and Trade" }]
-license = {file = "LICENSE"}
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [

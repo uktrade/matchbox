@@ -22,7 +22,7 @@ def test_hash_conversion():
             },
         ],
     )
-    all_companies = source_testkit.query.to_pandas()
+    all_companies = source_testkit.data.to_pandas()
     sha1_series_1 = fields_to_value_ordered_hash(
         data=all_companies,
         fields=["id", "key", "company_name", "address", "crn", "duns"],

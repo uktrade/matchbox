@@ -1,5 +1,6 @@
 """ORM classes for the Matchbox PostgreSQL database."""
 
+import json
 from typing import Literal
 
 from sqlalchemy import (
@@ -18,15 +19,19 @@ from sqlalchemy import (
     text,
     update,
 )
-from sqlalchemy.dialects.postgresql import BYTEA, TEXT, insert
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
 from sqlalchemy.orm import Session, relationship
 
+from matchbox.common.dtos import LocationConfig, ModelType
+from matchbox.common.dtos import ModelConfig as CommonModelConfig
+from matchbox.common.dtos import Resolution as CommonResolution
+from matchbox.common.dtos import SourceConfig as CommonSourceConfig
+from matchbox.common.dtos import SourceField as CommonSourceField
 from matchbox.common.exceptions import (
+    MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.graph import ResolutionName
-from matchbox.common.sources import SourceConfig as CommonSourceConfig
-from matchbox.common.sources import SourceField as CommonSourceField
+from matchbox.common.graph import ResolutionName, ResolutionType
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
 
@@ -76,6 +81,9 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     # Relationships
     source_config = relationship(
         "SourceConfigs", back_populates="source_resolution", uselist=False
+    )
+    model_config = relationship(
+        "ModelConfigs", back_populates="model_resolution", uselist=False
     )
     probabilities = relationship(
         "Probabilities",
@@ -199,7 +207,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     def from_name(
         cls,
         name: ResolutionName,
-        res_type: Literal["model", "source", "human"] | None = None,
+        res_type: ResolutionType | None = None,
         session: Session | None = None,
     ) -> "Resolutions":
         """Resolves a model resolution name to a Resolution object.
@@ -214,7 +222,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         """
         query = select(cls).where(cls.name == name)
         if res_type:
-            query = query.where(cls.type == res_type)
+            query = query.where(cls.type == res_type.value)
 
         if session:
             resolution = session.execute(query).scalar()
@@ -225,10 +233,111 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         if resolution:
             return resolution
 
-        res_type = res_type or "any"
         raise MatchboxResolutionNotFoundError(
-            message=f"No resolution {name} of {res_type}."
+            message=f"No resolution {name} of type {res_type or 'any'}."
         )
+
+    @classmethod
+    def from_dto(
+        cls,
+        resolution: CommonResolution,
+        session: Session,
+    ) -> "Resolutions":
+        """Create a Resolutions instance from a Resolution DTO object.
+
+        The resolution will be added to the session and flushed (but not committed).
+
+        For model resolutions, lineage entries will be created automatically.
+
+        Args:
+            resolution: The Resolution DTO to convert
+            session: Database session (caller must commit)
+
+        Returns:
+            A Resolutions ORM instance with ID and relationships established
+        """
+        # Check if resolution already exists. Always an error
+        existing = session.scalar(select(cls).where(cls.name == resolution.name))
+        if existing:
+            raise MatchboxResolutionAlreadyExists(
+                f"Resolution {resolution.name} already exists"
+            )
+
+        # Create new resolution
+        resolution_orm = cls(
+            name=resolution.name,
+            description=resolution.description,
+            type=resolution.resolution_type.value,
+            truth=resolution.truth,
+        )
+        session.add(resolution_orm)
+        session.flush()  # Get resolution_id
+
+        if resolution.resolution_type == ResolutionType.SOURCE:
+            resolution_orm.source_config = SourceConfigs.from_dto(resolution.config)
+
+        elif resolution.resolution_type == ResolutionType.MODEL:
+            resolution_orm.model_config = ModelConfigs.from_dto(resolution.config)
+            # Create lineage
+            left_parent = cls.from_name(
+                resolution.config.left_query.point_of_truth, session=session
+            )
+            cls._create_closure_entries(session, resolution_orm, left_parent)
+
+            if resolution.config.type == ModelType.LINKER:
+                right_parent = cls.from_name(
+                    resolution.config.right_query.point_of_truth, session=session
+                )
+                cls._create_closure_entries(session, resolution_orm, right_parent)
+
+        return resolution_orm
+
+    def to_dto(self) -> CommonResolution:
+        """Convert ORM resolution to a matchbox.common Resolution object."""
+        if self.type == ResolutionType.SOURCE:
+            config = self.source_config.to_dto()
+        else:
+            config = self.model_config.to_dto()
+
+        return CommonResolution(
+            name=self.name,
+            description=self.description,
+            truth=self.truth,
+            resolution_type=ResolutionType(self.type),
+            config=config,
+        )
+
+    @staticmethod
+    def _create_closure_entries(
+        session: Session, child: "Resolutions", parent: "Resolutions"
+    ):
+        """Create closure table entries for a parent-child relationship."""
+        # Direct relationship
+        session.add(
+            ResolutionFrom(
+                parent=parent.resolution_id,
+                child=child.resolution_id,
+                level=1,
+                truth_cache=parent.truth,
+            )
+        )
+
+        # Transitive closure
+        ancestors = (
+            session.query(ResolutionFrom)
+            .filter(ResolutionFrom.child == parent.resolution_id)
+            .all()
+        )
+
+        for ancestor in ancestors:
+            session.add(
+                ResolutionFrom(
+                    parent=ancestor.parent,
+                    child=child.resolution_id,
+                    level=ancestor.level + 1,
+                    truth_cache=ancestor.truth_cache,
+                )
+            )
 
 
 class PKSpace(MBDB.MatchboxBase):
@@ -443,19 +552,18 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
     @classmethod
     def from_dto(
         cls,
-        resolution: "Resolutions",
-        source_config: CommonSourceConfig,
+        config: CommonSourceConfig,
     ) -> "SourceConfigs":
-        """Create a SourceConfigs instance from a CommonSource object."""
+        """Create a SourceConfigs instance from a Resolution DTO object."""
+        # Create the SourceConfigs object
         return cls(
-            resolution_id=resolution.resolution_id,
-            location_type=source_config.location.type,
-            location_name=str(source_config.location.name),
-            extract_transform=source_config.extract_transform,
+            location_type=str(config.location_config.type),
+            location_name=str(config.location_config.name),
+            extract_transform=config.extract_transform,
             key_field=SourceFields(
                 index=0,
-                name=source_config.key_field.name,
-                type=source_config.key_field.type.value,
+                name=config.key_field.name,
+                type=config.key_field.type.value,
             ),
             index_fields=[
                 SourceFields(
@@ -463,18 +571,16 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
                     name=field.name,
                     type=field.type.value,
                 )
-                for idx, field in enumerate(source_config.index_fields)
+                for idx, field in enumerate(config.index_fields)
             ],
         )
 
     def to_dto(self) -> CommonSourceConfig:
-        """Convert ORM source to a matchbox.common SourceConfig object."""
+        """Convert ORM source to a matchbox.common.SourceConfig object."""
         return CommonSourceConfig(
-            name=self.name,
-            location={
-                "type": self.location_type,
-                "name": self.location_name,
-            },
+            location_config=LocationConfig(
+                type=self.location_type, name=self.location_name
+            ),
             extract_transform=self.extract_transform,
             key_field=CommonSourceField(
                 name=self.key_field.name, type=self.key_field.type
@@ -486,6 +592,64 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
                 )
                 for field in self.index_fields
             ],
+        )
+
+
+class ModelConfigs(CountMixin, MBDB.MatchboxBase):
+    """Table of model configs for Matchbox."""
+
+    __tablename__ = "model_configs"
+
+    # Columns
+    model_config_id = Column(BIGINT, Identity(start=1), primary_key=True)
+    resolution_id = Column(
+        BIGINT,
+        ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model_class = Column(TEXT, nullable=False)
+    model_settings = Column(JSONB, nullable=False)
+    left_query = Column(JSONB, nullable=False)
+    right_query = Column(JSONB, nullable=True)
+
+    @property
+    def name(self) -> str:
+        """Get the name of the related resolution."""
+        return self.model_resolution.name
+
+    # Relationships
+    model_resolution = relationship("Resolutions", back_populates="model_config")
+
+    @classmethod
+    def list_all(cls) -> list["SourceConfigs"]:
+        """Returns all model_configs in the database."""
+        with MBDB.get_session() as session:
+            return session.query(cls).all()
+
+    @classmethod
+    def from_dto(
+        cls,
+        config: CommonModelConfig,
+    ) -> "ModelConfigs":
+        """Create a SourceConfigs instance from a Resolution DTO object."""
+        # Create the SourceConfigs object
+        return cls(
+            model_class=config.model_class,
+            model_settings=config.model_settings,
+            left_query=config.left_query.model_dump_json(),
+            right_query=(
+                None if not config.right_query else config.right_query.model_dump_json()
+            ),
+        )
+
+    def to_dto(self) -> CommonModelConfig:
+        """Convert ORM source to a matchbox.common.ModelConfig object."""
+        return CommonModelConfig(
+            type=ModelType.LINKER if self.right_query else ModelType.DEDUPER,
+            model_class=self.model_class,
+            model_settings=self.model_settings,
+            left_query=json.loads(self.left_query),
+            right_query=json.loads(self.right_query) if self.right_query else None,
         )
 
 

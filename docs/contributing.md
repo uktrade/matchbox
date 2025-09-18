@@ -67,13 +67,13 @@ If:
 Then you can verify a migration script would be created (without creating one) with:
 
 ```shell
-just migration-check
+just migrate check
 ```
 
 Or actually create the new migration script by running:
 
 ```shell
-just migration-generate "< enter descriptive message >"
+just migrate generate "< enter descriptive message >"
 ```
 
 These commands will auto-detect the difference between the ORM and the database container.
@@ -90,7 +90,7 @@ Check `src/matchbox/server/postgresql/alembic/versions/` for the new migration s
 Sometimes you may wish to apply your migrations manually.
 
 ```shell
-just migration-apply
+just migrate apply
 ```
 
 In Alembic:
@@ -102,8 +102,8 @@ If you modify the database and need to recover it:
 
 
 ```shell
-just migration-reset
-just migration-apply
+just migrate reset
+just migrate apply
 ```
 
 ## Debugging

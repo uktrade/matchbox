@@ -4,7 +4,7 @@ from typing import Any
 
 from pyarrow import Schema
 
-from matchbox.common.graph import ResolutionName, SourceResolutionName
+from matchbox.common.graph import ResolutionName
 
 # -- Common data objects exceptions --
 
@@ -177,24 +177,6 @@ class MatchboxResolutionNotFoundError(Exception):
             message = "Resolution not found."
             if name is not None:
                 message = f"Resolution {name} not found."
-
-        super().__init__(message)
-        self.name = name
-
-
-class MatchboxSourceNotFoundError(Exception):
-    """SourceConfig not found on the server."""
-
-    def __init__(
-        self,
-        message: str = None,
-        name: SourceResolutionName | None = None,
-    ):
-        """Initialise the exception."""
-        if message is None:
-            message = "SourceConfig not found on matchbox."
-            if name:
-                message = f"SourceConfig ({name}) not found."
 
         super().__init__(message)
         self.name = name

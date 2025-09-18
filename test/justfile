@@ -1,0 +1,15 @@
+set working-directory := ".."
+
+# Run all tests
+default *ARGS:
+    just build -d
+    uv run pytest {{ARGS}}
+
+# Run local tests only
+local *ARGS:
+    uv run pytest -m "not docker" {{ARGS}}
+
+# Run docker tests only
+docker *ARGS:
+    just build -d
+    uv run pytest -m "docker" {{ARGS}}

@@ -9,11 +9,13 @@ from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.exc import SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
-from matchbox.common.exceptions import MatchboxResolutionAlreadyExists
-from matchbox.common.graph import ModelResolutionName, ResolutionNodeType
+from matchbox.common.graph import (
+    ModelResolutionName,
+    ResolutionType,
+    SourceResolutionName,
+)
 from matchbox.common.hash import IntMap, hash_arrow_table
 from matchbox.common.logging import logger
-from matchbox.common.sources import SourceConfig
 from matchbox.common.transform import Cluster, DisjointSet
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
@@ -22,10 +24,8 @@ from matchbox.server.postgresql.orm import (
     Contains,
     PKSpace,
     Probabilities,
-    ResolutionFrom,
     Resolutions,
     Results,
-    SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import (
     compile_sql,
@@ -35,63 +35,32 @@ from matchbox.server.postgresql.utils.db import (
 from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leaves
 
 
-def insert_source(
-    source_config: SourceConfig, data_hashes: pa.Table, batch_size: int
+def insert_hashes(
+    name: SourceResolutionName,
+    data_hashes: pa.Table,
+    batch_size: int,
 ) -> None:
-    """Indexes a source within Matchbox."""
-    log_prefix = f"Index {source_config.name}"
+    """Indexes hash data for a source within Matchbox.
+
+    Args:
+        name: The name of the source resolution
+        data_hashes: Arrow table containing hash data
+        batch_size: Batch size for bulk operations
+    """
+    log_prefix = f"Index hashes {name}"
     content_hash = hash_arrow_table(data_hashes)
 
     with MBDB.get_session() as session:
-        logger.info("Begin", prefix=log_prefix)
-
-        # Check if resolution already exists
-        existing_resolution = (
-            session.query(Resolutions).filter_by(name=source_config.name).first()
+        resolution = Resolutions.from_name(
+            name=name, res_type=ResolutionType.SOURCE, session=session
         )
+        # Check if the content hash is the same
+        if resolution.hash == content_hash:
+            logger.info("Source data matches index. Finished", prefix=log_prefix)
+            return
 
-        if existing_resolution:
-            resolution = existing_resolution
-            # Check if the content hash is the same
-            if resolution.hash == content_hash:
-                logger.info("Source data matches index. Finished", prefix=log_prefix)
-                return
-        else:
-            # Create new resolution without content hash
-            resolution = Resolutions(
-                name=source_config.name,
-                hash=None,
-                type=ResolutionNodeType.SOURCE.value,
-            )
-            session.add(resolution)
-            session.flush()
-
-        # Store resolution ID for later use
-        resolution_id: int = resolution.resolution_id
-
-        # Check if source already exists
-        existing_source = (
-            session.query(SourceConfigs)
-            .filter_by(resolution_id=resolution.resolution_id)
-            .first()
-        )
-
-        if existing_source:
-            logger.info("Deleting existing", prefix=log_prefix)
-            session.delete(existing_source)
-            session.flush()
-
-        # Create new source with relationship to resolution
-        source_obj = SourceConfigs.from_dto(resolution, source_config)
-        session.add(source_obj)
-        session.commit()
-
-        logger.info(
-            "Added to Resolutions, SourceConfigs, SourceFields", prefix=log_prefix
-        )
-
-        # Store source_config_id and max primary keys for later use
-        source_config_id = source_obj.source_config_id
+        resolution_id = resolution.resolution_id
+        source_config_id = resolution.source_config.source_config_id
 
     # Don't insert new hashes, but new keys need existing hash IDs
     with MBDB.get_adbc_connection() as conn:
@@ -122,6 +91,7 @@ def insert_source(
     else:
         # The value of next_cluster_id is irrelevant as cluster_records will be empty
         next_cluster_id = 0
+
     cluster_records = (
         new_hashes.with_row_index("cluster_id")
         .with_columns(
@@ -191,6 +161,7 @@ def insert_source(
                 )
 
             adbc_connection.commit()
+
         except Exception as e:
             # Log the error and rollback
             logger.warning(f"Error, rolling back: {e}", prefix=log_prefix)
@@ -212,89 +183,6 @@ def insert_source(
         logger.info("No new records to add", prefix=log_prefix)
 
     logger.info("Finished", prefix=log_prefix)
-
-
-def insert_model(
-    name: ModelResolutionName,
-    left: Resolutions,
-    right: Resolutions,
-    description: str,
-) -> None:
-    """Writes a model to Matchbox with a default truth value of 100.
-
-    Args:
-        name: Name of the new model
-        left: Left parent of the model
-        right: Right parent of the model. Same as left in a dedupe job
-        description: Model description
-
-    Raises:
-        MatchboxResolutionNotFoundError: If the specified parent models don't exist.
-        MatchboxResolutionAlreadyExists: If the specified model already exists.
-    """
-    log_prefix = f"Model {name}"
-    logger.info("Registering", prefix=log_prefix)
-    with MBDB.get_session() as session:
-        # Check if resolution exists
-        exists_stmt = select(Resolutions).where(Resolutions.name == name)
-        exists_obj = session.scalar(exists_stmt)
-
-        if exists_obj is not None:
-            raise MatchboxResolutionAlreadyExists
-
-        new_res = Resolutions(
-            type=ResolutionNodeType.MODEL.value,
-            name=name,
-            description=description,
-            truth=100,
-        )
-        session.add(new_res)
-        session.flush()
-
-        def _create_closure_entries(parent_resolution: Resolutions) -> None:
-            """Create closure entries for the new model.
-
-            This is made up of mappings between nodes and any of their direct or
-            indirect parents.
-            """
-            session.add(
-                ResolutionFrom(
-                    parent=parent_resolution.resolution_id,
-                    child=new_res.resolution_id,
-                    level=1,
-                    truth_cache=parent_resolution.truth,
-                )
-            )
-
-            ancestor_entries = (
-                session.query(ResolutionFrom)
-                .filter(ResolutionFrom.child == parent_resolution.resolution_id)
-                .all()
-            )
-
-            for entry in ancestor_entries:
-                session.add(
-                    ResolutionFrom(
-                        parent=entry.parent,
-                        child=new_res.resolution_id,
-                        level=entry.level + 1,
-                        truth_cache=entry.truth_cache,
-                    )
-                )
-
-        # Create resolution lineage entries
-        _create_closure_entries(parent_resolution=left)
-
-        if right != left:
-            _create_closure_entries(parent_resolution=right)
-
-        status = "Inserted new"
-        resolution_id = new_res.resolution_id
-
-        session.commit()
-
-    logger.info(f"{status} model with ID {resolution_id}", prefix=log_prefix)
-    logger.info("Done!", prefix=log_prefix)
 
 
 def _build_cluster_objects(
@@ -584,7 +472,7 @@ def _results_to_insert_tables(
 
 
 def insert_results(
-    resolution: Resolutions,
+    name: ModelResolutionName,
     results: pa.Table,
     batch_size: int,
 ) -> None:
@@ -599,13 +487,15 @@ def insert_results(
     This allows easy querying of clusters at any threshold.
 
     Args:
-        resolution: Resolution of type model to associate results with
+        name: The name of the model resolution to upload results for
         results: A PyArrow results table with left_id, right_id, probability
         batch_size: Number of records to insert in each batch
 
     Raises:
         MatchboxResolutionNotFoundError: If the specified model doesn't exist.
     """
+    resolution = Resolutions.from_name(name=name, res_type=ResolutionType.MODEL)
+
     log_prefix = f"Model {resolution.name}"
     logger.info(
         f"Writing results data with batch size {batch_size:,}", prefix=log_prefix

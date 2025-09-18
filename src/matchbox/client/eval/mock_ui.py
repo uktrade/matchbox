@@ -7,14 +7,14 @@ import subprocess
 import sys
 from os import environ
 
-import polars as pl
-from polars.datatypes import String
 from sqlalchemy import create_engine
 
-from matchbox import index, make_model, query, select
+from matchbox import index
 from matchbox.client._handler import create_client
 from matchbox.client._settings import settings as client_settings
+from matchbox.client.models import Model
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.queries import Query
 from matchbox.common.factories.sources import source_from_tuple
 from matchbox.common.graph import DEFAULT_RESOLUTION
 
@@ -41,12 +41,11 @@ def setup_mock_database():
         data_keys=["1", "2", "3", "4"],
         name="foo",
         engine=warehouse,
-    )
-    testkit_foo.write_to_location(warehouse)
-    foo = testkit_foo.source_config
-    foo.location.add_client(warehouse)
+    ).write_to_location()
+    foo = testkit_foo.source
 
-    index(source_config=foo)
+    foo.run()
+    foo.sync()
 
     testkit_bar = source_from_tuple(
         data_tuple=(
@@ -57,45 +56,31 @@ def setup_mock_database():
         data_keys=["a", "b", "c"],
         name="bar",
         engine=warehouse,
-    )
-    testkit_bar.write_to_location(warehouse)
+    ).write_to_location()
 
-    bar = testkit_bar.source_config
+    bar = testkit_bar.source
     bar.location.add_client(warehouse)
-    index(source_config=bar)
+    index(source=bar)
 
-    foo_df = query(select("foo", client=warehouse), return_type="polars")
-    bar_df = query(select("bar", client=warehouse), return_type="polars")
-
-    foo_df = foo_df.with_columns(
-        pl.col("foo_name")
-        .map_elements(lambda x: x.split(" ")[0], return_dtype=String)
-        .alias("foo_name")
-    )
-
-    bar_df = bar_df.with_columns(
-        pl.col("bar_name")
-        .map_elements(lambda x: x.split(" ")[0], return_dtype=String)
-        .alias("bar_name")
-    )
-
-    linker = make_model(
+    linker = Model(
         name=DEFAULT_RESOLUTION,
         description="Linking model",
         model_class=DeterministicLinker,
         model_settings={
             "left_id": "id",
             "right_id": "id",
-            "comparisons": ("l.foo_name = r.bar_name",),
+            "comparisons": ("l.comp = r.comp",),
         },
-        left_data=pl.from_arrow(foo_df),
-        left_resolution="foo",
-        right_data=pl.from_arrow(bar_df),
-        right_resolution="bar",
+        left_query=Query(
+            foo, cleaning={"comp": f"split_part({foo.f('name')}, ' ', 1)"}
+        ),
+        right_query=Query(
+            bar, cleaning={"comp": f"split_part({bar.f('name')}, ' ', 1)"}
+        ),
     )
 
-    results = linker.run()
-    results.to_matchbox()
+    linker.run()
+    linker.sync()
 
     return warehouse.url
 

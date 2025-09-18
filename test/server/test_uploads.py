@@ -10,11 +10,19 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from matchbox.common.arrow import table_to_buffer
-from matchbox.common.dtos import BackendUploadType, ModelConfig, ModelType, UploadStage
+from matchbox.common.dtos import (
+    BackendUploadType,
+    ModelConfig,
+    ModelType,
+    QueryConfig,
+    Resolution,
+    UploadStage,
+)
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
 from matchbox.common.factories.sources import source_factory
+from matchbox.common.graph import ResolutionType
 from matchbox.server.uploads import (
     InMemoryUploadTracker,
     UploadTracker,
@@ -52,7 +60,7 @@ def test_file_to_s3(s3: S3Client):
             },
         ],
     )
-    all_companies = source_testkit.query.to_pandas()
+    all_companies = source_testkit.data.to_pandas()
 
     # Test 1: Upload a parquet file
     # Create a mock UploadFile
@@ -133,12 +141,18 @@ class TestUploadTracker:
 
     def test_basic_upload_tracking(self):
         """Test adding upload to tracker and retrieving."""
-        source = source_factory().source_config
-        model = ModelConfig(
+        source = source_factory().source.to_resolution()
+        model = Resolution(
             name="name",
             description="description",
-            type=ModelType.DEDUPER,
-            left_resolution="resolution",
+            resolution_type=ResolutionType.MODEL,
+            truth=100,
+            config=ModelConfig(
+                type=ModelType.DEDUPER,
+                left_query=QueryConfig(source_resolutions=["source"]),
+                model_class="NaiveDeduper",
+                model_settings="{}",
+            ),
         )
 
         # Add the source and the model
@@ -167,7 +181,7 @@ class TestUploadTracker:
 
     def test_status_management(self):
         """Test status update functionality."""
-        source = source_factory().source_config
+        source = source_factory().source.to_resolution()
 
         # Create entry and verify initial status
         upload_id = self.tracker.add_source(source)
@@ -192,7 +206,7 @@ class TestUploadTracker:
     @patch("matchbox.server.uploads.datetime")
     def test_timestamp_updates(self, mock_datetime: Mock):
         """Test that timestamps update correctly on different operations."""
-        source = source_factory().source_config
+        source = source_factory().source.to_resolution()
 
         creation_timestamp = datetime(2024, 1, 1, 12, 0)
         get_timestamp = datetime(2024, 1, 1, 12, 15)
@@ -226,7 +240,10 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     tracker = InMemoryUploadTracker()
     mock_backend = Mock()
     mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.index = Mock(side_effect=ValueError("Simulated processing failure"))
+    mock_backend.insert_resolution = Mock(return_value=None)
+    mock_backend.insert_source_data = Mock(
+        side_effect=ValueError("Simulated processing failure")
+    )
 
     bucket = "test-bucket"
     test_key = "test-upload-id.parquet"
@@ -244,7 +261,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     assert s3.head_object(Bucket=bucket, Key=test_key)
 
     # Setup metadata store with test data
-    upload_id = tracker.add_source(source_testkit.source_config)
+    upload_id = tracker.add_source(source_testkit.source.to_resolution())
     tracker.update(upload_id, UploadStage.AWAITING_UPLOAD)
 
     # Run the process, expecting it to fail

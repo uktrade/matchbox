@@ -78,6 +78,20 @@ def table_to_buffer(table: pa.Table) -> BytesIO:
 
 
 def check_schema(expected: Schema, actual: Schema) -> None:
-    """Validate equality of Arrow schemas."""
-    if expected != actual:
+    """Validate equality of Arrow schemas, ignoring field order and metadata.
+
+    Args:
+        expected: Schema to check against
+        actual: Schema to check
+    """
+    # Make comparison invariant to order
+    actual = pa.schema(
+        [
+            (name, actual.field(name).type)
+            for name in expected.names
+            if name in actual.names
+        ]
+    )
+
+    if not actual.equals(expected):
         raise MatchboxArrowSchemaMismatch(expected=expected, actual=actual)

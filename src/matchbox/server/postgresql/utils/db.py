@@ -27,7 +27,7 @@ from matchbox.common.graph import (
     ResolutionEdge,
     ResolutionGraph,
     ResolutionNode,
-    ResolutionNodeType,
+    ResolutionType,
 )
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxSnapshot
@@ -46,7 +46,7 @@ def get_resolution_graph() -> ResolutionGraph:
                 ResolutionNode(
                     id=resolution.resolution_id,
                     name=resolution.name,
-                    type=ResolutionNodeType(resolution.type),
+                    type=ResolutionType(resolution.type),
                 )
             )
 

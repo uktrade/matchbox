@@ -54,16 +54,6 @@ tracker = InMemoryUploadTracker()
 upload_id = tracker.add_source(source_testkit.source_config)
 ```
 
-Or you're testing the client handler and want to mock the API.
-
-```python
-@patch("matchbox.client.helpers.index.SourceConfig")
-def test_my_api(MockSource: Mock, matchbox_api: MockRouter):
-    source_testkit = source_factory(
-        features=[{"name": "company_name", "base_generator": "company"}]
-    )
-    MockSource.return_value = source_testkit.mock
-```
 
 `source_factory()` can be configured with a powerful range of [`FeatureConfig`][matchbox.common.factories.entities.FeatureConfig] objects, including a [variety of rules][matchbox.common.factories.entities.VariationRule] which distort and duplicate the data in predictable ways. These use [Faker](https://faker.readthedocs.io/) to generate data.
 
@@ -108,7 +98,7 @@ Adding a `Model`.
 
 ```python
 model_testkit = model_factory()
-backend.insert_model(model_config=model_testkit.model.model_config)
+backend.insert_model(model_config=model_testkit.model.config)
 ```
 
 Inserting results.
@@ -116,7 +106,7 @@ Inserting results.
 ```python
 model_testkit = model_factory()
 backend.set_model_results(
-    name=model_testkit.model.model_config.name, 
+    name=model_testkit.model.config.name, 
     results=model_testkit.probabilities
 )
 ```
@@ -137,9 +127,9 @@ model_testkit = model_factory(
     true_entities=linked_testkit.true_entities,
 )
 
-backend.insert_model(model_config=model_testkit.model.model_config)
+backend.insert_model(model_config=model_testkit.model.config)
 backend.set_model_results(
-    name=model_testkit.model.model_config.name, 
+    name=model_testkit.model.config.name, 
     results=model_testkit.probabilities
 )
 ```
@@ -160,19 +150,19 @@ The `model_factory()` is designed so you can chain together known processes in a
 linked_testkit: LinkedSourcesTestkit = linked_sources_factory()
 
 # Create perfect deduped models first
-left_deduped: ModelTestkit = model_factory(
+left_deduper: ModelTestkit = model_factory(
     left_testkit=linked_testkit.sources["crn"],
     true_entities=linked_testkit.true_entities,
 )
-right_deduped: ModelTestkit = model_factory(
+right_deduper: ModelTestkit = model_factory(
     left_testkit=linked_testkit.sources["cdms"],
     true_entities=linked_testkit.true_entities,
 )
 
 # Create a model and generate probabilities
-model: Model = make_model(
-    left_data=left_deduped.query,
-    right_data=right_deduped.query
+model: Model = Model(
+    left_query=Query(left, model=left_deduper.model),
+    right_query=Query(right, model=right_deduper.model),
     ...
 )
 results: Results = model.run()

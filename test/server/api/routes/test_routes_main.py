@@ -15,6 +15,7 @@ from matchbox.common.dtos import (
     BackendResourceType,
     LoginAttempt,
     LoginResult,
+    Match,
     OKMessage,
     UploadStage,
     UploadStatus,
@@ -22,11 +23,9 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
-    MatchboxSourceNotFoundError,
 )
 from matchbox.common.factories.sources import source_factory
 from matchbox.common.graph import ResolutionGraph
-from matchbox.common.sources import Match
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -75,7 +74,8 @@ def test_upload(
 
     mock_backend.settings.datastore.get_client.return_value = s3
     mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-    mock_backend.index = Mock(return_value=None)
+    mock_backend.insert_resolution = Mock(return_value=None)
+    mock_backend.insert_source_data = Mock(return_value=None)
     s3.create_bucket(
         Bucket="test-bucket",
         CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
@@ -83,7 +83,7 @@ def test_upload(
 
     source_testkit = source_factory()
 
-    update_id = mock_tracker.add_source(source_testkit.source_config)
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
 
     # Make request with mocked background task
     response = test_client.post(
@@ -107,7 +107,8 @@ def test_upload(
     assert mock_tracker.update.call_args_list == [
         call(update_id, UploadStage.QUEUED),
     ]
-    mock_backend.index.assert_not_called()  # Index happens in background
+    mock_backend.insert_resolution.assert_not_called()  # Index happens in background
+    mock_backend.insert_source_data.assert_not_called()
     mock_add_task.assert_called_once()  # Verify task was queued
 
 
@@ -126,7 +127,7 @@ def test_upload_wrong_schema(
 
     # Create source with results schema instead of index
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source_config)
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
 
     response = test_client.post(
         f"/upload/{update_id}",
@@ -150,7 +151,7 @@ def test_upload_status_check(api_client_and_mocks: tuple[TestClient, Mock, Mock]
     """Test checking status of an upload using the status endpoint."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source_config)
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
     mock_tracker.update(update_id, UploadStage.PROCESSING)
     mock_tracker.reset_mock()
 
@@ -166,7 +167,7 @@ def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock,
     """Test attempting to upload when status is already processing."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source_config)
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
     mock_tracker.update(update_id, UploadStage.PROCESSING)
 
     response = test_client.post(
@@ -183,7 +184,7 @@ def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Moc
     """Test attempting to upload when status is already queued."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source_config)
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
     mock_tracker.update(update_id, UploadStage.QUEUED)
 
     response = test_client.post(
@@ -249,7 +250,7 @@ def test_query_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock
 
 def test_query_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.query = Mock(side_effect=MatchboxSourceNotFoundError())
+    mock_backend.query = Mock(side_effect=MatchboxResolutionNotFoundError())
 
     response = test_client.get(
         "/query",
@@ -307,7 +308,7 @@ def test_match_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock
 
 def test_match_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.match = Mock(side_effect=MatchboxSourceNotFoundError())
+    mock_backend.match = Mock(side_effect=MatchboxResolutionNotFoundError())
 
     response = test_client.get(
         "/match",
@@ -320,7 +321,7 @@ def test_match_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.SOURCE
+    assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
 # Admin
@@ -381,9 +382,8 @@ def test_api_key_authorisation(api_client_and_mocks: tuple[TestClient, Mock, Moc
     test_client, _, _ = api_client_and_mocks
     routes = [
         (test_client.post, "/upload/upload_id"),
-        (test_client.post, "/sources"),
-        (test_client.post, "/models"),
-        (test_client.patch, "/models/name/truth"),
+        (test_client.post, "/resolutions"),
+        (test_client.patch, "/resolutions/name/truth"),
         (test_client.delete, "/resolutions/name"),
         (test_client.delete, "/database"),
     ]

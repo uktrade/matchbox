@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import Mock, patch
 
 import numpy as np
 import polars as pl
@@ -9,12 +10,14 @@ import pytest
 from splink import SettingsCreator
 from splink import comparison_library as cl
 
-from matchbox import make_model
+from matchbox.client.models import Model
+from matchbox.client.models.linkers.base import Linker
 from matchbox.client.models.linkers.splinklinker import SplinkLinker, SplinkSettings
 from matchbox.client.models.linkers.weighteddeterministic import (
     WeightedDeterministicLinker,
     WeightedDeterministicSettings,
 )
+from matchbox.client.queries import Query
 from matchbox.client.results import Results
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -199,7 +202,10 @@ PROBABILISTIC_LINKERS = [
 
 
 @pytest.mark.parametrize(("Linker", "configure_linker"), PROBABILISTIC_LINKERS)
-def test_probabilistic_scores_generation(Linker, configure_linker):
+@patch.object(Query, "run")
+def test_probabilistic_scores_generation(
+    mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
+):
     """Test that linkers can generate varying probability scores."""
 
     # Create sources with variations
@@ -234,16 +240,19 @@ def test_probabilistic_scores_generation(Linker, configure_linker):
     left_source = linked.sources["source_left"]
     right_source = linked.sources["source_right"]
 
+    mock_query_run.side_effect = [
+        pl.from_arrow(left_source.data),
+        pl.from_arrow(right_source.data),
+    ]
+
     # Configure and run the linker
-    linker = make_model(
+    linker = Model(
         name="prob_test_linker",
         description="Testing probability generation",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_data=pl.from_arrow(left_source.query).drop("key"),
-        left_resolution="source_left",
-        right_data=pl.from_arrow(right_source.query).drop("key"),
-        right_resolution="source_right",
+        left_query=Query(left_source),
+        right_query=Query(right_source),
     )
 
     results: Results = linker.run()

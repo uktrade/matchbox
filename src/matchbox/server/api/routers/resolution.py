@@ -1,29 +1,23 @@
-"""Model API routes for the Matchbox server."""
+"""Resolution API routes for the Matchbox server."""
 
 from typing import Annotated
 
-from fastapi import (
-    APIRouter,
-    Body,
-    Depends,
-    HTTPException,
-    status,
-)
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
-    ModelAncestor,
-    ModelConfig,
     NotFoundError,
+    Resolution,
     ResolutionOperationStatus,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
+    MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.graph import ModelResolutionName
+from matchbox.common.graph import ModelResolutionName, ResolutionName, ResolutionType
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
@@ -31,7 +25,7 @@ from matchbox.server.api.dependencies import (
     authorisation_dependencies,
 )
 
-router = APIRouter(prefix="/models", tags=["models"])
+router = APIRouter(prefix="/resolutions", tags=["resolution"])
 
 
 @router.post(
@@ -45,15 +39,16 @@ router = APIRouter(prefix="/models", tags=["models"])
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(authorisation_dependencies)],
 )
-def insert_model(
-    backend: BackendDependency, model: ModelConfig
-) -> ResolutionOperationStatus:
-    """Insert a model into the backend."""
+def create_resolution(
+    backend: BackendDependency,
+    resolution: Resolution,
+) -> ResolutionOperationStatus | UploadStatus:
+    """Create a resolution (model or source)."""
     try:
-        backend.insert_model(model)
+        backend.insert_resolution(resolution=resolution)
         return ResolutionOperationStatus(
             success=True,
-            name=model.name,
+            name=resolution.name,
             operation=CRUDOperation.CREATE,
         )
     except Exception as e:
@@ -61,7 +56,7 @@ def insert_model(
             status_code=500,
             detail=ResolutionOperationStatus(
                 success=False,
-                name=model.name,
+                name=resolution.name,
                 operation=CRUDOperation.CREATE,
                 details=str(e),
             ).model_dump(),
@@ -72,33 +67,103 @@ def insert_model(
     "/{name}",
     responses={404: {"model": NotFoundError}},
 )
-def get_model(backend: BackendDependency, name: ModelResolutionName) -> ModelConfig:
-    """Get a model from the backend."""
+def get_resolution(
+    backend: BackendDependency,
+    name: ResolutionName,
+    validate_type: ResolutionType | None = None,
+) -> Resolution:
+    """Get a resolution (model or source) from the backend."""
     try:
-        return backend.get_model(name=name)
+        return backend.get_resolution(name=name, validate=validate_type)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,
             detail=NotFoundError(
                 details=str(e), entity=BackendResourceType.RESOLUTION
+            ).model_dump(),
+        ) from e
+
+
+@router.get(
+    "/{name}/sources",
+    responses={404: {"model": NotFoundError}},
+)
+def get_leaf_source_resolutions(
+    backend: BackendDependency,
+    name: ResolutionName,
+) -> list[Resolution]:
+    """Get all sources in scope for a resolution."""
+    try:
+        return backend.get_leaf_source_resolutions(name=name)
+    except MatchboxResolutionNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=NotFoundError(
+                details=str(e), entity=BackendResourceType.RESOLUTION
+            ).model_dump(),
+        ) from e
+
+
+@router.delete(
+    "/{name}",
+    responses={
+        404: {"model": NotFoundError},
+        409: {
+            "model": ResolutionOperationStatus,
+            **ResolutionOperationStatus.status_409_examples(),
+        },
+    },
+    dependencies=[Depends(authorisation_dependencies)],
+)
+def delete_resolution(
+    backend: BackendDependency,
+    name: ResolutionName,
+    certain: Annotated[
+        bool, Query(description="Confirm deletion of the resolution")
+    ] = False,
+) -> ResolutionOperationStatus:
+    """Delete a resolution from the backend."""
+    try:
+        backend.delete_resolution(name=name, certain=certain)
+        return ResolutionOperationStatus(
+            success=True,
+            name=name,
+            operation=CRUDOperation.DELETE,
+        )
+    except MatchboxResolutionNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=NotFoundError(
+                details=str(e), entity=BackendResourceType.RESOLUTION
+            ).model_dump(),
+        ) from e
+    except MatchboxDeletionNotConfirmed as e:
+        raise HTTPException(
+            status_code=409,
+            detail=ResolutionOperationStatus(
+                success=False,
+                name=name,
+                operation=CRUDOperation.DELETE,
+                details=str(e),
             ).model_dump(),
         ) from e
 
 
 @router.post(
-    "/{name}/results",
+    "/{name}/data",
     responses={404: {"model": NotFoundError}},
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(authorisation_dependencies)],
 )
-def set_results(
+def set_data(
     backend: BackendDependency,
     upload_tracker: UploadTrackerDependency,
-    name: ModelResolutionName,
+    name: ResolutionName,
+    validate_type: ResolutionType | None = None,
 ) -> UploadStatus:
-    """Create an upload task for model results."""
+    """Create an upload task for source hashes or model results."""
     try:
-        metadata = backend.get_model(name=name)
+        resolution = backend.get_resolution(name=name, validate=validate_type)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,
@@ -107,12 +172,16 @@ def set_results(
             ).model_dump(),
         ) from e
 
-    upload_id = upload_tracker.add_model(metadata=metadata)
+    if resolution.resolution_type == ResolutionType.SOURCE:
+        upload_id = upload_tracker.add_source(metadata=resolution)
+        return upload_tracker.get(upload_id=upload_id).status
+
+    upload_id = upload_tracker.add_model(metadata=resolution)
     return upload_tracker.get(upload_id=upload_id).status
 
 
 @router.get(
-    "/{name}/results",
+    "/{name}/data",
     responses={404: {"model": NotFoundError}},
 )
 def get_results(
@@ -120,7 +189,7 @@ def get_results(
 ) -> ParquetResponse:
     """Download results for a model as a parquet file."""
     try:
-        res = backend.get_model_results(name=name)
+        res = backend.get_model_data(name=name)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,
@@ -149,8 +218,9 @@ def set_truth(
     name: ModelResolutionName,
     truth: Annotated[int, Body(ge=0, le=100)],
 ) -> ResolutionOperationStatus:
-    """Set truth data for a model."""
+    """Set truth data for a resolution."""
     try:
+        # This will fail for a source, which is what we want for now
         backend.set_model_truth(name=name, truth=truth)
         return ResolutionOperationStatus(
             success=True,
@@ -181,90 +251,9 @@ def set_truth(
     responses={404: {"model": NotFoundError}},
 )
 def get_truth(backend: BackendDependency, name: ModelResolutionName) -> float:
-    """Get truth data for a model."""
+    """Get truth data for a resolution."""
     try:
         return backend.get_model_truth(name=name)
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-
-
-@router.get(
-    "/{name}/ancestors",
-    responses={404: {"model": NotFoundError}},
-)
-def get_ancestors(
-    backend: BackendDependency, name: ModelResolutionName
-) -> list[ModelAncestor]:
-    """Get the ancestors for a model."""
-    try:
-        return backend.get_model_ancestors(name=name)
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-
-
-@router.patch(
-    "/{name}/ancestors_cache",
-    responses={
-        404: {"model": NotFoundError},
-        500: {
-            "model": ResolutionOperationStatus,
-            **ResolutionOperationStatus.status_500_examples(),
-        },
-    },
-    dependencies=[Depends(authorisation_dependencies)],
-)
-def set_ancestors_cache(
-    backend: BackendDependency,
-    name: ModelResolutionName,
-    ancestors: list[ModelAncestor],
-):
-    """Update the cached ancestors for a model."""
-    try:
-        backend.set_model_ancestors_cache(name=name, ancestors_cache=ancestors)
-        return ResolutionOperationStatus(
-            success=True,
-            name=name,
-            operation=CRUDOperation.UPDATE,
-        )
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResolutionOperationStatus(
-                success=False,
-                name=name,
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
-
-
-@router.get(
-    "/{name}/ancestors_cache",
-    responses={404: {"model": NotFoundError}},
-)
-def get_ancestors_cache(
-    backend: BackendDependency, name: ModelResolutionName
-) -> list[ModelAncestor]:
-    """Get the cached ancestors for a model."""
-    try:
-        return backend.get_model_ancestors_cache(name=name)
     except MatchboxResolutionNotFoundError as e:
         raise HTTPException(
             status_code=404,

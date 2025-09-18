@@ -3,6 +3,7 @@
 import time
 import zipfile
 from collections.abc import Iterable
+from enum import StrEnum
 from importlib.metadata import version
 from io import BytesIO
 
@@ -33,10 +34,11 @@ from matchbox.common.dtos import (
     BackendResourceType,
     LoginAttempt,
     LoginResult,
-    ModelAncestor,
-    ModelConfig,
+    Match,
     NotFoundError,
+    Resolution,
     ResolutionOperationStatus,
+    ResolutionType,
     UploadStage,
     UploadStatus,
 )
@@ -47,7 +49,6 @@ from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
     MatchboxServerFileError,
-    MatchboxSourceNotFoundError,
     MatchboxTooManySamplesRequested,
     MatchboxUnhandledServerResponse,
     MatchboxUnparsedClientRequest,
@@ -61,7 +62,6 @@ from matchbox.common.graph import (
 )
 from matchbox.common.hash import hash_to_base64
 from matchbox.common.logging import logger
-from matchbox.common.sources import Match, SourceConfig
 
 URLEncodeHandledType = str | int | float | bytes
 
@@ -83,7 +83,7 @@ def encode_param_value(
 ) -> str | list[str]:
     if isinstance(v, str):
         return v
-    elif isinstance(v, int | float):
+    if isinstance(v, StrEnum | int | float):
         return str(v)
     elif isinstance(v, bytes):
         return hash_to_base64(v)
@@ -118,8 +118,6 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
     if res.status_code == 404:
         error = NotFoundError.model_validate(res.json())
         match error.entity:
-            case BackendResourceType.SOURCE:
-                raise MatchboxSourceNotFoundError(error.details)
             case BackendResourceType.RESOLUTION:
                 raise MatchboxResolutionNotFoundError(error.details)
             case BackendResourceType.CLUSTER:
@@ -261,67 +259,17 @@ def match(
     return matches
 
 
-# Data management
+# Resolution management
 
 
 @http_retry
-def index(source_config: SourceConfig, data_hashes: Table) -> UploadStatus:
-    """Index from a SourceConfig in Matchbox."""
-    log_prefix = f"Index {source_config.name}"
-
-    buffer = table_to_buffer(table=data_hashes)
-
-    # Upload metadata
-    logger.debug("Uploading metadata", prefix=log_prefix)
-
-    metadata_res = CLIENT.post("/sources", json=source_config.model_dump(mode="json"))
-
-    upload = UploadStatus.model_validate(metadata_res.json())
-
-    # Upload data
-    logger.debug("Uploading data", prefix=log_prefix)
-
-    upload_res = CLIENT.post(
-        f"/upload/{upload.id}",
-        files={"file": (f"{upload.id}.parquet", buffer, "application/octet-stream")},
-    )
-
-    # Poll until complete with retry/timeout configuration
-    status = UploadStatus.model_validate(upload_res.json())
-    while status.stage not in [UploadStage.COMPLETE, UploadStage.FAILED]:
-        status_res = CLIENT.get(f"/upload/{upload.id}/status")
-        status = UploadStatus.model_validate(status_res.json())
-
-        logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)
-
-        if status.stage == UploadStage.FAILED:
-            raise MatchboxServerFileError(status.details)
-
-        time.sleep(settings.retry_delay)
-
-    logger.debug("Finished")
-
-    return status
-
-
-@http_retry
-def get_source_config(name: SourceResolutionName) -> SourceConfig:
-    log_prefix = f"SourceConfig {name}"
-    logger.debug("Retrieving", prefix=log_prefix)
-
-    res = CLIENT.get(f"/sources/{name}")
-
-    return SourceConfig.model_validate(res.json())
-
-
-@http_retry
-def get_resolution_source_configs(name: ModelResolutionName) -> list[SourceConfig]:
+def get_leaf_source_resolutions(name: ModelResolutionName) -> list[Resolution]:
     log_prefix = f"Resolution {name}"
     logger.debug("Retrieving", prefix=log_prefix)
 
-    res = CLIENT.get("/sources", params={"name": name})
+    res = CLIENT.get(f"/resolutions/{name}/sources")
 
-    return [SourceConfig.model_validate(s) for s in res.json()]
+    return [Resolution.model_validate(s) for s in res.json()]
 
 
 @http_retry
@@ -334,42 +282,48 @@ def get_resolution_graph() -> ResolutionGraph:
     return ResolutionGraph.model_validate(res.json())
 
 
-# Model management
-
-
 @http_retry
-def insert_model(model_config: ModelConfig) -> ResolutionOperationStatus:
-    """Insert a model in Matchbox."""
-    log_prefix = f"Model {model_config.name}"
-    logger.debug("Inserting metadata", prefix=log_prefix)
+def create_resolution(
+    resolution: Resolution,
+) -> ResolutionOperationStatus | UploadStatus:
+    """Create a resolution (model or source)."""
+    log_prefix = f"Resolution {resolution.name}"
+    logger.debug("Creating", prefix=log_prefix)
 
-    res = CLIENT.post("/models", json=model_config.model_dump())
+    res = CLIENT.post("/resolutions", json=resolution.model_dump())
+
     return ResolutionOperationStatus.model_validate(res.json())
 
 
 @http_retry
-def get_model(name: ModelResolutionName) -> ModelConfig | None:
-    """Get model metadata from Matchbox."""
-    log_prefix = f"Model {name}"
+def get_resolution(
+    name: ResolutionName, validate_type: ResolutionType | None = None
+) -> Resolution | None:
+    """Get a resolution from Matchbox."""
+    log_prefix = f"Resolution {name}"
     logger.debug("Retrieving metadata", prefix=log_prefix)
 
-    try:
-        res = CLIENT.get(f"/models/{name}")
-        return ModelConfig.model_validate(res.json())
-    except MatchboxResolutionNotFoundError:
-        return None
+    res = CLIENT.get(
+        f"/resolutions/{name}",
+        params=url_params({"validate_type": validate_type}),
+    )
+    return Resolution.model_validate(res.json())
 
 
 @http_retry
-def add_model_results(name: ModelResolutionName, results: Table) -> UploadStatus:
-    """Upload model results in Matchbox."""
-    log_prefix = f"Model {name}"
+def set_data(
+    name: ResolutionName, data: Table, validate_type: ResolutionType
+) -> UploadStatus:
+    """Upload source hashes or model results to server."""
+    log_prefix = f"Resolution {name}"
     logger.debug("Uploading results", prefix=log_prefix)
 
-    buffer = table_to_buffer(table=results)
+    buffer = table_to_buffer(table=data)
 
     # Initialise upload
-    metadata_res = CLIENT.post(f"/models/{name}/results")
+    metadata_res = CLIENT.post(
+        f"/resolutions/{name}/data", params=url_params({"validate_type": validate_type})
+    )
 
     upload = UploadStatus.model_validate(metadata_res.json())
 
@@ -400,69 +354,34 @@ def add_model_results(name: ModelResolutionName, results: Table) -> UploadStatus
 
 
 @http_retry
-def get_model_results(name: ModelResolutionName) -> Table:
+def get_results(name: ModelResolutionName) -> Table:
     """Get model results from Matchbox."""
     log_prefix = f"Model {name}"
     logger.debug("Retrieving results", prefix=log_prefix)
 
-    res = CLIENT.get(f"/models/{name}/results")
+    res = CLIENT.get(f"/resolutions/{name}/data")
     buffer = BytesIO(res.content)
     return read_table(buffer)
 
 
 @http_retry
-def set_model_truth(name: ModelResolutionName, truth: int) -> ResolutionOperationStatus:
+def set_truth(name: ModelResolutionName, truth: int) -> ResolutionOperationStatus:
     """Set the truth threshold for a model in Matchbox."""
     log_prefix = f"Model {name}"
     logger.debug("Setting truth value", prefix=log_prefix)
 
-    res = CLIENT.patch(f"/models/{name}/truth", json=truth)
+    res = CLIENT.patch(f"/resolutions/{name}/truth", json=truth)
     return ResolutionOperationStatus.model_validate(res.json())
 
 
 @http_retry
-def get_model_truth(name: ModelResolutionName) -> int:
+def get_truth(name: ModelResolutionName) -> int:
     """Get the truth threshold for a model in Matchbox."""
     log_prefix = f"Model {name}"
     logger.debug("Retrieving truth value", prefix=log_prefix)
 
-    res = CLIENT.get(f"/models/{name}/truth")
+    res = CLIENT.get(f"/resolutions/{name}/truth")
     return res.json()
-
-
-@http_retry
-def get_model_ancestors(name: ModelResolutionName) -> list[ModelAncestor]:
-    """Get the ancestors of a model in Matchbox."""
-    log_prefix = f"Model {name}"
-    logger.debug("Retrieving ancestors", prefix=log_prefix)
-
-    res = CLIENT.get(f"/models/{name}/ancestors")
-    return [ModelAncestor.model_validate(m) for m in res.json()]
-
-
-@http_retry
-def set_model_ancestors_cache(
-    name: ModelResolutionName, ancestors: list[ModelAncestor]
-) -> ResolutionOperationStatus:
-    """Set the ancestors cache for a model in Matchbox."""
-    log_prefix = f"Model {name}"
-    logger.debug("Setting ancestors cached truth values", prefix=log_prefix)
-
-    res = CLIENT.post(
-        f"/models/{name}/ancestors_cache",
-        json=[a.model_dump() for a in ancestors],
-    )
-    return ResolutionOperationStatus.model_validate(res.json())
-
-
-@http_retry
-def get_model_ancestors_cache(name: ModelResolutionName) -> list[ModelAncestor]:
-    """Get the ancestors cache for a model in Matchbox."""
-    log_prefix = f"Model {name}"
-    logger.debug("Getting ancestors cached truth values", prefix=log_prefix)
-
-    res = CLIENT.get(f"/models/{name}/ancestors_cache")
-    return [ModelAncestor.model_validate(m) for m in res.json()]
 
 
 @http_retry

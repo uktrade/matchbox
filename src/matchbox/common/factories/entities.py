@@ -459,7 +459,7 @@ class SourceEntity(BaseModel, EntityIDMixin, SourceKeyMixin):
 
 
 def query_to_cluster_entities(
-    query: pa.Table | pd.DataFrame | pl.DataFrame, keys: dict[SourceResolutionName, str]
+    data: pa.Table | pd.DataFrame | pl.DataFrame, keys: dict[SourceResolutionName, str]
 ) -> set[ClusterEntity]:
     """Convert a query result to a set of ClusterEntities.
 
@@ -467,21 +467,21 @@ def query_to_cluster_entities(
     a set of ClusterEntities that can be used in `LinkedSourcesTestkit.diff_results()`.
 
     Args:
-        query: A PyArrow table or DataFrame representing a query result
+        data: A PyArrow table or DataFrame representing a query result
         keys: Mapping of source resolution names to key field names
 
     Returns:
         A set of ClusterEntity objects
     """
     # Convert polars to pandas for compatibility with existing logic
-    if isinstance(query, pl.DataFrame | pa.Table):
-        query = query.to_pandas()
+    if isinstance(data, pl.DataFrame | pa.Table):
+        data = data.to_pandas()
 
     must_have_fields = set(["id"] + list(keys.values()))
-    if not must_have_fields.issubset(query.columns):
+    if not must_have_fields.issubset(data.columns):
         raise ValueError(
-            f"Fields {must_have_fields.difference(query.columns)} must be included "
-            "in the query and are missing."
+            f"Fields {must_have_fields.difference(data.columns)} must be included "
+            "in the data and are missing."
         )
 
     def _create_cluster_entity(group: pd.DataFrame) -> ClusterEntity:
@@ -496,7 +496,7 @@ def query_to_cluster_entities(
             keys=EntityReference(entity_refs),
         )
 
-    result = query.groupby("id").apply(_create_cluster_entity, include_groups=False)
+    result = data.groupby("id").apply(_create_cluster_entity, include_groups=False)
     return set(result.tolist())
 
 

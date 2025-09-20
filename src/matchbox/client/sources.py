@@ -4,14 +4,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import datetime
 from functools import wraps
-from typing import (
-    Any,
-    ParamSpec,
-    Self,
-    TypeVar,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, ParamSpec, Self, TypeVar, overload
 
 import polars as pl
 import sqlglot
@@ -41,6 +36,15 @@ from matchbox.common.exceptions import (
 from matchbox.common.graph import ResolutionType
 from matchbox.common.hash import HashMethod, hash_rows
 from matchbox.common.logging import logger
+
+if TYPE_CHECKING:
+    from matchbox.client.dags import DAG
+    from matchbox.client.queries import Query
+
+else:
+    DAG = Any
+    Query = Any
+
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -305,6 +309,7 @@ class Source:
     @overload
     def __init__(
         self,
+        dag: DAG,
         location: Location,
         name: str,
         extract_transform: str,
@@ -317,6 +322,7 @@ class Source:
     @overload
     def __init__(
         self,
+        dag: DAG,
         location: Location,
         name: str,
         extract_transform: str,
@@ -328,6 +334,7 @@ class Source:
 
     def __init__(
         self,
+        dag: DAG,
         location: Location,
         name: str,
         extract_transform: str,
@@ -339,6 +346,7 @@ class Source:
         """Initialise source.
 
         Args:
+            dag: DAG containing the source.
             location: The location where the source data is stored.
             name: The name of the source.
             description: An optional description of the source.
@@ -356,7 +364,9 @@ class Source:
         if not location.validate_extract_transform(extract_transform):
             raise MatchboxSourceExtractTransformError
 
+        self.last_run: datetime | None = None
         self.location = location
+        self.dag = dag
         self.name = name
         self.description = description
 
@@ -413,12 +423,15 @@ class Source:
         )
 
     @classmethod
-    def from_resolution(cls, resolution: Resolution, location: Location) -> "Source":
+    def from_resolution(
+        cls, resolution: Resolution, dag: DAG, location: Location
+    ) -> "Source":
         """Reconstruct from Resolution."""
         if resolution.resolution_type != ResolutionType.SOURCE:
             raise ValueError("Resolution must be of type 'source'")
 
         return cls(
+            dag=dag,
             location=location,
             name=resolution.name,
             extract_transform=resolution.config.extract_transform,
@@ -535,6 +548,8 @@ class Source:
             pl.concat(all_results).group_by("hash").agg(pl.col("keys")).to_arrow()
         )
 
+        self.last_run = datetime.now()
+
         return self.hashes
 
     # Note: name, description, truth are now instance variables, not properties
@@ -603,3 +618,7 @@ class Source:
             _handler.set_data(
                 name=self.name, data=self.hashes, validate_type=ResolutionType.SOURCE
             )
+
+    def query(self, **kwargs) -> Query:
+        """Generate a query for this source."""
+        return self.dag.query(self, **kwargs)

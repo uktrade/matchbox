@@ -10,7 +10,6 @@ import polars as pl
 import polars.expr as plx
 import polars_hash as plh
 import pyarrow as pa
-from pandas import DataFrame, Series
 
 T = TypeVar("T")
 HashableItem = TypeVar("HashableItem", bytes, bool, str, int, float, bytearray)
@@ -214,27 +213,6 @@ def hash_arrow_table(
     all_hashes: bytes = b"".join(row_hashes.sort().to_list())
 
     return HASH_FUNC(all_hashes).digest()
-
-
-def fields_to_value_ordered_hash(data: DataFrame, fields: list[str]) -> Series:
-    """Returns the rowwise hash ordered by the row's values, ignoring field order.
-
-    This function is used to add a field to a dataframe that represents the
-    hash of each its rows, but where the order of the row values doesn't change the
-    hash value. field order is ignored in favour of value order.
-
-    This is primarily used to give a consistent hash to a new cluster no matter whether
-    its parent hashes were used in the left or right table.
-    """
-    bytes_records = data.filter(fields).astype(bytes).to_dict("records")
-
-    hashed_records = []
-
-    for record in bytes_records:
-        hashed_vals = hash_values(*record.values())
-        hashed_records.append(hashed_vals)
-
-    return Series(hashed_records)
 
 
 class IntMap:

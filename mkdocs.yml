@@ -9,8 +9,8 @@ nav:
   - Use cases: use-cases.md
 - Client:
   - Installation: client/install.md
-  - Explore resolutions: client/explore-resolutions.md
-  - Retrieve: client/query-data.md
+  - Explore DAGs: client/explore-dags.md
+  - Look up matches: client/look-up.md
   - Link and deduplicate: client/link-data.md
   - Evaluate models: client/evaluation.md
   - API: 
@@ -18,21 +18,18 @@ nav:
 - Server:
   - Matchbox concepts: server/concepts.md
   - Installation: server/install.md
-  - Deploy: server/deploy.md
   - Data and security risks: server/risks.md
   - API: 
     - Overview: api/server/index.md
 - API reference:
   - Client:
     - Overview: api/client/index.md
-    - Sources: api/client/sources.md
     - DAGs: api/client/dags.md
-    - Evaluation: api/client/eval.md
-    - Helpers: api/client/helpers.md
+    - Sources: api/client/sources.md
+    - Queries: api/client/queries.md
     - Models: api/client/models.md
+    - Evaluation: api/client/eval.md
     - Results: api/client/results.md
-    - Visualisation: api/client/visualisation.md
-    - Extract: api/client/extract.md
   - Server: 
     - Overview: api/server/index.md
     - API: api/server/api.md

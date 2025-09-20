@@ -95,11 +95,12 @@ def test_no_deduplication(
 
     # Configure and run the deduper
     deduper = Model(
+        dag=linked.dag,
         name="exact_deduper",
         description="Deduplication of exact duplicates",
         model_class=Deduper,
         model_settings=configure_deduper(source_testkit),
-        left_query=Query(source_testkit.source),
+        left_query=Query(source_testkit.source, dag=linked.dag),
     )
     results: Results = deduper.run()
 
@@ -147,11 +148,12 @@ def test_exact_duplicate_deduplication(
 
     # Configure and run the deduper
     deduper = Model(
+        dag=linked.dag,
         name="exact_deduper",
         description="Deduplication of exact duplicates",
         model_class=Deduper,
         model_settings=configure_deduper(source),
-        left_query=Query(source.source),
+        left_query=Query(source.source, dag=linked.dag),
     )
     results: Results = deduper.run()
 

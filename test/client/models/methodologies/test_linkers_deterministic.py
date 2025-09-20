@@ -266,12 +266,13 @@ def test_exact_match_linking(
 
     # Configure and run the linker
     linker = Model(
+        dag=linked.dag,
         name="exact_match_linker",
         description="Linking with exact matches",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source.source),
-        right_query=Query(right_source.source),
+        left_query=Query(left_source.source, dag=linked.dag),
+        right_query=Query(right_source.source, dag=linked.dag),
     )
     results: Results = linker.run()
 
@@ -331,12 +332,13 @@ def test_exact_match_with_duplicates_linking(
 
     # Configure and run the linker
     linker = Model(
+        dag=linked.dag,
         name="exact_match_linker",
         description="Linking with exact matches",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source),
-        right_query=Query(right_source),
+        left_query=Query(left_source, dag=linked.dag),
+        right_query=Query(right_source, dag=linked.dag),
     )
     results: Results = linker.run()
 
@@ -401,12 +403,13 @@ def test_partial_entity_linking(
 
     # Configure and run the linker
     linker = Model(
+        dag=linked.dag,
         name="partial_match_linker",
         description="Linking with partial entity coverage",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source),
-        right_query=Query(right_source),
+        left_query=Query(left_source, dag=linked.dag),
+        right_query=Query(right_source, dag=linked.dag),
     )
     results = linker.run()
 
@@ -463,12 +466,13 @@ def test_no_matching_entities_linking(
 
     # Configure and run the linker
     linker = Model(
+        dag=linked.dag,
         name="no_match_linker",
         description="Linking with no matching entities",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source),
-        right_query=Query(right_source),
+        left_query=Query(left_source, dag=linked.dag),
+        right_query=Query(right_source, dag=linked.dag),
     )
     results = linker.run()
 

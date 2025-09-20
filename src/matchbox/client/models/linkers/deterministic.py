@@ -1,20 +1,17 @@
 """A linking methodology based on a deterministic set of conditions."""
 
-from collections.abc import Iterable
-
 import polars as pl
 from pydantic import Field, field_validator
 
-from matchbox.client.helpers import comparison
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 
 
 class DeterministicSettings(LinkerSettings):
     """A data class to enforce the Deterministic linker's settings dictionary shape."""
 
-    comparisons: Iterable[str] = Field(
+    comparisons: list[str] = Field(
         description="""
-            An iterable of valid ON clause to compare fields between the left and 
+            A list of valid ON clause to compare fields between the left and 
             the right data.
 
             Use left.field and right.field to refer to columns in the respective 
@@ -32,11 +29,13 @@ class DeterministicSettings(LinkerSettings):
         """,
     )
 
-    @field_validator("comparisons")
+    @field_validator("comparisons", mode="before")
     @classmethod
-    def validate_comparison(cls, v: Iterable[str]) -> Iterable[str]:
-        """Validate the comparison string."""
-        return [comparison(comp_val) for comp_val in v]
+    def validate_comparison(cls, v: str | list[str]) -> list[str]:
+        """Turn single string into list of one string."""
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class DeterministicLinker(Linker):

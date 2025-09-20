@@ -15,6 +15,7 @@ from sqlalchemy import Engine, create_engine
 from sqlglot import cast, select
 from sqlglot.expressions import column
 
+from matchbox.client.dags import DAG
 from matchbox.client.sources import RelationalDBLocation, Source
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_QUERY
 from matchbox.common.dtos import (
@@ -123,6 +124,17 @@ class SourceTestkit(BaseModel):
         """Return the SourceConfig from the source."""
         return self.source.config
 
+    def into_dag(self) -> dict:
+        """Turn source into kwargs for `dag.source()`, detaching from original DAG."""
+        return {
+            "location": self.source.location,
+            "name": self.source.name,
+            "extract_transform": self.source.config.extract_transform,
+            "key_field": self.source.config.key_field,
+            "index_fields": self.source.config.index_fields,
+            "description": self.source.description,
+        }
+
     def write_to_location(self, set_client: Any | None = None) -> Self:
         """Write the data to the SourceConfig's location.
 
@@ -145,7 +157,7 @@ class LinkedSourcesTestkit(BaseModel):
     """Container for multiple related SourceConfig testkits with entity tracking."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
+    dag: DAG = DAG(name="dag")
     true_entities: set[SourceEntity] = Field(default_factory=set)
     sources: dict[str, SourceTestkit]
 
@@ -449,6 +461,7 @@ def source_factory(
     features: list[FeatureConfig] | list[dict] | None = None,
     name: SourceResolutionName | None = None,
     location_name: str = "dbname",
+    dag: DAG | None = None,
     engine: Engine | None = None,
     n_true_entities: int = 10,
     repetition: int = 0,
@@ -466,6 +479,7 @@ def source_factory(
             used as the name of the table in the RelationalDBLocation, but also as
             the SourceResolutionName for the source.
         location_name: Name of the location for the source.
+        dag: DAG containing the source.
         engine: SQLAlchemy engine to use for the source's RelationalDBLocation. If
             None, an in-memory SQLite engine is created.
         n_true_entities: Number of true entities to generate. Defaults to 10.
@@ -493,6 +507,9 @@ def source_factory(
 
     if engine is None:
         engine = create_engine("sqlite:///:memory:")
+
+    if dag is None:
+        dag = DAG("collection")
 
     # Generate base entities
     base_entities = generate_entities(
@@ -535,6 +552,7 @@ def source_factory(
 
     # Create source config
     source = Source(
+        dag=dag,
         location=RelationalDBLocation(name=location_name, client=engine),
         name=name,
         description=f"Generated source for {name}",
@@ -562,6 +580,7 @@ def source_from_tuple(
     data_keys: tuple[Any],
     name: str | None = None,
     location_name: str = "dbname",
+    dag: DAG | None = None,
     engine: Engine | None = None,
     seed: int = 42,
 ) -> SourceTestkit:
@@ -574,6 +593,9 @@ def source_from_tuple(
 
     if engine is None:
         engine = create_engine("sqlite:///:memory:")
+
+    if dag is None:
+        dag = DAG("collection")
 
     base_entities = tuple(SourceEntity(base_values=row) for row in data_tuple)
 
@@ -602,6 +624,7 @@ def source_from_tuple(
 
     # Create source config
     source = Source(
+        dag=dag,
         location=RelationalDBLocation(name=location_name, client=engine),
         name=name,
         description=f"Generated source for {name}",
@@ -644,6 +667,7 @@ def linked_sources_factory(
     source_parameters: tuple[SourceTestkitParameters, ...] | None = None,
     n_true_entities: int | None = None,
     engine: Engine | None = None,
+    dag: DAG | None = None,
     seed: int = 42,
 ) -> LinkedSourcesTestkit:
     """Generate a set of linked sources with tracked entities.
@@ -655,10 +679,14 @@ def linked_sources_factory(
             SourceTestkitParameters must specify its own n_true_entities.
         engine: Optional SQLAlchemy engine to use for all sources. If provided,
             overrides any engine in source configs.
+        dag: DAG containing sources
         seed: Random seed for reproducibility
     """
     generator = Faker()
     generator.seed_instance(seed)
+
+    if dag is None:
+        dag = DAG("collection")
 
     default_engine = create_engine("sqlite:///:memory:")
 
@@ -782,6 +810,7 @@ def linked_sources_factory(
     # Initialize LinkedSourcesTestkit
     true_entity_lookup = {entity.id: entity for entity in all_entities}
     linked = LinkedSourcesTestkit(
+        dag=dag,
         true_entities=all_entities,
         sources={},
     )
@@ -815,6 +844,7 @@ def linked_sources_factory(
 
         # Create source config
         source = Source(
+            dag=dag,
             location=RelationalDBLocation(
                 name=str(parameters.name), client=parameters.engine
             ),

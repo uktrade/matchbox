@@ -10,12 +10,16 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 class LinkerSettings(BaseModel):
     """A data class to enforce basic settings dictionary shapes."""
 
-    left_id: str = Field(description="The unique ID field in the left data")
-    right_id: str = Field(description="The unique ID field in the right data")
+    left_id: str = Field(
+        default="id", description="The unique ID field in the left data"
+    )
+    right_id: str = Field(
+        default="id", description="The unique ID field in the right data"
+    )
 
     @field_validator("left_id", "right_id")
     @classmethod
-    def _id_for_cmf(cls, v: str, info: ValidationInfo) -> str:
+    def _id_for_mb(cls, v: str, info: ValidationInfo) -> str:
         enforce = "id"
         if v != enforce:
             warnings.warn(

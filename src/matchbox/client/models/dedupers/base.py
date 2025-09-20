@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 class DeduperSettings(BaseModel):
     """A data class to enforce basic settings dictionary shapes."""
 
-    id: str = Field(description="A unique ID field in the data to dedupe")
+    id: str = Field(default="id", description="A unique ID field in the data to dedupe")
 
     @field_validator("id")
     @classmethod
-    def _id_for_cmf(cls, v: str, info: ValidationInfo) -> str:
+    def _id_for_mb(cls, v: str, info: ValidationInfo) -> str:
         enforce = "id"
         if v != enforce:
             warnings.warn(

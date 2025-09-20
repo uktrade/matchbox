@@ -101,6 +101,14 @@ def sqlite_warehouse() -> Generator[Engine, None, None]:
         engine.dispose()
 
 
+@pytest.fixture(scope="function")
+def sqlite_in_memory_warehouse() -> Generator[Engine, None, None]:
+    """Creates an in-memory engine for a function-scoped SQLite warehouse database."""
+    engine = create_engine("sqlite:///:memory:")
+    yield engine
+    engine.dispose()
+
+
 # Matchbox database fixtures
 
 

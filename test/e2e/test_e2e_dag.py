@@ -5,12 +5,10 @@ import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
 
-from matchbox import match as mb_match
-from matchbox.client.dags import DAG, DedupeStep, IndexStep, LinkStep, StepInput
+from matchbox.client.dags import DAG
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.client.queries import Query
-from matchbox.client.sources import RelationalDBLocation, Source
+from matchbox.client.sources import RelationalDBLocation
 from matchbox.common.factories.sources import (
     FeatureConfig,
     LinkedSourcesTestkit,
@@ -40,13 +38,13 @@ class TestE2EPipelineBuilder:
             trim(
                 regexp_replace(
                     regexp_replace(
-                        {column}, 
-                        ' (Ltd|Limited)$', 
-                        '', 
+                        {column},
+                        ' (Ltd|Limited)$',
+                        '',
                         'g'
-                    ), 
-                    '\\s+', 
-                    ' ', 
+                    ),
+                    '\\s+',
+                    ' ',
                     'g'
                 )
             )
@@ -139,17 +137,18 @@ class TestE2EPipelineBuilder:
 
         # === SETUP PHASE ===
         dw_loc = RelationalDBLocation(name="dbname", client=self.warehouse_engine)
-        batch_size = 1000
+
+        dag = DAG("companies", new=True)
 
         # Create source configs
-        source_a = Source(
+        source_a = dag.source(
             location=dw_loc,
             name="source_a",
             extract_transform="""
                 select
-                    key::text as id, 
-                    company_name, 
-                    registration_id 
+                    key::text as id,
+                    company_name,
+                    registration_id
                 from
                     source_a;
             """,
@@ -158,7 +157,7 @@ class TestE2EPipelineBuilder:
             index_fields=["company_name", "registration_id"],
         )
 
-        source_b = Source(
+        source_b = dag.source(
             location=dw_loc,
             name="source_b",
             extract_transform="""
@@ -174,155 +173,94 @@ class TestE2EPipelineBuilder:
             index_fields=["company_name", "registration_id"],
         )
 
-        # === DAG DEFINITION ===
-        # Index steps
-        i_source_a = IndexStep(source=source_a, batch_size=batch_size)
-        i_source_b = IndexStep(source=source_b, batch_size=batch_size)
-
         # Dedupe steps
-        dedupe_a = DedupeStep(
-            left=StepInput(
-                prev_node=i_source_a,
-                select={source_a: ["company_name", "registration_id"]},
-                cleaning_dict={
-                    "company_name": self._clean_company_name(
-                        source_a.f("company_name")
-                    ),
-                },
-                batch_size=batch_size,
-            ),
+        dedupe_a = source_a.query(
+            cleaning={
+                "company_name": self._clean_company_name(source_a.f("company_name"))
+            },
+        ).deduper(
             name="dedupe_source_a",
             description="Deduplicate source A",
             model_class=NaiveDeduper,
-            settings={
-                "id": "id",
-                "unique_fields": [source_a.f("registration_id")],
-            },
-            truth=1.0,
+            model_settings={"unique_fields": [source_a.f("registration_id")]},
         )
 
-        dedupe_b = DedupeStep(
-            left=StepInput(
-                prev_node=i_source_b,
-                select={source_b: ["company_name", "registration_id"]},
-                cleaning_dict={
-                    "company_name": self._clean_company_name(
-                        source_b.f("company_name")
-                    ),
-                },
-                batch_size=batch_size,
-            ),
+        dedupe_b = source_b.query(
+            cleaning={
+                "company_name": self._clean_company_name(source_b.f("company_name")),
+            }
+        ).deduper(
             name="dedupe_source_b",
             description="Deduplicate source B",
             model_class=NaiveDeduper,
-            settings={
-                "id": "id",
-                "unique_fields": [source_b.f("registration_id")],
-            },
-            truth=1.0,
+            model_settings={"unique_fields": [source_b.f("registration_id")]},
         )
 
-        # Link step
-        link_ab = LinkStep(
-            left=StepInput(
-                prev_node=dedupe_a,
-                select={source_a: ["company_name", "registration_id"]},
-                cleaning_dict={
-                    "company_name": self._clean_company_name(
-                        source_a.f("company_name")
-                    ),
-                    "registration_id": source_a.f("registration_id"),
-                },
-                batch_size=batch_size,
-            ),
-            right=StepInput(
-                prev_node=dedupe_b,
-                select={source_b: ["company_name", "registration_id"]},
-                cleaning_dict={
+        # Link deduplicated sources A and B
+        link_a_b = dedupe_a.query(
+            source_a,
+            cleaning={
+                "company_name": self._clean_company_name(source_a.f("company_name")),
+                "registration_id": source_a.f("registration_id"),
+            },
+        ).linker(
+            dedupe_b.query(
+                source_b,
+                cleaning={
                     "company_name": self._clean_company_name(
                         source_b.f("company_name")
                     ),
                     "registration_id": source_b.f("registration_id"),
                 },
-                batch_size=batch_size,
             ),
-            name="__DEFAULT__",
+            name="final",
             description="Link sources A and B on registration_id",
             model_class=DeterministicLinker,
-            settings={
-                "left_id": "id",
-                "right_id": "id",
-                "comparisons": ["l.registration_id = r.registration_id"],
-            },
-            truth=1.0,
+            model_settings={"comparisons": ["l.registration_id = r.registration_id"]},
         )
-
-        # Create and run DAG
-        dag = DAG()
-        dag.add_steps(i_source_a, i_source_b)
-        dag.add_steps(dedupe_a, dedupe_b)
-        dag.add_steps(link_ab)
 
         # === FIRST RUN ===
         logging.info("Running DAG for the first time")
-        dag.run()
+        dag.run_and_sync()
 
         # Basic verification - we have some linked results and can retrieve them
-        final_df = Query(source_a, source_b, model=link_ab._model).run()
+        final_df = link_a_b.query(source_a, source_b).run()
 
-        # Should have linked results
+        # # Should have linked results
         assert len(final_df) > 0, "Expected some results from first run"
         assert final_df["id"].n_unique() == len(self.linked_testkit.true_entities)
 
         first_run_entities = final_df["id"].n_unique()
         logging.info(f"First run produced {first_run_entities} unique entities")
 
-        # mb.match works too
-        matches = mb_match(
-            source_a.name,
-            source=source_b.name,
-            resolution="__DEFAULT__",
+        # Lookup works too
+        matches = dag.lookup_key(
+            from_source=source_b.name,
+            to_sources=[source_a.name],
             key=final_df.filter(
                 pl.col(source_b.f(source_b.config.key_field.name)).is_not_null()
             )[source_b.f(source_b.config.key_field.name)][0],
         )
-        assert len(matches) >= 1
-        assert matches[0].cluster
+        assert len(matches[source_a.name]) >= 1
 
         # === SECOND RUN (OVERWRITE) ===
-        # TODO: Refactor into whatever DAGs look like at the end of this feature branch
-        # We know there'll be some method to sync a local DAG with the server
-        # This will need to handle both:
-        #   * Resolution synchronisation, including some kind of create/update logic
-        #       This is the hard bit. It needs versioning/collections
-        #   * Data synchronisation, where we fetch/process the data through
 
-        # logging.info("Running DAG again to test overwriting")
-        # dag.run()
+        logging.info("Running DAG again to test overwriting")
+        dag.run_and_sync()
 
-        # # Verify second run produces same results
-        # final_df_second = query(
-        #     select(
-        #         {
-        #             source_a.name: ["company_name", "registration_id"],
-        #             source_b.name: ["company_name", "registration_id"],
-        #         },
-        #         client=self.warehouse_engine,
-        #     ),
-        #     resolution="__DEFAULT__",
-        #     return_type="polars",
-        # )
+        # Verify second run produces same results
+        final_df_second = link_a_b.query(source_a, source_b).run()
 
-        # second_run_entities = final_df_second["id"].n_unique()
-        # logging.info(f"Second run produced {second_run_entities} unique entities")
+        second_run_entities = final_df_second["id"].n_unique()
+        logging.info(f"Second run produced {second_run_entities} unique entities")
 
-        # # Should have same number of entities after rerun
-        # assert first_run_entities == second_run_entities, (
-        #     "Expected same results after rerun: "
-        #     f"{first_run_entities} vs {second_run_entities}"
-        # )
+        # Should have same number of entities after rerun
+        assert first_run_entities == second_run_entities, (
+            "Expected same results after rerun: "
+            f"{first_run_entities} vs {second_run_entities}"
+        )
 
         # # Basic sanity checks
-        # assert len(final_df_second) > 0, "Expected some results from second run"
+        assert len(final_df_second) > 0, "Expected some results from second run"
 
         logging.info("DAG pipeline test completed successfully!")

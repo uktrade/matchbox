@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import Engine
 
 from matchbox.common.factories.sources import (
     FeatureConfig,
@@ -33,9 +33,8 @@ def test_linked_sources_factory_default():
             assert len(keys) > 0
 
 
-def test_linked_sources_custom_config():
+def test_linked_sources_custom_config(sqlite_in_memory_warehouse: Engine):
     """Test linked_sources_factory with custom source configurations."""
-    engine = create_engine("sqlite:///:memory:")
 
     features = {
         "name": FeatureConfig(
@@ -52,7 +51,7 @@ def test_linked_sources_custom_config():
     configs = (
         SourceTestkitParameters(
             name="source_a",
-            engine=engine,
+            engine=sqlite_in_memory_warehouse,
             features=(features["name"], features["user_id"]),
             n_true_entities=5,
             repetition=1,
@@ -357,16 +356,15 @@ def test_linked_sources_entity_hierarchy():
             ), f"ClusterEntity in {source_name} not a proper subset of any true entity"
 
 
-def test_linked_sources_entity_count_behavior():
+def test_linked_sources_entity_count_behavior(sqlite_in_memory_warehouse: Engine):
     """Test different n_true_entities behaviors in linked_sources_factory."""
     base_feature = FeatureConfig(name="name", base_generator="name")
-    engine = create_engine("sqlite:///:memory:")
 
     # Test error when n_true_entities missing from configs
     configs_missing_counts = (
         SourceTestkitParameters(
             name="source_a",
-            engine=engine,
+            engine=sqlite_in_memory_warehouse,
             features=(base_feature,),
             n_true_entities=5,
         ),
@@ -385,7 +383,7 @@ def test_linked_sources_entity_count_behavior():
     configs_different_counts = (
         SourceTestkitParameters(
             name="source_a",
-            engine=engine,
+            engine=sqlite_in_memory_warehouse,
             features=(base_feature,),
             n_true_entities=5,
         ),

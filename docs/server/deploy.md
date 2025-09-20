@@ -1,1 +1,0 @@
-Full instructions on using the Docker image, including recommended infrastructure, will follow.

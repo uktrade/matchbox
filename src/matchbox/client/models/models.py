@@ -1,19 +1,26 @@
 """Functions and classes to define, run and register models."""
 
 import inspect
-from typing import ParamSpec, TypeVar, overload
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
 from matchbox.client import _handler
 from matchbox.client._settings import settings
 from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
-from matchbox.client.queries import Query
 from matchbox.client.results import Results
 from matchbox.common.dtos import ModelConfig, ModelType, Resolution
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.graph import ResolutionType
 from matchbox.common.logging import logger
+
+if TYPE_CHECKING:
+    from matchbox.client.dags import DAG
+    from matchbox.client.queries import Query
+else:
+    DAG = Any
+    Query = Any
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -40,48 +47,54 @@ class Model:
     def __init__(
         self,
         name: str,
-        description: str | None,
+        dag: DAG,
         model_class: type[Deduper],
         model_settings: DeduperSettings | dict,
         left_query: Query,
         right_query: None = None,
         truth: float = 1.0,
+        description: str | None = None,
     ) -> None: ...
 
     @overload
     def __init__(
         self,
+        dag: DAG,
         name: str,
-        description: str | None,
         model_class: type[Linker],
         model_settings: LinkerSettings | dict,
         left_query: Query,
         right_query: Query,
         truth: float = 1.0,
+        description: str | None = None,
     ) -> None: ...
 
     def __init__(
         self,
+        dag: DAG,
         name: str,
-        description: str | None,
         model_class: type[Deduper] | type[Linker] | str,
         model_settings: DeduperSettings | LinkerSettings | dict,
         left_query: Query,
         right_query: Query | None = None,
         truth: float = 1.0,
+        description: str | None = None,
     ):
         """Create a new model instance.
 
         Args:
+            dag: DAG containing this model.
             name: Unique name for the model
-            description: Optional description of the model
             truth: Truth threshold. Defaults to 1.0. Can be set later after analysis.
             model_class: Class of Linker or Deduper, or its name.
             model_settings: Appropriate settings object to pass to model class.
             left_query: The query that will get the data to deduplicate, or the data to
                 link on the left.
             right_query: The query that will get the data to link on the right.
+            description: Optional description of the model
         """
+        self.last_run: datetime | None = None
+        self.dag = dag
         self.name = name
         self.description = description
         self._truth: int = _truth_float_to_int(truth)
@@ -111,6 +124,26 @@ class Model:
             right_query=right_query.config if right_query else None,
         )
 
+    @property
+    def dependencies(self) -> list[str]:
+        """Returns all resolution names this model needs as implied by the queries."""
+        if self.right_query:
+            return (
+                self.left_query.config.dependencies
+                + self.right_query.config.dependencies
+            )
+        return self.left_query.config.dependencies
+
+    @property
+    def parents(self) -> list[str]:
+        """Returns all points of truth input to this model."""
+        if self.right_query:
+            return [
+                self.left_query.config.point_of_truth,
+                self.right_query.config.point_of_truth,
+            ]
+        return [self.left_query.config.point_of_truth]
+
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""
         return Resolution(
@@ -122,12 +155,13 @@ class Model:
         )
 
     @classmethod
-    def from_resolution(cls, resolution: Resolution) -> "Model":
+    def from_resolution(cls, resolution: Resolution, dag: DAG) -> "Model":
         """Reconstruct from Resolution."""
         if resolution.resolution_type != ResolutionType.MODEL:
             raise ValueError("Resolution must be of type 'model'")
 
         return cls(
+            dag=dag,
             name=resolution.name,
             description=resolution.description,
             model_class=resolution.config.model_class,
@@ -188,6 +222,7 @@ class Model:
         else:
             self.results = Results(probabilities=results)
 
+        self.last_run = datetime.now()
         return self.results
 
     def sync(self) -> None:
@@ -224,6 +259,10 @@ class Model:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(name=self.name)
         return Results(probabilities=results, metadata=self.config)
+
+    def query(self, *sources, **kwargs) -> Query:
+        """Generate a query for this model."""
+        return self.dag.query(*sources, **kwargs, model=self)
 
 
 def _truth_float_to_int(truth: float) -> int:

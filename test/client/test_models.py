@@ -5,7 +5,9 @@ import pyarrow as pa
 import pytest
 from httpx import Response
 from respx.router import MockRouter
+from sqlalchemy import Engine
 
+from matchbox.client.dags import DAG
 from matchbox.client.models import Model, add_model_class
 from matchbox.client.models.linkers.base import LinkerSettings
 from matchbox.client.queries import Query
@@ -30,14 +32,14 @@ from matchbox.common.factories.models import MockLinker, model_factory
 from matchbox.common.factories.sources import source_factory
 
 
-def test_init_and_run_model(matchbox_api: MockRouter):
+def test_init_and_run_model(sqlite_warehouse: Engine, matchbox_api: MockRouter):
     """Test that model can be initialised and run correctly."""
     # Register "custom" model
     add_model_class(MockLinker)
 
     # Mock API
-    foo = source_factory().write_to_location()
-    bar = source_factory().write_to_location()
+    foo = source_factory(engine=sqlite_warehouse).write_to_location()
+    bar = source_factory(engine=sqlite_warehouse).write_to_location()
 
     foo_leafy_data = foo.data.append_column(
         "leaf_id", pa.array(range(len(foo.data)), type=pa.int64())
@@ -61,15 +63,16 @@ def test_init_and_run_model(matchbox_api: MockRouter):
             Response(200, content=table_to_buffer(bar_leafy_data).read()),
         ]
     )
-
-    foo_query = Query(foo.source)
-    bar_query = Query(bar.source)
+    dag = DAG("collection")
+    foo_query = Query(foo.source, dag=dag)
+    bar_query = Query(bar.source, dag=dag)
 
     model = Model(
+        dag=dag,
         name="name",
         description="description",
         model_class=MockLinker,
-        model_settings=LinkerSettings(left_id="left", right_id="right"),
+        model_settings=LinkerSettings(),
         left_query=foo_query,
         right_query=bar_query,
     )

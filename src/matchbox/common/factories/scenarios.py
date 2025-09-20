@@ -159,7 +159,7 @@ def create_dedupe_scenario(
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_query=Query(testkit.source),
+            left_query=Query(testkit.source, dag=dag.dag),
             left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
@@ -203,7 +203,7 @@ def create_probabilistic_dedupe_scenario(
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_query=Query(testkit.source),
+            left_query=Query(testkit.source, dag=dag.dag),
             left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
@@ -252,10 +252,14 @@ def create_link_scenario(
     # Create CRN-DUNS link
     crn_duns_name = "deterministic_naive_test_crn_naive_test_duns"
     crn_duns_model = query_to_model_factory(
-        left_query=Query(dag.sources["crn"].source, model=crn_model.model),
+        left_query=Query(
+            dag.sources["crn"].source,
+            model=crn_model.model,
+            dag=dag.dag,
+        ),
         left_data=crn_data,
         left_keys={"crn": "key"},
-        right_query=Query(dag.sources["duns"], model=duns_model.model),
+        right_query=Query(dag.sources["duns"], model=duns_model.model, dag=dag.dag),
         right_data=duns_data,
         right_keys={"duns": "key"},
         true_entities=tuple(linked.true_entities),
@@ -273,10 +277,18 @@ def create_link_scenario(
     # Create CRN-CDMS link
     crn_cdms_name = "probabilistic_naive_test_crn_naive_test_cdms"
     crn_cdms_model = query_to_model_factory(
-        left_query=Query(dag.sources["crn"].source, model=crn_model.model),
+        left_query=Query(
+            dag.sources["crn"].source,
+            model=crn_model.model,
+            dag=dag.dag,
+        ),
         left_data=crn_data,
         left_keys={"crn": "key"},
-        right_query=Query(dag.sources["cdms"].source, model=cdms_model.model),
+        right_query=Query(
+            dag.sources["cdms"].source,
+            model=cdms_model.model,
+            dag=dag.dag,
+        ),
         right_data=cdms_data,
         right_keys={"cdms": "key"},
         true_entities=tuple(linked.true_entities),
@@ -312,10 +324,15 @@ def create_link_scenario(
             dag.sources["crn"].source,
             dag.sources["cdms"].source,
             model=crn_cdms_model.model,
+            dag=dag.dag,
         ),
         left_data=crn_cdms_data,
         left_keys={"crn": "keys_crn", "cdms": "keys_cdms"},
-        right_query=Query(dag.sources["duns"].source, model=duns_model.model),
+        right_query=Query(
+            dag.sources["duns"].source,
+            model=duns_model.model,
+            dag=dag.dag,
+        ),
         right_data=duns_data_linked,
         right_keys={"duns": "key"},
         true_entities=tuple(linked.true_entities),
@@ -384,7 +401,7 @@ def create_alt_dedupe_scenario(
 
         # Build model testkit using query data
         model_testkit1 = query_to_model_factory(
-            left_query=Query(testkit.source),
+            left_query=Query(testkit.source, dag=dag.dag),
             left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
@@ -395,7 +412,7 @@ def create_alt_dedupe_scenario(
         )
 
         model_testkit2 = query_to_model_factory(
-            left_query=Query(testkit.source),
+            left_query=Query(testkit.source, dag=dag.dag),
             left_data=source_data,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),
@@ -482,7 +499,7 @@ def create_convergent_scenario(
 
         # Build model testkit using query data
         model_testkit = query_to_model_factory(
-            left_query=Query(testkit.source),
+            left_query=Query(testkit.source, dag=dag.dag),
             left_data=source_query,
             left_keys={resolution.name: "key"},
             true_entities=tuple(linked.true_entities),

@@ -1,4 +1,4 @@
-from matchbox.client.helpers import comparison
+from matchbox.client.models import comparison
 
 
 def test_comparisons():

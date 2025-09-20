@@ -11,13 +11,8 @@ from json import JSONDecodeError
 from typing import Self
 
 import polars as pl
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlglot import errors, expressions, parse_one
 
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
 from matchbox.common.graph import (
@@ -390,6 +385,38 @@ class QueryConfig(BaseModel):
                 "A model resolution must be set if querying from multiple sources"
             )
         return self
+
+    @field_validator("cleaning")
+    @classmethod
+    def validate_cleaning_dict(cls, v: dict[str, str] | None) -> str | None:
+        """Validate cleaning as valid SQL."""
+        if v is None:
+            return v
+
+        for alias, sql in v.items():
+            if sql is not None:
+                try:
+                    stmt = parse_one(sql, dialect="duckdb")
+                except errors.ParseError as e:
+                    raise ValueError(f"Invalid SQL in cleaning_dict: {alias}") from e
+
+                for node in stmt.walk():
+                    if isinstance(node, expressions.Column) and node.name == "id":
+                        raise ValueError(
+                            "Cannot transform 'id' column in cleaning_dict. "
+                            "It is always selected by default."
+                        )
+
+        return v
+
+    @property
+    def dependencies(self) -> list[str]:
+        """Return all resolution names that this query needs."""
+        deps = list(self.source_resolutions)
+        if self.model_resolution:
+            deps.append(self.model_resolution)
+
+        return deps
 
     @property
     def point_of_truth(self):

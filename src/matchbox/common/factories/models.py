@@ -16,6 +16,7 @@ from pyarrow import compute as pc
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import create_engine
 
+from matchbox.client.dags import DAG
 from matchbox.client.models import add_model_class
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
@@ -654,16 +655,21 @@ class ModelTestkit(BaseModel):
 
 def _testkit_to_query(testkit: SourceTestkit | ModelTestkit) -> Query:
     if isinstance(testkit, SourceTestkit):
-        return Query(testkit.source)
+        return Query(testkit.source, dag=testkit.source.dag)
     else:
         all_sources = list(testkit.model.left_query.sources)
         if testkit.model.right_query is not None:
             all_sources += list(testkit.model.right_query.sources)
-        return Query(*all_sources, model=testkit.model)
+        return Query(
+            *all_sources,
+            model=testkit.model,
+            dag=testkit.model.dag,
+        )
 
 
 def model_factory(
     name: ModelResolutionName | None = None,
+    dag: DAG | None = None,
     description: str | None = None,
     left_testkit: SourceTestkit | ModelTestkit | None = None,
     right_testkit: SourceTestkit | ModelTestkit | None = None,
@@ -683,6 +689,8 @@ def model_factory(
 
     Args:
         name: Name of the model
+        dag: DAG containing this model.
+            Overridden by dag of left testkit if present.
         description: Description of the model
         left_testkit: A SourceTestkit or ModelTestkit for the left source
         right_testkit: If creating a linker, a SourceTestkit or ModelTestkit for the
@@ -733,6 +741,10 @@ def model_factory(
         left_data = left_testkit.data
         left_query = _testkit_to_query(left_testkit)
         left_entities = left_testkit.entities
+        if isinstance(left_testkit, SourceTestkit):
+            dag = left_testkit.source.dag
+        else:
+            dag = left_testkit.model.dag
 
         right_data = None
         right_query = None
@@ -747,6 +759,8 @@ def model_factory(
             model_type = ModelType.DEDUPER
             right_entities = None
     else:
+        if dag is None:
+            dag = DAG("collection")
         # Create default sources
         engine = create_engine("sqlite:///:memory:")
         resolved_model_type = ModelType(model_type.lower() if model_type else "deduper")
@@ -797,6 +811,7 @@ def model_factory(
 
         # Generate linked sources
         linked = linked_sources_factory(
+            dag=dag,
             source_parameters=tuple(source_parameters),
             n_true_entities=n_true_entities,
             seed=seed,
@@ -804,7 +819,7 @@ def model_factory(
 
         # Extract source data
         left_data = linked.sources["crn"].data
-        left_query = Query(linked.sources["crn"])
+        left_query = Query(linked.sources["crn"], dag=dag)
         left_entities = linked.sources["crn"].entities
 
         right_data = None
@@ -812,7 +827,7 @@ def model_factory(
         right_entities = None
         if resolved_model_type == ModelType.LINKER:
             right_data = linked.sources["cdms"].data
-            right_query = Query(linked.sources["cdms"])
+            right_query = Query(linked.sources["cdms"], dag=dag)
             right_entities = linked.sources["cdms"].entities
 
         dummy_true_entities = tuple(linked.true_entities)
@@ -821,11 +836,10 @@ def model_factory(
     # ==== Model creation ====
     model_class = MockLinker if model_type == ModelType.LINKER else MockDeduper
     model_settings = (
-        LinkerSettings(left_id="left", right_id="right")
-        if model_type == ModelType.LINKER
-        else DeduperSettings(id="key")
+        LinkerSettings() if model_type == ModelType.LINKER else DeduperSettings()
     )
     model = Model(
+        dag=dag,
         name=name or generator.unique.word(),
         description=description or generator.sentence(),
         model_class=model_class,
@@ -908,6 +922,10 @@ def query_to_model_factory(
     if not (0 <= prob_range[0] <= prob_range[1] <= 1):
         raise ValueError("Probabilities must be increasing values between 0 and 1")
 
+    dag = left_query.dag
+    if right_query and right_query.dag != dag:
+        raise ValueError("DAGs for left and right query must match.")
+
     # Check if right-side arguments are consistently provided
     right_args = [right_query, right_data, right_keys]
     if any(arg is not None for arg in right_args) and not all(
@@ -932,13 +950,10 @@ def query_to_model_factory(
 
     # Create model metadata
     model_class = MockLinker if right_data is not None else MockDeduper
-    model_settings = (
-        LinkerSettings(left_id="left", right_id="right")
-        if right_data is not None
-        else DeduperSettings(id="key")
-    )
+    model_settings = LinkerSettings() if right_data is not None else DeduperSettings()
 
     model = Model(
+        dag=dag,
         name=name or generator.unique.word(),
         description=description or generator.sentence(),
         model_class=model_class,

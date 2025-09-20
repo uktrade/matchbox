@@ -2,7 +2,7 @@ import functools
 
 import pytest
 from faker import Faker
-from sqlalchemy import create_engine
+from sqlalchemy import Engine
 
 from matchbox.common.arrow import SCHEMA_INDEX
 from matchbox.common.dtos import DataTypes, LocationConfig, LocationType
@@ -125,7 +125,7 @@ def test_source_factory_data_hashes_integrity():
     assert len(hashes_df["hash"].unique()) == expected_hash_groups
 
 
-def test_source_factory_mock_properties():
+def test_source_factory_mock_properties(sqlite_in_memory_warehouse: Engine):
     """Test that properties set in source_factory match generated SourceConfig."""
     # Create source with specific features and name
     features = [
@@ -143,13 +143,12 @@ def test_source_factory_mock_properties():
 
     name = "companies"
     location_name = "custom_name"
-    engine = create_engine("sqlite:///:memory:")
 
     source_testkit = source_factory(
         features=features,
         name=name,
         location_name=location_name,
-        engine=engine,
+        engine=sqlite_in_memory_warehouse,
     )
     source_config = source_testkit.source_config
 

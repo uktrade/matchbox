@@ -1,7 +1,8 @@
 """DAG container for testkits."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from matchbox.client.dags import DAG
 from matchbox.common.factories.models import ModelTestkit
 from matchbox.common.factories.sources import LinkedSourcesTestkit, SourceTestkit
 from matchbox.common.graph import (
@@ -13,6 +14,10 @@ from matchbox.common.graph import (
 
 class TestkitDAG(BaseModel):
     """Simple DAG container for testkits."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    dag: DAG = DAG("collection")
 
     sources: dict[SourceResolutionName, SourceTestkit] = {}
     linked: dict[str, LinkedSourcesTestkit] = {}

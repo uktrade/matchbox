@@ -9,14 +9,11 @@ from os import environ
 
 from sqlalchemy import create_engine
 
-from matchbox import index
 from matchbox.client._handler import create_client
 from matchbox.client._settings import settings as client_settings
-from matchbox.client.models import Model
+from matchbox.client.dags import DAG
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.client.queries import Query
 from matchbox.common.factories.sources import source_from_tuple
-from matchbox.common.graph import DEFAULT_RESOLUTION
 
 MOCK_WH_FILE = "sqlite:///eval_mock.db"
 
@@ -31,6 +28,7 @@ def setup_mock_database():
 
     warehouse = create_engine(MOCK_WH_FILE)
 
+    # Write dummy sources
     testkit_foo = source_from_tuple(
         data_tuple=(
             {"name": "Moore PLC", "postcode": "EH1"},
@@ -42,10 +40,6 @@ def setup_mock_database():
         name="foo",
         engine=warehouse,
     ).write_to_location()
-    foo = testkit_foo.source
-
-    foo.run()
-    foo.sync()
 
     testkit_bar = source_from_tuple(
         data_tuple=(
@@ -58,29 +52,18 @@ def setup_mock_database():
         engine=warehouse,
     ).write_to_location()
 
-    bar = testkit_bar.source
-    bar.location.add_client(warehouse)
-    index(source=bar)
+    dag = DAG("companies", new=True)
+    foo = dag.source(**testkit_foo.into_dag())
+    bar = dag.source(**testkit_bar.into_dag())
 
-    linker = Model(
-        name=DEFAULT_RESOLUTION,
-        description="Linking model",
+    foo.query(cleaning={"comp": f"split_part({foo.f('name')}, ' ', 1)"}).linker(
+        bar.query(cleaning={"comp": f"split_part({bar.f('name')}, ' ', 1)"}),
+        name="final",
         model_class=DeterministicLinker,
-        model_settings={
-            "left_id": "id",
-            "right_id": "id",
-            "comparisons": ("l.comp = r.comp",),
-        },
-        left_query=Query(
-            foo, cleaning={"comp": f"split_part({foo.f('name')}, ' ', 1)"}
-        ),
-        right_query=Query(
-            bar, cleaning={"comp": f"split_part({bar.f('name')}, ' ', 1)"}
-        ),
+        model_settings={"comparisons": "l.comp = r.comp"},
     )
 
-    linker.run()
-    linker.sync()
+    dag.run_and_sync()
 
     return warehouse.url
 

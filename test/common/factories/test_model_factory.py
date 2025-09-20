@@ -545,7 +545,7 @@ def test_query_to_model_factory_validation():
     # Test invalid probability range
     with pytest.raises(ValueError, match="Probabilities must be increasing values"):
         query_to_model_factory(
-            left_query=Query(left_testkit.source),
+            left_query=Query(left_testkit.source, dag=linked.dag),
             left_data=left_data,
             left_keys=left_keys,
             true_entities=true_entities,
@@ -555,11 +555,11 @@ def test_query_to_model_factory_validation():
     # Test inconsistent right-side arguments
     with pytest.raises(ValueError, match="all of right_"):
         query_to_model_factory(
-            left_query=Query(left_testkit.source),
+            left_query=Query(left_testkit.source, dag=linked.dag),
             left_data=left_data,
             left_keys=left_keys,
             true_entities=true_entities,
-            right_query=Query(linked.sources["duns"].source),
+            right_query=Query(linked.sources["duns"].source, dag=linked.dag),
         )
 
 
@@ -617,11 +617,11 @@ def test_query_to_model_factory_creation(
         right_testkit = linked.sources["cdms"]
         right_data = right_testkit.data
         right_keys = {"cdms": "key"}
-        right_query = Query(right_testkit.source)
+        right_query = Query(right_testkit.source, dag=linked.dag)
 
     # Create the model using our function
     model = query_to_model_factory(
-        left_query=Query(left_testkit.source),
+        left_query=Query(left_testkit.source, dag=linked.dag),
         left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
@@ -667,7 +667,7 @@ def test_query_to_model_factory_seed_behavior(
 
     # Create two models with different seeds
     model1 = query_to_model_factory(
-        left_query=Query(left_testkit.source),
+        left_query=Query(left_testkit.source, dag=linked.dag),
         left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
@@ -675,7 +675,7 @@ def test_query_to_model_factory_seed_behavior(
     )
 
     model2 = query_to_model_factory(
-        left_query=Query(left_testkit.source),
+        left_query=Query(left_testkit.source, dag=linked.dag),
         left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
@@ -715,11 +715,11 @@ def test_query_to_model_factory_compare_with_model_factory():
 
     # Create model using query_to_model_factory
     query_model = query_to_model_factory(
-        left_query=Query(linked.sources["crn"].source),
+        left_query=Query(linked.sources["crn"].source, dag=linked.dag),
         left_data=left_data,
         left_keys=left_keys,
         true_entities=true_entities,
-        right_query=Query(linked.sources["cdms"].source),
+        right_query=Query(linked.sources["cdms"].source, dag=linked.dag),
         right_data=right_data,
         right_keys=right_keys,
         seed=42,

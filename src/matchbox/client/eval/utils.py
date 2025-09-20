@@ -6,11 +6,10 @@ from typing import Any
 import polars as pl
 from matplotlib import pyplot as plt
 from matplotlib.pyplot import Figure
-from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 
 from matchbox.client import _handler
-from matchbox.client._settings import settings
+from matchbox.client.dags import DAG
 from matchbox.client.results import Results
 from matchbox.client.sources import Location, Source
 from matchbox.common.dtos import ResolutionType
@@ -20,29 +19,26 @@ from matchbox.common.eval import (
     precision_recall,
 )
 from matchbox.common.exceptions import MatchboxSourceTableError
-from matchbox.common.graph import DEFAULT_RESOLUTION, ModelResolutionName
-from matchbox.common.logging import logger
+from matchbox.common.graph import ModelResolutionName
 
 
 def get_samples(
     n: int,
+    dag: DAG,
     user_id: int,
-    resolution: ModelResolutionName | None = None,
     clients: dict[str, Any] | None = None,
-    use_default_client: bool = False,
+    default_client: Any | None = None,
 ) -> dict[int, pl.DataFrame]:
     """Retrieve samples enriched with source data, grouped by resolution cluster.
 
     Args:
         n: Number of clusters to sample
+        dag: DAG for which to retrieve samples
         user_id: ID of the user requesting the samples
-        resolution: Model resolution proposing the clusters. If not set, will
-            use a default resolution.
         clients: Dictionary from location names to valid client for each.
-            Locations whose name is missing from the dictionary will be skipped.
-        use_default_client: Whether to use for all unset location clients
-            a SQLAlchemy engine for the default warehouse set in the environment
-            variable `MB__CLIENT__DEFAULT_WAREHOUSE`.
+            Locations whose name is missing from the dictionary will be skipped,
+            unless a default client is provided.
+        default_client: Fallback client to use for all sources.
 
     Returns:
         Dictionary of cluster ID to dataframe describing the cluster
@@ -51,22 +47,11 @@ def get_samples(
         MatchboxSourceTableError: If a source cannot be queried from a location using
             provided or default clients.
     """
-    if not resolution:
-        resolution = DEFAULT_RESOLUTION
-
     if not clients:
         clients = {}
 
-    default_client = None
-    if use_default_client:
-        if default_clients_uri := settings.default_warehouse:
-            default_client = create_engine(default_clients_uri)
-            logger.warning("Using default engine")
-        else:
-            raise ValueError("`MB__CLIENT__DEFAULT_WAREHOUSE` is unset")
-
     samples: pl.DataFrame = pl.from_arrow(
-        _handler.sample_for_eval(n=n, resolution=resolution, user_id=user_id)
+        _handler.sample_for_eval(n=n, resolution=dag.final_step, user_id=user_id)
     )
 
     if not len(samples):
@@ -94,7 +79,9 @@ def get_samples(
         location = Location.from_config(
             resolution.config.location_config, client=client
         )
-        source = Source.from_resolution(resolution=resolution, location=location)
+        source = Source.from_resolution(
+            resolution=resolution, dag=dag, location=location
+        )
 
         samples_by_source = samples.filter(pl.col("source") == source_resolution)
         keys_by_source = samples_by_source["key"].to_list()

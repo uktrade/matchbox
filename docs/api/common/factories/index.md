@@ -51,7 +51,7 @@ source_testkit = source_factory()
 
 # Setup store
 tracker = InMemoryUploadTracker()
-upload_id = tracker.add_source(source_testkit.source_config)
+upload_id = tracker.add_source(source_testkit.source.resolution_path)
 ```
 
 

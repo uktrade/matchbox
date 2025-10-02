@@ -11,15 +11,19 @@ from pyarrow import Table
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from matchbox.common.dtos import Match, Resolution
-from matchbox.common.eval import Judgement, ModelComparison
-from matchbox.common.graph import (
-    ModelResolutionName,
-    ResolutionGraph,
-    ResolutionName,
+from matchbox.common.dtos import (
+    Collection,
+    CollectionName,
+    Match,
+    ModelResolutionPath,
+    Resolution,
+    ResolutionPath,
     ResolutionType,
-    SourceResolutionName,
+    SourceResolutionPath,
+    Version,
+    VersionName,
 )
+from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.logging import LogLevelType
 
 if TYPE_CHECKING:
@@ -244,8 +248,8 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def query(
         self,
-        source: SourceResolutionName,
-        resolution: ResolutionName | None = None,
+        source: SourceResolutionPath,
+        point_of_truth: ResolutionPath | None = None,
         threshold: int | None = None,
         return_leaf_id: bool = False,
         limit: int | None = None,
@@ -253,8 +257,8 @@ class MatchboxDBAdapter(ABC):
         """Queries the database from an optional point of truth.
 
         Args:
-            source: the `SourceResolutionName` string identifying the source to query
-            resolution (optional): the resolution to use for filtering results
+            source: the resolution pathidentifying the source to query
+            point_of_truth (optional): the resolution path to use for filtering results
                 If not specified, will use the source resolution for the queried source
             threshold (optional): the threshold to use for creating clusters
                 If None, uses the models' default threshold
@@ -272,18 +276,18 @@ class MatchboxDBAdapter(ABC):
     def match(
         self,
         key: str,
-        source: SourceResolutionName,
-        targets: list[SourceResolutionName],
-        resolution: ResolutionName,
+        source: SourceResolutionPath,
+        targets: list[SourceResolutionPath],
+        point_of_truth: ResolutionPath,
         threshold: int | None = None,
     ) -> list[Match]:
         """Matches an ID in a source resolution and returns the keys in the targets.
 
         Args:
             key: The key to match from the source.
-            source: The name of the source resolution.
-            targets: The names of the target source resolutions.
-            resolution: The name of the resolution to use for matching.
+            source: The path of the source resolution.
+            targets: The paths of the target source resolutions.
+            point_of_truth: The path of the resolution to use for matching.
             threshold (optional): the threshold to use for creating clusters
                 If None, uses the resolutions' default threshold
                 If an integer, uses that threshold for the specified resolution, and the
@@ -292,14 +296,134 @@ class MatchboxDBAdapter(ABC):
         """
         ...
 
+    # Collection management
+
+    @abstractmethod
+    def create_collection(self, name: CollectionName) -> Collection:
+        """Create a new collection.
+
+        Args:
+            name: The name of the collection to create.
+
+        Returns:
+            A Collection object containing its metadata, versions, and resolutions.
+        """
+
+    @abstractmethod
+    def get_collection(self, name: CollectionName) -> Collection:
+        """Get collection metadata.
+
+        Args:
+            name: The name of the collection to get.
+
+        Returns:
+            A Collection object containing its metadata, versions, and resolutions.
+        """
+        ...
+
+    @abstractmethod
+    def list_collections(self) -> list[CollectionName]:
+        """List all collection names.
+
+        Returns:
+            A list of collection names.
+        """
+        ...
+
+    @abstractmethod
+    def delete_collection(self, name: CollectionName, certain: bool) -> None:
+        """Delete a collection and all its versions.
+
+        Args:
+            name: The name of the collection to delete.
+            certain: Whether to delete the collection without confirmation.
+        """
+        ...
+
+    # Version management
+
+    @abstractmethod
+    def create_version(
+        self, collection: CollectionName, version: VersionName
+    ) -> Version:
+        """Create a new version label.
+
+        Args:
+            collection: The name of the collection to create the version in.
+            version: The name of the version to create.
+
+        Returns:
+            A Version object containing its metadata and resolutions.
+        """
+        ...
+
+    @abstractmethod
+    def set_version_mutable(
+        self, collection: CollectionName, version: VersionName, mutable: bool
+    ) -> Version:
+        """Set the mutability of a version.
+
+        Args:
+            collection: The name of the collection containing the version.
+            version: The name of the version to update.
+            mutable: Whether the version should be mutable.
+
+        Returns:
+            The updated Version object.
+        """
+        ...
+
+    @abstractmethod
+    def set_version_default(
+        self, collection: CollectionName, version: VersionName, default: bool
+    ) -> Version:
+        """Set the default status of a version.
+
+        Args:
+            collection: The name of the collection containing the version.
+            version: The name of the version to update.
+            default: Whether the version should be the default version.
+
+        Returns:
+            The updated Version object.
+        """
+        ...
+
+    @abstractmethod
+    def get_version(self, collection: CollectionName, version: VersionName) -> Version:
+        """Get version metadata and resolutions.
+
+        Args:
+            collection: The name of the collection to get the version from.
+            version: The name of the version to get.
+
+        Returns:
+            A Version object containing its metadata and resolutions.
+        """
+        ...
+
+    @abstractmethod
+    def delete_version(
+        self, collection: CollectionName, version: VersionName, certain: bool
+    ) -> None:
+        """Delete a version and all its resolutions.
+
+        Args:
+            collection: The name of the collection to delete the version from.
+            version: The name of the version to delete.
+            certain: Whether to delete the version without confirmation.
+        """
+        ...
+
     # Resolution management
 
     @abstractmethod
-    def insert_resolution(self, resolution: "Resolution") -> None:
+    def create_resolution(self, resolution: Resolution, path: ResolutionPath) -> None:
         """Writes a resolution to Matchbox.
 
         Args:
             resolution: Resolution object with a source or model config
+            path: The resolution path for the source
 
         Raises:
             MatchboxModelConfigError: If the configuration is invalid, such as
@@ -309,12 +433,12 @@ class MatchboxDBAdapter(ABC):
 
     @abstractmethod
     def get_resolution(
-        self, name: ResolutionName, validate: ResolutionType | None = None
+        self, path: ResolutionPath, validate: ResolutionType | None = None
     ) -> Resolution:
-        """Get a resolution from its name.
+        """Get a resolution from its path.
 
         Args:
-            name: The name resolution name for the source
+            path: The resolution path for the source
             validate: The expected type of the resolution
 
         Returns:
@@ -323,63 +447,46 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def delete_resolution(self, name: ResolutionName, certain: bool) -> None:
+    def delete_resolution(self, path: ResolutionPath, certain: bool) -> None:
         """Delete a resolution from the database.
 
         Args:
-            name: The name of the resolution to delete.
+            path: The name of the resolution to delete.
             certain: Whether to delete the model without confirmation.
         """
-        ...
-
-    @abstractmethod
-    def get_leaf_source_resolutions(self, name: ResolutionName) -> list[Resolution]:
-        """Get a list of source configurations queriable from a resolution.
-
-        Args:
-            name: Name of the resolution to query.
-
-        Returns:
-            List of relevant Resolution objects.
-        """
-        ...
-
-    @abstractmethod
-    def get_resolution_graph(self) -> ResolutionGraph:
-        """Get the full resolution graph."""
         ...
 
     # Data insertion
 
     @abstractmethod
     def insert_source_data(
-        self, name: SourceResolutionName, data_hashes: Table
+        self, path: SourceResolutionPath, data_hashes: Table
     ) -> None:
         """Inserts hash data for a source resolution.
 
         Args:
-            name: The name of the source resolution to index.
+            path: The path of the source resolution to index.
             data_hashes: The Arrow table with the hash of each data row
         """
         ...
 
     @abstractmethod
-    def insert_model_data(self, name: ModelResolutionName, results: Table) -> None:
+    def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:
         """Inserts results data for a model resolution."""
         ...
 
     @abstractmethod
-    def get_model_data(self, name: ModelResolutionName) -> Table:
+    def get_model_data(self, path: ModelResolutionPath) -> Table:
         """Get the results for a model resolution."""
         ...
 
     @abstractmethod
-    def set_model_truth(self, name: ModelResolutionName, truth: int) -> None:
+    def set_model_truth(self, path: ModelResolutionPath, truth: int) -> None:
         """Sets the truth threshold for this model, changing the default clusters."""
         ...
 
     @abstractmethod
-    def get_model_truth(self, name: ModelResolutionName) -> int:
+    def get_model_truth(self, path: ModelResolutionPath) -> int:
         """Gets the current truth threshold for this model."""
         ...
 
@@ -394,30 +501,6 @@ class MatchboxDBAdapter(ABC):
 
         Raises:
             MatchboxDataNotFound: If some items don't exist in the target table.
-        """
-        ...
-
-    @abstractmethod
-    def validate_hashes(self, hashes: list[bytes]) -> bool:
-        """Validates a list of hashes exist in the database.
-
-        Args:
-            hashes: A list of hashes to validate.
-
-        Raises:
-            MatchboxDataNotFound: If some items don't exist in the target table.
-        """
-        ...
-
-    @abstractmethod
-    def cluster_id_to_hash(self, ids: list[int]) -> dict[int, bytes | None]:
-        """Get a lookup of Cluster hashes from a list of IDs.
-
-        Args:
-            ids: A list of IDs to get hashes for.
-
-        Returns:
-            A dictionary mapping IDs to hashes.
         """
         ...
 
@@ -490,11 +573,11 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def compare_models(self, resolutions: list[ModelResolutionName]) -> ModelComparison:
+    def compare_models(self, paths: list[ModelResolutionPath]) -> ModelComparison:
         """Compare metrics of models based on evaluation data.
 
         Args:
-            resolutions: List of names of model resolutions to be compared.
+            paths: List of paths of model resolutions to be compared.
 
         Returns:
             A model comparison object, listing metrics for each model.
@@ -502,14 +585,12 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def sample_for_eval(
-        self, n: int, resolution: ModelResolutionName, user_id: int
-    ) -> Table:
+    def sample_for_eval(self, n: int, path: ModelResolutionPath, user_id: int) -> Table:
         """Sample a cluster to validate.
 
         Args:
             n: Number of clusters to sample
-            resolution: Name of resolution from which to sample
+            path: Path of resolution from which to sample
             user_id: ID of user requesting the sample
 
         Returns:

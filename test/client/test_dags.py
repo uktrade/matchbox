@@ -16,7 +16,13 @@ from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
-from matchbox.common.dtos import BackendResourceType, Match, NotFoundError
+from matchbox.common.dtos import (
+    BackendResourceType,
+    Match,
+    NotFoundError,
+    ResolutionPath,
+    Version,
+)
 from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
@@ -24,6 +30,7 @@ from matchbox.common.exceptions import (
 from matchbox.common.factories.sources import source_factory, source_from_tuple
 
 
+@patch.object(DAG, "connect")
 @patch.object(Source, "run")
 @patch.object(Model, "run")
 @patch.object(Source, "sync")
@@ -33,6 +40,7 @@ def test_dag_run_and_sync(
     source_sync_mock: Mock,
     model_run_mock: Mock,
     source_run_mock: Mock,
+    dag_connect_mock: Mock,
     sqlite_warehouse: Engine,
 ):
     """A legal DAG can be built and run."""
@@ -85,6 +93,7 @@ def test_dag_run_and_sync(
     # Run DAG
     dag.run_and_sync()
 
+    assert dag_connect_mock.call_count == 1
     assert source_run_mock.call_count == 3
     assert source_sync_mock.call_count == 3
     assert model_run_mock.call_count == 3
@@ -156,7 +165,19 @@ def test_dag_name_clash(sqlite_warehouse: Engine):
     assert dag.graph["d_foo"] == [foo.name]
 
 
-def test_dag_disconnected(sqlite_warehouse: Engine):
+@patch.object(DAG, "connect")
+@patch.object(Source, "run")
+@patch.object(Model, "run")
+@patch.object(Source, "sync")
+@patch.object(Model, "sync")
+def test_dag_disconnected(
+    model_sync_mock: Mock,
+    source_sync_mock: Mock,
+    model_run_mock: Mock,
+    source_run_mock: Mock,
+    dag_connect_mock: Mock,
+    sqlite_warehouse: Engine,
+):
     """Nodes cannot be disconnected."""
     dag = DAG("collection")
 
@@ -338,13 +359,16 @@ def test_extract_lookup(
     expected_foo_mapping = expected_foo_bar_mapping.select(["id", "foo_key"]).unique()
 
     # Mock API
-    matchbox_api.get("/resolutions/root/sources").mock(
+    matchbox_api.get(f"/collections/{dag.name}/versions/{dag.version}").mock(
         return_value=Response(
             200,
-            json=[
-                foo.source.to_resolution().model_dump(mode="json"),
-                bar.source.to_resolution().model_dump(mode="json"),
-            ],
+            json=Version(
+                name="v1",
+                resolutions={
+                    foo.name: foo.source.to_resolution(),
+                    bar.name: bar.source.to_resolution(),
+                },
+            ).model_dump(),
         )
     )
 
@@ -470,11 +494,15 @@ def test_lookup_key_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine):
         model_settings={"comparisons": "l.field=r.field"},
     )
 
+    foo_path = ResolutionPath(name="foo", collection=dag.name, version=dag.version)
+    bar_path = ResolutionPath(name="bar", collection=dag.name, version=dag.version)
+    baz_path = ResolutionPath(name="baz", collection=dag.name, version=dag.version)
+
     mock_match1 = Match(
-        cluster=1, source="foo", source_id={"a"}, target="bar", target_id={"b"}
+        cluster=1, source=foo_path, source_id={"a"}, target=bar_path, target_id={"b"}
     )
     mock_match2 = Match(
-        cluster=1, source="foo", source_id={"a"}, target="baz", target_id={"b"}
+        cluster=1, source=foo_path, source_id={"a"}, target=baz_path, target_id={"b"}
     )
     # The standard JSON serialiser does not handle Pydantic objects
     serialised_matches = json.dumps(

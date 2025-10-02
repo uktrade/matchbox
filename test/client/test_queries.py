@@ -37,8 +37,8 @@ def test_init_query():
     )
 
     assert query.config == QueryConfig(
-        source_resolutions=[source.name],
-        model_resolution=model.name,
+        source_resolutions=[source.resolution_path],
+        model_resolution=model.resolution_path,
         combine_type="explode",
         threshold=32,
         cleaning={"hello": "hello"},
@@ -158,6 +158,8 @@ def test_query_single_source(matchbox_api: MockRouter, sqlite_warehouse: Engine)
     assert {"foo_a", "foo_b", "foo_key", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
+        "collection": testkit.source.dag.name,
+        "version": testkit.source.dag.version,
         "source": testkit.source.name,
         "return_leaf_id": "False",
     }
@@ -172,6 +174,8 @@ def test_query_single_source(matchbox_api: MockRouter, sqlite_warehouse: Engine)
     assert {"foo_a", "foo_b", "foo_key", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
+        "collection": testkit.source.dag.name,
+        "version": testkit.source.dag.version,
         "source": testkit.source.name,
         "threshold": "50",
         "return_leaf_id": "False",
@@ -243,11 +247,15 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
     } == set(results.columns)
 
     assert dict(query_route.calls[-2].request.url.params) == {
+        "collection": testkit1.source.dag.name,
+        "version": testkit1.source.dag.version,
         "source": testkit1.source.name,
         "resolution": model.name,
         "return_leaf_id": "False",
     }
     assert dict(query_route.calls[-1].request.url.params) == {
+        "collection": testkit2.source.dag.name,
+        "version": testkit2.source.dag.version,
         "source": testkit2.source.name,
         "resolution": model.name,
         "return_leaf_id": "False",

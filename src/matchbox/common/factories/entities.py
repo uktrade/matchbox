@@ -17,8 +17,7 @@ from faker import Faker
 from frozendict import frozendict
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from matchbox.common.dtos import DataTypes
-from matchbox.common.graph import SourceResolutionName
+from matchbox.common.dtos import DataTypes, SourceResolutionName
 from matchbox.common.transform import DisjointSet
 
 if TYPE_CHECKING:
@@ -174,7 +173,8 @@ class EntityReference(frozendict):
     """
 
     def __init__(
-        self, mapping: dict[SourceResolutionName, frozenset[str]] | None = None
+        self,
+        mapping: dict[SourceResolutionName, frozenset[str]] | None = None,
     ) -> None:
         """Initialise the EntityReference."""
         super().__init__({} if mapping is None else mapping)
@@ -459,7 +459,8 @@ class SourceEntity(BaseModel, EntityIDMixin, SourceKeyMixin):
 
 
 def query_to_cluster_entities(
-    data: pa.Table | pd.DataFrame | pl.DataFrame, keys: dict[SourceResolutionName, str]
+    data: pa.Table | pd.DataFrame | pl.DataFrame,
+    keys: dict[SourceResolutionName, str],
 ) -> set[ClusterEntity]:
     """Convert a query result to a set of ClusterEntities.
 

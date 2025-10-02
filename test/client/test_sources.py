@@ -25,7 +25,8 @@ from matchbox.common.dtos import (
     LocationType,
     NotFoundError,
     Resolution,
-    ResolutionOperationStatus,
+    ResolutionType,
+    ResourceOperationStatus,
     SourceField,
     UploadStage,
     UploadStatus,
@@ -40,7 +41,6 @@ from matchbox.common.factories.sources import (
     source_factory,
     source_from_tuple,
 )
-from matchbox.common.graph import ResolutionType
 
 # Locations
 
@@ -301,7 +301,7 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine):
             text_col,
             INSTR(text_col, 'a') as position_of_a
         FROM
-            "{source_testkit.source.to_resolution().name}"
+            "{source_testkit.name}"
     """
 
     # This should work since INSTR is valid SQLite
@@ -537,7 +537,9 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     ).write_to_location()
 
     # Mock the routes
-    matchbox_api.get(f"/resolutions/{testkit.source.name}").mock(
+    matchbox_api.get(
+        f"/collections/{testkit.source.dag.name}/versions/{testkit.source.dag.version}/resolutions/{testkit.source.name}"
+    ).mock(
         return_value=Response(
             404,
             json=NotFoundError(
@@ -545,17 +547,21 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
             ).model_dump(),
         )
     )
-    insert_config_route = matchbox_api.post("/resolutions").mock(
+    insert_config_route = matchbox_api.post(
+        f"/collections/{testkit.source.dag.name}/versions/{testkit.source.dag.version}/resolutions/{testkit.source.name}"
+    ).mock(
         return_value=Response(
             201,
-            json=ResolutionOperationStatus(
+            json=ResourceOperationStatus(
                 success=True,
                 name=testkit.source.name,
                 operation=CRUDOperation.CREATE,
             ).model_dump(),
         )
     )
-    matchbox_api.post(f"/resolutions/{testkit.source.name}/data").mock(
+    matchbox_api.post(
+        f"/collections/{testkit.source.dag.name}/versions/{testkit.source.dag.version}/resolutions/{testkit.source.name}/data"
+    ).mock(
         return_value=Response(
             202,
             content=UploadStatus(
@@ -589,7 +595,6 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
         insert_config_route.calls.last.request.content.decode("utf-8")
     )
     # Check key fields match (allowing for different descriptions)
-    assert resolution_call.name == testkit.source.to_resolution().name
     assert resolution_call.resolution_type == ResolutionType.SOURCE
     assert resolution_call.config == testkit.source.to_resolution().config
     assert "test-upload-id" in upload_route.calls.last.request.url.path
@@ -616,9 +621,9 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
 
     # Mock earlier endpoint generating a name clash
     model = model_factory().model
-    matchbox_api.get(f"/resolutions/{testkit.source.name}").mock(
-        return_value=Response(200, json=model.to_resolution().model_dump())
-    )
+    matchbox_api.get(
+        f"/collections/{testkit.source.dag.name}/versions/{testkit.source.dag.version}/resolutions/{testkit.source.name}"
+    ).mock(return_value=Response(200, json=model.to_resolution().model_dump()))
 
     with pytest.raises(ValueError, match="existing resolution"):
         testkit.source.sync()

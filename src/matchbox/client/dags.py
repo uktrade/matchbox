@@ -10,17 +10,34 @@ from matchbox.client import _handler
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
 from matchbox.client.sources import Source
-from matchbox.common.exceptions import MatchboxResolutionNotFoundError
+from matchbox.common.dtos import (
+    CollectionName,
+    ResolutionName,
+    ResolutionPath,
+    ResolutionType,
+    VersionName,
+)
+from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
+    MatchboxResolutionNotFoundError,
+    MatchboxVersionNotFoundError,
+)
 from matchbox.common.logging import logger
 
 
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
 
-    def __init__(self, name: str, new: bool = False):
+    def __init__(
+        self,
+        name: str,
+        version: str | None = None,
+        new: bool = False,
+    ):
         """Initialises empty DAG."""
-        self.name = name
-        self.nodes: dict[str, Source | Model] = {}
+        self.name: CollectionName = CollectionName(name)
+        self.version: VersionName = VersionName(version or "v1")
+        self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[str, list[str]] = {}
 
     def _check_dag(self, dag: Self):
@@ -38,10 +55,10 @@ class DAG:
             if step.right_query:
                 self._check_dag(step.right_query.dag)
 
-            for resolution_name in step.dependencies:
-                if resolution_name not in self.nodes:
-                    raise ValueError(f"Step {resolution_name} not added to DAG")
-            self.graph[step.name] = step.parents
+            for resolution in step.dependencies:
+                if resolution.name not in self.nodes:
+                    raise ValueError(f"Step {resolution.name} not added to DAG")
+            self.graph[step.name] = [parent.name for parent in step.parents]
         else:
             self.graph[step.name] = []
 
@@ -173,6 +190,20 @@ class DAG:
 
         return "\n".join(result)
 
+    def connect(self) -> Self:
+        """Create collection and version if they don't exist."""
+        try:
+            _handler.get_collection(self.name)
+        except MatchboxCollectionNotFoundError:
+            _handler.create_collection(self.name)
+
+        try:
+            _handler.get_version(collection=self.name, name=self.version)
+        except MatchboxVersionNotFoundError:
+            _handler.create_version(collection=self.name, name=self.version)
+
+        return self
+
     def run_and_sync(
         self,
         full_rerun: bool = False,
@@ -181,6 +212,9 @@ class DAG:
     ):
         """Run entire DAG and send results to server."""
         start_time = datetime.datetime.now()
+
+        # TODO: this is a temporary and undocumented interface
+        self.connect()
 
         # Determine order of execution steps
         root_node = self.final_step
@@ -259,6 +293,9 @@ class DAG:
                 If an integer, uses that threshold for the specified resolution, and the
                 resolution's cached thresholds for its ancestors
 
+        Returns:
+            Dictionary mapping source names to list of keys within that source.
+
         Examples:
             ```python
             dag.lookup_key(
@@ -272,14 +309,21 @@ class DAG:
             ```
         """
         matches = _handler.match(
-            targets=to_sources,
-            source=from_source,
+            targets=[
+                ResolutionPath(name=target, collection=self.name, version=self.version)
+                for target in to_sources
+            ],
+            source=ResolutionPath(
+                name=from_source, collection=self.name, version=self.version
+            ),
             key=key,
-            resolution=self.final_step,
+            resolution=ResolutionPath(
+                name=self.final_step, collection=self.name, version=self.version
+            ),
             threshold=threshold,
         )
 
-        to_sources_results = {m.target: list(m.target_id) for m in matches}
+        to_sources_results = {m.target.name: list(m.target_id) for m in matches}
         # If no matches, _handler will raise
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
@@ -294,56 +338,72 @@ class DAG:
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
         """
-        # Get all sources in scope of the resolution
-        point_of_truth = self.final_step
-        source_resolutions = _handler.get_leaf_source_resolutions(name=point_of_truth)
+        # Get all sources in scope of the DAG version
+        version = _handler.get_version(collection=self.name, name=self.version)
+        source_resolutions = {
+            res_name: resolution
+            for res_name, resolution in version.resolutions.items()
+            if resolution.resolution_type == ResolutionType.SOURCE
+        }
+
+        filtered_res_names = list(source_resolutions.keys())
 
         if source_filter:
-            source_resolutions = [
-                s for s in source_resolutions if s.name in source_filter
-            ]
+            filtered_res_names = [s for s in filtered_res_names if s in source_filter]
 
         if location_names:
-            source_resolutions = [
+            filtered_res_names = [
                 s
-                for s in source_resolutions
-                if s.config.location_config.name in location_names
+                for s in filtered_res_names
+                if source_resolutions[s].config.location_config.name in location_names
             ]
 
-        if not source_resolutions:
+        if not filtered_res_names:
             raise MatchboxResolutionNotFoundError("No compatible source was found")
 
         source_mb_ids: list[ArrowTable] = []
         source_to_key_field: dict[str, str] = {}
 
-        for s in source_resolutions:
+        for res_name in filtered_res_names:
             # Get Matchbox IDs from backend
             source_mb_ids.append(
                 _handler.query(
-                    source=s.name, resolution=point_of_truth, return_leaf_id=False
+                    source=ResolutionPath(
+                        name=res_name, collection=self.name, version=self.version
+                    ),
+                    resolution=ResolutionPath(
+                        name=self.final_step, collection=self.name, version=self.version
+                    ),
+                    return_leaf_id=False,
                 )
             )
 
-            source_to_key_field[s.name] = s.config.key_field.name
+            source_to_key_field[res_name] = source_resolutions[
+                res_name
+            ].config.key_field.name
 
         # Join Matchbox IDs to form mapping table
         mapping = source_mb_ids[0]
         mapping = mapping.rename_columns(
             {
-                "key": source_resolutions[0].config.qualified_key(
-                    source_resolutions[0].name
+                "key": source_resolutions[filtered_res_names[0]].config.qualified_key(
+                    filtered_res_names[0]
                 )
             }
         )
-        if len(source_resolutions) > 1:
-            for s, mb_ids in zip(
-                source_resolutions[1:], source_mb_ids[1:], strict=True
+        if len(filtered_res_names) > 1:
+            for source_name, mb_ids in zip(
+                filtered_res_names[1:], source_mb_ids[1:], strict=True
             ):
                 mapping = mapping.join(
                     right_table=mb_ids, keys="id", join_type="full outer"
                 )
                 mapping = mapping.rename_columns(
-                    {"key": s.config.qualified_key(s.name)}
+                    {
+                        "key": source_resolutions[source_name].config.qualified_key(
+                            source_name
+                        )
+                    }
                 )
 
         return mapping

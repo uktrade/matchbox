@@ -9,10 +9,10 @@ from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.exc import SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
-from matchbox.common.graph import (
-    ModelResolutionName,
+from matchbox.common.dtos import (
+    ModelResolutionPath,
     ResolutionType,
-    SourceResolutionName,
+    SourceResolutionPath,
 )
 from matchbox.common.hash import IntMap, hash_arrow_table
 from matchbox.common.logging import logger
@@ -36,23 +36,23 @@ from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leave
 
 
 def insert_hashes(
-    name: SourceResolutionName,
+    path: SourceResolutionPath,
     data_hashes: pa.Table,
     batch_size: int,
 ) -> None:
     """Indexes hash data for a source within Matchbox.
 
     Args:
-        name: The name of the source resolution
+        path: The path of the source resolution
         data_hashes: Arrow table containing hash data
         batch_size: Batch size for bulk operations
     """
-    log_prefix = f"Index hashes {name}"
+    log_prefix = f"Index hashes {path}"
     content_hash = hash_arrow_table(data_hashes)
 
     with MBDB.get_session() as session:
-        resolution = Resolutions.from_name(
-            name=name, res_type=ResolutionType.SOURCE, session=session
+        resolution = Resolutions.from_path(
+            path=path, res_type=ResolutionType.SOURCE, session=session
         )
         # Check if the content hash is the same
         if resolution.hash == content_hash:
@@ -472,7 +472,7 @@ def _results_to_insert_tables(
 
 
 def insert_results(
-    name: ModelResolutionName,
+    path: ModelResolutionPath,
     results: pa.Table,
     batch_size: int,
 ) -> None:
@@ -487,14 +487,14 @@ def insert_results(
     This allows easy querying of clusters at any threshold.
 
     Args:
-        name: The name of the model resolution to upload results for
+        path: The path of the model resolution to upload results for
         results: A PyArrow results table with left_id, right_id, probability
         batch_size: Number of records to insert in each batch
 
     Raises:
         MatchboxResolutionNotFoundError: If the specified model doesn't exist.
     """
-    resolution = Resolutions.from_name(name=name, res_type=ResolutionType.MODEL)
+    resolution = Resolutions.from_path(path=path, res_type=ResolutionType.MODEL)
 
     log_prefix = f"Model {resolution.name}"
     logger.info(

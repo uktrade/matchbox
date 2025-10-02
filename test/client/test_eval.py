@@ -68,17 +68,23 @@ def test_get_samples(
     )
 
     # Mock API endpoints
-    matchbox_api.get("/resolutions/foo").mock(
+    matchbox_api.get(
+        f"/collections/{dag.name}/versions/{dag.version}/resolutions/foo"
+    ).mock(
         return_value=Response(
             200, content=foo_testkit.source.to_resolution().model_dump_json()
         )
     )
-    matchbox_api.get("/resolutions/bar").mock(
+    matchbox_api.get(
+        f"/collections/{dag.name}/versions/{dag.version}/resolutions/bar"
+    ).mock(
         return_value=Response(
             200, content=bar_testkit.source.to_resolution().model_dump_json()
         )
     )
-    matchbox_api.get("/resolutions/baz").mock(
+    matchbox_api.get(
+        f"/collections/{dag.name}/versions/{dag.version}/resolutions/baz"
+    ).mock(
         return_value=Response(
             200, content=baz_testkit.source.to_resolution().model_dump_json()
         )

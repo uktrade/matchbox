@@ -197,7 +197,9 @@ def test_entity_variations_tracking():
     # Process each ClusterEntity group
     for cluster_entity in source_testkit.entities:
         # Get the values for this entity
-        entity_values = cluster_entity.get_values({source_testkit.name: source_testkit})
+        entity_values = cluster_entity.get_values(
+            {source_testkit.source.name: source_testkit}
+        )
 
         # Calculate total unique variations (equivalent to total_unique_variations)
         unique_variations = 0
@@ -213,7 +215,7 @@ def test_entity_variations_tracking():
         data_df = source_testkit.data.to_pandas()
 
         # Get keys for this cluster entity
-        result_keys = cluster_entity.get_keys(source_testkit.name)
+        result_keys = cluster_entity.get_keys(source_testkit.source.name)
         assert result_keys is not None
 
         # All rows for a given cluster entity should share the same company value
@@ -262,7 +264,7 @@ def test_base_and_variation_entities():
     variation_entity = None
 
     for entity in source_testkit.entities:
-        entity_keys = entity.get_keys(source_testkit.name)
+        entity_keys = entity.get_keys(source_testkit.source.name)
         rows = data_df[data_df["key"].isin(entity_keys)]
         values = rows["company"]
         assert len(values.unique()) == 1
@@ -277,11 +279,11 @@ def test_base_and_variation_entities():
     assert variation_entity is not None, "No ClusterEntity found for variation"
 
     # Verify that each entity only contains its own variation
-    base_values = base_entity.get_values({source_testkit.name: source_testkit})
+    base_values = base_entity.get_values({source_testkit.source.name: source_testkit})
     assert base_values[source_testkit.name]["company"] == [base_value]
 
     variation_values = variation_entity.get_values(
-        {source_testkit.name: source_testkit}
+        {source_testkit.source.name: source_testkit}
     )
     assert variation_values[source_testkit.name]["company"] == [variation_value]
 
@@ -289,26 +291,29 @@ def test_base_and_variation_entities():
     combined = base_entity + variation_entity
 
     # Verify that the combined entity contains both variations
-    combined_values = combined.get_values({source_testkit.name: source_testkit})
+    combined_values = combined.get_values({source_testkit.source.name: source_testkit})
     assert sorted(combined_values[source_testkit.name]["company"]) == sorted(
         [base_value, variation_value]
     )
 
     # Verify that adding the entities produces the same result as having all keys
     assert (
-        combined.keys[source_testkit.name]
-        == base_entity.keys[source_testkit.name]
-        | variation_entity.keys[source_testkit.name]
+        combined.keys[source_testkit.source.name]
+        == base_entity.keys[source_testkit.source.name]
+        | variation_entity.keys[source_testkit.source.name]
     )
 
     # The diff between entities should match their respective keys
     base_diff = base_entity - variation_entity
-    assert base_diff.get(source_testkit.name) == base_entity.keys[source_testkit.name]
+    assert (
+        base_diff.get(source_testkit.source.name)
+        == base_entity.keys[source_testkit.source.name]
+    )
 
     variation_diff = variation_entity - base_entity
     assert (
-        variation_diff.get(source_testkit.name)
-        == variation_entity.keys[source_testkit.name]
+        variation_diff.get(source_testkit.source.name)
+        == variation_entity.keys[source_testkit.source.name]
     )
 
 

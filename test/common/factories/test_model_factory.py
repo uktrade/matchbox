@@ -5,13 +5,16 @@ import pytest
 
 from matchbox.client.queries import Query
 from matchbox.common.arrow import SCHEMA_RESULTS
+from matchbox.common.dtos import (
+    ModelResolutionName,
+    ResolutionName,
+)
 from matchbox.common.factories.models import (
     generate_dummy_probabilities,
     model_factory,
     query_to_model_factory,
 )
 from matchbox.common.factories.sources import linked_sources_factory, source_factory
-from matchbox.common.graph import ModelResolutionName, ResolutionName
 
 
 def test_model_factory_entity_preservation():

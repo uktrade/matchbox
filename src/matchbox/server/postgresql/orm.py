@@ -20,20 +20,173 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
-from sqlalchemy.orm import Session, relationship
+from sqlalchemy.orm import Session, relationship, selectinload
 
-from matchbox.common.dtos import LocationConfig, ModelType
+from matchbox.common.dtos import Collection as CommonCollection
+from matchbox.common.dtos import (
+    CollectionName,
+    LocationConfig,
+    ModelType,
+    ResolutionName,
+    ResolutionPath,
+    ResolutionType,
+    VersionName,
+)
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
 from matchbox.common.dtos import Resolution as CommonResolution
 from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.dtos import SourceField as CommonSourceField
+from matchbox.common.dtos import Version as CommonVersion
 from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
+    MatchboxVersionNotFoundError,
 )
-from matchbox.common.graph import ResolutionName, ResolutionType
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
+
+
+class Collections(CountMixin, MBDB.MatchboxBase):
+    """Named collections of resolutions and versions."""
+
+    __tablename__ = "collections"
+
+    collection_id = Column(BIGINT, primary_key=True, autoincrement=True)
+    name = Column(TEXT, nullable=False)
+
+    # Relationships
+    versions = relationship("Versions", back_populates="collection")
+
+    # Constraints
+    __table_args__ = (UniqueConstraint("name", name="collections_name_key"),)
+
+    @classmethod
+    def from_name(
+        cls,
+        name: CollectionName,
+        session: Session | None = None,
+    ) -> "Collections":
+        """Resolve a collection name to a Collections object.
+
+        Args:
+            name: The name of the collection to resolve.
+            session: Optional session to use for the query.
+
+        Raises:
+            MatchboxCollectionNotFoundError: If the collection doesn't exist.
+        """
+        query = select(cls).where(cls.name == name).options(selectinload(cls.versions))
+
+        if session:
+            collection = session.execute(query).scalar_one_or_none()
+        else:
+            with MBDB.get_session() as session:
+                collection = session.execute(query).scalar_one_or_none()
+
+        if not collection:
+            raise MatchboxCollectionNotFoundError(f"Collection '{name}' not found.")
+
+        return collection
+
+    def to_dto(self) -> CommonCollection:
+        """Convert ORM collection to a matchbox.common Collection object."""
+        version_names: list[VersionName] = []
+        default_version = None
+        if versions := self.versions:
+            version_names = [v.name for v in versions]
+            default_version_list = [v.name for v in versions if v.is_default]
+            if default_version_list:
+                default_version = default_version_list[0]
+
+        return CommonCollection(versions=version_names, default_version=default_version)
+
+
+class Versions(CountMixin, MBDB.MatchboxBase):
+    """Named versions of collections of resolutions."""
+
+    __tablename__ = "versions"
+
+    version_id = Column(BIGINT, primary_key=True, autoincrement=True)
+    collection_id = Column(
+        BIGINT,
+        ForeignKey("collections.collection_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(TEXT, nullable=False)
+    is_mutable = Column(BOOLEAN, default=False)
+    is_default = Column(BOOLEAN, default=False)
+
+    # Relationships
+    collection = relationship("Collections", back_populates="versions")
+    resolutions = relationship("Resolutions", back_populates="version")
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("collection_id", "version_id", name="unique_version_id"),
+        UniqueConstraint("collection_id", "name", name="unique_version_name"),
+        Index(
+            "ix_default_version_collection",
+            "collection_id",
+            unique=True,
+            postgresql_where=text("is_default = true"),
+        ),
+    )
+
+    @classmethod
+    def from_name(
+        cls,
+        collection: CollectionName,
+        name: VersionName,
+        session: Session | None = None,
+    ) -> "Versions":
+        """Resolve a collection and version name to a Versions object.
+
+        Args:
+            collection: The name of the collection.
+            name: The name of the version within that collection.
+            session: Optional session to use for the query.
+
+        Raises:
+            MatchboxVersionNotFoundError: If the version doesn't exist.
+        """
+        query = (
+            select(cls)
+            .join(Collections)
+            .where(Collections.name == collection, cls.name == name)
+            .options(
+                selectinload(cls.resolutions)
+                .selectinload(Resolutions.source_config)
+                .selectinload(SourceConfigs.fields),
+                selectinload(cls.resolutions).selectinload(Resolutions.model_config),
+            )
+        )
+
+        if session:
+            version_orm = session.execute(query).scalar_one_or_none()
+        else:
+            with MBDB.get_session() as session:
+                version_orm = session.execute(query).scalar_one_or_none()
+
+        if not version_orm:
+            raise MatchboxVersionNotFoundError
+
+        return version_orm
+
+    def to_dto(self) -> CommonVersion:
+        """Convert ORM version to a matchbox.common Version object."""
+        resolutions: dict[ResolutionName, CommonResolution] = {}
+        if self.resolutions:
+            resolutions = {
+                resolution.name: resolution.to_dto() for resolution in self.resolutions
+            }
+
+        return CommonVersion(
+            name=self.name,
+            is_default=self.is_default,
+            is_mutable=self.is_mutable,
+            resolutions=resolutions,
+        )
 
 
 class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
@@ -63,7 +216,7 @@ class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
 
 
 class Resolutions(CountMixin, MBDB.MatchboxBase):
-    """Table of resolution points: models, sources and humans.
+    """Table of resolution points corresponding to models, and sources.
 
     Resolutions produce probabilities or own data in the clusters table.
     """
@@ -72,6 +225,9 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
     # Columns
     resolution_id = Column(BIGINT, primary_key=True, autoincrement=True)
+    version_id = Column(
+        BIGINT, ForeignKey("versions.version_id", ondelete="CASCADE"), nullable=False
+    )
     name = Column(TEXT, nullable=False)
     description = Column(TEXT, nullable=True)
     type = Column(TEXT, nullable=False)
@@ -102,14 +258,15 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         secondaryjoin="Resolutions.resolution_id == ResolutionFrom.child",
         backref="parents",
     )
+    version = relationship("Versions", back_populates="resolutions")
 
     # Constraints
     __table_args__ = (
         CheckConstraint(
-            "type IN ('model', 'source', 'human')",
+            "type IN ('model', 'source')",
             name="resolution_type_constraints",
         ),
-        UniqueConstraint("name", name="resolutions_name_key"),
+        UniqueConstraint("version_id", "name", name="resolutions_name_key"),
     )
 
     @property
@@ -204,23 +361,33 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             )
 
     @classmethod
-    def from_name(
+    def from_path(
         cls,
-        name: ResolutionName,
+        path: ResolutionPath,
         res_type: ResolutionType | None = None,
         session: Session | None = None,
     ) -> "Resolutions":
-        """Resolves a model resolution name to a Resolution object.
+        """Resolves a resolution name to a Resolution object.
 
         Args:
-            name: The name of the model to resolve.
+            path: The path of the resolution to resolve.
             res_type: A resolution type to use as filter.
             session: A session to get the resolution for updates.
 
         Raises:
-            MatchboxResolutionNotFoundError: If the model doesn't exist.
+            MatchboxResolutionNotFoundError: If the resolution doesn't exist.
         """
-        query = select(cls).where(cls.name == name)
+        query = (
+            select(cls)
+            .join(cls.version)
+            .join(Versions.collection)
+            .where(
+                cls.name == path.name,
+                Versions.name == path.version,
+                Collections.name == path.collection,
+            )
+        )
+
         if res_type:
             query = query.where(cls.type == res_type.value)
 
@@ -234,14 +401,12 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             return resolution
 
         raise MatchboxResolutionNotFoundError(
-            message=f"No resolution {name} of type {res_type or 'any'}."
+            message=f"No resolution {path} of type {res_type or 'any'}."
         )
 
     @classmethod
     def from_dto(
-        cls,
-        resolution: CommonResolution,
-        session: Session,
+        cls, resolution: CommonResolution, path: ResolutionPath, session: Session
     ) -> "Resolutions":
         """Create a Resolutions instance from a Resolution DTO object.
 
@@ -251,21 +416,33 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
         Args:
             resolution: The Resolution DTO to convert
+            path: The full resolution path
             session: Database session (caller must commit)
 
         Returns:
             A Resolutions ORM instance with ID and relationships established
         """
         # Check if resolution already exists. Always an error
-        existing = session.scalar(select(cls).where(cls.name == resolution.name))
+        existing = session.scalar(select(cls).where(cls.name == path.name))
         if existing:
             raise MatchboxResolutionAlreadyExists(
-                f"Resolution {resolution.name} already exists"
+                f"Resolution {path.name} already exists"
             )
+
+        # Find the version ID for the given collection and version names
+        version_obj = session.execute(
+            select(Versions)
+            .join(Collections)
+            .where(Collections.name == path.collection, Versions.name == path.version)
+        ).scalar_one_or_none()
+
+        if not version_obj:
+            raise MatchboxVersionNotFoundError(name=path.version)
 
         # Create new resolution
         resolution_orm = cls(
-            name=resolution.name,
+            version_id=version_obj.version_id,
+            name=path.name,
             description=resolution.description,
             type=resolution.resolution_type.value,
             truth=resolution.truth,
@@ -279,13 +456,13 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         elif resolution.resolution_type == ResolutionType.MODEL:
             resolution_orm.model_config = ModelConfigs.from_dto(resolution.config)
             # Create lineage
-            left_parent = cls.from_name(
+            left_parent = cls.from_path(
                 resolution.config.left_query.point_of_truth, session=session
             )
             cls._create_closure_entries(session, resolution_orm, left_parent)
 
             if resolution.config.type == ModelType.LINKER:
-                right_parent = cls.from_name(
+                right_parent = cls.from_path(
                     resolution.config.right_query.point_of_truth, session=session
                 )
                 cls._create_closure_entries(session, resolution_orm, right_parent)
@@ -300,7 +477,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             config = self.model_config.to_dto()
 
         return CommonResolution(
-            name=self.name,
             description=self.description,
             truth=self.truth,
             resolution_type=ResolutionType(self.type),

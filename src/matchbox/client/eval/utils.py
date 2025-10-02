@@ -4,22 +4,19 @@ import warnings
 from typing import Any
 
 import polars as pl
-from matplotlib import pyplot as plt
-from matplotlib.pyplot import Figure
 from sqlalchemy.exc import OperationalError
 
 from matchbox.client import _handler
 from matchbox.client.dags import DAG
 from matchbox.client.results import Results
 from matchbox.client.sources import Location, Source
-from matchbox.common.dtos import ResolutionType
+from matchbox.common.dtos import ModelResolutionPath, ResolutionPath, ResolutionType
 from matchbox.common.eval import (
     ModelComparison,
     PrecisionRecall,
     precision_recall,
 )
 from matchbox.common.exceptions import MatchboxSourceTableError
-from matchbox.common.graph import ModelResolutionName
 
 
 def get_samples(
@@ -51,7 +48,13 @@ def get_samples(
         clients = {}
 
     samples: pl.DataFrame = pl.from_arrow(
-        _handler.sample_for_eval(n=n, resolution=dag.final_step, user_id=user_id)
+        _handler.sample_for_eval(
+            n=n,
+            resolution=ResolutionPath(
+                name=dag.final_step, collection=dag.name, version=dag.version
+            ),
+            user_id=user_id,
+        )
     )
 
     if not len(samples):
@@ -60,7 +63,10 @@ def get_samples(
     results_by_source = []
     for source_resolution in samples["source"].unique():
         resolution = _handler.get_resolution(
-            source_resolution, validate_type=ResolutionType.SOURCE
+            path=ResolutionPath(
+                name=source_resolution, collection=dag.name, version=dag.version
+            ),
+            validate_type=ResolutionType.SOURCE,
         )
         location_name = resolution.config.location_config.name
 
@@ -80,7 +86,10 @@ def get_samples(
             resolution.config.location_config, client=client
         )
         source = Source.from_resolution(
-            resolution=resolution, dag=dag, location=location
+            resolution=resolution,
+            resolution_name=source_resolution,
+            dag=dag,
+            location=location,
         )
 
         samples_by_source = samples.filter(pl.col("source") == source_resolution)
@@ -131,33 +140,8 @@ class EvalData:
         root_leaf = results.root_leaf().rename({"root_id": "root", "leaf_id": "leaf"})
         return precision_recall([root_leaf], self.judgements, self.expansion)[0]
 
-    def pr_curve(self, results: Results) -> Figure:
-        """Computes precision and recall for each threshold in results."""
-        all_p = []
-        all_r = []
 
-        probs = results.probabilities
-        thresholds = probs.select("probability").unique().to_series()
-        for i, t in enumerate(sorted(thresholds)):
-            float_thresh = t / 100
-            p, r = self.precision_recall(results=results, threshold=float_thresh)
-            all_p.append(p)
-            all_r.append(r)
-            plt.annotate(float_thresh, (all_r[i], all_p[i]))
-
-        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-        ax.plot(all_r, all_p, marker="o")
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("Precision")
-        ax.set_xlabel("Recall")
-        ax.set_title("Precision-Recall Curve")
-        ax.grid()
-
-        return fig
-
-
-def compare_models(resolutions: list[ModelResolutionName]) -> ModelComparison:
+def compare_models(resolutions: list[ModelResolutionPath]) -> ModelComparison:
     """Compare metrics of models based on evaluation data.
 
     Args:

@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from faker import Faker
 
-from matchbox.common.dtos import DataTypes
+from matchbox.common.dtos import DataTypes, SourceResolutionName
 from matchbox.common.factories.entities import (
     ClusterEntity,
     EntityReference,
@@ -14,7 +14,6 @@ from matchbox.common.factories.entities import (
     generate_entities,
     probabilities_to_results_entities,
 )
-from matchbox.common.graph import SourceResolutionName
 
 
 def make_cluster_entity(id: int, *args) -> ClusterEntity:

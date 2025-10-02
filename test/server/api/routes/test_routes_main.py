@@ -12,20 +12,24 @@ from matchbox.client.authorisation import (
 )
 from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
 from matchbox.common.dtos import (
+    BackendParameterType,
     BackendResourceType,
+    InvalidParameterError,
     LoginAttempt,
     LoginResult,
     Match,
     OKMessage,
+    SourceResolutionPath,
     UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
+    MatchboxVersionNotFoundError,
 )
 from matchbox.common.factories.sources import source_factory
-from matchbox.common.graph import ResolutionGraph
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -74,7 +78,7 @@ def test_upload(
 
     mock_backend.settings.datastore.get_client.return_value = s3
     mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-    mock_backend.insert_resolution = Mock(return_value=None)
+    mock_backend.create_resolution = Mock(return_value=None)
     mock_backend.insert_source_data = Mock(return_value=None)
     s3.create_bucket(
         Bucket="test-bucket",
@@ -83,7 +87,7 @@ def test_upload(
 
     source_testkit = source_factory()
 
-    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+    update_id = mock_tracker.add_source(source_testkit.resolution_path)
 
     # Make request with mocked background task
     response = test_client.post(
@@ -107,7 +111,7 @@ def test_upload(
     assert mock_tracker.update.call_args_list == [
         call(update_id, UploadStage.QUEUED),
     ]
-    mock_backend.insert_resolution.assert_not_called()  # Index happens in background
+    mock_backend.create_resolution.assert_not_called()  # Index happens in background
     mock_backend.insert_source_data.assert_not_called()
     mock_add_task.assert_called_once()  # Verify task was queued
 
@@ -127,7 +131,7 @@ def test_upload_wrong_schema(
 
     # Create source with results schema instead of index
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+    update_id = mock_tracker.add_source(source_testkit.resolution_path)
 
     response = test_client.post(
         f"/upload/{update_id}",
@@ -151,7 +155,7 @@ def test_upload_status_check(api_client_and_mocks: tuple[TestClient, Mock, Mock]
     """Test checking status of an upload using the status endpoint."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+    update_id = mock_tracker.add_source(source_testkit.resolution_path)
     mock_tracker.update(update_id, UploadStage.PROCESSING)
     mock_tracker.reset_mock()
 
@@ -167,7 +171,7 @@ def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock,
     """Test attempting to upload when status is already processing."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+    update_id = mock_tracker.add_source(source_testkit.resolution_path)
     mock_tracker.update(update_id, UploadStage.PROCESSING)
 
     response = test_client.post(
@@ -184,7 +188,7 @@ def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Moc
     """Test attempting to upload when status is already queued."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+    update_id = mock_tracker.add_source(source_testkit.resolution_path)
     mock_tracker.update(update_id, UploadStage.QUEUED)
 
     response = test_client.post(
@@ -226,7 +230,12 @@ def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
     response = test_client.get(
         "/query",
-        params={"source": "foo", "return_leaf_id": False},
+        params={
+            "collection": "test_collection",
+            "version": "v1",
+            "source": "foo",
+            "return_leaf_id": False,
+        },
     )
 
     buffer = BytesIO(response.content)
@@ -236,28 +245,52 @@ def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert table.schema.equals(SCHEMA_QUERY)
 
 
-def test_query_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     test_client, mock_backend, _ = api_client_and_mocks
+
+    mock_backend.query = Mock(side_effect=MatchboxCollectionNotFoundError())
+
+    response = test_client.get(
+        "/query",
+        params={
+            "collection": "test_collection",
+            "version": "v1",
+            "source": "foo",
+            "return_leaf_id": True,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["entity"] == BackendResourceType.COLLECTION
+
+    mock_backend.query = Mock(side_effect=MatchboxVersionNotFoundError())
+
+    response = test_client.get(
+        "/query",
+        params={
+            "collection": "test_collection",
+            "version": "v1",
+            "source": "foo",
+            "return_leaf_id": True,
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["entity"] == BackendResourceType.VERSION
+
     mock_backend.query = Mock(side_effect=MatchboxResolutionNotFoundError())
 
     response = test_client.get(
         "/query",
-        params={"source": "foo", "resolution": "bar", "return_leaf_id": True},
+        params={
+            "collection": "test_collection",
+            "version": "v1",
+            "source": "foo",
+            "return_leaf_id": True,
+        },
     )
 
     assert response.status_code == 404
-
-
-def test_query_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.query = Mock(side_effect=MatchboxResolutionNotFoundError())
-
-    response = test_client.get(
-        "/query",
-        params={"source": "foo", "return_leaf_id": True},
-    )
-
-    assert response.status_code == 404
+    assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
 def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
@@ -265,9 +298,9 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     mock_matches = [
         Match(
             cluster=1,
-            source="foo",
+            source=SourceResolutionPath(collection="test_collection", name="foo"),
             source_id={"1"},
-            target="bar",
+            target=SourceResolutionPath(collection="test_collection", name="bar"),
             target_id={"a"},
         )
     ]
@@ -276,6 +309,8 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     response = test_client.get(
         "/match",
         params={
+            "collection": "test_collection",
+            "version": "v1",
             "targets": "foo",
             "source": "bar",
             "key": 1,
@@ -288,13 +323,16 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     [Match.model_validate(m) for m in response.json()]
 
 
-def test_match_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.match = Mock(side_effect=MatchboxResolutionNotFoundError())
+
+    mock_backend.match = Mock(side_effect=MatchboxCollectionNotFoundError())
 
     response = test_client.get(
         "/match",
         params={
+            "collection": "test_collection",
+            "version": "v1",
             "targets": ["foo"],
             "source": "bar",
             "key": 1,
@@ -303,16 +341,32 @@ def test_match_404_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RESOLUTION
+    assert response.json()["entity"] == BackendResourceType.COLLECTION
 
+    mock_backend.match = Mock(side_effect=MatchboxVersionNotFoundError())
 
-def test_match_404_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    test_client, mock_backend, _ = api_client_and_mocks
+    response = test_client.get(
+        "/match",
+        params={
+            "collection": "test_collection",
+            "version": "v1",
+            "targets": ["foo"],
+            "source": "bar",
+            "key": 1,
+            "resolution": "res",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["entity"] == BackendResourceType.VERSION
+
     mock_backend.match = Mock(side_effect=MatchboxResolutionNotFoundError())
 
     response = test_client.get(
         "/match",
         params={
+            "collection": "test_collection",
+            "version": "v1",
             "targets": ["foo"],
             "source": "bar",
             "key": 1,
@@ -382,9 +436,9 @@ def test_api_key_authorisation(api_client_and_mocks: tuple[TestClient, Mock, Moc
     test_client, _, _ = api_client_and_mocks
     routes = [
         (test_client.post, "/upload/upload_id"),
-        (test_client.post, "/resolutions"),
-        (test_client.patch, "/resolutions/name/truth"),
-        (test_client.delete, "/resolutions/name"),
+        (test_client.post, "/collections/default/versions/v1/resolutions/name"),
+        (test_client.patch, "/collections/default/versions/v1/resolutions/name/truth"),
+        (test_client.delete, "/collections/default/versions/v1/resolutions/name"),
         (test_client.delete, "/database"),
     ]
 
@@ -420,14 +474,14 @@ def test_api_key_authorisation(api_client_and_mocks: tuple[TestClient, Mock, Moc
         assert response.content == b'"JWT required but not provided."'
 
 
-def test_get_resolution_graph(
-    resolution_graph: ResolutionGraph,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test the resolution graph report endpoint."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_resolution_graph = Mock(return_value=resolution_graph)
+#  Error handling
 
-    response = test_client.get("/report/resolutions")
-    assert response.status_code == 200
-    assert ResolutionGraph.model_validate(response.json())
+
+def test_handles_name_errors(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+    test_client, _, _ = api_client_and_mocks
+
+    response = test_client.get("/collections/companies,")
+    assert response.status_code == 422
+    error = InvalidParameterError.model_validate(response.json())
+    assert error.parameter == BackendParameterType.NAME
+    assert "companies," in error.details

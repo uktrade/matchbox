@@ -22,6 +22,8 @@ from matchbox.common.dtos import (
     DataTypes,
     SourceConfig,
     SourceField,
+    SourceResolutionName,
+    SourceResolutionPath,
 )
 from matchbox.common.factories.entities import (
     ClusterEntity,
@@ -33,7 +35,6 @@ from matchbox.common.factories.entities import (
     generate_entities,
     probabilities_to_results_entities,
 )
-from matchbox.common.graph import SourceResolutionName
 from matchbox.common.hash import hash_values
 
 P = ParamSpec("P")
@@ -120,6 +121,11 @@ class SourceTestkit(BaseModel):
         return self.source.name
 
     @property
+    def resolution_path(self) -> SourceResolutionPath:
+        """Returns the source resolution path."""
+        return self.source.resolution_path
+
+    @property
     def source_config(self) -> SourceConfig:
         """Return the SourceConfig from the source."""
         return self.source.config
@@ -159,7 +165,7 @@ class LinkedSourcesTestkit(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     dag: DAG = DAG(name="dag")
     true_entities: set[SourceEntity] = Field(default_factory=set)
-    sources: dict[str, SourceTestkit]
+    sources: dict[SourceResolutionName, SourceTestkit]
 
     def find_entities(
         self,
@@ -476,7 +482,7 @@ def source_factory(
         features: List of FeatureConfig objects or dictionaries to use for generating
             the source data. If None, defaults to a set of common features.
         name: Name of the source. If None, a unique name is generated. This will be
-            used as the name of the table in the RelationalDBLocation, but also as
+            used as the name of the table in the RelationalDBLocation, but also in
             the SourceResolutionName for the source.
         location_name: Name of the location for the source.
         dag: DAG containing the source.

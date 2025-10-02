@@ -15,11 +15,13 @@ from typing import Literal
 import pytest
 
 from matchbox.common.db import sql_to_df
+from matchbox.common.dtos import CollectionName, ResolutionPath, VersionName
 from matchbox.server.postgresql import MatchboxPostgres
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
+    Collections,
     Contains,
     Probabilities,
     ResolutionFrom,
@@ -27,15 +29,30 @@ from matchbox.server.postgresql.orm import (
     Results,
     SourceConfigs,
     SourceFields,
+    Versions,
 )
 from matchbox.server.postgresql.utils.db import compile_sql
 from matchbox.server.postgresql.utils.query import (
     build_unified_query,
     get_parent_clusters_and_leaves,
-    get_source_config,
     match,
     query,
 )
+
+_COLLECTION: CollectionName = "default"
+_VERSION: VersionName = "v1"
+
+
+def _resolution_path(name: str) -> ResolutionPath:
+    """Small helper function to convert resolution name to path.
+
+    Hard codes collection and resolution as per test setup.
+    """
+    return ResolutionPath(
+        collection=_COLLECTION,
+        version=_VERSION,
+        name=name,
+    )
 
 
 @pytest.fixture(scope="function")
@@ -177,13 +194,49 @@ def populated_postgres_db(
     """
 
     with MBDB.get_session() as session:
+        # === COLLECTION AND VERSION ===
+        collection = Collections(name=_COLLECTION)
+        version = Versions(
+            name=_VERSION, is_mutable=True, is_default=True, collection=collection
+        )
+
         # === RESOLUTIONS ===
         resolutions = [
-            Resolutions(resolution_id=1, name="source_a", type="source", truth=None),
-            Resolutions(resolution_id=2, name="source_b", type="source", truth=None),
-            Resolutions(resolution_id=3, name="dedupe_a", type="model", truth=80),
-            Resolutions(resolution_id=4, name="dedupe_b", type="model", truth=70),
-            Resolutions(resolution_id=5, name="linker_ab", type="model", truth=90),
+            Resolutions(
+                resolution_id=1,
+                version=version,
+                name="source_a",
+                type="source",
+                truth=None,
+            ),
+            Resolutions(
+                resolution_id=2,
+                version=version,
+                name="source_b",
+                type="source",
+                truth=None,
+            ),
+            Resolutions(
+                resolution_id=3,
+                version=version,
+                name="dedupe_a",
+                type="model",
+                truth=80,
+            ),
+            Resolutions(
+                resolution_id=4,
+                version=version,
+                name="dedupe_b",
+                type="model",
+                truth=70,
+            ),
+            Resolutions(
+                resolution_id=5,
+                version=version,
+                name="linker_ab",
+                type="model",
+                truth=90,
+            ),
         ]
 
         # === RESOLUTION LINEAGE ===
@@ -395,6 +448,7 @@ def populated_postgres_db(
 
         # Insert all objects
         for obj in (
+            [collection, version],
             resolutions,
             lineage,
             source_configs,
@@ -607,9 +661,12 @@ class TestGetSourceConfig:
     def test_get_existing_source(self, populated_postgres_db: MatchboxPostgres):
         """Should return source config for existing source."""
         with MBDB.get_session() as session:
-            source_config = get_source_config("source_a", session)
-            assert source_config.source_config_id == 11
-            assert source_config.resolution_id == 1
+            source_config = Resolutions.from_path(
+                _resolution_path("source_a"),
+                session=session,
+            )
+            assert source_config.source_config.source_config_id == 11
+            assert source_config.source_config.resolution_id == 1
 
 
 @pytest.mark.docker
@@ -1181,7 +1238,12 @@ class TestQueryFunction:
 
     def test_query_source_only(self, populated_postgres_db: MatchboxPostgres):
         """Should query source data without resolution."""
-        result = query("source_a", resolution=None, threshold=None, limit=None)
+        result = query(
+            _resolution_path("source_a"),
+            point_of_truth=None,
+            threshold=None,
+            limit=None,
+        )
 
         # Should return all keys from source_a with their cluster assignments
         assert result.shape[0] == 6
@@ -1207,7 +1269,12 @@ class TestQueryFunction:
 
     def test_query_source_b_only(self, populated_postgres_db: MatchboxPostgres):
         """Should query source_b which has one key per cluster."""
-        result = query("source_b", resolution=None, threshold=None, limit=None)
+        result = query(
+            _resolution_path("source_b"),
+            point_of_truth=None,
+            threshold=None,
+            limit=None,
+        )
 
         # Should return all keys from source_b
         assert result.shape[0] == 5
@@ -1226,7 +1293,12 @@ class TestQueryFunction:
 
     def test_query_through_deduper(self, populated_postgres_db: MatchboxPostgres):
         """Should query source through its deduper resolution."""
-        result = query("source_a", resolution="dedupe_a", threshold=None, limit=None)
+        result = query(
+            _resolution_path("source_a"),
+            point_of_truth=_resolution_path("dedupe_a"),
+            threshold=None,
+            limit=None,
+        )
 
         # Should return all 6 keys, but some mapped to dedupe clusters
         assert result.shape[0] == 6
@@ -1247,7 +1319,12 @@ class TestQueryFunction:
     ):
         """Should query source through deduper with threshold override."""
         # Test with threshold=90 (higher than dedupe_a's clusters)
-        result = query("source_a", resolution="dedupe_a", threshold=90, limit=None)
+        result = query(
+            _resolution_path("source_a"),
+            point_of_truth=_resolution_path("dedupe_a"),
+            threshold=90,
+            limit=None,
+        )
 
         # Should return all 6 keys, but no dedupe clusters qualify
         assert result.shape[0] == 6
@@ -1262,7 +1339,12 @@ class TestQueryFunction:
 
     def test_query_through_linker(self, populated_postgres_db: MatchboxPostgres):
         """Should query source through complex linker resolution."""
-        result = query("source_a", resolution="linker_ab", threshold=None, limit=None)
+        result = query(
+            _resolution_path("source_a"),
+            point_of_truth=_resolution_path("linker_ab"),
+            threshold=None,
+            limit=None,
+        )
 
         # Should return all 6 keys with linker cluster assignments
         assert result.shape[0] == 6
@@ -1295,8 +1377,18 @@ class TestQueryFunction:
         self, populated_postgres_db: MatchboxPostgres
     ):
         """Should query both sources through linker with consistent results."""
-        result_a = query("source_a", resolution="linker_ab", threshold=80, limit=None)
-        result_b = query("source_b", resolution="linker_ab", threshold=80, limit=None)
+        result_a = query(
+            _resolution_path("source_a"),
+            point_of_truth=_resolution_path("linker_ab"),
+            threshold=80,
+            limit=None,
+        )
+        result_b = query(
+            _resolution_path("source_b"),
+            point_of_truth=_resolution_path("linker_ab"),
+            threshold=80,
+            limit=None,
+        )
 
         # Both should return their respective key counts
         assert result_a.shape[0] == 6  # source_a keys
@@ -1339,7 +1431,9 @@ class TestQueryFunction:
 
     def test_query_with_limit(self, populated_postgres_db: MatchboxPostgres):
         """Should respect limit parameter."""
-        result = query("source_a", resolution=None, threshold=None, limit=3)
+        result = query(
+            _resolution_path("source_a"), point_of_truth=None, threshold=None, limit=3
+        )
 
         # Should return only 3 rows
         assert result.shape[0] == 3
@@ -1351,7 +1445,12 @@ class TestQueryFunction:
     ):
         """Should handle case where multiple keys belong to same cluster."""
         # This tests the scenario causing your test failure
-        result = query("source_a", resolution="dedupe_a", threshold=80, limit=None)
+        result = query(
+            _resolution_path("source_a"),
+            point_of_truth=_resolution_path("dedupe_a"),
+            threshold=80,
+            limit=None,
+        )
 
         # source_a has 6 keys but some share clusters:
         # - keys 1,2 both in cluster 101 → both map to C301
@@ -1385,16 +1484,18 @@ class TestMatchFunction:
         """Should find matches within the same cluster."""
         matches = match(
             key="src_a_key1",
-            source="source_a",
-            targets=["source_a", "source_b"],
-            resolution="dedupe_a",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_a"), _resolution_path("source_b")],
+            point_of_truth=_resolution_path("dedupe_a"),
             threshold=80,
         )
 
         assert len(matches) == 2  # One for each target
 
         # Should find the key in source_a target
-        source_a_match = next(m for m in matches if m.target == "source_a")
+        source_a_match = next(
+            m for m in matches if m.target == _resolution_path("source_a")
+        )
         assert "src_a_key1" in source_a_match.source_id
         assert "src_a_key1" in source_a_match.target_id  # Should match itself
 
@@ -1405,9 +1506,9 @@ class TestMatchFunction:
         # src_a_key6 is in C105, not linked to source_b at dedupe level
         matches = match(
             key="src_a_key6",
-            source="source_a",
-            targets=["source_b"],
-            resolution="dedupe_a",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("dedupe_a"),
             threshold=80,
         )
 
@@ -1419,9 +1520,9 @@ class TestMatchFunction:
         """Should handle nonexistent key gracefully."""
         matches = match(
             key="nonexistent_key",
-            source="source_a",
-            targets=["source_b"],
-            resolution="dedupe_a",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("dedupe_a"),
             threshold=80,
         )
 
@@ -1437,15 +1538,15 @@ class TestMatchFunction:
         # src_a_key1 (cluster 101) should match src_b_key1, src_b_key2, src_b_key5
         matches = match(
             key="src_a_key1",
-            source="source_a",
-            targets=["source_b"],
-            resolution="linker_ab",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("linker_ab"),
             threshold=80,
         )
 
         assert len(matches) == 1
         source_b_match = matches[0]
-        assert source_b_match.target == "source_b"
+        assert source_b_match.target == _resolution_path("source_b")
         assert len(source_b_match.target_id) > 1  # Should match multiple keys
 
         # Should contain the expected keys from C503
@@ -1462,15 +1563,15 @@ class TestMatchFunction:
         # - Target: all source_b keys linked via C503
         matches = match(
             key="src_a_key1",  # One key from C101
-            source="source_a",
-            targets=["source_b"],  # Cross-source target
-            resolution="linker_ab",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],  # Cross-source target
+            point_of_truth=_resolution_path("linker_ab"),
             threshold=80,
         )
 
         assert len(matches) == 1
         source_b_match = matches[0]
-        assert source_b_match.target == "source_b"
+        assert source_b_match.target == _resolution_path("source_b")
 
         # Source should contain ALL keys from the same cluster (C301 via C503)
         expected_source_keys = {"src_a_key1", "src_a_key2", "src_a_key3"}
@@ -1488,15 +1589,15 @@ class TestMatchFunction:
         # src_a_key5 (cluster 104) is not connected to any source_b clusters
         matches = match(
             key="src_a_key5",
-            source="source_a",
-            targets=["source_b"],
-            resolution="linker_ab",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("linker_ab"),
             threshold=80,
         )
 
         assert len(matches) == 1
         source_b_match = matches[0]
-        assert source_b_match.target == "source_b"
+        assert source_b_match.target == _resolution_path("source_b")
         assert len(source_b_match.target_id) == 0  # No matches in source_b
         assert source_b_match.cluster is not None  # Should still have cluster info
 
@@ -1506,15 +1607,15 @@ class TestMatchFunction:
         """Should handle none-to-none scenario with nonexistent key."""
         matches = match(
             key="completely_nonexistent_key",
-            source="source_a",
-            targets=["source_b"],
-            resolution="linker_ab",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("linker_ab"),
             threshold=80,
         )
 
         assert len(matches) == 1
         source_b_match = matches[0]
-        assert source_b_match.target == "source_b"
+        assert source_b_match.target == _resolution_path("source_b")
         assert len(source_b_match.source_id) == 0  # No source key found
         assert len(source_b_match.target_id) == 0  # No target matches
         assert source_b_match.cluster is None  # No cluster for nonexistent key
@@ -1527,15 +1628,15 @@ class TestMatchFunction:
         # C503 is excluded (prob=80 < 90)
         matches = match(
             key="src_a_key4",  # cluster 103, part of C504
-            source="source_a",
-            targets=["source_b"],
-            resolution="linker_ab",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("linker_ab"),
             threshold=90,
         )
 
         assert len(matches) == 1
         source_b_match = matches[0]
-        assert source_b_match.target == "source_b"
+        assert source_b_match.target == _resolution_path("source_b")
 
         # Should match src_b_key3 (cluster 203) via C504
         assert "src_b_key3" in source_b_match.target_id
@@ -1545,23 +1646,30 @@ class TestMatchFunction:
         """Should handle matching against multiple target sources."""
         matches = match(
             key="src_a_key1",
-            source="source_a",
-            targets=["source_a", "source_b"],  # Multiple targets
-            resolution="linker_ab",
+            source=_resolution_path("source_a"),
+            targets=[
+                _resolution_path("source_a"),
+                _resolution_path("source_b"),
+            ],  # Multiple targets
+            point_of_truth=_resolution_path("linker_ab"),
             threshold=80,
         )
 
         assert len(matches) == 2  # One match per target
 
         targets = {m.target for m in matches}
-        assert targets == {"source_a", "source_b"}
+        assert targets == {_resolution_path("source_a"), _resolution_path("source_b")}
 
         # Self-match in source_a should contain the key itself
-        source_a_match = next(m for m in matches if m.target == "source_a")
+        source_a_match = next(
+            m for m in matches if m.target == _resolution_path("source_a")
+        )
         assert "src_a_key1" in source_a_match.target_id
 
         # Cross-source match should contain linked keys
-        source_b_match = next(m for m in matches if m.target == "source_b")
+        source_b_match = next(
+            m for m in matches if m.target == _resolution_path("source_b")
+        )
         assert len(source_b_match.target_id) > 0
 
     def test_match_dedupe_only_no_cross_source(
@@ -1571,15 +1679,15 @@ class TestMatchFunction:
         # dedupe_a only processes source_a, so no source_b matches expected
         matches = match(
             key="src_a_key1",
-            source="source_a",
-            targets=["source_b"],
-            resolution="dedupe_a",
+            source=_resolution_path("source_a"),
+            targets=[_resolution_path("source_b")],
+            point_of_truth=_resolution_path("dedupe_a"),
             threshold=80,
         )
 
         assert len(matches) == 1
         source_b_match = matches[0]
-        assert source_b_match.target == "source_b"
+        assert source_b_match.target == _resolution_path("source_b")
         assert (
             len(source_b_match.target_id) == 0
         )  # No cross-source links at dedupe level

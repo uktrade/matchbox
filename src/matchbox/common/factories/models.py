@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import Hashable
 from functools import cache
 from textwrap import dedent
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 import polars as pl
@@ -24,7 +24,10 @@ from matchbox.client.models.models import Model
 from matchbox.client.queries import Query
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.dtos import (
+    ModelResolutionName,
+    ModelResolutionPath,
     ModelType,
+    SourceResolutionName,
 )
 from matchbox.common.factories.entities import (
     ClusterEntity,
@@ -38,10 +41,6 @@ from matchbox.common.factories.sources import (
     SourceTestkit,
     SourceTestkitParameters,
     linked_sources_factory,
-)
-from matchbox.common.graph import (
-    ModelResolutionName,
-    SourceResolutionName,
 )
 from matchbox.common.transform import DisjointSet, graph_results
 
@@ -554,6 +553,11 @@ class ModelTestkit(BaseModel):
         return self.model.name
 
     @property
+    def resolution_path(self) -> ModelResolutionPath:
+        """Returns the model resolution path."""
+        return self.model.resolution_path
+
+    @property
     def data(self) -> pa.Table:
         """Return a PyArrow table in the same format as matchbox queries."""
         if self.model.config.type == ModelType.DEDUPER:
@@ -651,7 +655,7 @@ def model_factory(
     left_testkit: SourceTestkit | ModelTestkit | None = None,
     right_testkit: SourceTestkit | ModelTestkit | None = None,
     true_entities: tuple[SourceEntity, ...] | None = None,
-    model_type: Literal["deduper", "linker"] | None = None,
+    model_type: ModelType | None = None,
     n_true_entities: int | None = None,
     prob_range: tuple[float, float] = (0.8, 1.0),
     seed: int = 42,
@@ -740,7 +744,7 @@ def model_factory(
             dag = DAG("collection")
         # Create default sources
         engine = create_engine("sqlite:///:memory:")
-        resolved_model_type = ModelType(model_type.lower() if model_type else "deduper")
+        resolved_model_type = model_type or ModelType.DEDUPER
 
         # Define common features
         features = {
@@ -796,7 +800,7 @@ def model_factory(
 
         # Extract source data
         left_data = linked.sources["crn"].data
-        left_query = Query(linked.sources["crn"], dag=dag)
+        left_query = Query(linked.sources["crn"].source, dag=dag)
         left_entities = linked.sources["crn"].entities
 
         right_data = None
@@ -804,7 +808,7 @@ def model_factory(
         right_entities = None
         if resolved_model_type == ModelType.LINKER:
             right_data = linked.sources["cdms"].data
-            right_query = Query(linked.sources["cdms"], dag=dag)
+            right_query = Query(linked.sources["cdms"].source, dag=dag)
             right_entities = linked.sources["cdms"].entities
 
         dummy_true_entities = tuple(linked.true_entities)

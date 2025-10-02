@@ -13,7 +13,6 @@ dependencies = [
     "faker>=36.1.1",
     "frozendict>=2.4.6",
     "httpx>=0.28.0",
-    "matplotlib>=3.9.2",
     "pandas>=2.2.3",
     "polars-hash>=0.5.3",
     "polars>=1.32.3",

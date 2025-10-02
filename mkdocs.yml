@@ -47,7 +47,6 @@ nav:
       - Sources: api/common/factories/sources.md
       - Models: api/common/factories/models.md
       - Scenarios: api/common/factories/scenarios.md
-    - Graph: api/common/graph.md
     - Hashing: api/common/hash.md
     - Logging: api/common/logging.md
     - Transform: api/common/transform.md

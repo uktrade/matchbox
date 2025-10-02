@@ -16,12 +16,11 @@ from pydantic import BaseModel
 
 from matchbox.common.dtos import (
     BackendUploadType,
-    Resolution,
+    ResolutionPath,
     UploadStage,
     UploadStatus,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
-from matchbox.common.graph import ResolutionType
 from matchbox.common.logging import logger
 from matchbox.server.base import (
     MatchboxDBAdapter,
@@ -47,7 +46,7 @@ class UploadEntry(BaseModel):
     """Entry in upload tracker, combining private metadata and public upload status."""
 
     status: UploadStatus
-    metadata: Resolution
+    path: ResolutionPath
 
 
 class UploadTracker(ABC):
@@ -55,13 +54,13 @@ class UploadTracker(ABC):
 
     @staticmethod
     def _create_entry(
-        metadata: Resolution, upload_type: BackendUploadType
+        path: ResolutionPath, upload_type: BackendUploadType
     ) -> UploadEntry:
         """Create initial UploadEntry object."""
         upload_id = str(uuid.uuid4())
 
         return UploadEntry(
-            metadata=metadata,
+            path=path,
             status=UploadStatus(
                 id=upload_id,
                 stage=UploadStage.AWAITING_UPLOAD,
@@ -84,30 +83,21 @@ class UploadTracker(ABC):
         if details:
             status.details = details
 
-        return UploadEntry(status=status, metadata=entry.metadata)
+        return UploadEntry(status=status, path=entry.path)
 
-    def add_source(self, metadata: Resolution) -> str:
+    def add_source(self, path: ResolutionPath) -> str:
         """Register source resolution and return ID."""
-        assert metadata.resolution_type == ResolutionType.SOURCE
-        entry = self._create_entry(metadata, BackendUploadType.INDEX)
+        entry = self._create_entry(path, BackendUploadType.INDEX)
         self._register_entry(entry)
 
         return entry.status.id
 
-    def add_model(self, metadata: Resolution) -> str:
+    def add_model(self, path: ResolutionPath) -> str:
         """Register model resolution and return ID."""
-        assert metadata.resolution_type == ResolutionType.MODEL
-        entry = self._create_entry(metadata, BackendUploadType.RESULTS)
+        entry = self._create_entry(path, BackendUploadType.RESULTS)
         self._register_entry(entry)
 
         return entry.status.id
-
-    def add_resolution(self, metadata: Resolution) -> str:
-        """Generic add that routes based on type."""
-        if metadata.resolution_type == ResolutionType.SOURCE:
-            return self.add_source(metadata)
-        else:
-            return self.add_model(metadata)
 
     @abstractmethod
     def _register_entry(self, UploadEntry) -> str:
@@ -116,7 +106,7 @@ class UploadTracker(ABC):
 
     @abstractmethod
     def get(self, upload_id: str) -> UploadEntry | None:
-        """Retrieve metadata by ID if not expired."""
+        """Retrieve entry by ID if not expired."""
         ...
 
     @abstractmethod
@@ -321,9 +311,9 @@ def process_upload(
         )
 
         if upload.status.entity == BackendUploadType.INDEX:
-            backend.insert_source_data(name=upload.metadata.name, data_hashes=data)
+            backend.insert_source_data(path=upload.path, data_hashes=data)
         elif upload.status.entity == BackendUploadType.RESULTS:
-            backend.insert_model_data(name=upload.metadata.name, results=data)
+            backend.insert_model_data(path=upload.path, results=data)
         else:
             raise ValueError(f"Unknown upload type: {upload.status.entity}")
 
@@ -343,7 +333,7 @@ def process_upload(
         details = (
             f"Error: {e}. Context: "
             f"Upload type: {getattr(upload.status, 'entity', 'unknown')}, "
-            f"SourceConfig: {getattr(upload, 'metadata', 'unknown')}"
+            f"Resolution path: {getattr(upload, 'path', 'unknown')}"
         )
         tracker.update(
             upload_id,

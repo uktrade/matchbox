@@ -12,17 +12,13 @@ from fastapi import UploadFile
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendUploadType,
-    ModelConfig,
-    ModelType,
-    QueryConfig,
-    Resolution,
+    ResolutionPath,
     UploadStage,
 )
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
 from matchbox.common.factories.sources import source_factory
-from matchbox.common.graph import ResolutionType
 from matchbox.server.uploads import (
     InMemoryUploadTracker,
     UploadTracker,
@@ -141,31 +137,20 @@ class TestUploadTracker:
 
     def test_basic_upload_tracking(self):
         """Test adding upload to tracker and retrieving."""
-        source = source_factory().source.to_resolution()
-        model = Resolution(
-            name="name",
-            description="description",
-            resolution_type=ResolutionType.MODEL,
-            truth=100,
-            config=ModelConfig(
-                type=ModelType.DEDUPER,
-                left_query=QueryConfig(source_resolutions=["source"]),
-                model_class="NaiveDeduper",
-                model_settings="{}",
-            ),
-        )
+        source_path = ResolutionPath(name="source", collection="default", version="v1")
+        model_path = ResolutionPath(name="model", collection="default", version="v1")
 
         # Add the source and the model
-        source_upload_id = self.tracker.add_source(source)
+        source_upload_id = self.tracker.add_source(source_path)
         assert isinstance(source_upload_id, str)
 
-        model_upload_id = self.tracker.add_model(model)
+        model_upload_id = self.tracker.add_model(model_path)
         assert isinstance(source_upload_id, str)
 
         # Retrieve and verify
         source_entry = self.tracker.get(source_upload_id)
         assert source_entry is not None
-        assert source_entry.metadata == source
+        assert source_entry.path == source_path
         assert source_entry.status.stage == UploadStage.AWAITING_UPLOAD
         assert source_entry.status.entity == BackendUploadType.INDEX
         assert source_entry.status.id == source_upload_id
@@ -173,7 +158,7 @@ class TestUploadTracker:
 
         model_entry = self.tracker.get(model_upload_id)
         assert model_entry is not None
-        assert model_entry.metadata == model
+        assert model_entry.path == model_path
         assert model_entry.status.stage == UploadStage.AWAITING_UPLOAD
         assert model_entry.status.entity == BackendUploadType.RESULTS
         assert model_entry.status.id == model_upload_id
@@ -181,10 +166,10 @@ class TestUploadTracker:
 
     def test_status_management(self):
         """Test status update functionality."""
-        source = source_factory().source.to_resolution()
-
         # Create entry and verify initial status
-        upload_id = self.tracker.add_source(source)
+        upload_id = self.tracker.add_source(
+            ResolutionPath(name="source", collection="default", version="v1")
+        )
         entry = self.tracker.get(upload_id)
         assert entry.status.stage == UploadStage.AWAITING_UPLOAD
 
@@ -206,7 +191,6 @@ class TestUploadTracker:
     @patch("matchbox.server.uploads.datetime")
     def test_timestamp_updates(self, mock_datetime: Mock):
         """Test that timestamps update correctly on different operations."""
-        source = source_factory().source.to_resolution()
 
         creation_timestamp = datetime(2024, 1, 1, 12, 0)
         get_timestamp = datetime(2024, 1, 1, 12, 15)
@@ -214,7 +198,9 @@ class TestUploadTracker:
 
         # Initial creation
         mock_datetime.now.return_value = creation_timestamp
-        upload_id = self.tracker.add_source(source)
+        upload_id = self.tracker.add_source(
+            ResolutionPath(name="source", collection="default", version="v1")
+        )
         entry = self.tracker.get(upload_id)
         assert entry.status.update_timestamp == datetime(2024, 1, 1, 12, 0)
 
@@ -240,7 +226,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     tracker = InMemoryUploadTracker()
     mock_backend = Mock()
     mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.insert_resolution = Mock(return_value=None)
+    mock_backend.create_resolution = Mock(return_value=None)
     mock_backend.insert_source_data = Mock(
         side_effect=ValueError("Simulated processing failure")
     )
@@ -261,7 +247,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     assert s3.head_object(Bucket=bucket, Key=test_key)
 
     # Setup metadata store with test data
-    upload_id = tracker.add_source(source_testkit.source.to_resolution())
+    upload_id = tracker.add_source(source_testkit.resolution_path)
     tracker.update(upload_id, UploadStage.AWAITING_UPLOAD)
 
     # Run the process, expecting it to fail

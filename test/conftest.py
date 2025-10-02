@@ -9,7 +9,6 @@ from rich.progress import Progress
 
 pytest_plugins = [
     "test.fixtures.db",
-    "test.fixtures.graph",
     "test.fixtures.client",
 ]
 

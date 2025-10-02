@@ -4,8 +4,7 @@ from typing import NamedTuple
 
 from sqlalchemy import select
 
-from matchbox.common.dtos import ModelConfig, ModelType
-from matchbox.common.graph import ResolutionType
+from matchbox.common.dtos import ModelConfig, ModelType, ResolutionType
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     ResolutionFrom,

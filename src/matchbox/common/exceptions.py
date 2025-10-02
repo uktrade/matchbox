@@ -1,15 +1,44 @@
 """Custom exceptions for Matchbox."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyarrow import Schema
 
-from matchbox.common.graph import ResolutionName
+if TYPE_CHECKING:
+    from matchbox.common.dtos import (
+        CollectionName,
+        ResolutionName,
+        VersionName,
+    )
+else:
+    CollectionName = Any
+    ResolutionName = Any
+    VersionName = Any
+
+
+# -- Base class for all Matchbox exceptions
+
+
+class MatchboxException(Exception):
+    """An exception has occurred in Matchbox.."""
+
+    def __init__(self, message: str | None = None) -> None:
+        """Initialise the exception."""
+        super().__init__(message or self.__doc__)
+
 
 # -- Common data objects exceptions --
 
 
-class MatchboxArrowSchemaMismatch(Exception):
+class MatchboxNameError(MatchboxException):
+    """Name did not pass validation."""
+
+    def __init__(self, message: str):
+        """Initialise the exception."""
+        super().__init__(message)
+
+
+class MatchboxArrowSchemaMismatch(MatchboxException):
     """Arrow schema mismatch."""
 
     def __init__(self, expected: Schema, actual: Schema):
@@ -22,7 +51,7 @@ class MatchboxArrowSchemaMismatch(Exception):
 # -- Configuration exceptions --
 
 
-class MatchboxClientSettingsException(Exception):
+class MatchboxClientSettingsException(MatchboxException):
     """Incorrect configuration provided to client."""
 
     def __init__(
@@ -39,7 +68,7 @@ class MatchboxClientSettingsException(Exception):
 # -- Client-side API exceptions --
 
 
-class MatchboxUnparsedClientRequest(Exception):
+class MatchboxUnparsedClientRequest(MatchboxException):
     """The API could not parse the content of the client request."""
 
     def __init__(
@@ -53,7 +82,7 @@ class MatchboxUnparsedClientRequest(Exception):
         super().__init__(message)
 
 
-class MatchboxUnhandledServerResponse(Exception):
+class MatchboxUnhandledServerResponse(MatchboxException):
     """The API sent an unexpected response."""
 
     def __init__(self, http_status: int, details: str | None = None):
@@ -65,7 +94,7 @@ class MatchboxUnhandledServerResponse(Exception):
         super().__init__(message)
 
 
-class MatchboxEmptyServerResponse(Exception):
+class MatchboxEmptyServerResponse(MatchboxException):
     """The server returned an empty response when data was expected."""
 
     def __init__(self, message: str | None = None, operation: str | None = None):
@@ -85,15 +114,15 @@ class MatchboxEmptyServerResponse(Exception):
 # -- SourceConfig exceptions --
 
 
-class MatchboxSourceFieldError(Exception):
+class MatchboxSourceFieldError(MatchboxException):
     """Specified fields diverge with the warehouse."""
 
 
-class MatchboxSourceClientError(Exception):
+class MatchboxSourceClientError(MatchboxException):
     """Location client must be set."""
 
 
-class MatchboxSourceExtractTransformError(Exception):
+class MatchboxSourceExtractTransformError(MatchboxException):
     """Invalid ETL logic detected."""
 
     def __init__(
@@ -108,7 +137,7 @@ class MatchboxSourceExtractTransformError(Exception):
         super().__init__(message)
 
 
-class MatchboxSourceTableError(Exception):
+class MatchboxSourceTableError(MatchboxException):
     """Tables not found in your source data warehouse."""
 
     def __init__(
@@ -126,7 +155,7 @@ class MatchboxSourceTableError(Exception):
         self.table_name = table_name
 
 
-class MatchboxServerFileError(Exception):
+class MatchboxServerFileError(MatchboxException):
     """There was a problem with file upload."""
 
     def __init__(self, message: str | None = None):
@@ -140,7 +169,7 @@ class MatchboxServerFileError(Exception):
 # -- ModelConfig exceptions --
 
 
-class MatchboxModelConfigError(Exception):
+class MatchboxModelConfigError(MatchboxException):
     """There was a problem with ModelConfig."""
 
     def __init__(self, message: str | None = None):
@@ -154,7 +183,7 @@ class MatchboxModelConfigError(Exception):
 # -- Resource not found on server exceptions --
 
 
-class MatchboxUserNotFoundError(Exception):
+class MatchboxUserNotFoundError(MatchboxException):
     """User not found."""
 
     def __init__(self, message: str | None = None, user_id: str | None = None):
@@ -168,7 +197,7 @@ class MatchboxUserNotFoundError(Exception):
         self.user_id = user_id
 
 
-class MatchboxResolutionNotFoundError(Exception):
+class MatchboxResolutionNotFoundError(MatchboxException):
     """Resolution not found."""
 
     def __init__(self, message: str | None = None, name: ResolutionName | None = None):
@@ -182,7 +211,35 @@ class MatchboxResolutionNotFoundError(Exception):
         self.name = name
 
 
-class MatchboxDataNotFound(Exception):
+class MatchboxCollectionNotFoundError(MatchboxException):
+    """Collection not found."""
+
+    def __init__(self, message: str | None = None, name: CollectionName | None = None):
+        """Initialise the exception."""
+        if message is None:
+            message = "Collection not found."
+            if name is not None:
+                message = f"Collection {name} not found."
+
+        super().__init__(message)
+        self.name = name
+
+
+class MatchboxVersionNotFoundError(MatchboxException):
+    """Version not found."""
+
+    def __init__(self, message: str | None = None, name: VersionName | None = None):
+        """Initialise the exception."""
+        if message is None:
+            message = "Version not found."
+            if name is not None:
+                message = f"Version {name} not found."
+
+        super().__init__(message)
+        self.name = name
+
+
+class MatchboxDataNotFound(MatchboxException):
     """Data doesn't exist in the Matchbox source table."""
 
     def __init__(
@@ -207,11 +264,11 @@ class MatchboxDataNotFound(Exception):
 # -- Server-side API exceptions --
 
 
-class MatchboxConnectionError(Exception):
+class MatchboxConnectionError(MatchboxException):
     """Connection to Matchbox's backend database failed."""
 
 
-class MatchboxDeletionNotConfirmed(Exception):
+class MatchboxDeletionNotConfirmed(MatchboxException):
     """Deletion must be confirmed: if certain, rerun with certain=True."""
 
     def __init__(self, message: str | None = None, children: list[str] | None = None):
@@ -232,20 +289,32 @@ class MatchboxDeletionNotConfirmed(Exception):
         super().__init__(message)
 
 
-class MatchboxResolutionAlreadyExists(Exception):
+class MatchboxResolutionAlreadyExists(MatchboxException):
     """Resolution already exists."""
 
 
-class MatchboxTooManySamplesRequested(Exception):
+class MatchboxCollectionAlreadyExists(MatchboxException):
+    """Collection already exists."""
+
+
+class MatchboxVersionAlreadyExists(MatchboxException):
+    """Version already exists."""
+
+
+class MatchboxVersionNotWriteable(MatchboxException):
+    """Version is not mutable."""
+
+
+class MatchboxTooManySamplesRequested(MatchboxException):
     """Too many samples have been requested from the server."""
 
 
 # -- Adapter DB exceptions --
 
 
-class MatchboxNoJudgements(Exception):
+class MatchboxNoJudgements(MatchboxException):
     """No judgements found in the database when required for operation."""
 
 
-class MatchboxDatabaseWriteError(Exception):
+class MatchboxDatabaseWriteError(MatchboxException):
     """Could not be written to the backend DB, likely due to a constraint violation."""

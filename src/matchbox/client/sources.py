@@ -26,15 +26,17 @@ from matchbox.common.dtos import (
     LocationConfig,
     LocationType,
     Resolution,
+    ResolutionType,
     SourceConfig,
     SourceField,
+    SourceResolutionName,
+    SourceResolutionPath,
 )
 from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
     MatchboxSourceClientError,
     MatchboxSourceExtractTransformError,
 )
-from matchbox.common.graph import ResolutionType
 from matchbox.common.hash import HashMethod, hash_rows
 from matchbox.common.logging import logger
 
@@ -422,7 +424,6 @@ class Source:
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""
         return Resolution(
-            name=self.name,
             description=self.description,
             truth=None,
             resolution_type=ResolutionType.SOURCE,
@@ -431,7 +432,11 @@ class Source:
 
     @classmethod
     def from_resolution(
-        cls, resolution: Resolution, dag: DAG, location: Location
+        cls,
+        resolution: Resolution,
+        resolution_name: str,
+        dag: DAG,
+        location: Location,
     ) -> "Source":
         """Reconstruct from Resolution."""
         if resolution.resolution_type != ResolutionType.SOURCE:
@@ -440,7 +445,7 @@ class Source:
         return cls(
             dag=dag,
             location=location,
-            name=resolution.name,
+            name=SourceResolutionName(resolution_name),
             extract_transform=resolution.config.extract_transform,
             key_field=resolution.config.key_field,
             index_fields=resolution.config.index_fields,
@@ -570,6 +575,15 @@ class Source:
     # Note: name, description, truth are now instance variables, not properties
 
     @property
+    def resolution_path(self) -> SourceResolutionPath:
+        """Returns the source resolution path."""
+        return SourceResolutionPath(
+            collection=self.dag.name,
+            version=self.dag.version,
+            name=self.name,
+        )
+
+    @property
     def prefix(self) -> str:
         """Get the prefix for the source."""
         return self.config.prefix(self.name)
@@ -612,26 +626,28 @@ class Source:
         """Send the source config and hashes to the server."""
         resolution = self.to_resolution()
         try:
-            existing_resolution = _handler.get_resolution(name=self.name)
+            existing_resolution = _handler.get_resolution(path=self.resolution_path)
         except MatchboxResolutionNotFoundError:
             existing_resolution = None
         # Check if config matches
         if existing_resolution:
             if existing_resolution.config != self.config:
                 raise ValueError(
-                    f"Resolution {self.name} already exists with different "
+                    f"Resolution {self.resolution_path} already exists with different "
                     "configuration. Please delete the existing resolution "
                     "or use a different name. "
                 )
             else:
-                log_prefix = f"Resolution {self.name}"
+                log_prefix = f"Resolution {self.resolution_path}"
                 logger.warning("Already exists. Passing.", prefix=log_prefix)
         else:
-            _handler.create_resolution(resolution=resolution)
+            _handler.create_resolution(resolution=resolution, path=self.resolution_path)
 
         if self.hashes:
             _handler.set_data(
-                name=self.name, data=self.hashes, validate_type=ResolutionType.SOURCE
+                path=self.resolution_path,
+                data=self.hashes,
+                validate_type=ResolutionType.SOURCE,
             )
 
     def query(self, **kwargs) -> Query:

@@ -23,40 +23,9 @@ from sqlalchemy.sql.type_api import TypeEngine
 from matchbox.common.exceptions import (
     MatchboxDatabaseWriteError,
 )
-from matchbox.common.graph import (
-    ResolutionEdge,
-    ResolutionGraph,
-    ResolutionNode,
-    ResolutionType,
-)
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxSnapshot
 from matchbox.server.postgresql.db import MBDB
-from matchbox.server.postgresql.orm import ResolutionFrom, Resolutions
-
-# Retrieval
-
-
-def get_resolution_graph() -> ResolutionGraph:
-    """Retrieves the resolution graph."""
-    G = ResolutionGraph(nodes=set(), edges=set())
-    with MBDB.get_session() as session:
-        for resolution in session.query(Resolutions).all():
-            G.nodes.add(
-                ResolutionNode(
-                    id=resolution.resolution_id,
-                    name=resolution.name,
-                    type=ResolutionType(resolution.type),
-                )
-            )
-
-        for edge in (
-            session.query(ResolutionFrom).filter(ResolutionFrom.level == 1).all()
-        ):
-            G.edges.add(ResolutionEdge(parent=edge.parent, child=edge.child))
-
-    return G
-
 
 # Data management
 

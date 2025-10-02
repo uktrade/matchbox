@@ -112,6 +112,88 @@ def test_upload(
     mock_add_task.assert_called_once()  # Verify task was queued
 
 
+@patch("matchbox.server.api.main.BackgroundTasks.add_task")
+def test_upload_wrong_filetype(
+    mock_add_task: Mock,
+    s3: S3Client,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Test uploading a file that is not Parquet."""
+    # Setup
+    test_client, mock_backend, mock_tracker = api_client_and_mocks
+
+    mock_backend.settings.datastore.get_client.return_value = s3
+    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
+    mock_backend.insert_resolution = Mock(return_value=None)
+    mock_backend.insert_source_data = Mock(return_value=None)
+    s3.create_bucket(
+        Bucket="test-bucket",
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
+    )
+
+    source_testkit = source_factory()
+
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+
+    # Make request with mocked background task
+    response = test_client.post(
+        f"/upload/{update_id}",
+        files={
+            "file": (
+                "hashes.csv",
+                table_to_buffer(source_testkit.data),
+                "application/octet-stream",
+            ),
+        },
+    )
+
+    # Should fail when trying to read parquet table
+    assert response.status_code == 400
+    assert "server expected .parquet" in response.json()["details"].lower()
+    mock_add_task.assert_not_called()
+
+
+@patch("matchbox.server.api.main.BackgroundTasks.add_task")
+def test_upload_wrong_file_format(
+    mock_add_task: Mock,
+    s3: S3Client,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Test that file uploaded has Parquet magic bytes."""
+    # Setup
+    test_client, mock_backend, mock_tracker = api_client_and_mocks
+
+    mock_backend.settings.datastore.get_client.return_value = s3
+    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
+    mock_backend.insert_resolution = Mock(return_value=None)
+    mock_backend.insert_source_data = Mock(return_value=None)
+    s3.create_bucket(
+        Bucket="test-bucket",
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
+    )
+
+    source_testkit = source_factory()
+
+    update_id = mock_tracker.add_source(source_testkit.source.to_resolution())
+
+    # Make request with mocked background task
+    response = test_client.post(
+        f"/upload/{update_id}",
+        files={
+            "file": (
+                "hashes.parquet",
+                b"dummy\ndata",
+                "application/octet-stream",
+            ),
+        },
+    )
+
+    # Should fail when trying to read parquet table
+    assert response.status_code == 400
+    assert "invalid parquet file" in response.json()["details"].lower()
+    mock_add_task.assert_not_called()
+
+
 # We can patch BackgroundTasks as the api_client_and_mocks fixture
 # ensures the API runs the task (not Celery)
 @patch("matchbox.server.api.main.BackgroundTasks.add_task")
@@ -172,7 +254,13 @@ def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock,
 
     response = test_client.post(
         f"/upload/{update_id}",
-        files={"file": ("test.parquet", b"dummy data", "application/octet-stream")},
+        files={
+            "file": (
+                "test.parquet",
+                table_to_buffer(source_testkit.data),
+                "application/octet-stream",
+            )
+        },
     )
 
     # Should return 400 with current status
@@ -189,7 +277,13 @@ def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Moc
 
     response = test_client.post(
         f"/upload/{update_id}",
-        files={"file": ("test.parquet", b"dummy data", "application/octet-stream")},
+        files={
+            "file": (
+                "test.parquet",
+                table_to_buffer(source_testkit.data),
+                "application/octet-stream",
+            )
+        },
     )
 
     # Should return 400 with current status

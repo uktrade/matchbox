@@ -7,7 +7,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push-development-image:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -34,11 +34,20 @@ jobs:
           python-version: "3.11"
 
       - name: Extract development version
+        id: get_version
         run: |
-          echo "MB_VERSION=$( \
-            SETUPTOOLS_SCM_PRETEND_METADATA='{distance=1}' \
-            uv run --frozen python -m setuptools_scm \
-          )" >> $GITHUB_ENV
+          echo "version=$(uv run --frozen python -m setuptools_scm)" >> $GITHUB_OUTPUT
+
+      - name: Build package
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.get_version.outputs.version }}
+        run: uv build
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-dist
+          path: ./dist
 
       - name: Extract tag metadata for Docker
         id: meta
@@ -56,7 +65,7 @@ jobs:
           file: src/matchbox/server/Dockerfile
           push: true
           build-args: |
-            MB_VERSION=${{ env.MB_VERSION }}
+            MB_VERSION=${{ steps.version.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
 
       - name: Delete existing development release if it exists
@@ -78,3 +87,21 @@ jobs:
             
             **Version:** ${{ env.MB_VERSION }}
             **Commit:** ${{ github.sha }}
+
+  deploy-package:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    
+    environment: pypi
+    
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: package-dist
+          path: ./dist
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

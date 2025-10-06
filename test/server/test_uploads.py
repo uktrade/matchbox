@@ -156,48 +156,46 @@ class TestUploadTracker:
         )
 
         # Add the source and the model
-        source_upload_id = self.tracker.add_source(source)
-        assert isinstance(source_upload_id, str)
+        source_name = self.tracker.add_source(source)
+        assert isinstance(source_name, str)
 
-        model_upload_id = self.tracker.add_model(model)
-        assert isinstance(source_upload_id, str)
+        model_name = self.tracker.add_model(model)
+        assert isinstance(model_name, str)
 
         # Retrieve and verify
-        source_entry = self.tracker.get(source_upload_id)
+        source_entry = self.tracker.get(source_name)
         assert source_entry is not None
-        assert source_entry.metadata == source
-        assert source_entry.status.stage == UploadStage.AWAITING_UPLOAD
-        assert source_entry.status.entity == BackendUploadType.INDEX
-        assert source_entry.status.id == source_upload_id
-        assert isinstance(source_entry.status.update_timestamp, datetime)
+        assert source_entry.stage == UploadStage.QUEUED
+        assert source_entry.entity == BackendUploadType.INDEX
+        assert source_entry.name == source_name
+        assert isinstance(source_entry.update_timestamp, datetime)
 
-        model_entry = self.tracker.get(model_upload_id)
+        model_entry = self.tracker.get(model_name)
         assert model_entry is not None
-        assert model_entry.metadata == model
-        assert model_entry.status.stage == UploadStage.AWAITING_UPLOAD
-        assert model_entry.status.entity == BackendUploadType.RESULTS
-        assert model_entry.status.id == model_upload_id
-        assert isinstance(model_entry.status.update_timestamp, datetime)
+        assert model_entry.stage == UploadStage.QUEUED
+        assert model_entry.entity == BackendUploadType.RESULTS
+        assert model_entry.name == model_name
+        assert isinstance(model_entry.update_timestamp, datetime)
 
     def test_status_management(self):
         """Test status update functionality."""
         source = source_factory().source.to_resolution()
 
         # Create entry and verify initial status
-        upload_id = self.tracker.add_source(source)
-        entry = self.tracker.get(upload_id)
-        assert entry.status.stage == UploadStage.AWAITING_UPLOAD
+        name = self.tracker.add_source(source)
+        entry = self.tracker.get(name)
+        assert entry.stage == UploadStage.QUEUED
 
         # Update status
-        self.tracker.update(upload_id, UploadStage.PROCESSING)
-        entry = self.tracker.get(upload_id)
-        assert entry.status.stage == UploadStage.PROCESSING
+        self.tracker.update(name, UploadStage.PROCESSING)
+        entry = self.tracker.get(name)
+        assert entry.stage == UploadStage.PROCESSING
 
         # Update with details
-        self.tracker.update(upload_id, UploadStage.FAILED, "Error details")
-        entry = self.tracker.get(upload_id)
-        assert entry.status.stage == UploadStage.FAILED
-        assert entry.status.details == "Error details"
+        self.tracker.update(name, UploadStage.FAILED, "Error details")
+        entry = self.tracker.get(name)
+        assert entry.stage == UploadStage.FAILED
+        assert entry.details == "Error details"
 
         # Try updating non-existent entry
         with pytest.raises(KeyError):
@@ -214,20 +212,20 @@ class TestUploadTracker:
 
         # Initial creation
         mock_datetime.now.return_value = creation_timestamp
-        upload_id = self.tracker.add_source(source)
-        entry = self.tracker.get(upload_id)
-        assert entry.status.update_timestamp == datetime(2024, 1, 1, 12, 0)
+        name = self.tracker.add_source(source)
+        entry = self.tracker.get(name)
+        assert entry.update_timestamp == datetime(2024, 1, 1, 12, 0)
 
         # Get operation does not update timestamp
         mock_datetime.now.return_value = get_timestamp
-        entry = self.tracker.get(upload_id)
-        assert entry.status.update_timestamp == creation_timestamp
+        entry = self.tracker.get(name)
+        assert entry.update_timestamp == creation_timestamp
 
         # Status update updates timestamp
         mock_datetime.now.return_value = update_timestamp
-        self.tracker.update(upload_id, UploadStage.PROCESSING)
-        entry = self.tracker.get(upload_id)
-        assert entry.status.update_timestamp == update_timestamp
+        self.tracker.update(name, UploadStage.PROCESSING)
+        entry = self.tracker.get(name)
+        assert entry.update_timestamp == update_timestamp
 
 
 def test_process_upload_deletes_file_on_failure(s3: S3Client):

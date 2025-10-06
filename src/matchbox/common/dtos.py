@@ -662,7 +662,7 @@ class UploadStage(StrEnum):
 class UploadStatus(BaseModel):
     """Response model for any file upload processes."""
 
-    id: str
+    name: str
     stage: UploadStage
     update_timestamp: datetime
     details: str | None = None
@@ -693,7 +693,7 @@ class UploadStatus(BaseModel):
                         "expired_id": {
                             "summary": "Upload ID expired",
                             "value": cls(
-                                id="example_id",
+                                name="example_name",
                                 stage=UploadStage.FAILED,
                                 details=(
                                     "Upload ID not found or expired. Entries expire "
@@ -707,7 +707,7 @@ class UploadStatus(BaseModel):
                         "schema_mismatch": {
                             "summary": "Schema validation error",
                             "value": cls(
-                                id="example_id",
+                                name="example_name",
                                 stage=UploadStage.FAILED,
                                 details="Schema mismatch. Expected: ... Got: ...",
                                 entity=BackendUploadType.INDEX,

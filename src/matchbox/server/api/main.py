@@ -136,7 +136,7 @@ def upload_file(
             detail=UploadStatus(
                 id=upload_id,
                 update_timestamp=datetime.now(),
-                stage="unknown",
+                stage=UploadStage.READY,
                 details=(
                     f"Server expected .parquet file, got {file.filename.split('.')[-1]}"
                 ),
@@ -152,7 +152,7 @@ def upload_file(
             detail=UploadStatus(
                 id=upload_id,
                 update_timestamp=datetime.now(),
-                stage="unknown",
+                stage=UploadStage.READY,
                 details=(f"Invalid Parquet file: {str(e)}"),
             ).model_dump(),
         ) from e
@@ -165,7 +165,7 @@ def upload_file(
             detail=UploadStatus(
                 id=upload_id,
                 update_timestamp=datetime.now(),
-                stage="unknown",
+                stage=UploadStage.UNKNOWN,
                 details=(
                     "Upload ID not found or expired. Entries expire after 30 minutes "
                     "of inactivity, including failed processes."
@@ -264,7 +264,7 @@ def get_upload_status(
             status_code=400,
             detail=UploadStatus(
                 id=upload_id,
-                stage="unknown",
+                stage=UploadStage.UNKNOWN,
                 update_timestamp=datetime.now(),
                 details=(
                     "Upload ID not found or expired. Entries expire after 30 minutes "

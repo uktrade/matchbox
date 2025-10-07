@@ -326,8 +326,8 @@ def process_upload(
         )
         details = (
             f"Error: {e}. Context: "
-            f"Upload type: {getattr(upload.status, 'entity', 'unknown')}, "
-            f"SourceConfig: {getattr(upload, 'metadata', 'unknown')}"
+            f"Upload type: {getattr(upload, 'entity', 'unknown')}, "
+            f"SourceConfig: {getattr(upload, 'name', 'unknown')}"
         )
         tracker.update(
             name,

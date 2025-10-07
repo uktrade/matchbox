@@ -259,8 +259,8 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     assert s3.head_object(Bucket=bucket, Key=test_key)
 
     # Setup metadata store with test data
-    upload_id = tracker.add_source(source_testkit.source.to_resolution())
-    tracker.update(upload_id, UploadStage.AWAITING_UPLOAD)
+    name = tracker.add_source(source_testkit.source.to_resolution())
+    tracker.update(name, UploadStage.AWAITING_UPLOAD)
 
     # Run the process, expecting it to fail
     with pytest.raises(MatchboxServerFileError) as excinfo:
@@ -268,7 +268,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
             backend=mock_backend,
             tracker=tracker,
             s3_client=s3,
-            upload_id=upload_id,
+            name=name,
             bucket=bucket,
             filename=test_key,
             upload_type="type",
@@ -278,7 +278,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     assert "Simulated processing failure" in str(excinfo.value)
 
     # Check that the status was updated to failed
-    status = tracker.get(upload_id).status
+    status = tracker.get(name)
     assert status.stage == UploadStage.FAILED, (
         f"Expected status 'failed', got '{status.stage}'"
     )

@@ -135,25 +135,11 @@ def test_model_sync(matchbox_api: MockRouter):
         )
     )
 
-    insert_results_route = matchbox_api.post(
-        f"/resolutions/{testkit.model.name}/data"
-    ).mock(
+    upload_route = matchbox_api.post(f"/resolutions/{testkit.model.name}/data").mock(
         return_value=Response(
             202,
             content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.AWAITING_UPLOAD,
-                update_timestamp=datetime.now(),
-                entity=BackendUploadType.RESULTS,
-            ).model_dump_json(),
-        )
-    )
-
-    upload_route = matchbox_api.post("/upload/test-upload-id").mock(
-        return_value=Response(
-            202,
-            content=UploadStatus(
-                id="test-upload-id",
+                name=testkit.model.name,
                 stage=UploadStage.PROCESSING,
                 update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
@@ -161,11 +147,13 @@ def test_model_sync(matchbox_api: MockRouter):
         )
     )
 
-    status_route = matchbox_api.get("/upload/test-upload-id/status").mock(
+    status_route = matchbox_api.get(
+        f"resolutions/{testkit.model.name}/data/status"
+    ).mock(
         return_value=Response(
             200,
             content=UploadStatus(
-                id="test-upload-id",
+                name=testkit.model.name,
                 stage=UploadStage.COMPLETE,
                 update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,
@@ -185,7 +173,6 @@ def test_model_sync(matchbox_api: MockRouter):
     )
     assert set_truth_route.called
     assert float(set_truth_route.calls.last.request.read()) == 100
-    assert not insert_results_route.called
 
     # Set results
     test_results = Results(probabilities=testkit.probabilities)
@@ -194,7 +181,6 @@ def test_model_sync(matchbox_api: MockRouter):
     testkit.model.sync()
 
     # Verify API calls
-    assert insert_results_route.called
     assert upload_route.called
     assert status_route.called
     assert (
@@ -202,11 +188,11 @@ def test_model_sync(matchbox_api: MockRouter):
     )  # Check for parquet file signature
 
     # Mock the upload endpoint with a failure
-    matchbox_api.post("/upload/test-upload-id").mock(
+    matchbox_api.post(f"/resolutions/{testkit.model.name}/data").mock(
         return_value=Response(
             400,
             content=UploadStatus(
-                id="test-upload-id",
+                name=testkit.model.name,
                 stage=UploadStage.FAILED,
                 update_timestamp=datetime.now(),
                 entity=BackendUploadType.RESULTS,

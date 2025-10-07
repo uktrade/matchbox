@@ -315,6 +315,7 @@ def set_data(
     upload_res = CLIENT.post(
         f"/resolutions/{name}/data",
         files={"file": (f"{name}.parquet", buffer, "application/octet-stream")},
+        params=url_params({"validate_type": validate_type}),
     )
 
     logger.debug("Uploading data", prefix=log_prefix)
@@ -322,7 +323,7 @@ def set_data(
     # Poll until complete with retry/timeout configuration
     status = UploadStatus.model_validate(upload_res.json())
     while status.stage not in [UploadStage.COMPLETE, UploadStage.FAILED]:
-        status_res = CLIENT.get(f"/upload/{name}/data/status")
+        status_res = CLIENT.get(f"/resolutions/{name}/data/status")
         status = UploadStatus.model_validate(status_res.json())
 
         logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)

@@ -311,17 +311,10 @@ def set_data(
     data_arrow = data.to_arrow() if isinstance(data, pl.DataFrame) else data
     buffer = table_to_buffer(table=data_arrow)
 
-    # Initialise upload
-    metadata_res = CLIENT.post(
-        f"/resolutions/{name}/data", params=url_params({"validate_type": validate_type})
-    )
-
-    upload = UploadStatus.model_validate(metadata_res.json())
-
     # Upload data
     upload_res = CLIENT.post(
-        f"/upload/{upload.id}",
-        files={"file": (f"{upload.id}.parquet", buffer, "application/octet-stream")},
+        f"/resolutions/{name}/data",
+        files={"file": (f"{name}.parquet", buffer, "application/octet-stream")},
     )
 
     logger.debug("Uploading data", prefix=log_prefix)
@@ -329,7 +322,7 @@ def set_data(
     # Poll until complete with retry/timeout configuration
     status = UploadStatus.model_validate(upload_res.json())
     while status.stage not in [UploadStage.COMPLETE, UploadStage.FAILED]:
-        status_res = CLIENT.get(f"/upload/{upload.id}/status")
+        status_res = CLIENT.get(f"/upload/{name}/data/status")
         status = UploadStatus.model_validate(status_res.json())
 
         logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)

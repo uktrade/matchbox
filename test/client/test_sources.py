@@ -555,24 +555,13 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
             ).model_dump(),
         )
     )
-    matchbox_api.post(f"/resolutions/{testkit.source.name}/data").mock(
-        return_value=Response(
-            202,
-            content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.AWAITING_UPLOAD,
-                update_timestamp=datetime.now(),
-                entity=BackendUploadType.RESULTS,
-            ).model_dump_json(),
-        )
-    )
 
     # Mock the data upload
-    upload_route = matchbox_api.post("/upload/test-upload-id").mock(
+    upload_route = matchbox_api.post(f"/resolutions/{testkit.source.name}/data").mock(
         return_value=Response(
             202,
             content=UploadStatus(
-                id="test-upload-id",
+                name=testkit.source.name,
                 stage=UploadStage.COMPLETE,
                 update_timestamp=datetime.now(),
                 entity=BackendUploadType.INDEX,
@@ -592,16 +581,16 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     assert resolution_call.name == testkit.source.to_resolution().name
     assert resolution_call.resolution_type == ResolutionType.SOURCE
     assert resolution_call.config == testkit.source.to_resolution().config
-    assert "test-upload-id" in upload_route.calls.last.request.url.path
+    assert testkit.source.name in upload_route.calls.last.request.url.path
     assert b"Content-Disposition: form-data;" in upload_route.calls.last.request.content
     assert b"PAR1" in upload_route.calls.last.request.content
 
     # Now check client handling of server error
-    matchbox_api.post("/upload/test-upload-id").mock(
+    matchbox_api.post(f"/resolutions/{testkit.source.name}/data").mock(
         return_value=Response(
             400,
             content=UploadStatus(
-                id="test-upload-id",
+                name=testkit.source.name,
                 stage=UploadStage.FAILED,
                 update_timestamp=datetime.now(),
                 details="Invalid schema",

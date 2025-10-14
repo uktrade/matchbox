@@ -821,7 +821,10 @@ class UploadStage(StrEnum):
 class UploadStatus(BaseModel):
     """Response model for any file upload processes."""
 
-    id: str
+    collection_name: CollectionName
+    run_id: RunID
+    resolution_name: ResolutionName
+    path_str: str
     stage: UploadStage
     update_timestamp: datetime
     details: str | None = None

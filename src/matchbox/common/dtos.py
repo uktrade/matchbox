@@ -855,7 +855,10 @@ class UploadStatus(BaseModel):
                         "expired_id": {
                             "summary": "Upload ID expired",
                             "value": cls(
-                                id="example_id",
+                                collection_name="collection",
+                                run_id=1,
+                                resolution_name="resolution",
+                                path_str="collection/1/resolution",
                                 stage=UploadStage.FAILED,
                                 details=(
                                     "Upload ID not found or expired. Entries expire "
@@ -869,7 +872,10 @@ class UploadStatus(BaseModel):
                         "schema_mismatch": {
                             "summary": "Schema validation error",
                             "value": cls(
-                                id="example_id",
+                                collection_name="collection",
+                                run_id=1,
+                                resolution_name="resolution",
+                                path_str="collection/1/resolution",
                                 stage=UploadStage.FAILED,
                                 details="Schema mismatch. Expected: ... Got: ...",
                                 entity=BackendUploadType.INDEX,

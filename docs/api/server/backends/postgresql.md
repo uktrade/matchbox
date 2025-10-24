@@ -5,10 +5,22 @@ A backend adapter for deploying Matchbox using PostgreSQL.
 There are two graph-like trees in place here.
 
 * In the resolution subgraph the tree is implemented as closure table, enabling quick querying of root to leaf paths at the cost of redundancy
-* In the data subgraph the tree is implemented as an adjacency list, which means recursive queries are required to resolve it, but less data is stored
+* In the data subgraph the tree is implemented as a modified closure table which only stores the "root" and "leaf" relationships for each model
+    * The leaf IDs
+    * The model's proposed cluster IDs at that threshold -- the roots
 
 ```mermaid
 erDiagram
+    Collections {
+        bigint collection_id PK
+        string name
+    }
+    Runs {
+        bigint run_id PK
+        bigint collection_id FK
+        bool is_mutable
+        bool is_default
+    }
     SourceConfigs {
         bigint source_config_id PK
         bigint resolution_id FK
@@ -24,6 +36,14 @@ erDiagram
         string type
         bool is_key
     }
+    ModelConfigs {
+        bigint model_config_id PK
+        bigint resolution_id FK
+        string model_class
+        jsonb model_settings
+        jsonb left_query
+        jsonb right_query
+    }
     Clusters {
         bigint cluster_id PK
         bytes cluster_hash
@@ -35,8 +55,8 @@ erDiagram
         string key
     }
     Contains {
-        bigint parent PK,FK
-        bigint child PK,FK
+        bigint root PK,FK
+        bigint leaf PK,FK
     }
     PKSpace {
         bigint id
@@ -44,12 +64,20 @@ erDiagram
         bigint next_cluster_keys_id
     }
     Probabilities {
-        bigint resolution PK,FK
-        bigint cluster PK,FK
+        bigint resolution_id PK,FK
+        bigint cluster_id PK,FK
+        smallint probability
+    }
+    Results {
+        bigint result_id PK
+        bigint resolution_id FK
+        bigint left_id FK
+        bigint right_id FK
         smallint probability
     }
     Resolutions {
         bigint resolution_id PK
+        bigint run_id FK
         string name
         string description
         string type
@@ -74,16 +102,22 @@ erDiagram
         datetime timestamp
     }
 
+    Collections ||--o{ Runs : ""
+    Runs ||--o{ Resolutions : ""
     SourceConfigs |o--|| Resolutions : ""
+    ModelConfigs |o--|| Resolutions : ""
     SourceConfigs ||--o{ SourceFields : ""
     SourceConfigs ||--o{ ClusterSourceKey : ""
     Clusters ||--o{ ClusterSourceKey : ""
     Clusters ||--o{ Probabilities : ""
+    Clusters ||--o{ Results : "left_id"
+    Clusters ||--o{ Results : "right_id"
     Clusters ||--o{ EvalJudgements : "endorsed_cluster_id"
     Clusters ||--o{ EvalJudgements : "shown_cluster_id" 
-    Clusters ||--o{ Contains : "parent"
-    Contains }o--|| Clusters : "child"
+    Clusters ||--o{ Contains : "root"
+    Contains }o--|| Clusters : "leaf"
     Resolutions ||--o{ Probabilities : ""
+    Resolutions ||--o{ Results : ""
     Resolutions ||--o{ ResolutionFrom : "parent"
     ResolutionFrom }o--|| Resolutions : "child"
     Users ||--o{ EvalJudgements : ""

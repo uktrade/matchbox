@@ -216,11 +216,15 @@ class Query:
 
         if cache_raw:
             self.raw_data = raw_data
-        clean_data = _convert_df(
-            clean(raw_data, self.config.cleaning), return_type=return_type
-        )
 
-        self.data = clean_data
+        self.data = _convert_df(
+            _clean(
+                data=raw_data,
+                cleaning_dict=self.config.cleaning,
+                key_columns=[source.qualified_key for source in self.sources],
+            ),
+            return_type=return_type,
+        )
         self.last_run = datetime.now()
 
         return self.data
@@ -244,7 +248,11 @@ class Query:
             raise RuntimeError("No raw data is stored in this query.")
 
         self.data = _convert_df(
-            data=clean(data=self.raw_data, cleaning_dict=cleaning),
+            data=_clean(
+                data=self.raw_data,
+                cleaning_dict=cleaning,
+                key_columns=[source.qualified_key for source in self.sources],
+            ),
             return_type=return_type,
         )
 
@@ -287,12 +295,17 @@ class Query:
         )
 
 
-def clean(data: pl.DataFrame, cleaning_dict: dict[str, str] | None) -> pl.DataFrame:
+def _clean(
+    data: pl.DataFrame,
+    cleaning_dict: dict[str, str] | None,
+    key_columns: list[str] | None = None,
+) -> pl.DataFrame:
     """Clean data using DuckDB with the provided cleaning SQL.
 
     * ID is passed through automatically
-    * If present, leaf_id and key are passed through automatically
-    * Columns not mentioned in the cleaning_dict are passed through unchanged
+    * If present, leaf_id is passed through automatically
+    * Key columns (specified in key_columns) are passed through automatically
+    * Columns not mentioned in the cleaning_dict are dropped
     * Each key in cleaning_dict is an alias for a SQL expression
 
     Args:
@@ -301,12 +314,14 @@ def clean(data: pl.DataFrame, cleaning_dict: dict[str, str] | None) -> pl.DataFr
             The SQL expressions can reference columns in the data using their names.
             If None, no cleaning is applied and the original data is returned.
             `SourceConfig.f()` can be used to help reference qualified fields.
+        key_columns: List of key column names to pass through automatically.
+            These are typically qualified key columns like "foo_key", "bar_key".
 
     Returns:
         Cleaned polars dataframe
 
     Examples:
-        Column passthrough behavior:
+        Column passthrough behaviour:
 
         ```python
         data = pl.DataFrame(
@@ -321,30 +336,7 @@ def clean(data: pl.DataFrame, cleaning_dict: dict[str, str] | None) -> pl.DataFr
             "full_name": "name"  # Only references 'name' column
         }
         result = clean(data, cleaning_dict)
-        # Result columns: id, full_name, age, city
-        # 'name' is dropped because it was used in cleaning_dict
-        # 'age' and 'city' are passed through unchanged
-        ```
-
-        Multiple column references:
-
-        ```python
-        data = pl.DataFrame(
-            {
-                "id": [1, 2, 3],
-                "first": ["John", "Jane", "Bob"],
-                "last": ["Doe", "Smith", "Johnson"],
-                "salary": [50000, 60000, 55000],
-            }
-        )
-        cleaning_dict = {
-            "name": "first || ' ' || last",  # References both 'first' and 'last'
-            "high_earner": "salary > 55000",
-        }
-        result = clean(data, cleaning_dict)
-        # Result columns: id, name, high_earner
-        # 'first', 'last', and 'salary' are dropped (used in expressions)
-        # No other columns to pass through
+        # Result columns: id, full_name
         ```
 
         Special columns (leaf_id, key) handling:
@@ -354,24 +346,17 @@ def clean(data: pl.DataFrame, cleaning_dict: dict[str, str] | None) -> pl.DataFr
             {
                 "id": [1, 2, 3],
                 "leaf_id": ["a", "b", "c"],
-                "key": ["x", "y", "z"],
+                "foo_key": ["x", "y", "z"],
+                "bar_key": ["p", "q", "r"],
                 "value": [10, 20, 30],
                 "status": ["active", "inactive", "pending"],
             }
         )
         cleaning_dict = {"processed_value": "value * 2"}
-        result = clean(data, cleaning_dict)
-        # Result columns: id, leaf_id, key, processed_value, status
-        # 'id', 'leaf_id', 'key' always included automatically
-        # 'value' dropped (used in expression), 'status' passed through
-        ```
-
-        No cleaning (returns original data):
-
-        ```python
-        data = pl.DataFrame({"id": [1, 2], "name": ["Alice", "Bob"], "score": [95, 87]})
-        result = clean(data, None)
-        # Returns exact same dataframe with all original columns
+        key_columns = ["foo_key", "bar_key"]
+        result = clean(data, cleaning_dict, key_columns)
+        # Result columns: id, leaf_id, foo_key, bar_key, processed_value
+        # 'id', 'leaf_id', and key columns always included automatically
         ```
     """
     if cleaning_dict is None:
@@ -389,34 +374,20 @@ def clean(data: pl.DataFrame, cleaning_dict: dict[str, str] | None) -> pl.DataFr
     # Always select 'id'
     to_select: list[expressions.Expression] = [_add_column("id")]
 
-    # Add optional columns if they exist
-    for col in ["leaf_id", "key"]:
-        if col in data.columns:
-            to_select.append(_add_column(col))
+    # Add leaf_id if it exists
+    if "leaf_id" in data.columns:
+        to_select.append(_add_column("leaf_id"))
+
+    # Add key columns if specified
+    if key_columns:
+        for key_col in key_columns:
+            if key_col in data.columns:
+                to_select.append(_add_column(key_col))
 
     # Parse and add each SQL expression from cleaning_dict
-    query_column_names: set[str] = set()
     for alias, sql in cleaning_dict.items():
         stmt = parse_one(sql, dialect="duckdb")
-
-        # Get column name used in the expression
-        for node in stmt.walk():
-            if isinstance(node, expressions.Column):
-                query_column_names.add(node.name)
-
-        # Add to the list of expressions to select
         to_select.append(expressions.alias_(stmt, alias))
-
-    # Add all column names not used in the query
-    for column in set(data.columns) - query_column_names - {"id", "leaf_id", "key"}:
-        to_select.append(
-            expressions.Alias(
-                this=expressions.Column(
-                    this=expressions.Identifier(this=column, quoted=False)
-                ),
-                alias=expressions.Identifier(this=column, quoted=False),
-            )
-        )
 
     query = sqlglot_select(*to_select, dialect="duckdb").from_("data")
 

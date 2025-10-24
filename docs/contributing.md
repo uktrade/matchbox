@@ -9,7 +9,7 @@ This document describes how you can get started with developing Matchbox.
 
 ## Setup
 
-Set up environment variables by creating a `.env` file under project directory. See [`/environments/development.env`](https://github.com/uktrade/matchbox/blob/main/environments/development.env) for sensible defaults.
+Set up environment variables by creating a `.env` file under project directory. See [`/environments/development.env`](https://github.com/uktrade/matchbox/blob/main/environments/development.env) for sensible defaults, which should work as is with the Docker Compose set-up and the tests.
 
 This project is managed by [uv](https://docs.astral.sh/uv/), linted and formated with [ruff](https://docs.astral.sh/ruff/), and tested with [pytest](https://docs.pytest.org/en/stable/). [Docker](https://www.docker.com) is used for local development. Documentation is build using [mkdocs](https://www.mkdocs.org).
 
@@ -33,23 +33,35 @@ Task running is done with [just](https://just.systems/man/en/). To see all avail
 just -l
 ```
 
+## Starting containers
+
+All containers required to run a development version of Matchbox can be built and launched as follows:
+
+```shell
+just build -d --wait
+```
+
+!!! tip "Docker configuration"
+    If you want to change the ports on which the various Docker containers listen (typically to avoid clashes with other projects) you need to change the variables starting with `MB__DEV_` in `.env`.
+
 ## Run tests
 
 !!! note
 
     Your `.env` file needs to be correctly configured for tests to be loaded.
 
-A just task is provided to run all tests.
+If the Docker containers are already up, you can run all tests:
+
+```shell
+pytest
+```
+
+Otherwise, you can build and launch the containers, as well as run the tests with a single command:
 
 ```shell
 just test
 ```
 
-If you're running tests with some other method, such as your IDE or pytest directly, you'll need to start the local backends and mock warehouse in Docker.
-
-```shell
-just build -d --wait
-```
 
 ## Database Migrations for PostgreSQL backend
 

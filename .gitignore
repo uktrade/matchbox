@@ -25,6 +25,10 @@ site/
 # AI agents in root
 /CLAUDE.md
 /GEMINI.md
+/AGENTS.md
+
+# .agents dir
+.agents
 
 # Logs
 *.log

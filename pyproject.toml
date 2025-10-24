@@ -26,6 +26,8 @@ dependencies = [
     "sqlalchemy>=2.0.35",
     "sqlglot[rs]>=26.12.1",
     "tenacity>=9.1.2",
+    "textual>=0.87.1",
+    "typer>=0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -38,9 +40,6 @@ server = [
     "python-multipart>=0.0.18",
     "redis>=5.2.1",
     "tomli>=2.0.1",
-]
-eval = [
-    "streamlit>=1.45.0",
 ]
 
 [dependency-groups]
@@ -55,6 +54,7 @@ dev = [
     "mkdocstrings[python]>=0.27.0",
     "moto[s3]>=5.0.26",
     "pre-commit>=3.8.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "pytest-env>=1.1.5",
     "pytest>=8.3.3",
@@ -67,6 +67,9 @@ typing = [
     "boto3-stubs[s3]>=1.35.99",
     "pyarrow-stubs>=17.16",
 ]
+
+[project.scripts]
+matchbox = "matchbox.client.cli.main:app"
 
 [project.urls]
 "Documentation" = "https://uktrade.github.io/matchbox/"
@@ -111,6 +114,14 @@ select = [
     "PLC",
     "SIM"
 ]
+extend-select = [
+    "UP",
+    "TID",
+    "BLE",
+    "PLC",
+    "SIM",
+    "ANN",
+]
 ignore = []
 fixable = ["ALL"]
 unfixable = []
@@ -121,6 +132,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "**/{test,docs}/*" = ["D"]
+"!**/{src/matchbox,test}/client/cli/*" = ["UP", "TID", "BLE", "PLC", "SIM", "ANN"]
 
 [tool.ruff.format]
 quote-style = "double"

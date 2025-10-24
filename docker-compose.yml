@@ -3,7 +3,7 @@ services:
     image: postgres:17
     restart: always
     ports:
-      - "${MB__DEV__WAREHOUSE_PORT:-7654}:5432"
+      - "${MB__DEV__WAREHOUSE_PORT}:5432"
     volumes:
       - warehouse_data:/var/lib/postgresql/data
     environment:
@@ -17,8 +17,8 @@ services:
       - matchbox_store:/data
     command: server --console-address ":9001" /data
     ports:
-      - "${MB__DEV__DATASTORE_PORT:-9000}:9000"
-      - "${MB__DEV__DATASTORE_CONSOLE_PORT-9001}:9001"
+      - "${MB__DEV__DATASTORE_PORT}:9000"
+      - "${MB__DEV__DATASTORE_CONSOLE_PORT}:9001"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -31,12 +31,11 @@ services:
     build:
       context: .
       args:
-        ENV_FILE: containers.env
         MB_VERSION: ${MB_VERSION-0.0.0dev0}
       dockerfile: src/matchbox/server/Dockerfile
       target: dev
     ports:
-      - "${MB__DEV__API_PORT-8000}:8000"
+      - "${MB__DEV__API_PORT}:8000"
     command: fastapi dev --host 0.0.0.0 src/matchbox/server/api
     depends_on:
       - postgres
@@ -59,7 +58,7 @@ services:
     image: postgres:17
     restart: always
     ports:
-      - "${MB__DEV__POSTGRES_BACKEND_PORT:-5432}:5432"
+      - "${MB__DEV__POSTGRES_BACKEND_PORT}:5432"
     volumes:
       - matchbox_data:/var/lib/postgresql/data
     environment:
@@ -70,30 +69,25 @@ services:
     image: redis:8
     restart: always
     ports:
-      - "${MB__DEV__REDIS_PORT:-6379}:6379"
+      - "${MB__DEV__REDIS_PORT}:6379"
   worker:
     build:
       context: .
       dockerfile: src/matchbox/server/Dockerfile
       target: dev
       args:
-        ENV_FILE: containers.env
         MB_VERSION: ${MB_VERSION-0.0.0dev0}
     command: celery -A matchbox.server.uploads.celery worker --loglevel=info
     depends_on:
       - postgres
       - filestorage
       - redis
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
   flower:
     image: mher/flower
     container_name: flower
     ports:
-      - "${MB__DEV__FLOWER_PORT:-5555}:5555"
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0 
-    command: celery flower --broker=${CELERY_BROKER_URL}
+      - "${MB__DEV__FLOWER_PORT}:5555"
+    command: celery --broker=${MB__SERVER__REDIS_URI} flower
     depends_on:
       - redis
 

@@ -16,7 +16,8 @@ from sqlglot import cast, select
 from sqlglot.expressions import column
 
 from matchbox.client.dags import DAG
-from matchbox.client.sources import RelationalDBLocation, Source
+from matchbox.client.locations import RelationalDBLocation
+from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_QUERY
 from matchbox.common.dtos import (
     DataTypes,
@@ -148,7 +149,7 @@ class SourceTestkit(BaseModel):
             set_client: client to replace existing source client
         """
         if set_client:
-            self.source.location.client = set_client
+            self.source.location.set_client(set_client)
 
         pl.from_arrow(self.data).write_database(
             table_name=self.source.name,
@@ -561,7 +562,7 @@ def source_factory(
     # Create source config
     source = Source(
         dag=dag,
-        location=RelationalDBLocation(name=location_name, client=engine),
+        location=RelationalDBLocation(name=location_name).set_client(engine),
         name=name,
         description=f"Generated source for {name}",
         extract_transform=select(
@@ -634,7 +635,7 @@ def source_from_tuple(
     # Create source config
     source = Source(
         dag=dag,
-        location=RelationalDBLocation(name=location_name, client=engine),
+        location=RelationalDBLocation(name=location_name).set_client(engine),
         name=name,
         description=f"Generated source for {name}",
         extract_transform=select(
@@ -855,8 +856,8 @@ def linked_sources_factory(
         # Create source config
         source = Source(
             dag=dag,
-            location=RelationalDBLocation(
-                name=str(parameters.name), client=parameters.engine
+            location=RelationalDBLocation(str(parameters.name)).set_client(
+                parameters.engine
             ),
             name=parameters.name,
             description=f"Generated source for {parameters.name}",

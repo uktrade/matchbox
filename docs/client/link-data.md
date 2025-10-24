@@ -91,16 +91,18 @@ Now you can define your data sources. Each source represents data that will be u
 
 The `index_fields` are what Matchbox will use to store a reference to your data, and are the only fields it will permit you to match on.
 
-The `key_field` is the field in your source that contains some unique code that identifies each entitiy. For example, in a relational database, this would typically be your primary key.
+The `key_field` is the field in your source that contains some unique code that identifies each entity. For example, in a relational database, this would typically be your primary key.
 
 === "Example"
     ```python
     from matchbox.client import RelationalDBLocation
 
+    warehouse = RelationalDBLocation(name="dbname").set_client(engine)
+
     # Companies House data
     companies_house = dag.source(
         name="companies_house",
-        location=RelationalDBLocation(name="dbname", client=engine),
+        location=warehouse,
         extract_transform="""
             select
                 number::str as company_number,
@@ -117,7 +119,7 @@ The `key_field` is the field in your source that contains some unique code that 
     # Exporters data
     exporters = dag.source(
         name="hmrc_exporters",
-        location=RelationalDBLocation(name="dbname", client=engine),
+        location=warehouse,
         extract_transform="""
             select
                 id,
@@ -134,7 +136,7 @@ The `key_field` is the field in your source that contains some unique code that 
 
 Each [`Source`][matchbox.client.sources.Source] object requires:
 
-- A `location`, such as [`RelationalDBLocation`][matchbox.client.sources.RelationalDBLocation]. This will need a `name`, and `client`
+- A `location`, such as [`RelationalDBLocation`][matchbox.client.locations.RelationalDBLocation]. This will need a `name`, and `client`
     - The name of a location is a way of tagging it, such that later on you can filter sources you want to retrieve from the server
     - For a relational database, a SQLAlchemy engine is your client
 - An `extract_transform` string, which will take data from the location and transform it into your key and index fields. Its syntax will depend on the type of location
@@ -155,22 +157,30 @@ Dedupe steps identify and resolve duplicates within a single source.
     dedupe_companies_house = companies_house.query(
         cleaning={
             "company_name": f"lower({companies_house.f('company_name')})",
+            "company_number": companies_house.f("company_number"),
         }
     ).deduper(
         name="naive_companieshouse_companies",
         description="Deduplication based on company name",
         model_class=NaiveDeduper,
         model_settings={
-            "unique_fields": ["company_name"],
+            "unique_fields": ["company_name", "company_number],
         },
         truth=1.0,
     )
+    ```
 
 A query can optionally take instructions on how to clean the data. These are defined using a dictionary where:
 
 * the dictionary **key** is the desired column name that will be output
 * the dictionary **value** is a SQL expression in DuckDB format
+
+!!! warning "Only cleaned columns are passed through"
     
+    When you specify a `cleaning` dictionary, **only the columns you explicitly include** (plus `id`, `leaf_id`, and key columns) will be passed through to the next step. Any columns not mentioned in the cleaning dictionary will be dropped.
+    
+    This means you must include **all fields** you need for your model in the cleaning dictionary, even if you're just passing them through unchanged.
+
 A deduper takes:
 
 - A unique `name` for the step
@@ -181,147 +191,115 @@ A deduper takes:
 
 ### On cleaning
 
-!!! tip "Simplify field references by cleaning everything"
+!!! tip "Always clean all fields you need"
     
-    To avoid confusion with qualified vs unqualified field names, consider "cleaning" every field you select - even if you're just aliasing it without transformation. This way, all your field references use simple, unqualified names throughout your configuration.
+    Since only columns in the cleaning dictionary are passed through, you should include **all fields** required by your model - even if you're just aliasing them without transformation. This makes your configuration explicit and prevents fields from being accidentally dropped.
     
     ```python
-    # Instead of mixing qualified and unqualified names
+    # ❌ BAD: company_number will be dropped
     cleaning={
         "company_name": f"lower({companies_house.f('company_name')})",
-        # company_number not cleaned, so needs qualification later
+        # company_number not included - will be DROPPED!
     }
     model_settings={
         "unique_fields": [
             "company_name",
-            companies_house.f("company_number"),  # Qualified!
+            "company_number",  # This field won't exist!
         ],
     }
     
-    # Clean everything for consistency
+    # ✅ GOOD: Include all fields you need
     cleaning = {
         "company_name": f"lower({companies_house.f('company_name')})",
-        "company_number": companies_house.f("company_number") # Just aliasing
+        "company_number": companies_house.f("company_number"),  # Pass through
     }
 
     model_settings = {
         "unique_fields": [
             "company_name",
-            "company_number",  # Both unqualified!
+            "company_number",  # Both fields available
         ],
     }
     ```
     
-    This approach makes your configuration much more readable and reduces errors from forgetting to qualify field names.
+    This approach makes your configuration explicit and ensures all necessary fields are available to your models.
 
 It's worth understanding how data moves through steps, as it helps knowing when or if to qualify column names. When would I use `"company_number"` vs. `companies_house.f("company_number")`, for example?
 
-A [`Query`][matchbox.client.queries.Query] extracts data to a columnar format. Models will often query the same column names from multiple sources, so column names must be qualified with their source. 
+### Columns before and after cleaning
 
-For example, 
+When you query a source without cleaning, all columns are qualified with the source name:
 
 ```python
+# No cleaning - all columns qualified
 companies_house.query().run()
+# Columns: id, companies_house_key, companies_house_company_name, companies_house_company_number, companies_house_postcode
 ```
 
-will return a dataframe with the following columns:
-
-* `id` (the Matchbox ID)
-* `companies_house_company_number`
-* `companies_house_company_name`
-* `companies_house_postcode`
-
-Note how the fields specified are "qualified" with the source they came from. When defining cleaning instructions, we need to refer to qualified source names too. `Source.f()` is provided as a convenient way to select fields qualified by a source.
-
-The rules for the cleaning dictionary are:
-
-* If a column _is_ mentioned in any cleaning SQL, its uncleaned version is automatically dropped from the output
-* If a column _isn't_ mentioned in any cleaning SQL, it's automatically passed through with its qualified name
-
-Here's the cleaning dictionary from the above example:
+When you apply cleaning, the columns become the aliases you specify in the cleaning dictionary:
 
 ```python
-cleaning_dict = {
-    "company_name": f"lower({companies_house.f('company_name')})",
-}
+# With cleaning - only specified columns, with your aliases
+companies_house.query(
+    cleaning={
+        "name": f"lower({companies_house.f('company_name')})",
+        "number": companies_house.f("company_number"),
+    }
+).run()
+# Columns: id, companies_house_key, name, number
+# Note: postcode is DROPPED because it's not in cleaning dict
 ```
 
-Note: 
+Special columns are always passed through:
 
-* How we qualify the field we clean
-* How we alias it to `company_name`
-* `company_number` and `postcode` _aren't_ mentioned.
+- `id`: The Matchbox entity ID (always present)
+- `leaf_id`: If present, identifies the source cluster (optional)
+- Key columns: One per source (e.g., `companies_house_key`, `exporters_key`)
 
-The columns output by the query will be:
+### Qualified field references
 
-* `id` (the Matchbox ID)
-* `companies_house_company_number`
-* `company_name` (unqualified)
-* `companies_house_postcode`
-
-Finally, cleaned fields typically need specifying in a model. Here's our example:
+Use `source.f()` to create qualified references in SQL expressions:
 
 ```python
+# Inside cleaning dictionary values (SQL expressions)
+companies_house.f("company_name")  # → "companies_house_company_name"
+
+# In model_settings, use the cleaned aliases
 model_settings = {
-    "id": "id",
-    "unique_fields": [
-        "company_name",
-        companies_house.f("company_number"),
-    ],
+    "unique_fields": ["company_name"]  # Use the alias from cleaning dict
 }
 ```
 
-Note that because we didn't clean `company_number` it needs to be qualified here, rather than in the cleaning dictionary.
+## 4. Creating linkers
 
-If you want to test and improve your cleaning dictionary iteratively, but don't want to re-run a full query each time, you can do:
-
-```python
-old_cleaning = ...
-# Store inside the query object the raw data
-query = source.query(cleaning=old_cleaning, cache_raw=True)
-query.run()
-
-new_cleaning = ...
-# Will apply new cleaning without re-fetching the data, and also update the query
-# configuration with the new cleaning
-query.clean(new_cleaning)
-```
-
-## 4. Creating link steps
-
-Link steps connect records between different sources.
+Link steps match records across different sources or models.
 
 === "Example"
     ```python
-    from matchbox.client.dags import LinkStep
     from matchbox.client.models.linkers import DeterministicLinker
 
-    # Link exporters and importers based on name and postcode
-    link_exp_imp = dedupe_exporters.query(
-        exporters,
+    link_ch_exporters = dedupe_companies_house.query(
+        companies_house,
         cleaning={
+            "company_name": f"lower({companies_house.f('company_name')})",
+            "postcode": companies_house.f("postcode"),
+        },
+    ).linker(
+        dedupe_exporters.query(
+            exporters,
+            cleaning={
                 "company_name": f"lower({exporters.f('company_name')})",
                 "postcode": exporters.f("postcode"),
             },
-    ).linker(
-        dedupe_importers.query(
-            importers,
-            cleaning={
-                "company_name": f"lower({importers.f('company_name')})",
-                "postcode": importers.f("postcode"),
-            },
-        )
-        name="deterministic_exp_imp",
-        description="Deterministic link on names and postcode",
+        ),
+        name="deterministic_ch_exporters",
+        description="Link Companies House to exporters",
         model_class=DeterministicLinker,
-        settings={
+        model_settings={
             "left_id": "id",
             "right_id": "id",
             "comparisons": [
-                """
-                    l.company_name = r.company_name
-                        and l.postcode= r.postcode
-                """
+                "l.company_name = r.company_name and l.postcode = r.postcode"
             ],
         },
     )
@@ -480,13 +458,13 @@ You can link across multiple sources in a single step:
     link_ch_traders = dedupe_companies_house.query(
         companies_house,
         cleaning={
-                "company_name": f"lower({companies_house.f('company_name')})",
-                "postcode": companies_house.f("postcode"),
-            },
+            "company_name": f"lower({companies_house.f('company_name')})",
+            "postcode": companies_house.f("postcode"),
+        },
     ).linker(
         link_exp_imp.query(
             importers,
-            exporters
+            exporters,
             cleaning={
                 "company_name": f"""
                     coalesce(
@@ -505,7 +483,7 @@ You can link across multiple sources in a single step:
         name="deterministic_ch_hmrc",
         description="Link Companies House to HMRC traders",
         model_class=DeterministicLinker,
-        settings={
+        model_settings={
             "left_id": "id",
             "right_id": "id",
             "comparisons": [
@@ -521,7 +499,7 @@ You can link across multiple sources in a single step:
 This example demonstrates how you can:
 
 1. Use the results of a previous linking step as input
-2. Select fields from multiple sources in a single step
+2. Select fields from multiple sources in a single query
 3. Use SQL functions like `coalesce()` in your cleaning expressions to handle data from multiple sources
 4. Create unified field names for comparison across sources
 
@@ -532,9 +510,7 @@ You might want to publish a new run of your DAG based on newer data. You can ret
 === "Example"
     ```python    
     # Create a new DAG identical to the previous default
-    dag = DAG(name="companies").load_default(
-        location=RelationalDBLocation(name="dbname", client=engine)
-    ).new_run()
+    dag = DAG(name="companies").load_default().set_client(engine).new_run()
     # Run new DAG
     dag.run_and_sync()
     # Make the DAG the new default
@@ -550,18 +526,27 @@ Data cleaning is 90% of any record matching problem.
 - Clean your data before matching
 - Create appropriate indexes on your database tables
 - Test your cleaning functions on sample data
+- **Always include all fields needed by your models** in the cleaning dictionary
 
 ### 2. Pipeline design
 
 - Break complex matching tasks into smaller steps
 - Use appropriate batch sizes for large sources
 - Create clear, descriptive names for your steps
+- Be explicit about which fields you need at each step
 
-### 3. Execution
+### 3. Cleaning dictionaries
+
+- **Include all fields** your model needs, even if just passing them through
+- Use consistent aliases across left and right queries when linking
+- Test your cleaning logic on sample data before running the full pipeline
+- Remember that key columns are automatically passed through
+
+### 4. Execution
 
 - Start with small samples to test your pipeline
 - Monitor performance and adjust batch sizes accordingly
-- Use the `draw()` method to visualize and debug your DAG
+- Use the `draw()` method to visualise and debug your DAG
 
 ## Conclusion
 

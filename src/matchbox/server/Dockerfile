@@ -24,7 +24,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --all-extras --no-install-project --no-dev
 
-ARG ENV_FILE
 COPY ./uv.lock /code/uv.lock
 COPY ./pyproject.toml /code/pyproject.toml
 COPY ./src/matchbox /code/src/matchbox
@@ -41,7 +40,11 @@ ENV PATH="/code/.venv/bin:$PATH"
 # Local development stage: with locally-specified environment variables and hot reloading
 FROM base AS dev
 
-COPY ./environments/$ENV_FILE /code/.env
+# Concatenate local env and overrides for containers
+COPY .env /code/.env.local
+COPY environments/containers.env /code/.env.containers
+RUN cat .env.local .env.containers > .env
+
 
 # Production stage: no environment variables (they come from the infrastructure) and no hot reloading
 FROM base AS prod

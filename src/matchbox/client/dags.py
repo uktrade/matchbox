@@ -3,21 +3,24 @@
 import datetime
 import json
 from collections import defaultdict
-from typing import Self
+from typing import Any, Self
 
 from pyarrow import Table as ArrowTable
 
 from matchbox.client import _handler
+from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
-from matchbox.client.sources import Location, Source
+from matchbox.client.sources import Source
 from matchbox.common.dtos import (
+    Collection,
     CollectionName,
     ModelResolutionName,
     Resolution,
     ResolutionName,
     ResolutionPath,
     ResolutionType,
+    Run,
     RunID,
     SourceResolutionName,
 )
@@ -123,18 +126,18 @@ class DAG:
         self,
         name: ResolutionName,
         resolution: Resolution,
-        location: Location,
     ) -> None:
-        """Convert a resolution to a Source or Model and add to DAG."""
+        """Convert a resolution from the server to a Source or Model and add to DAG."""
         if resolution.resolution_type == ResolutionType.SOURCE:
             self.source(
-                location=location,
+                location=Location.from_config(resolution.config.location_config),
                 name=SourceResolutionName(name),
                 extract_transform=resolution.config.extract_transform,
                 key_field=resolution.config.key_field,
                 index_fields=resolution.config.index_fields,
                 description=resolution.description,
                 infer_types=False,
+                validate_etl=False,
             )
         elif resolution.resolution_type == ResolutionType.MODEL:
             self.model(
@@ -301,18 +304,22 @@ class DAG:
 
         return self
 
-    def load_default(self, location: Location) -> Self:
-        """Attach to default run in this collection, loading all DAG nodes.
+    def set_client(self, client: Any) -> Self:
+        """Assign a client to all sources at once."""
+        for node in self.nodes.values():
+            if isinstance(node, Source):
+                node.location.set_client(client)
+
+        return self
+
+    def _load_run(self, run_id: RunID) -> Self:
+        """Attach the specified run ID to the current DAG.
 
         Args:
-            location: The Location object that will be attached to nodes coming
-                from default Run. Can be updated per-source after instantiation if
-                necessary.
+            run_id: The ID of the run to attach
         """
-        collection = _handler.get_collection(self.name)
-
-        run = _handler.get_run(collection=self.name, run_id=collection.default_run)
-        self.run = collection.default_run
+        run: Run = _handler.get_run(collection=self.name, run_id=run_id)
+        self.run: RunID = run_id
 
         def _len_dependencies(res_item: tuple[ResolutionName, Resolution]) -> int:
             return len(res_item[1].config.dependencies)
@@ -322,9 +329,34 @@ class DAG:
         )
 
         for name, resolution in sorted_resolutions:
-            self.add_resolution(name=name, resolution=resolution, location=location)
+            self.add_resolution(name=name, resolution=resolution)
 
         return self
+
+    def load_default(self) -> Self:
+        """Attach to default run in this collection, loading all DAG nodes."""
+        collection: Collection = _handler.get_collection(self.name)
+
+        if not collection.default_run:
+            raise RuntimeError("No default run set.")
+
+        return self._load_run(collection.default_run)
+
+    def load_pending(self) -> Self:
+        """Attach to the pending run in this collection, loading all DAG nodes.
+
+        Pending is defined as the last non-default run.
+        """
+        collection: Collection = _handler.get_collection(self.name)
+
+        pending_runs: list[RunID] = [
+            run_id for run_id in collection.runs if run_id != collection.default_run
+        ]
+
+        if not pending_runs:
+            raise RuntimeError("No pending runs available.")
+
+        return self._load_run(pending_runs[0])
 
     def run_and_sync(
         self,

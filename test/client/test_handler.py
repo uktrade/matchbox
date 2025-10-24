@@ -4,7 +4,7 @@ import httpx
 from httpx import Response
 from respx import MockRouter
 
-from matchbox.client._handler import create_client, login
+from matchbox.client._handler import create_client, healthcheck, login
 from matchbox.client._settings import ClientSettings
 
 
@@ -48,3 +48,16 @@ def test_retry_decorator_applied(matchbox_api: MockRouter):
 
     # Verify the API was called 3 times (2 failures + 1 success)
     assert len(matchbox_api.calls) == 3
+
+
+def test_healthcheck(matchbox_api: MockRouter):
+    """Test the healthcheck endpoint works."""
+    matchbox_api.get("/health").mock(
+        side_effect=[
+            Response(200, json={"status": "OK", "version": "0.0.0.dev0"}),
+        ]
+    )
+    result = healthcheck()
+
+    assert result.status == "OK"
+    assert result.version == "0.0.0.dev0"

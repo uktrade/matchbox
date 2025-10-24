@@ -38,7 +38,7 @@ class DevelopmentSettings(BaseSettings):
         extra="ignore",
         env_prefix="MB__DEV__",
         env_nested_delimiter="__",
-        env_file=Path("environments/development.env"),
+        env_file=Path(".env"),
         env_file_encoding="utf-8",
     )
 

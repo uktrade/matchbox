@@ -1,0 +1,130 @@
+/* Entity Resolution UI Styles */
+
+Screen {
+    align: center top;
+}
+
+/* Main container - expanded to fill space */
+#main-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* Modal dialogs */
+#help-dialog {
+    width: 80;
+    height: 30;
+    background: $surface;
+    border: thick $primary;
+}
+
+#help-title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin: 1;
+}
+
+#help-content {
+    margin: 1 2;
+    height: 20;
+}
+
+#close-help {
+    margin: 1 2;
+    width: 20;
+}
+
+#no-samples-dialog {
+    width: 65;
+    height: 18;
+    background: $surface;
+    border: thick $primary;
+}
+
+#no-samples-title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin: 1;
+}
+
+#no-samples-content {
+    margin: 1 2;
+}
+
+#quit-no-samples {
+    margin: 1 2;
+    width: 20;
+}
+
+/* Status bar */
+#status-bar {
+    height: 3;
+    background: #1B2E46;
+    padding: 1;
+    width: 100%;
+}
+
+#status-left {
+    width: 1fr;
+    text-align: left;
+}
+
+#status-right {
+    width: auto;
+    text-align: right;
+}
+
+/* Table */
+#record-table {
+    height: 1fr;
+    width: 100%;
+    background: $surface;
+}
+
+/* Rich table styling through the widget */
+ComparisonDisplayTable {
+    height: 1fr;
+    width: 100%;
+}
+
+/* Footer */
+Footer {
+    background: #1B2E46;
+    color: $text;
+}
+
+Footer > .footer--highlight {
+    background: #1B2E46;
+}
+
+Footer > .footer--highlight-key {
+    background: #E4A242;
+    color: #1B2E46;
+}
+
+Footer > .footer--key {
+    background: #E4A242;
+    color: #1B2E46;
+}
+
+Footer > .footer--description {
+    color: $text;
+}
+
+/* Other views */
+#pr-curve-display {
+    height: auto;
+    width: 100%;
+    overflow: auto;
+}
+
+.command-area {
+    height: 3;
+    background: #1B2E46;
+    padding: 1;
+}
+
+/* Dynamic group styles will be generated at runtime */
+/* No need for hardcoded group-a through group-g classes */

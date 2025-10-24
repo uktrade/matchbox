@@ -1127,16 +1127,18 @@ class TestGetClustersWithLeaves:
             # Verify C301's leaves (should contain clusters 101, 102)
             c301_leaves = result[301]["leaves"]
             c301_leaf_ids = {leaf["leaf_id"] for leaf in c301_leaves}
-            assert c301_leaf_ids == {101, 102}, (
-                f"C301 leaves incorrect: {c301_leaf_ids}"
-            )
+            assert c301_leaf_ids == {
+                101,
+                102,
+            }, f"C301 leaves incorrect: {c301_leaf_ids}"
 
             # Verify C401's leaves (should contain clusters 201, 202)
             c401_leaves = result[401]["leaves"]
             c401_leaf_ids = {leaf["leaf_id"] for leaf in c401_leaves}
-            assert c401_leaf_ids == {201, 202}, (
-                f"C401 leaves incorrect: {c401_leaf_ids}"
-            )
+            assert c401_leaf_ids == {
+                201,
+                202,
+            }, f"C401 leaves incorrect: {c401_leaf_ids}"
 
     def test_get_clusters_excludes_low_probability(
         self, populated_postgres_db: MatchboxPostgres

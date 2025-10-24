@@ -7,12 +7,11 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine, text
 
 from matchbox.client.dags import DAG
+from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.client.sources import RelationalDBLocation
 from matchbox.common.factories.sources import (
     FeatureConfig,
-    LinkedSourcesTestkit,
     SourceTestkitParameters,
     SuffixRule,
     linked_sources_factory,
@@ -22,11 +21,6 @@ from matchbox.common.factories.sources import (
 @pytest.mark.docker
 class TestE2EPipelineBuilder:
     """End to end tests for DAG pipeline functionality."""
-
-    client: Client | None = None
-    warehouse_engine: Engine | None = None
-    linked_testkit: LinkedSourcesTestkit | None = None
-    n_true_entities: int | None = None
 
     def _clean_company_name(self, column: str) -> str:
         """Generate cleaning SQL for a company name column.
@@ -58,12 +52,9 @@ class TestE2EPipelineBuilder:
         postgres_warehouse: Engine,
     ):
         """Set up warehouse and database using fixtures."""
-        # Store fixtures as class attributes
+        # Persist shared setup for use in the test body
         n_true_entities = 10  # Keep it small for simplicity
-
-        self.__class__.client = matchbox_client
-        self.__class__.warehouse_engine = postgres_warehouse
-        self.__class__.n_true_entities = n_true_entities
+        self.warehouse_engine = postgres_warehouse
 
         # Create simple feature configurations - just two sources
         features = {
@@ -106,7 +97,7 @@ class TestE2EPipelineBuilder:
         )
 
         # Create linked sources testkit
-        self.__class__.linked_testkit = linked_sources_factory(
+        self.linked_testkit = linked_sources_factory(
             source_parameters=source_parameters,
             seed=42,
         )
@@ -137,7 +128,7 @@ class TestE2EPipelineBuilder:
         """
 
         # === SETUP PHASE ===
-        dw_loc = RelationalDBLocation(name="dbname", client=self.warehouse_engine)
+        dw_loc = RelationalDBLocation(name="dbname").set_client(self.warehouse_engine)
 
         dag = DAG("companies").new_run()
 
@@ -177,24 +168,26 @@ class TestE2EPipelineBuilder:
         # Dedupe steps
         dedupe_a = source_a.query(
             cleaning={
-                "company_name": self._clean_company_name(source_a.f("company_name"))
+                "company_name": self._clean_company_name(source_a.f("company_name")),
+                "registration_id": source_a.f("registration_id"),
             },
         ).deduper(
             name="dedupe_source_a",
             description="Deduplicate source A",
             model_class=NaiveDeduper,
-            model_settings={"unique_fields": [source_a.f("registration_id")]},
+            model_settings={"unique_fields": ["registration_id"]},
         )
 
         dedupe_b = source_b.query(
             cleaning={
                 "company_name": self._clean_company_name(source_b.f("company_name")),
+                "registration_id": source_b.f("registration_id"),
             }
         ).deduper(
             name="dedupe_source_b",
             description="Deduplicate source B",
             model_class=NaiveDeduper,
-            model_settings={"unique_fields": [source_b.f("registration_id")]},
+            model_settings={"unique_fields": ["registration_id"]},
         )
 
         # Link deduplicated sources A and B
@@ -257,7 +250,7 @@ class TestE2EPipelineBuilder:
         logging.info("Running DAG again to test downloading and using the default")
 
         # Load default
-        reconstructed_dag = DAG("companies").load_default(location=dw_loc)
+        reconstructed_dag = DAG("companies").load_default()
         assert reconstructed_dag.run == dag.run
 
         # Can directly read data from default
@@ -268,7 +261,7 @@ class TestE2EPipelineBuilder:
         )
 
         # Start a new run
-        rerun_dag = reconstructed_dag.new_run()
+        rerun_dag = reconstructed_dag.set_client(self.warehouse_engine).new_run()
         assert rerun_dag.run != dag.run
         rerun_dag.run_and_sync()
 
@@ -279,5 +272,11 @@ class TestE2EPipelineBuilder:
             check_column_order=False,
             check_row_order=False,
         )
+
+        # Load pending to check we can
+        pending_dag: DAG = (
+            DAG("companies").load_pending().set_client(self.warehouse_engine)
+        )
+        assert pending_dag.run == rerun_dag.run
 
         logging.info("DAG pipeline test completed successfully!")

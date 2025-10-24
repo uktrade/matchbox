@@ -2,14 +2,12 @@
 mod test 'test/justfile'
 # PostgreSQL migration
 mod migrate 'src/matchbox/server/postgresql/justfile'
-# Evaluation app
-mod eval 'src/matchbox/client/eval/justfile'
 
 # Build and run all containers
 build *DOCKER_ARGS:
     uv sync --extra server
     MB_VERSION=$(uv run --frozen python -m setuptools_scm) \
-    docker compose --env-file=environments/containers.env up --build {{DOCKER_ARGS}}
+    docker compose --env-file .env --env-file environments/containers.env up --build {{DOCKER_ARGS}}
 
 # Delete all compiled Python files
 clean:
@@ -31,3 +29,7 @@ scan:
     bash -c "docker run -v "$(pwd):/repo" -i \
         --rm trufflesecurity/trufflehog:latest git \
         file:///repo  --since-commit HEAD --fail"
+
+# Run evaluation app with scenario data
+eval scenario="" log="":
+    uv run python test/scripts/eval.py {{scenario}} --log "{{log}}"

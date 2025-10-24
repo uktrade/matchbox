@@ -17,6 +17,7 @@ from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelResolutionPath
 from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import (
+    MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
 )
 from matchbox.common.transform import hash_cluster_leaves
@@ -36,9 +37,7 @@ from matchbox.server.postgresql.utils.db import (
     compile_sql,
     ingest_to_temporary_table,
 )
-from matchbox.server.postgresql.utils.query import (
-    build_unified_query,
-)
+from matchbox.server.postgresql.utils.query import build_unified_query
 
 
 def insert_judgement(judgement: Judgement):
@@ -98,8 +97,21 @@ def insert_judgement(judgement: Judgement):
             session.commit()
 
 
-def get_judgements() -> tuple[pl.DataFrame, pl.DataFrame]:
+def get_judgements() -> tuple[pa.Table, pa.Table]:
     """Get all judgements from server."""
+
+    def _cast_tables(
+        judgements: pl.DataFrame, cluster_expansion: pl.DataFrame
+    ) -> tuple[pa.Table, pa.Table]:
+        """Cast judgement tables to conform to data transfer schema."""
+        judgements = judgements.cast(pl.Schema(SCHEMA_JUDGEMENTS))
+        cluster_expansion = cluster_expansion.cast(pl.Schema(SCHEMA_CLUSTER_EXPANSION))
+
+        return (
+            judgements.to_arrow().cast(SCHEMA_JUDGEMENTS),
+            cluster_expansion.to_arrow().cast(SCHEMA_CLUSTER_EXPANSION),
+        )
+
     judgements_stmt = select(
         EvalJudgements.user_id,
         EvalJudgements.endorsed_cluster_id.label("endorsed"),
@@ -110,20 +122,18 @@ def get_judgements() -> tuple[pl.DataFrame, pl.DataFrame]:
         judgements = sql_to_df(
             stmt=compile_sql(judgements_stmt),
             connection=conn.dbapi_connection,
-            return_type="arrow",
+            return_type="polars",
         )
 
-        if not len(judgements):
-            return (
-                pl.DataFrame([], schema=pl.Schema(SCHEMA_JUDGEMENTS)),
-                pl.DataFrame([], schema=pl.Schema(SCHEMA_CLUSTER_EXPANSION)),
-            )
+    if not len(judgements):
+        cluster_expansion = pl.DataFrame(schema=pl.Schema(SCHEMA_CLUSTER_EXPANSION))
+        return _cast_tables(judgements, cluster_expansion)
 
-        shown_clusters = set(judgements["shown"].to_pylist())
-        endorsed_clusters = set(judgements["endorsed"].to_pylist())
-        referenced_clusters = Table.from_pydict(
-            {"root": list(shown_clusters | endorsed_clusters)}
-        )
+    shown_clusters = set(judgements["shown"].to_list())
+    endorsed_clusters = set(judgements["endorsed"].to_list())
+    referenced_clusters = Table.from_pydict(
+        {"root": list(shown_clusters | endorsed_clusters)}
+    )
 
     with ingest_to_temporary_table(
         table_name="judgements",
@@ -144,21 +154,10 @@ def get_judgements() -> tuple[pl.DataFrame, pl.DataFrame]:
             cluster_expansion = sql_to_df(
                 stmt=compile_sql(cluster_expansion_stmt),
                 connection=conn.dbapi_connection,
-                return_type="arrow",
+                return_type="polars",
             )
 
-    # Do a bit of casting to conform to data transfer schema
-    for i, col in enumerate(["user_id", "endorsed", "shown"]):
-        judgements = judgements.set_column(i, col, judgements[col].cast(pa.uint64()))
-
-    cluster_expansion = cluster_expansion.set_column(
-        0, "root", cluster_expansion["root"].cast(pa.uint64())
-    )
-    cluster_expansion = cluster_expansion.set_column(
-        1, "leaves", cluster_expansion["leaves"].cast(pa.list_(pa.uint64()))
-    )
-
-    return judgements, cluster_expansion
+    return _cast_tables(judgements, cluster_expansion)
 
 
 def sample(n: int, resolution_path: ModelResolutionPath, user_id: int):
@@ -167,7 +166,7 @@ def sample(n: int, resolution_path: ModelResolutionPath, user_id: int):
     # If the user ID does not exist, the exclusion by previous judgements breaks
     if n > 100:
         # This reasonable assumption means simple "IS IN" function later is fine
-        raise ValueError("Can only sample 100 entries at a time.")
+        raise MatchboxTooManySamplesRequested("Can only sample 100 entries at a time.")
 
     with MBDB.get_session() as session:
         # Use ORM to get resolution metadata
@@ -212,10 +211,7 @@ def sample(n: int, resolution_path: ModelResolutionPath, user_id: int):
 
     # Return early if nothing to sample from
     if not len(to_sample):
-        return pl.DataFrame(
-            {"root": [], "leaf": [], "key": [], "source": []},
-            schema=pl.Schema(SCHEMA_EVAL_SAMPLES),
-        )
+        return pl.DataFrame(schema=pl.Schema(SCHEMA_EVAL_SAMPLES)).to_arrow()
 
     # Sample proportionally to distance from the truth, and get 1D array
     distances = np.abs(to_sample.select("probability").to_numpy() - truth)[:, 0]
@@ -267,9 +263,7 @@ def sample(n: int, resolution_path: ModelResolutionPath, user_id: int):
             connection=conn.dbapi_connection,
             return_type="polars",
         )
-        return final_samples.with_columns(
-            [pl.col("root").cast(pl.UInt64), pl.col("leaf").cast(pl.UInt64)]
-        ).to_arrow()
+        return final_samples.cast(pl.Schema(SCHEMA_EVAL_SAMPLES)).to_arrow()
 
 
 def compare_models(

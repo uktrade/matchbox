@@ -5,16 +5,12 @@ import polars as pl
 import pyarrow as pa
 import pytest
 from httpx import Response
-from polars.testing import assert_frame_equal
 from respx import MockRouter
 from sqlalchemy import Engine
-from sqlalchemy.exc import OperationalError
-from sqlglot import select
-from sqlglot.errors import ParseError
 
 from matchbox.client.dags import DAG
+from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.sources import (
-    RelationalDBLocation,
     Source,
 )
 from matchbox.common.dtos import (
@@ -22,7 +18,6 @@ from matchbox.common.dtos import (
     BackendUploadType,
     CRUDOperation,
     DataTypes,
-    LocationType,
     NotFoundError,
     Resolution,
     ResolutionType,
@@ -33,216 +28,11 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
-    MatchboxSourceExtractTransformError,
 )
 from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import (
-    FeatureConfig,
     source_factory,
-    source_from_tuple,
 )
-
-# Locations
-
-
-def test_relational_db_location_instantiation(sqlite_in_memory_warehouse: Engine):
-    """Test that RelationalDBLocation can be instantiated with valid parameters."""
-    location = RelationalDBLocation(name="dbname", client=sqlite_in_memory_warehouse)
-    assert location.config.type == LocationType.RDBMS
-    assert location.config.name == "dbname"
-
-
-@pytest.mark.parametrize(
-    ["sql", "is_valid"],
-    [
-        pytest.param("SELECT * FROM test_table", True, id="valid-select"),
-        pytest.param(
-            "SELECT id, name FROM test_table WHERE id > 1",
-            True,
-            id="valid-where",
-        ),
-        pytest.param("SLECT * FROM test_table", False, id="invalid-syntax"),
-        pytest.param("", False, id="empty-string"),
-        pytest.param("ALTER TABLE test_table", False, id="alter-sql"),
-        pytest.param(
-            "INSERT INTO users (name, age) VALUES ('John', '25')",
-            False,
-            id="insert-sql",
-        ),
-        pytest.param("DROP TABLE test_table", False, id="drop-sql"),
-        pytest.param("SELECT * FROM users /* with a comment */", True, id="comment"),
-        pytest.param(
-            "WITH user_cte AS (SELECT * FROM users) SELECT * FROM user_cte",
-            True,
-            id="valid-with",
-        ),
-        pytest.param(
-            (
-                "WITH user_cte AS (SELECT * FROM users) "
-                "INSERT INTO temp_users SELECT * FROM user_cte"
-            ),
-            False,
-            id="invalid-with",
-        ),
-        pytest.param(
-            "SELECT * FROM users; DROP TABLE users;", False, id="multiple-statements"
-        ),
-        pytest.param("SELECT * INTO new_table FROM users", False, id="select-into"),
-        pytest.param(
-            """
-            WITH updated_rows AS (
-                UPDATE employees
-                SET salary = salary * 1.1
-                WHERE department = 'Sales'
-                RETURNING *
-            )
-            SELECT * FROM updated_rows;
-            """,
-            False,
-            id="non-query-cte",
-        ),
-        pytest.param(
-            """
-            SELECT foo, bar FROM baz
-            UNION
-            SELECT foo, bar FROM qux;
-            """,
-            True,
-            id="valid-union",
-        ),
-        # This test only works with postgres
-        pytest.param(
-            """
-            SELECT 'ciao' ~ 'hello'
-            """,
-            True,
-            id="valid-tilde",
-        ),
-    ],
-)
-def test_relational_db_extract_transform(
-    sql: str, is_valid: bool, postgres_warehouse: Engine
-):
-    """Test SQL validation in validate_extract_transform."""
-    location = RelationalDBLocation(name="dbname", client=postgres_warehouse)
-
-    if is_valid:
-        assert location.validate_extract_transform(sql)
-    else:
-        with pytest.raises((MatchboxSourceExtractTransformError, ParseError)):
-            location.validate_extract_transform(sql)
-
-
-def test_relational_db_infer_types(sqlite_warehouse: Engine):
-    """Test that types are inferred correctly from the extract transform SQL."""
-    source_testkit = source_from_tuple(
-        data_tuple=(
-            {"foo": "10", "bar": None},
-            {"foo": "foo_val", "bar": None},
-            {"foo": None, "bar": 10},
-        ),
-        data_keys=["a", "b", "c"],
-        name="source",
-        engine=sqlite_warehouse,
-    ).write_to_location()
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
-
-    query = f"""
-        select key as renamed_key, foo, bar from
-        (select key, foo, bar from {source_testkit.name});
-    """
-
-    inferred_types = location.infer_types(query)
-
-    assert len(inferred_types) == 3
-    assert inferred_types["renamed_key"] == DataTypes.STRING
-    assert inferred_types["foo"] == DataTypes.STRING
-    assert inferred_types["bar"] == DataTypes.INT64
-
-
-def test_relational_db_execute(sqlite_warehouse: Engine):
-    """Test executing a query and returning results using a real SQLite database."""
-    features = [
-        FeatureConfig(name="company", base_generator="company"),
-        FeatureConfig(name="employees", base_generator="random_int"),
-    ]
-
-    source_testkit = source_factory(
-        features=features, n_true_entities=10, engine=sqlite_warehouse
-    ).write_to_location()
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
-
-    sql = select("*").from_(source_testkit.name).sql()
-    batch_size = 2
-
-    # Execute the query
-    results = list(location.execute(sql, batch_size))
-    # Unlike later on, employee data type not overridden
-    assert results[0]["employees"].dtype == pl.Int64
-
-    # Check that we got expected results
-    assert len(results) > 0
-
-    # Combine all batches to check total row count
-    combined_df = pl.concat(results)
-    assert len(combined_df) == 10
-
-    # Try overriding schema
-    overridden_results = list(
-        location.execute(sql, batch_size, schema_overrides={"employees": pl.String})
-    )
-    assert overridden_results[0]["employees"].dtype == pl.String
-
-    # Try query with filter
-    keys_to_filter = source_testkit.data["key"][:2].to_pylist()
-    filtered_results = pl.concat(
-        location.execute(sql, batch_size, keys=("key", keys_to_filter))
-    )
-    assert len(filtered_results) == 2
-
-    # Filtering by no keys has no effect
-    unfiltered_results = pl.concat(location.execute(sql, batch_size, keys=("key", [])))
-    assert_frame_equal(unfiltered_results, combined_df)
-
-
-def test_relational_db_execute_invalid(sqlite_warehouse: Engine):
-    """Test that invalid queries are handled correctly when executing."""
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
-
-    # Invalid SQL query
-    sql = "SELECT * FROM nonexistent_table"
-
-    # Should raise an exception when executed
-    with pytest.raises(OperationalError):
-        list(location.execute(sql, batch_size=10))
-
-
-def test_relational_db_retrieval_and_transformation(sqlite_warehouse: Engine):
-    """Test a more complete workflow with data retrieval and transformation."""
-    source_testkit = source_factory(engine=sqlite_warehouse).write_to_location()
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
-
-    # Execute a query with transformation
-    sql = (
-        select("company_name AS name", "UPPER(company_name) AS company_name", "crn")
-        .from_(source_testkit.name)
-        .sql()
-    )
-
-    results = list(location.execute(sql, batch_size=1))
-    assert len(results) == 10  # 10 batches of 1 row
-
-    df: pl.DataFrame = pl.concat(results)
-
-    # Verify the result structure
-    assert set(df.columns) == {"name", "company_name", "crn"}
-
-    # Verify the calculated index_fields
-    sample_str: str = df.select("company_name").row(0)[0]
-    assert sample_str == sample_str.upper()
-
-
-# Source
 
 
 def test_source_infers_type(sqlite_warehouse: Engine):
@@ -256,7 +46,7 @@ def test_source_infers_type(sqlite_warehouse: Engine):
         engine=sqlite_warehouse,
     ).write_to_location()
 
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -291,7 +81,7 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine):
         engine=sqlite_warehouse,
     ).write_to_location()
 
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
 
     # Use SQLite's INSTR function (returns position of substring)
     # Other databases use CHARINDEX, POSITION, etc.
@@ -337,7 +127,7 @@ def test_source_fetch(sqlite_warehouse: Engine):
     ).write_to_location()
 
     # Create location and source
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -374,14 +164,16 @@ def test_source_fetch(sqlite_warehouse: Engine):
         pytest.param(True, id="with_name_qualification"),
     ],
 )
-@patch("matchbox.client.sources.RelationalDBLocation.execute")
+@patch("matchbox.client.locations.RelationalDBLocation.execute")
 def test_source_fetch_name_qualification(
     mock_execute: Mock, qualify_names: bool, sqlite_in_memory_warehouse: Engine
 ):
     """Test that column names are qualified when requested."""
     # Mock the location execute method to verify parameters
     mock_execute.return_value = (x for x in [None])  # execute needs to be a generator
-    location = RelationalDBLocation(name="sqlite", client=sqlite_in_memory_warehouse)
+    location = RelationalDBLocation(name="sqlite").set_client(
+        sqlite_in_memory_warehouse
+    )
 
     # Create source
     source = Source(
@@ -421,7 +213,7 @@ def test_source_fetch_name_qualification(
         pytest.param(3, {"batch_size": 3}, id="multiple_batches"),
     ],
 )
-@patch("matchbox.client.sources.RelationalDBLocation.execute")
+@patch("matchbox.client.locations.RelationalDBLocation.execute")
 def test_source_fetch_batching(
     mock_execute: Mock,
     batch_size: int,
@@ -431,7 +223,9 @@ def test_source_fetch_batching(
     """Test query with batching options."""
     # Mock the location execute method to verify parameters
     mock_execute.return_value = (x for x in [None])  # execute needs to be a generator
-    location = RelationalDBLocation(name="sqlite", client=sqlite_in_memory_warehouse)
+    location = RelationalDBLocation(name="sqlite").set_client(
+        sqlite_in_memory_warehouse
+    )
 
     # Create source
     source = Source(
@@ -477,7 +271,7 @@ def test_source_run(sqlite_warehouse: Engine, batch_size: int):
     ).write_to_location()
 
     # Create location and source
-    location = RelationalDBLocation(name="dbname", client=sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -509,7 +303,9 @@ def test_source_run_null_identifier(
 ):
     """Test hashing data raises an error when source primary keys contain nulls."""
     # Create a source
-    location = RelationalDBLocation(name="sqlite", client=sqlite_in_memory_warehouse)
+    location = RelationalDBLocation(name="sqlite").set_client(
+        sqlite_in_memory_warehouse
+    )
     source = Source(
         dag=DAG("collection"),
         location=location,

@@ -11,6 +11,7 @@ import httpx
 import polars as pl
 from pyarrow import Table
 from pyarrow.parquet import read_table
+from pydantic import ValidationError
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -40,6 +41,7 @@ from matchbox.common.dtos import (
     Match,
     ModelResolutionPath,
     NotFoundError,
+    OKMessage,
     Resolution,
     ResolutionPath,
     ResolutionType,
@@ -120,7 +122,12 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
             raise RuntimeError(f"Unexpected 400 error: {res.content}")
 
     if res.status_code == 404:
-        error = NotFoundError.model_validate(res.json())
+        try:
+            error = NotFoundError.model_validate(res.json())
+        # Validation will fail if endpoint does not exist
+        except ValidationError as e:
+            raise RuntimeError(f"Error with request {res._request}: {res}") from e
+
         match error.entity:
             case BackendResourceType.COLLECTION:
                 raise MatchboxCollectionNotFoundError(error.details)
@@ -176,7 +183,14 @@ CLIENT = create_client(settings=settings)
 
 
 @http_retry
+def healthcheck() -> OKMessage:
+    """Checks the health of the Matchbox server."""
+    return OKMessage.model_validate(CLIENT.get("/health").json())
+
+
+@http_retry
 def login(user_name: str) -> int:
+    """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
     response = CLIENT.post(
         "/login", json=LoginAttempt(user_name=user_name).model_dump()
@@ -520,17 +534,7 @@ def compare_models(
     resolutions: list[ModelResolutionPath],
 ) -> ModelComparison:
     """Get a model comparison for a set of model resolutions."""
-    qualified_resolution = [
-        ModelResolutionPath(
-            collection=resolution.collection,
-            run=resolution.run,
-            name=resolution,
-        )
-        for resolution in resolutions
-    ]
-    res = CLIENT.post(
-        "/eval/compare", json=[r.model_dump() for r in qualified_resolution]
-    )
+    res = CLIENT.post("/eval/compare", json=[r.model_dump() for r in resolutions])
     scores = {resolution: tuple(pr) for resolution, pr in res.json().items()}
     return scores
 

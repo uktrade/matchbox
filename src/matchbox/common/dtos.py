@@ -824,7 +824,7 @@ class UploadStatus(BaseModel):
     collection_name: CollectionName
     run_id: RunID
     resolution_name: ResolutionName
-    path_str: str
+    full_path: str
     stage: UploadStage
     update_timestamp: datetime
     details: str | None = None
@@ -858,7 +858,7 @@ class UploadStatus(BaseModel):
                                 collection_name="collection",
                                 run_id=1,
                                 resolution_name="resolution",
-                                path_str="collection/1/resolution",
+                                full_path="collection/1/resolution",
                                 stage=UploadStage.FAILED,
                                 details=(
                                     "Upload ID not found or expired. Entries expire "
@@ -875,7 +875,7 @@ class UploadStatus(BaseModel):
                                 collection_name="collection",
                                 run_id=1,
                                 resolution_name="resolution",
-                                path_str="collection/1/resolution",
+                                full_path="collection/1/resolution",
                                 stage=UploadStage.FAILED,
                                 details="Schema mismatch. Expected: ... Got: ...",
                                 entity=BackendUploadType.INDEX,

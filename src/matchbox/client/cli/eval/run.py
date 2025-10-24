@@ -41,7 +41,7 @@ def evaluate(
         typer.Option(
             "--warehouse",
             "-w",
-            help="Warehouse database connection string (e.g. postgresql://user:pass@host/db)",
+            help="Warehouse database connection string (e.g. postgresql://user:pass@host/db)",  # trufflehog:ignore  # noqa: E501
         ),
     ] = None,
     log_file: Annotated[

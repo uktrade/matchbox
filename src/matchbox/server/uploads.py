@@ -59,9 +59,6 @@ class UploadTracker(ABC):
         return UploadEntry(
             path=path,
             status=UploadStatus(
-                collection_name=path.collection,
-                run_id=path.run,
-                resolution_name=path.name,
                 full_path=str(path),
                 stage=UploadStage.AWAITING_UPLOAD,
                 update_timestamp=datetime.now(),

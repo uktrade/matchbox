@@ -82,8 +82,8 @@ class Query:
     def config(self) -> QueryConfig:
         """The query configuration for the current DAG."""
         return QueryConfig(
-            source_resolutions=[source.resolution_path for source in self.sources],
-            model_resolution=self.model.resolution_path if self.model else None,
+            source_resolutions=[source.name for source in self.sources],
+            model_resolution=self.model.name if self.model else None,
             combine_type=self.combine_type,
             threshold=truth_float_to_int(self.threshold) if self.threshold else None,
             cleaning=self.cleaning,
@@ -103,13 +103,11 @@ class Query:
             A reconstructed Query instance.
         """
         # Get sources from DAG
-        sources = [dag.get_source(res.name) for res in config.source_resolutions]
+        sources = [dag.get_source(res) for res in config.source_resolutions]
 
         # Get model if specified
         model = (
-            dag.get_model(config.model_resolution.name)
-            if config.model_resolution
-            else None
+            dag.get_model(config.model_resolution) if config.model_resolution else None
         )
 
         # Convert threshold back to float

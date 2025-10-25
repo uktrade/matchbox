@@ -162,21 +162,6 @@ def test_multiple_linked_testkits():
     assert dag_testkit.source_to_linked["bar1"] == linked2
 
 
-def test_name_collision_caught_by_dag():
-    """Test that name collisions are still caught by the real dag_testkit."""
-    dag_testkit = TestkitDAG()
-
-    # Add first source
-    source1 = source_factory(name="duplicate_name", dag=dag_testkit.dag)
-    dag_testkit.add_source(source1)
-
-    # Try to add second source with same name
-    source2 = source_factory(name="duplicate_name", dag=dag_testkit.dag)
-
-    with pytest.raises(ValueError, match="already taken"):
-        dag_testkit.add_source(source2)
-
-
 def test_empty_dag_properties():
     """Test properties of an empty TestkitDAG."""
     dag_testkit = TestkitDAG()

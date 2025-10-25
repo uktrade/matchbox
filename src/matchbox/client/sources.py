@@ -17,16 +17,13 @@ from matchbox.common.db import (
 from matchbox.common.dtos import (
     DataTypes,
     Resolution,
-    ResolutionPath,
     ResolutionType,
     SourceConfig,
     SourceField,
     SourceResolutionName,
     SourceResolutionPath,
 )
-from matchbox.common.exceptions import (
-    MatchboxResolutionNotFoundError,
-)
+from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import HashMethod, hash_rows
 from matchbox.common.logging import logger
 
@@ -159,14 +156,6 @@ class Source:
             key_field=self.key_field,
             index_fields=self.index_fields,
         )
-
-    @property
-    def dependencies(self) -> list[ResolutionPath]:
-        """Returns all resolution paths this source needs.
-
-        Provided to match the interface of Model objects.
-        """
-        return self.config.dependencies
 
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""

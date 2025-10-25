@@ -5,7 +5,6 @@ from matchbox.common.dtos import (
     CollectionName,
     Match,
     ModelResolutionName,
-    QueryConfig,
     ResolutionName,
     ResolutionPath,
     SourceResolutionName,
@@ -64,26 +63,3 @@ def test_validate_collection():
 
     with pytest.raises(ValueError):
         Collection(default_run=2, runs=[1])
-
-
-def test_validate_query_paths():
-    with pytest.raises(ValueError, match="Incompatible collection"):
-        QueryConfig(
-            source_resolutions=(
-                ResolutionPath(collection="companies", run=1, name="source"),
-            ),
-            model_resolution=ResolutionPath(
-                collection="companies", run=2, name="model"
-            ),
-        )
-
-    with pytest.raises(ValueError, match="Incompatible collection"):
-        QueryConfig(
-            source_resolutions=(
-                ResolutionPath(collection="companies", run=1, name="source"),
-                ResolutionPath(collection="companies2", run=1, name="source2"),
-            ),
-            model_resolution=ResolutionPath(
-                collection="companies", run=1, name="model"
-            ),
-        )

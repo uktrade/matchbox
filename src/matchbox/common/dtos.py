@@ -397,8 +397,16 @@ class SourceConfig(BaseModel):
         return self
 
     @property
-    def dependencies(self) -> list[ResolutionPath]:
+    def dependencies(self) -> list[ResolutionName]:
         """Return all resolution names that this source needs.
+
+        Provided for symmetry with ModelConfig.
+        """
+        return []
+
+    @property
+    def parents(self) -> list[ResolutionName]:
+        """Returns all resolution names directly input to this config.
 
         Provided for symmetry with ModelConfig.
         """
@@ -477,8 +485,8 @@ class QueryConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    source_resolutions: tuple[SourceResolutionPath, ...]
-    model_resolution: ModelResolutionPath | None = None
+    source_resolutions: tuple[SourceResolutionName, ...]
+    model_resolution: ModelResolutionName | None = None
     combine_type: QueryCombineType = QueryCombineType.CONCAT
     threshold: int | None = None
     cleaning: dict[str, str] | None = None
@@ -488,27 +496,10 @@ class QueryConfig(BaseModel):
         """Ensure that resolution settings are compatible."""
         if not self.source_resolutions:
             raise ValueError("At least one source resolution required.")
-        first_path = self.source_resolutions[0]
-        if self.model_resolution and (
-            self.model_resolution.collection != first_path.collection
-            or self.model_resolution.run != first_path.run
-        ):
-            raise ValueError(
-                "Incompatible collection and runs across model and source resolutions."
-            )
         if len(self.source_resolutions) > 1:
             if not self.model_resolution:
                 raise ValueError(
                     "A model resolution must be set if querying from multiple sources"
-                )
-            if any(
-                [
-                    res.collection != first_path.collection or res.run != first_path.run
-                    for res in self.source_resolutions[1:]
-                ]
-            ):
-                raise ValueError(
-                    "Incompatible collection and runs across source resolutions."
                 )
         return self
 
@@ -536,8 +527,8 @@ class QueryConfig(BaseModel):
         return v
 
     @property
-    def dependencies(self) -> list[ResolutionPath]:
-        """Return all resolution names that this query needs."""
+    def dependencies(self) -> list[ResolutionName]:
+        """Return all resolutions that this query needs."""
         deps = list(self.source_resolutions)
         if self.model_resolution:
             deps.append(self.model_resolution)
@@ -545,7 +536,7 @@ class QueryConfig(BaseModel):
         return deps
 
     @property
-    def point_of_truth(self):
+    def point_of_truth(self) -> ResolutionName:
         """Return path of resolution that will be used as point of truth."""
         if self.model_resolution:
             return self.model_resolution
@@ -585,16 +576,8 @@ class ModelConfig(BaseModel):
         """Ensure that a right query is set if and only if model is linker."""
         if self.type == ModelType.DEDUPER and self.right_query is not None:
             raise ValueError("Right query can't be set for dedupers")
-        if self.type == ModelType.LINKER:
-            if (
-                self.right_query.source_resolutions[0].collection
-                != self.left_query.source_resolutions[0].collection
-                or self.right_query.source_resolutions[0].run
-                != self.left_query.source_resolutions[0].run
-            ):
-                raise ValueError("Left and right query must share collection and run.")
-            if self.right_query is None:
-                raise ValueError("Right query must be set for linkers")
+        if self.type == ModelType.LINKER and self.right_query is None:
+            raise ValueError("Right query must be set for linkers")
 
         return self
 
@@ -609,13 +592,23 @@ class ModelConfig(BaseModel):
         return value
 
     @property
-    def dependencies(self) -> list[ResolutionPath]:
-        """Return all resolution names that this model needs."""
+    def dependencies(self) -> list[ResolutionName]:
+        """Return all resolutions that this model needs."""
         deps = list(self.left_query.dependencies)
         if self.right_query:
             deps.extend(self.right_query.dependencies)
 
         return deps
+
+    @property
+    def parents(self) -> list[ResolutionName]:
+        """Returns all resolution names directly input to this config."""
+        if self.right_query:
+            return [
+                self.left_query.point_of_truth,
+                self.right_query.point_of_truth,
+            ]
+        return [self.left_query.point_of_truth]
 
 
 class Match(BaseModel):

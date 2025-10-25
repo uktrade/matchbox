@@ -151,7 +151,7 @@ def test_mixing_dags_fails(sqlite_warehouse: Engine):
 
 
 def test_dag_name_clash(sqlite_warehouse: Engine):
-    """Names across sources and steps must be unique."""
+    """Under some conditions, nodes can be overwritten."""
     dag = TestkitDAG().dag
 
     foo_tkit = source_factory(name="foo", engine=sqlite_warehouse)
@@ -161,18 +161,67 @@ def test_dag_name_clash(sqlite_warehouse: Engine):
     bar = dag.source(**bar_tkit.into_dag())
 
     d_foo = foo.query().deduper(
-        name="d_foo", model_class=NaiveDeduper, model_settings={"unique_fields": []}
+        name="d_foo",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": [foo.f(foo.index_fields[0].name)]},
     )
 
-    with pytest.raises(ValueError, match="already taken"):
-        bar.query().deduper(
-            name="d_foo", model_class=NaiveDeduper, model_settings={"unique_fields": []}
+    # Can re-define nodes, in whatever order
+    d_foo = foo.query().deduper(
+        name="d_foo", model_class=NaiveDeduper, model_settings={"unique_fields": []}
+    )
+    updated_foo_args = foo_tkit.into_dag()
+    updated_foo_args["description"] = "new description"
+    foo = dag.source(**updated_foo_args)
+
+    assert dag.get_model("d_foo").model_settings.unique_fields == []
+    assert dag.get_source(foo_tkit.name).description == "new description"
+
+    # Cannot overwrite source with model
+    with pytest.raises(ValueError, match="Cannot re-assign"):
+        foo.query().deduper(
+            name=foo_tkit.name,
+            model_class=NaiveDeduper,
+            model_settings={"unique_fields": []},
         )
 
-    # DAG is not modified by failed attempt
-    assert dag.nodes["d_foo"] == d_foo
-    # We didn't overwrite d_foo's dependencies
-    assert dag.graph["d_foo"] == [foo.name]
+    # Cannot overwrite model with source
+    updated_foo_args = foo_tkit.into_dag()
+    updated_foo_args["name"] = "d_foo"
+    with pytest.raises(ValueError, match="Cannot re-assign"):
+        dag.source(**updated_foo_args)
+
+    # Cannot change inputs of model
+    linker = foo.query().linker(
+        bar.query(),
+        name="linker",
+        model_class=DeterministicLinker,
+        model_settings={"comparisons": "l.field=r.field"},
+    )
+
+    baz_tkit = source_factory(name="baz", engine=sqlite_warehouse)
+    baz = dag.source(**baz_tkit.into_dag())
+    with pytest.raises(ValueError, match="Cannot re-assign"):
+        foo.query().linker(
+            # Linking different source using linker whose name is taken
+            baz.query(),
+            name="linker",
+            model_class=DeterministicLinker,
+            model_settings={"comparisons": "l.field=r.field"},
+        )
+
+    # After failed attempts, DAG is as we expect
+    assert dag.get_source(foo.name) == foo
+    assert dag.get_source(bar.name) == bar
+    assert dag.get_source(baz.name) == baz
+    assert dag.get_model(d_foo.name) == d_foo
+    assert dag.get_model(linker.name) == linker
+
+    assert dag.graph[foo.name] == []
+    assert dag.graph[bar.name] == []
+    assert dag.graph[baz.name] == []
+    assert dag.graph[d_foo.name] == [foo.name]
+    assert dag.graph[linker.name] == [foo.name, bar.name]
 
 
 @patch.object(Source, "run")
@@ -852,8 +901,8 @@ def test_dag_uses_existing_collection(
     assert dag.run == expected_run_id
 
 
-def test_dag_load_default_run(matchbox_api: MockRouter):
-    """Can load default run with sources and optionally models."""
+def test_dag_load_server_run(matchbox_api: MockRouter):
+    """Can retrieve serialised DAG from the server."""
     # Create test data
     test_dag = TestkitDAG().dag
 
@@ -938,6 +987,32 @@ def test_dag_load_default_run(matchbox_api: MockRouter):
     assert pending_dag.run == 2
     assert set(pending_dag.nodes.keys()) == set(test_dag.nodes.keys())
     assert pending_dag.graph == test_dag.graph
+
+    # Compatible nodes are updated when loading pending
+    overwritten_dag = DAG(name=test_dag.name)
+    overwritten_source = overwritten_dag.source(**crn_testkit.into_dag())
+    overwritten_source.description = "new description"
+    overwritten_dag.load_pending()
+    # Description is overwritten
+    assert (
+        overwritten_dag.get_source(crn_testkit.name).description
+        == crn_testkit.source.description
+    )
+
+    # Cannot load pending into local DAG that alters the graph
+    clashing_dag = DAG(name=test_dag.name)
+    crn = clashing_dag.source(**crn_testkit.into_dag())
+    duns = clashing_dag.source(**duns_testkit.into_dag())
+
+    # This linker skips the deduper defined above
+    crn.query().linker(
+        duns.query(),
+        name=linker_model_testkit.name,
+        model_class=DeterministicLinker,
+        model_settings={"comparisons": "l.field=r.field"},
+    )
+    with pytest.raises(ValueError, match="Cannot re-assign"):
+        clashing_dag.load_pending()
 
     # If the collection is not available, errors
     matchbox_api.get(f"/collections/{test_dag.name}/runs/1").mock(

@@ -19,7 +19,6 @@ from matchbox.common.dtos import (
     ModelResolutionPath,
     ModelType,
     Resolution,
-    ResolutionPath,
     ResolutionType,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
@@ -139,21 +138,6 @@ class Model:
             left_query=self.left_query.config,
             right_query=self.right_query.config if self.right_query else None,
         )
-
-    @property
-    def dependencies(self) -> list[ResolutionPath]:
-        """Returns all resolution paths this model needs as implied by the queries."""
-        return self.config.dependencies
-
-    @property
-    def parents(self) -> list[ResolutionPath]:
-        """Returns all resolution paths directly input to this model."""
-        if self.right_query:
-            return [
-                self.left_query.config.point_of_truth,
-                self.right_query.config.point_of_truth,
-            ]
-        return [self.left_query.config.point_of_truth]
 
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""

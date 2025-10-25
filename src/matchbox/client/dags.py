@@ -46,21 +46,57 @@ class DAG:
         if self != dag:
             raise ValueError("Cannot mix DAGs")
 
+    def set_downstream_to_rerun(self, step_name: ResolutionName):
+        """Mark step and downstream steps as not run."""
+        self.nodes[step_name].last_run = None
+
+        descendants: set[str] = set()
+
+        def dfs(node):
+            for child, parents in self.graph.items():
+                if node in parents:
+                    descendants.add(child)
+                    dfs(child)
+
+        dfs(self.nodes[step_name])
+
+        for d in descendants:
+            self.nodes[d].last_run = None
+
     def _add_step(self, step: Source | Model) -> None:
         """Validate and add sources and models to DAG."""
         self._check_dag(step.dag)
 
+        # We allow overwriting nodes, because:
+        # - One might want to iterate on a local DAG without starting over
+        # - One might need to load a pending run in a script which defines the same
+        #   DAG, to re-run a specific node.
+        #
+        # We only mandate that a model's direct inputs not be changed. This ensures
+        # that `self.graph` is not altered. It does not guarantee that the new node
+        # works well with the rest of the DAG, which must be verified by the user.
+        # For example, you could remove source fields that are needed downstream, or
+        # you could query sources that are not available to a point of truth.
+        # These issues are not checked when adding a node for the first time either.
         if step.name in self.nodes:
-            raise ValueError(f"Name '{step.name}' is already taken in the DAG")
+            if step.config.parents != self.nodes[step.name].config.parents:
+                raise ValueError(
+                    "Cannot re-assign name to model with different inputs."
+                )
+            logger.info(
+                f"Overwriting node '{step.name}' and resetting its descendants."
+            )
+            self.set_downstream_to_rerun(step.name)
+
         if isinstance(step, Model):
             self._check_dag(step.left_query.dag)
             if step.right_query:
                 self._check_dag(step.right_query.dag)
 
-            for resolution in step.dependencies:
-                if resolution.name not in self.nodes:
-                    raise ValueError(f"Step {resolution.name} not added to DAG")
-            self.graph[step.name] = [parent.name for parent in step.parents]
+            for resolution in step.config.dependencies:
+                if resolution not in self.nodes:
+                    raise ValueError(f"Step {resolution} not added to DAG")
+            self.graph[step.name] = [parent for parent in step.config.parents]
         else:
             self.graph[step.name] = []
 
@@ -367,7 +403,7 @@ class DAG:
         # Build dependency graph and track added
         added: set[ResolutionName] = set()
         deps_graph: dict[ResolutionName, set[ResolutionName]] = {
-            name: {dep.name for dep in res.config.dependencies}
+            name: {dep for dep in res.config.dependencies}
             for name, res in resolutions.items()
         }
 

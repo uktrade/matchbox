@@ -42,8 +42,8 @@ def test_init_query():
     )
 
     assert query.config == QueryConfig(
-        source_resolutions=[source.resolution_path],
-        model_resolution=model.resolution_path,
+        source_resolutions=[source.name],
+        model_resolution=model.name,
         combine_type="explode",
         threshold=32,
         cleaning={"hello": "hello"},

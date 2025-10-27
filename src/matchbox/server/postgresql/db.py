@@ -115,6 +115,7 @@ class MatchboxDatabase:
         )
         self._adbc_pool = QueuePool(
             self._source_adbc_connection.adbc_clone,
+            # reset_on_return=None,
         )
 
     def _disconnect_adbc(self) -> None:
@@ -158,6 +159,7 @@ class MatchboxDatabase:
         try:
             yield conn
         finally:
+            # conn.dbapi_connection.rollback()
             conn.close()
 
     def run_migrations(self):

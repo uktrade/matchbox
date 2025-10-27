@@ -16,6 +16,7 @@ from matchbox.common.factories.sources import (
     SuffixRule,
     linked_sources_factory,
 )
+from matchbox.server.postgresql.db import MBDB
 
 
 @pytest.mark.docker
@@ -44,6 +45,24 @@ class TestE2EPipelineBuilder:
                 )
             )
         """
+
+    def _check_idle_in_transaction(self) -> int:
+        """Check for idle in transaction connections.
+
+        Returns:
+            Number of connections in idle in transaction state
+        """
+        query = text("""
+            SELECT COUNT(*)
+            FROM pg_stat_activity
+            WHERE state = 'idle in transaction'
+                AND usename = CURRENT_USER
+                AND pid != pg_backend_pid()
+        """)
+
+        with MBDB.get_engine().connect() as conn:
+            result = conn.execute(query)
+            return result.scalar()
 
     @pytest.fixture(autouse=True, scope="function")
     def setup_environment(
@@ -217,6 +236,13 @@ class TestE2EPipelineBuilder:
         logging.info("Running DAG for the first time")
         dag.run_and_sync()
 
+        # CRITICAL CHECK: Verify no idle in transaction connections after pipeline run
+        idle_count = self._check_idle_in_transaction()
+        assert idle_count == 0, (
+            f"Found {idle_count} connection(s) in 'idle in transaction' state after "
+            "DAG run. This will block pg_stat updates and cause query planning issues."
+        )
+
         # Basic verification - we have some linked results and can retrieve them
         final_df = link_a_b.query(source_a, source_b).run()
 
@@ -264,6 +290,13 @@ class TestE2EPipelineBuilder:
         rerun_dag = reconstructed_dag.set_client(self.warehouse_engine).new_run()
         assert rerun_dag.run != dag.run
         rerun_dag.run_and_sync()
+
+        # CRITICAL CHECK: Verify no idle connections after second run
+        idle_count = self._check_idle_in_transaction()
+        assert idle_count == 0, (
+            f"Found {idle_count} connection(s) in 'idle in transaction' state after "
+            "second DAG run"
+        )
 
         # The lookup is identical
         assert_frame_equal(

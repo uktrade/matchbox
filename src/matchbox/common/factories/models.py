@@ -587,7 +587,7 @@ class ModelTestkit(BaseModel):
         return self._entities
 
     @entities.setter
-    def entities(self, value: tuple[ClusterEntity, ...]):
+    def entities(self, value: tuple[ClusterEntity, ...]) -> None:
         self._entities = value
 
     @property
@@ -596,7 +596,7 @@ class ModelTestkit(BaseModel):
         return self._threshold
 
     @threshold.setter
-    def threshold(self, value: int):
+    def threshold(self, value: int) -> None:
         """Set the threshold for the model."""
         right_clusters = self.right_clusters.values() if self.right_clusters else []
         input_results = set(self.left_clusters.values()) | set(right_clusters)

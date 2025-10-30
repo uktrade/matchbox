@@ -34,7 +34,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_init_and_run_model(sqlite_warehouse: Engine, matchbox_api: MockRouter):
+def test_init_and_run_model(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
     """Test that model can be initialised and run correctly."""
     # Register "custom" model
     add_model_class(MockLinker)
@@ -99,7 +99,7 @@ def test_init_and_run_model(sqlite_warehouse: Engine, matchbox_api: MockRouter):
     assert model.results.right_root_leaf is not None
 
 
-def test_model_sync(matchbox_api: MockRouter):
+def test_model_sync(matchbox_api: MockRouter) -> None:
     """Test syncing a model, its truth and results."""
     # Create test model using factory
     testkit = model_factory(model_type="linker")
@@ -234,7 +234,7 @@ def test_model_sync(matchbox_api: MockRouter):
         testkit.model.sync()
 
 
-def test_truth_getter():
+def test_truth_getter() -> None:
     """Test getting model truth threshold from config."""
     # Create testkit with specific truth value
     testkit = model_factory(model_type="linker")
@@ -248,7 +248,7 @@ def test_truth_getter():
     assert truth == 0.9
 
 
-def test_truth_setter_validation_error():
+def test_truth_setter_validation_error() -> None:
     """Test setting invalid truth values."""
     testkit = model_factory(model_type="linker")
 
@@ -257,7 +257,7 @@ def test_truth_setter_validation_error():
         testkit.model.truth = 1.5
 
 
-def test_delete_resolution(matchbox_api: MockRouter):
+def test_delete_resolution(matchbox_api: MockRouter) -> None:
     """Test successfully deleting a resolution."""
     # Create test model using factory
     testkit = model_factory()
@@ -286,7 +286,7 @@ def test_delete_resolution(matchbox_api: MockRouter):
     assert route.calls.last.request.url.params["certain"] == "true"
 
 
-def test_delete_resolution_needs_confirmation(matchbox_api: MockRouter):
+def test_delete_resolution_needs_confirmation(matchbox_api: MockRouter) -> None:
     """Test attempting to delete a resolution without confirmation returns 409."""
     # Create test model using factory
     testkit = model_factory()

@@ -42,11 +42,11 @@ class MatchboxSnapshot(BaseModel):
     """A snapshot of the Matchbox database."""
 
     backend_type: MatchboxBackends
-    data: Any
+    data: dict[str, Any]
 
     @field_validator("data")
     @classmethod
-    def check_serialisable(cls, value: Any) -> Any:
+    def check_serialisable(cls, value: dict[str, Any]) -> dict[str, Any]:
         """Validate that the value can be serialised to JSON."""
         try:
             json.dumps(value)
@@ -144,7 +144,7 @@ class BackendManager:
     _settings = None
 
     @classmethod
-    def initialise(cls, settings: "MatchboxServerSettings"):
+    def initialise(cls, settings: "MatchboxServerSettings") -> None:
         """Initialise the backend with the given settings."""
         cls._settings = settings
 

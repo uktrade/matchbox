@@ -85,7 +85,7 @@ class Results:
         self.probabilities = probabilities.cast(pl.Schema(SCHEMA_RESULTS))
 
     @property
-    def clusters(self):
+    def clusters(self) -> pl.DataFrame:
         """Retrieve new clusters implied by these results."""
         if self._clusters is None:
             im = IntMap()
@@ -94,7 +94,7 @@ class Results:
             )
         return self._clusters
 
-    def root_leaf(self):
+    def root_leaf(self) -> pl.DataFrame:
         """Returns all roots and leaves implied by these results."""
         if self.left_root_leaf is None:
             raise RuntimeError(

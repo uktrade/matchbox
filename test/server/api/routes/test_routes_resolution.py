@@ -28,7 +28,7 @@ else:
     S3Client = Any
 
 
-def test_get_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     source_testkit = source_factory(name="foo")
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(
@@ -40,7 +40,7 @@ def test_get_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert response.json()["resolution_type"] == "source"
 
 
-def test_get_model(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_model(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     testkit = model_factory(name="test_model", description="test description")
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
@@ -53,7 +53,7 @@ def test_get_model(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_get_resolution_404(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(side_effect=MatchboxResolutionNotFoundError())
 
@@ -65,7 +65,7 @@ def test_get_resolution_404(
 
 def test_insert_model(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     testkit = model_factory(name="test_model")
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -93,7 +93,7 @@ def test_insert_model(
 
 def test_insert_model_error(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.create_resolution = Mock(side_effect=Exception("Test error"))
     testkit = model_factory()
@@ -113,7 +113,7 @@ def test_complete_model_upload_process(
     s3: S3Client,
     model_type: str,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test the complete upload process for models from creation through processing."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.settings.datastore.get_client.return_value = s3
@@ -188,9 +188,9 @@ def test_complete_model_upload_process(
 
         current_attempt += 1
 
-    assert current_attempt < max_attempts, (
-        "Timed out waiting for processing to complete"
-    )
+    assert (
+        current_attempt < max_attempts
+    ), "Timed out waiting for processing to complete"
     assert stage == UploadStage.COMPLETE
     assert response.status_code == 200
 
@@ -234,7 +234,7 @@ def test_complete_model_upload_process(
 
 def test_set_results(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     testkit = model_factory()
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
@@ -249,7 +249,7 @@ def test_set_results(
 
 def test_set_results_model_not_found(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test setting results for a non-existent model."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(side_effect=MatchboxResolutionNotFoundError())
@@ -264,7 +264,7 @@ def test_set_results_model_not_found(
 
 def test_get_results(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     testkit = model_factory()
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_model_data = Mock(return_value=testkit.probabilities.to_arrow())
@@ -279,7 +279,7 @@ def test_get_results(
 
 def test_set_truth(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     testkit = model_factory()
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -298,7 +298,9 @@ def test_set_truth(
     )
 
 
-def test_set_truth_invalid_value(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_set_truth_invalid_value(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test setting an invalid truth value (outside 0-1 range)."""
     testkit = model_factory()
     test_client, _, _ = api_client_and_mocks
@@ -320,7 +322,7 @@ def test_set_truth_invalid_value(api_client_and_mocks: tuple[TestClient, Mock, M
 
 def test_get_truth(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     testkit = model_factory()
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_model_truth = Mock(return_value=95)
@@ -383,7 +385,7 @@ def test_model_patch_endpoints_404(
     assert error.entity == BackendResourceType.RESOLUTION
 
 
-def test_delete_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_delete_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test deletion of a resolution."""
     testkit = model_factory()
     test_client, _, _ = api_client_and_mocks
@@ -406,7 +408,7 @@ def test_delete_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_delete_resolution_needs_confirmation(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test deletion of a model that requires confirmation."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.delete_resolution = Mock(
@@ -446,7 +448,7 @@ def test_delete_resolution_404(
 def test_complete_source_upload_process(
     s3: S3Client,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test the complete upload process from source creation through processing."""
     # Create test data
     source_testkit = source_factory()
@@ -529,9 +531,9 @@ def test_complete_source_upload_process(
 
         current_attempt += 1
 
-    assert current_attempt < max_attempts, (
-        "Timed out waiting for processing to complete"
-    )
+    assert (
+        current_attempt < max_attempts
+    ), "Timed out waiting for processing to complete"
     assert stage == UploadStage.COMPLETE
     assert response.status_code == 200
 

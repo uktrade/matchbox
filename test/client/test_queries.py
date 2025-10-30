@@ -28,7 +28,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_init_query():
+def test_init_query() -> None:
     """Test that query is initialised correctly"""
     source = source_factory().source
     model = model_factory(dag=source.dag).model
@@ -50,7 +50,9 @@ def test_init_query():
     )
 
 
-def test_query_multiple_runs(sqlite_warehouse: Engine, matchbox_api: MockRouter):
+def test_query_multiple_runs(
+    sqlite_warehouse: Engine, matchbox_api: MockRouter
+) -> None:
     """Can run a query multiple times and clean separately."""
     source = (
         source_from_tuple(
@@ -132,7 +134,9 @@ def test_query_multiple_runs(sqlite_warehouse: Engine, matchbox_api: MockRouter)
     assert query.config.cleaning == new_cleaning
 
 
-def test_query_single_source(matchbox_api: MockRouter, sqlite_warehouse: Engine):
+def test_query_single_source(
+    matchbox_api: MockRouter, sqlite_warehouse: Engine
+) -> None:
     """Tests that we can query from a single source."""
     # Dummy data and source
     testkit = source_from_tuple(
@@ -187,7 +191,9 @@ def test_query_single_source(matchbox_api: MockRouter, sqlite_warehouse: Engine)
     }
 
 
-def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engine):
+def test_query_multiple_sources(
+    matchbox_api: MockRouter, sqlite_warehouse: Engine
+) -> None:
     """Tests that we can query multiple sources."""
     # Dummy data and source
     testkit1 = source_from_tuple(
@@ -267,7 +273,7 @@ def test_query_multiple_sources(matchbox_api: MockRouter, sqlite_warehouse: Engi
     }
 
 
-def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine):
+def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
     """Test that cleaning in a query is applied."""
     testkit = source_from_tuple(
         data_tuple=({"val": "a", "val2": 1}, {"val": "b", "val2": 2}),
@@ -309,7 +315,7 @@ def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine):
 )
 def test_query_combine_type(
     combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
-):
+) -> None:
     """Various ways of combining multiple sources are supported."""
     # Dummy data and source
     testkit1 = source_from_tuple(
@@ -400,7 +406,7 @@ def test_query_combine_type(
 )
 def test_query_leaf_ids(
     combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
-):
+) -> None:
     """Leaf IDs can be derived as a query byproduct."""
     testkit1 = source_from_tuple(
         data_tuple=({"col": 20}, {"col": 40}, {"col": 60}),
@@ -478,7 +484,9 @@ def test_query_leaf_ids(
     )
 
 
-def test_query_404_resolution(matchbox_api: MockRouter, sqlite_warehouse: Engine):
+def test_query_404_resolution(
+    matchbox_api: MockRouter, sqlite_warehouse: Engine
+) -> None:
     testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
 
     # Mock API
@@ -499,7 +507,7 @@ def test_query_404_resolution(matchbox_api: MockRouter, sqlite_warehouse: Engine
 
 def test_query_empty_results_raises_exception(
     matchbox_api: MockRouter, sqlite_warehouse: Engine
-):
+) -> None:
     """Test that query raises MatchboxEmptyServerResponse when no data is returned."""
     testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
 
@@ -547,7 +555,7 @@ def test_clean_basic_functionality(
     cleaning_dict: dict[str, str],
     expected_columns: list[str],
     expected_values: dict[str, list],
-):
+) -> None:
     """Test that clean() basic functionality works."""
     test_data = pl.DataFrame(
         {
@@ -565,7 +573,7 @@ def test_clean_basic_functionality(
         assert result[column].to_list() == values
 
 
-def test_clean_none_returns_original():
+def test_clean_none_returns_original() -> None:
     """Test that None cleaning_dict returns original data unchanged."""
     test_data = pl.DataFrame(
         {
@@ -581,7 +589,7 @@ def test_clean_none_returns_original():
     assert_frame_equal(result, test_data)
 
 
-def test_clean_column_passthrough():
+def test_clean_column_passthrough() -> None:
     """Test that id is always included plus columns referenced in cleaning_dict."""
     test_data = pl.DataFrame(
         {
@@ -600,7 +608,7 @@ def test_clean_column_passthrough():
     assert result["full_name"].to_list() == ["John", "Jane", "Bob"]
 
 
-def test_clean_multiple_column_references():
+def test_clean_multiple_column_references() -> None:
     """Test expressions that reference multiple columns."""
     test_data = pl.DataFrame(
         {
@@ -623,7 +631,7 @@ def test_clean_multiple_column_references():
     assert result["high_earner"].to_list() == [False, True, False]
 
 
-def test_clean_complex_sql_expressions():
+def test_clean_complex_sql_expressions() -> None:
     """Test more complex SQL expressions."""
     test_data = pl.DataFrame(
         {
@@ -648,7 +656,7 @@ def test_clean_complex_sql_expressions():
     assert result["category_upper"].to_list() == ["A", "B", "A"]
 
 
-def test_clean_empty_cleaning_dict():
+def test_clean_empty_cleaning_dict() -> None:
     """Test with empty cleaning dict returns only id."""
     test_data = pl.DataFrame(
         {
@@ -665,7 +673,7 @@ def test_clean_empty_cleaning_dict():
     assert result["id"].to_list() == [1, 2, 3]
 
 
-def test_clean_invalid_sql():
+def test_clean_invalid_sql() -> None:
     """Test that invalid SQL raises ParseError."""
     test_data = pl.DataFrame(
         {
@@ -682,7 +690,7 @@ def test_clean_invalid_sql():
         _clean(test_data, cleaning_dict)
 
 
-def test_clean_leaf_id_passed_through():
+def test_clean_leaf_id_passed_through() -> None:
     """Test that leaf_id is automatically passed through if present."""
     test_data = pl.DataFrame(
         {
@@ -703,7 +711,7 @@ def test_clean_leaf_id_passed_through():
     assert result["processed_value"].to_list() == [20, 40, 60]
 
 
-def test_clean_multi_source_data():
+def test_clean_multi_source_data() -> None:
     """Test cleaning with data from multiple sources."""
     test_data = pl.DataFrame(
         {
@@ -731,7 +739,7 @@ def test_clean_multi_source_data():
     ]
 
 
-def test_query_from_config():
+def test_query_from_config() -> None:
     """Test reconstructing a Query from a QueryConfig."""
     dag = TestkitDAG().dag
 
@@ -776,7 +784,7 @@ def test_query_from_config():
     assert reconstructed_query.cleaning == original_query.cleaning
 
 
-def test_query_from_config_no_model():
+def test_query_from_config_no_model() -> None:
     """Test reconstructing a Query without a model."""
     dag = TestkitDAG().dag
 

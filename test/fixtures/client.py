@@ -26,7 +26,7 @@ def env_setter() -> Generator[Callable[[str, str], None], None, None]:
     """Set temporary env variable and refresh client settings."""
     original_values = {}
 
-    def setter(var_name: str, var_value: str):
+    def setter(var_name: str, var_value: str) -> None:
         original_values[var_name] = environ.get(var_name)
 
         environ[var_name] = var_value

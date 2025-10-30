@@ -235,7 +235,7 @@ class IntMap:
         salt (optional): A positive integer to salt the Cantor pairing function
     """
 
-    def __init__(self, salt: int = 42):
+    def __init__(self, salt: int = 42) -> None:
         """Initialise the IntMap."""
         self.mapping: dict[frozenset[int], int] = {}
         if salt < 0:

@@ -18,7 +18,7 @@ from matchbox.server.postgresql.utils.db import (
 @pytest.mark.docker
 def test_reserve_id_block(
     matchbox_postgres: MatchboxPostgres,  # Reset DB
-):
+) -> None:
     """Test that we can atomically reserve ID blocks."""
     first_cluster_id = PKSpace.reserve_block("clusters", 42)
     second_cluster_id = PKSpace.reserve_block("clusters", 42)
@@ -37,7 +37,7 @@ def test_reserve_id_block(
 @pytest.mark.docker
 def test_large_append(
     matchbox_postgres: MatchboxPostgres,  # will drop dummy table
-):
+) -> None:
     """Test appending large data to a table."""
     engine = MBDB.get_engine()
     metadata = MetaData(schema=MBDB.MatchboxBase.metadata.schema)
@@ -120,7 +120,7 @@ def test_large_append(
 @pytest.mark.docker
 def test_ingest_to_temporary_table(
     matchbox_postgres: MatchboxPostgres,  # will drop dummy table
-):
+) -> None:
     """Test temporary table creation, data ingestion, and automatic cleanup."""
     # Create sample arrow data
     data = pa.Table.from_pylist(

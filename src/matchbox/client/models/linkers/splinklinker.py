@@ -13,6 +13,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic.functional_serializers import SerializationInfo
 from splink import DuckDBAPI, SettingsCreator
 from splink import Linker as SplinkLibLinkerClass
 from splink.internals.linker_components.training import LinkerTraining
@@ -165,7 +166,9 @@ class SplinkSettings(LinkerSettings):
         return value
 
     @field_serializer("linker_settings")
-    def serialise_settings(self, value: SettingsCreator, info: Any) -> str:
+    def serialise_settings(
+        self, value: SettingsCreator, info: SerializationInfo
+    ) -> str:
         """Convert Splink settings to string."""
         return json.dumps(value.create_settings_dict("duckdb"))
 

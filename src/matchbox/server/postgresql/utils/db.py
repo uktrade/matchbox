@@ -127,7 +127,7 @@ def restore(snapshot: MatchboxSnapshot, batch_size: int) -> None:
 
 
 @contextlib.contextmanager
-def sqa_profiled():
+def sqa_profiled() -> Generator[None, None, None]:
     """SQLAlchemy profiler.
 
     Taken directly from their docs:
@@ -170,7 +170,7 @@ def _copy_to_table(
     connection: ADBCConnection,
     data: ArrowTable,
     max_chunksize: int | None = None,
-):
+) -> None:
     """Copy data to table using ADBC with isolated connection."""
     batch_reader = pa.RecordBatchReader.from_batches(
         data.schema, data.to_batches(max_chunksize=max_chunksize)
@@ -190,7 +190,7 @@ def large_append(
     table_class: DeclarativeMeta,
     adbc_connection: PoolProxiedConnection,
     max_chunksize: int | None = None,
-):
+) -> None:
     """Append a PyArrow table to a PostgreSQL table using ADBC.
 
     This function does not support upserting and will error if keys clash.

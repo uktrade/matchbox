@@ -16,7 +16,7 @@ from matchbox.common.factories.entities import (
 )
 
 
-def make_cluster_entity(id: int, *args) -> ClusterEntity:
+def make_cluster_entity(id: int, *args: Any) -> ClusterEntity:
     """Helper to create a ClusterEntity.
 
     Args:
@@ -59,7 +59,9 @@ def make_source_entity(
         ("source2", frozenset({"A", "B"})),
     ),
 )
-def test_entity_reference_creation(name: SourceResolutionName, keys: frozenset[str]):
+def test_entity_reference_creation(
+    name: SourceResolutionName, keys: frozenset[str]
+) -> None:
     """Test basic EntityReference creation and access."""
     ref = EntityReference({name: keys})
     assert ref[name] == keys
@@ -68,7 +70,7 @@ def test_entity_reference_creation(name: SourceResolutionName, keys: frozenset[s
         ref["nonexistent"]
 
 
-def test_entity_reference_addition():
+def test_entity_reference_addition() -> None:
     """Test combining EntityReferences."""
     ref1 = EntityReference({"source1": frozenset({"1", "2"})})
     ref2 = EntityReference(
@@ -79,7 +81,7 @@ def test_entity_reference_addition():
     assert combined["source2"] == frozenset({"A"})
 
 
-def test_entity_reference_subset():
+def test_entity_reference_subset() -> None:
     """Test subset relationships between EntityReferences."""
     subset = EntityReference({"source1": frozenset({"1", "2"})})
     superset = EntityReference(
@@ -90,7 +92,7 @@ def test_entity_reference_subset():
     assert not superset <= subset
 
 
-def test_cluster_entity_creation():
+def test_cluster_entity_creation() -> None:
     """Test basic ClusterEntity functionality."""
     ref = EntityReference({"source1": frozenset({"1", "2"})})
     entity = ClusterEntity(keys=ref)
@@ -99,7 +101,7 @@ def test_cluster_entity_creation():
     assert isinstance(entity.id, int)
 
 
-def test_cluster_entity_addition():
+def test_cluster_entity_addition() -> None:
     """Test combining ClusterEntity objects."""
     entity1 = ClusterEntity(keys=EntityReference({"source1": frozenset({"1"})}))
     entity2 = ClusterEntity(keys=EntityReference({"source1": frozenset({"2"})}))
@@ -108,7 +110,7 @@ def test_cluster_entity_addition():
     assert combined.keys["source1"] == frozenset({"1", "2"})
 
 
-def test_source_entity_creation():
+def test_source_entity_creation() -> None:
     """Test basic SourceEntity functionality."""
     base_values = {"name": "John", "age": 30}
     ref = EntityReference({"source1": frozenset({"1", "2"})})
@@ -133,7 +135,7 @@ def test_source_entity_creation():
         ),
     ),
 )
-def test_generate_entities(features: tuple[FeatureConfig, ...], n: int):
+def test_generate_entities(features: tuple[FeatureConfig, ...], n: int) -> None:
     """Test entity generation with different features and counts."""
     faker = Faker(seed=42)
     entities = generate_entities(faker, features, n)
@@ -251,7 +253,9 @@ def test_probabilities_to_results_entities(
         assert any(input_entity in output_entity for output_entity in result)
 
 
-def assert_deep_approx_equal(got: float | dict | list, want: float | dict | list):
+def assert_deep_approx_equal(
+    got: float | dict | list, want: float | dict | list
+) -> None:
     """Compare nested structures with approximate equality for floats."""
     # Handle float comparison
     if isinstance(want, float):
@@ -384,7 +388,7 @@ def test_diff_results(
     actual: list[ClusterEntity],
     want_identical: bool,
     want_result: dict[str, Any],
-):
+) -> None:
     """Test diff_results function handles various scenarios correctly."""
     got_identical, got_result = diff_results(expected, actual)
 
@@ -392,7 +396,7 @@ def test_diff_results(
     assert dict(got_result) == want_result
 
 
-def test_source_to_results_conversion():
+def test_source_to_results_conversion() -> None:
     """Test converting source entities to cluster entities and comparing them."""
     # Create source entity present in multiple sources
     source = SourceEntity(

@@ -222,7 +222,7 @@ def upload_tracker_redis(
         redis_url=development_settings.redis_url, expiry_minutes=100
     )
 
-    def empty_tracker():
+    def empty_tracker() -> None:
         for key in r.scan_iter(f"{tracker.key_prefix}*"):
             r.delete(key)
 

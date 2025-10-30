@@ -15,7 +15,7 @@ from matchbox.common.arrow import (
 )
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelResolutionPath
-from matchbox.common.eval import Judgement, precision_recall
+from matchbox.common.eval import Judgement, ModelComparison, precision_recall
 from matchbox.common.exceptions import (
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
@@ -40,7 +40,7 @@ from matchbox.server.postgresql.utils.db import (
 from matchbox.server.postgresql.utils.query import build_unified_query
 
 
-def insert_judgement(judgement: Judgement):
+def insert_judgement(judgement: Judgement) -> None:
     """Record judgement to server."""
     # Note: we don't currently check that the shown cluster ID points to
     # the source cluster IDs. We must assume this is well-formed.
@@ -160,7 +160,7 @@ def get_judgements() -> tuple[pa.Table, pa.Table]:
     return _cast_tables(judgements, cluster_expansion)
 
 
-def sample(n: int, resolution_path: ModelResolutionPath, user_id: int):
+def sample(n: int, resolution_path: ModelResolutionPath, user_id: int) -> Table:
     """Sample some clusters from a resolution."""
     # Not currently checking validity of the user_id
     # If the user ID does not exist, the exclusion by previous judgements breaks
@@ -270,7 +270,7 @@ def compare_models(
     resolutions: list[ModelResolutionPath],
     judgements: pl.DataFrame,
     expansion: pl.DataFrame,
-):
+) -> ModelComparison:
     """Compare models on the basis of precision and recall."""
 
     def get_root_leaf(resolution_path: ModelResolutionPath) -> Table:

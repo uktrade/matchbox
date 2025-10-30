@@ -10,7 +10,7 @@ from typing import Any, ParamSpec, Self, TypeVar
 
 import polars as pl
 import sqlglot
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import OperationalError
 from sqlglot.errors import ParseError
 
@@ -49,7 +49,7 @@ def requires_client(method: Callable[..., T]) -> Callable[..., T]:
     """
 
     @wraps(method)
-    def wrapper(self: "Location", *args, **kwargs) -> T:
+    def wrapper(self: "Location", *args: Any, **kwargs: Any) -> T:
         if self.client is None:
             raise MatchboxSourceClientError
         return method(self, *args, **kwargs)
@@ -60,12 +60,12 @@ def requires_client(method: Callable[..., T]) -> Callable[..., T]:
 class Location(ABC):
     """A location for a data source."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         """Initialise location."""
         self.config = LocationConfig(type=self.location_type, name=name)
         self._client = None
 
-    def __deepcopy__(self, memo=None):
+    def __deepcopy__(self, memo: dict[int, object] | None = None) -> Self:
         """Create a deep copy of the Location object."""
         if memo is None:
             memo = {}
@@ -78,11 +78,11 @@ class Location(ABC):
         return obj_copy
 
     @property
-    def client(self) -> Any:
+    def client(self) -> Engine | None:
         """Retrieve client."""
         return self._client
 
-    def set_client(self, client: Any) -> Self:
+    def set_client(self, client: Any) -> Self:  # noqa: ANN401
         """Set client for location and return the location."""
         if not isinstance(client, CLIENT_CLASSES[self.client_type]):
             raise ValueError(
@@ -169,7 +169,7 @@ class RelationalDBLocation(Location):
     client_type: ClientType = ClientType.SQLALCHEMY
 
     @contextmanager
-    def _get_connection(self):
+    def _get_connection(self) -> Generator[Connection, None, None]:
         """Context manager for getting database connections with proper cleanup."""
         connection = self.client.connect()
         try:

@@ -28,7 +28,9 @@ from matchbox.common.exceptions import (
 )
 
 
-def test_insert_judgement_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_insert_judgement_ok(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
     judgement = Judgement(user_id=1, shown=10, endorsed=[[1]])
@@ -39,7 +41,9 @@ def test_insert_judgement_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]
     )
 
 
-def test_insert_judgement_error(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_insert_judgement_error(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test that judgement insertion bubbles up errors."""
     test_client, mock_backend, _ = api_client_and_mocks
     fake_judgement = Judgement(user_id=1, shown=10, endorsed=[[1]]).model_dump()
@@ -55,7 +59,7 @@ def test_insert_judgement_error(api_client_and_mocks: tuple[TestClient, Mock, Mo
     assert response.json()["entity"] == BackendResourceType.USER
 
 
-def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test that all judgements can be retrieved."""
     judgements = pa.Table.from_pylist(
         [
@@ -98,7 +102,7 @@ def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert downloaded_expansion.equals(expansion)
 
 
-def test_compare_models_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_compare_models_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     model_a_path = ModelResolutionPath(name="a", collection="default", run=1)
     model_b_path = ModelResolutionPath(name="b", collection="default", run=1)
@@ -117,7 +121,9 @@ def test_compare_models_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert tuple(result["default/1/b"]) == mock_pr[model_b_path]
 
 
-def test_compare_models_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_compare_models_404(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     model_a_path = ModelResolutionPath(name="a", collection="default", run=1)
     model_b_path = ModelResolutionPath(name="b", collection="default", run=1)
@@ -140,7 +146,7 @@ def test_compare_models_404(api_client_and_mocks: tuple[TestClient, Mock, Mock])
     assert response.json()["entity"] == BackendResourceType.JUDGEMENT
 
 
-def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test that samples can be requested."""
     sample = pa.Table.from_pylist(
         [
@@ -192,7 +198,7 @@ def test_get_samples_404(
     exception: BaseException,
     entity: BackendResourceType,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test errors in requesting samples."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.sample_for_eval = Mock(side_effect=exception)
@@ -212,7 +218,7 @@ def test_get_samples_404(
     assert response.json()["entity"] == entity
 
 
-def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test errors in requesting samples."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.sample_for_eval = Mock(side_effect=MatchboxTooManySamplesRequested)

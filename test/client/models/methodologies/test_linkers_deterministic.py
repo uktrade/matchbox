@@ -228,7 +228,7 @@ LINKERS = [
 @patch.object(Query, "run")
 def test_exact_match_linking(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
-):
+) -> None:
     """Test linking with exact matches between sources."""
     # Create sources with the same entities
     features = (
@@ -297,7 +297,7 @@ def test_exact_match_linking(
 @patch.object(Query, "run")
 def test_exact_match_with_duplicates_linking(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
-):
+) -> None:
     """Test linking with exact matches between sources, where data is duplicated."""
     # Create sources with the same entities
     features = (
@@ -363,7 +363,7 @@ def test_exact_match_with_duplicates_linking(
 @patch.object(Query, "run")
 def test_partial_entity_linking(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
-):
+) -> None:
     """Test linking when one source contains only a subset of entities.
 
     This tests that the linker correctly handles when the right source
@@ -434,7 +434,7 @@ def test_partial_entity_linking(
 @patch.object(Query, "run")
 def test_no_matching_entities_linking(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
-):
+) -> None:
     """Test linking when there are no matching entities between sources.
 
     Verifies linkers behave correctly when there should be no matches.

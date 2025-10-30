@@ -65,7 +65,7 @@ def test_no_deduplication(
     mock_query_run: Mock,
     Deduper: Deduper,
     configure_deduper: DeduperConfigurator,
-):
+) -> None:
     """Test deduplication where there aren't actually any duplicates."""
     # Create a source with exact duplicates
     features = (
@@ -120,7 +120,7 @@ def test_no_deduplication(
 @patch.object(Query, "run")
 def test_exact_duplicate_deduplication(
     mock_query_run: Mock, Deduper: Deduper, configure_deduper: DeduperConfigurator
-):
+) -> None:
     """Test deduplication with exact duplicates."""
     # Create a source with exact duplicates
     features = (

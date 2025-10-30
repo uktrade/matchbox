@@ -5,7 +5,7 @@ from polars.testing import assert_frame_equal
 from matchbox.client.results import Results
 
 
-def test_clusters_and_root_leaf():
+def test_clusters_and_root_leaf() -> None:
     """From a results object, we can derive clusters at various levels."""
     # Prepare dummy data and model
     left_root_leaf = pl.DataFrame(

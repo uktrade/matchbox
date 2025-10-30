@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Generator
 
 import polars as pl
 import pytest
@@ -50,7 +51,7 @@ class TestE2EPipelineBuilder:
         self,
         matchbox_client: Client,
         postgres_warehouse: Engine,
-    ):
+    ) -> Generator[None, None, None]:
         """Set up warehouse and database using fixtures."""
         # Persist shared setup for use in the test body
         n_true_entities = 10  # Keep it small for simplicity
@@ -121,7 +122,7 @@ class TestE2EPipelineBuilder:
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 
-    def test_dag_pipeline_creation_and_rerun(self):
+    def test_dag_pipeline_creation_and_rerun(self) -> None:
         """Test DAG API with simple two-source pipeline
 
         Rerun to test overwriting.

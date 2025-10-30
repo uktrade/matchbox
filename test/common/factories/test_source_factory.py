@@ -19,7 +19,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_source_factory_default():
+def test_source_factory_default() -> None:
     """Test that source_factory generates a source testkit with default parameters."""
     source = source_factory()
 
@@ -29,7 +29,7 @@ def test_source_factory_default():
     assert source.data_hashes.schema.equals(SCHEMA_INDEX)
 
 
-def test_source_factory_repetition():
+def test_source_factory_repetition() -> None:
     """Test that source_factory correctly handles row repetition."""
     features = [
         FeatureConfig(
@@ -77,7 +77,7 @@ def test_source_factory_repetition():
     assert len(data_df) == expected_unique_hashes * (repetition + 1)
 
 
-def test_source_factory_data_hashes_integrity():
+def test_source_factory_data_hashes_integrity() -> None:
     """Test that data_hashes correctly identifies identical rows."""
     features = [
         FeatureConfig(
@@ -125,7 +125,7 @@ def test_source_factory_data_hashes_integrity():
     assert len(hashes_df["hash"].unique()) == expected_hash_groups
 
 
-def test_source_factory_mock_properties(sqlite_in_memory_warehouse: Engine):
+def test_source_factory_mock_properties(sqlite_in_memory_warehouse: Engine) -> None:
     """Test that properties set in source_factory match generated SourceConfig."""
     # Create source with specific features and name
     features = [
@@ -175,7 +175,7 @@ def test_source_factory_mock_properties(sqlite_in_memory_warehouse: Engine):
     )
 
 
-def test_entity_variations_tracking():
+def test_entity_variations_tracking() -> None:
     """Test that entity variations are correctly tracked and accessible.
 
     Asserts that ClusterEntity objects are proper subsets of their parent entities.
@@ -229,7 +229,7 @@ def test_entity_variations_tracking():
         )
 
 
-def test_base_and_variation_entities():
+def test_base_and_variation_entities() -> None:
     """Test that base values and variations create correct ClusterEntity objects."""
     features = [
         FeatureConfig(
@@ -317,7 +317,7 @@ def test_base_and_variation_entities():
     )
 
 
-def test_source_factory_id_generation():
+def test_source_factory_id_generation() -> None:
     """Test that source_factory generates unique IDs for rows."""
     features = [
         FeatureConfig(
@@ -351,7 +351,7 @@ def test_source_factory_id_generation():
     assert len(data_df["id"].unique()) == len(data_df["company_name"].unique())
 
 
-def test_source_from_tuple():
+def test_source_from_tuple() -> None:
     """Test that source_factory can create a source from a tuple of values."""
     # Create a source from a tuple of values
     data_tuple = ({"a": 1, "b": "val"}, {"a": 2, "b": "val"})
@@ -494,7 +494,7 @@ def test_generate_rows(
     selected_entities: tuple[SourceEntity, ...],
     features: tuple[FeatureConfig, ...],
     repetition: int,
-):
+) -> None:
     """Test generate_rows correctly tracks entities and row identities."""
     generator = Faker(seed=42)
     raw_data, entity_keys, id_keys, id_hashes = generate_rows(

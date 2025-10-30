@@ -142,7 +142,7 @@ class SourceTestkit(BaseModel):
             "description": self.source.description,
         }
 
-    def write_to_location(self, set_client: Any | None = None) -> Self:
+    def write_to_location(self, set_client: Any | None = None) -> Self:  # noqa: ANN401
         """Write the data to the SourceConfig's location.
 
         Args:

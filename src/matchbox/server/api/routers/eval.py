@@ -41,7 +41,7 @@ router = APIRouter(prefix="/eval", tags=["eval"])
 def insert_judgement(
     backend: BackendDependency,
     judgement: Judgement,
-):
+) -> Response:
     """Submit judgement from human evaluator."""
     try:
         backend.insert_judgement(judgement=judgement)

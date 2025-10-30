@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -16,14 +17,14 @@ from matchbox.server.base import MatchboxDBAdapter
 @pytest.mark.docker
 def test_setup_scenario_bare(
     matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
-):
+) -> None:
     """Test that the bare scenario can be set up."""
     with setup_scenario(matchbox_postgres, "bare", warehouse=sqlite_warehouse) as dag:
         assert isinstance(dag, TestkitDAG)
         assert len(dag.sources) > 0
 
 
-def test_scenario_registry():
+def test_scenario_registry() -> None:
     """Test that the scenario registry contains the built-in scenarios."""
     assert "bare" in SCENARIO_REGISTRY
     assert "index" in SCENARIO_REGISTRY
@@ -37,11 +38,17 @@ def test_scenario_registry():
 @pytest.mark.docker
 def test_register_custom_scenario(
     matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
-):
+) -> None:
     """Test that a custom scenario can be registered and used."""
 
     @register_scenario("custom")
-    def create_custom_scenario(backend, warehouse_engine, n_entities, seed, **kwargs):
+    def create_custom_scenario(
+        backend: MatchboxDBAdapter,
+        warehouse_engine: Engine,
+        n_entities: int,
+        seed: int,
+        **kwargs: Any,
+    ) -> TestkitDAG:
         return create_bare_scenario(
             backend, warehouse_engine, n_entities=n_entities, seed=seed, **kwargs
         )
@@ -57,7 +64,7 @@ def test_register_custom_scenario(
 @pytest.mark.docker
 def test_setup_unknown_scenario(
     matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
-):
+) -> None:
     """Test that asking for an unknown scenario raises a ValueError."""
     with (
         pytest.raises(ValueError, match="Unknown scenario type: nonexistent"),
@@ -71,15 +78,19 @@ def test_setup_unknown_scenario(
 @patch("matchbox.common.factories.scenarios.SCENARIO_REGISTRY", {})
 def test_caching_scenario(
     matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
-):
+) -> None:
     """Test that scenario caching works."""
 
     call_count = 0
 
     @register_scenario("cacheable")
     def create_cacheable_scenario(
-        backend, warehouse_engine, n_entities, seed, **kwargs
-    ):
+        backend: MatchboxDBAdapter,
+        warehouse_engine: Engine,
+        n_entities: int,
+        seed: int,
+        **kwargs: Any,
+    ) -> TestkitDAG:
         nonlocal call_count
         call_count += 1
         return create_bare_scenario(

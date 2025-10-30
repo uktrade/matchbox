@@ -22,12 +22,12 @@ from matchbox.client._settings import settings
 EXPIRY_AFTER_X_HOURS = 24
 
 
-def b64encode_nopadding(to_encode):
+def b64encode_nopadding(to_encode: bytes) -> bytes:
     """B64 encode."""
     return urlsafe_b64encode(to_encode).rstrip(b"=")
 
 
-def generate_json_web_token(sub):
+def generate_json_web_token(sub: str) -> str:
     """Generate JWT with private API Key."""
     private_key = load_pem_private_key(
         settings.private_key.get_secret_value().encode(), password=None

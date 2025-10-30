@@ -26,7 +26,7 @@ class Judgement(BaseModel):
 
     @field_validator("endorsed", mode="before")
     @classmethod
-    def check_endorsed(cls, value: list[list[int]]):
+    def check_endorsed(cls, value: list[list[int]]) -> list[list[int]]:
         """Ensure no cluster IDs are repeated in the endorsement."""
         concat_ids = list(chain(*value))
         if len(concat_ids) != len(set(concat_ids)):

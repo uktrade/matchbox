@@ -38,7 +38,7 @@ else:
 # General
 
 
-def test_healthcheck(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_healthcheck(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test the healthcheck endpoint."""
     test_client, _, _ = api_client_and_mocks
     response = test_client.get("/health")
@@ -48,7 +48,7 @@ def test_healthcheck(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert response.version == version("matchbox-db")
 
 
-def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test the login endpoint."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.login = Mock(return_value=1)
@@ -69,7 +69,7 @@ def test_upload(
     mock_add_task: Mock,
     s3: S3Client,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test uploading a file, happy path."""
     # Setup
     test_client, mock_backend, mock_tracker = api_client_and_mocks
@@ -119,7 +119,7 @@ def test_upload_wrong_filetype(
     mock_add_task: Mock,
     s3: S3Client,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test uploading a file that is not Parquet."""
     # Setup
     test_client, mock_backend, mock_tracker = api_client_and_mocks
@@ -160,7 +160,7 @@ def test_upload_wrong_file_format(
     mock_add_task: Mock,
     s3: S3Client,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test that file uploaded has Parquet magic bytes."""
     # Setup
     test_client, mock_backend, mock_tracker = api_client_and_mocks
@@ -203,7 +203,7 @@ def test_upload_wrong_schema(
     mock_add_task: Mock,
     s3: S3Client,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test uploading a file with wrong schema."""
     test_client, mock_backend, mock_tracker = api_client_and_mocks
     mock_backend.settings.datastore.get_client.return_value = s3
@@ -231,7 +231,9 @@ def test_upload_wrong_schema(
     mock_add_task.assert_not_called()
 
 
-def test_upload_status_check(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_upload_status_check(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test checking status of an upload using the status endpoint."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
@@ -247,7 +249,9 @@ def test_upload_status_check(api_client_and_mocks: tuple[TestClient, Mock, Mock]
     mock_tracker.update.assert_not_called()
 
 
-def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_upload_already_processing(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test attempting to upload when status is already processing."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
@@ -270,7 +274,9 @@ def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock,
     assert response.json()["stage"] == UploadStage.PROCESSING
 
 
-def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_upload_already_queued(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test attempting to upload when status is already queued."""
     test_client, _, mock_tracker = api_client_and_mocks
     source_testkit = source_factory()
@@ -293,7 +299,9 @@ def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Moc
     assert response.json()["stage"] == UploadStage.QUEUED
 
 
-def test_status_check_not_found(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_status_check_not_found(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test checking status for non-existent upload ID."""
     test_client, _, mock_tracker = api_client_and_mocks
     mock_tracker.get.return_value = None
@@ -308,7 +316,7 @@ def test_status_check_not_found(api_client_and_mocks: tuple[TestClient, Mock, Mo
 # Retrieval
 
 
-def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.query = Mock(
         return_value=pa.Table.from_pylist(
@@ -338,7 +346,7 @@ def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert table.schema.equals(SCHEMA_QUERY)
 
 
-def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
 
     mock_backend.query = Mock(side_effect=MatchboxCollectionNotFoundError())
@@ -386,7 +394,7 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
-def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_matches = [
         Match(
@@ -420,7 +428,7 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     [Match.model_validate(m) for m in response.json()]
 
 
-def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
 
     mock_backend.match = Mock(side_effect=MatchboxCollectionNotFoundError())
@@ -478,7 +486,9 @@ def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 # Admin
 
 
-def test_count_all_backend_items(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_count_all_backend_items(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test the unparameterised entity counting endpoint."""
     test_client, mock_backend, _ = api_client_and_mocks
     entity_counts = {
@@ -500,7 +510,9 @@ def test_count_all_backend_items(api_client_and_mocks: tuple[TestClient, Mock, M
     assert response.json() == {"entities": entity_counts}
 
 
-def test_count_backend_item(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_count_backend_item(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     """Test the parameterised entity counting endpoint."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.models.count = Mock(return_value=20)
@@ -510,7 +522,7 @@ def test_count_backend_item(api_client_and_mocks: tuple[TestClient, Mock, Mock])
     assert response.json() == {"entities": {"models": 20}}
 
 
-def test_clear_backend_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_clear_backend_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.clear = Mock()
 
@@ -519,7 +531,9 @@ def test_clear_backend_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     OKMessage.model_validate(response.json())
 
 
-def test_clear_backend_errors(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_clear_backend_errors(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.clear = Mock(side_effect=MatchboxDeletionNotConfirmed)
 
@@ -529,7 +543,9 @@ def test_clear_backend_errors(api_client_and_mocks: tuple[TestClient, Mock, Mock
     assert response.content
 
 
-def test_api_key_authorisation(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_api_key_authorisation(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
     test_client, _, _ = api_client_and_mocks
     routes = [
         (test_client.post, "/upload/upload_id"),

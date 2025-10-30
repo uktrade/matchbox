@@ -48,7 +48,7 @@ def test_calculate_min_max_edges(
     n_components: int,
     true_min: int,
     true_max: int,
-):
+) -> None:
     deduplicate = False
     if not right_n:
         deduplicate = True
@@ -126,7 +126,7 @@ def test_calculate_min_max_edges(
         ),
     ],
 )
-def test_generate_dummy_probabilities(parameters: dict[str, Any]):
+def test_generate_dummy_probabilities(parameters: dict[str, Any]) -> None:
     len_left = parameters["left_count"]
     len_right = parameters["right_count"]
     if len_right:
@@ -184,7 +184,7 @@ def test_generate_dummy_probabilities(parameters: dict[str, Any]):
     assert len(self_references) == 0
 
 
-def test_generate_dummy_probabilities_no_self_references():
+def test_generate_dummy_probabilities_no_self_references() -> None:
     # Create input with repeated values
     left_values = tuple([1] * 4 + [2] * 4 + [3] * 4)
 
@@ -228,7 +228,7 @@ def test_generate_dummy_probabilities_no_self_references():
     ],
     ids=["lower_than_min", "higher_than_max"],
 )
-def test_generate_dummy_probabilities_errors(parameters: dict[str, Any]):
+def test_generate_dummy_probabilities_errors(parameters: dict[str, Any]) -> None:
     left_values = tuple(range(*parameters["left_range"]))
     right_values = tuple(range(*parameters["right_range"]))
 
@@ -401,7 +401,7 @@ def test_generate_entity_probabilities_scenarios(
     source_entities: frozenset[SourceEntity],
     prob_range: tuple[float, float],
     expected: dict,
-):
+) -> None:
     """Comprehensive test for generate_entity_probabilities with various scenarios."""
     # Run the function
     result = generate_entity_probabilities(
@@ -444,7 +444,7 @@ def test_seed_determinism(
     seed2: int,
     should_be_equal: bool,
     case: str,
-):
+) -> None:
     """Test that seeds produce consistent/different results as expected."""
     # Create test entities
     source = make_source_entity("test", ["a1", "a2", "a3"], "entity_a")
@@ -494,7 +494,7 @@ def test_seed_determinism(
         assert not result1.equals(result2)
 
 
-def test_disjoint_set_recovery():
+def test_disjoint_set_recovery() -> None:
     """Test that DisjointSet can recover the entity structure from probabilities."""
     # Create source entities
     source1 = make_source_entity("source1", ["1", "2", "3"], "entity1")
@@ -545,7 +545,7 @@ def test_disjoint_set_recovery():
         pytest.param((0.8, 0.7), id="decreasing_range"),  # Decreasing range
     ],
 )
-def test_invalid_probability_ranges(prob_range: tuple[float, float]):
+def test_invalid_probability_ranges(prob_range: tuple[float, float]) -> None:
     """Test that invalid probability ranges raise appropriate errors."""
     source = make_source_entity("test", ["a1", "a2"], "entity")
     entities = frozenset(
@@ -564,7 +564,7 @@ def test_invalid_probability_ranges(prob_range: tuple[float, float]):
         )
 
 
-def test_complex_entity_recovery():
+def test_complex_entity_recovery() -> None:
     """Test recovery of complex, multi-source entity structures."""
     # Create a source entity spanning multiple sources
     source = SourceEntity(

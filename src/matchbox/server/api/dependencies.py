@@ -121,7 +121,7 @@ SettingsDependency = Annotated[MatchboxServerSettings, Depends(settings)]
 UploadTrackerDependency = Annotated[UploadTracker, Depends(upload_tracker)]
 
 
-def b64_decode(b64_bytes):
+def b64_decode(b64_bytes: bytes) -> bytes:
     """Add padding and decode b64 bytes."""
     remainder = len(b64_bytes) % 4
     if remainder:
@@ -179,7 +179,7 @@ def validate_jwt(
 
 def authorisation_dependencies(
     settings: SettingsDependency, client_token: str = Security(JWT_HEADER)
-):
+) -> None:
     """Optional authorisation."""
     if settings.authorisation:
         validate_jwt(settings, client_token)

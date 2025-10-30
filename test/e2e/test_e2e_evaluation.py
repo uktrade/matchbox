@@ -1,3 +1,5 @@
+from collections.abc import Generator
+
 import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
@@ -38,7 +40,7 @@ class TestE2EModelEvaluation:
         self,
         matchbox_client: Client,
         postgres_warehouse: Engine,
-    ):
+    ) -> Generator[None, None, None]:
         """Set up warehouse and database using fixtures."""
         # Persist shared setup for use in the test body
         n_true_entities = 10
@@ -163,7 +165,7 @@ class TestE2EModelEvaluation:
         assert response.status_code == 200, "Failed to clear matchbox database"
 
     @pytest.mark.asyncio
-    async def test_evaluation_workflow(self):
+    async def test_evaluation_workflow(self) -> None:
         """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
 
         This test focuses on the full data flow through the system with real warehouse
@@ -206,9 +208,9 @@ class TestE2EModelEvaluation:
             await app.action_submit()
 
             final_judgements, _ = _handler.download_eval_data()
-            assert len(final_judgements) == initial_count + 1, (
-                "Judgement should flow through to backend"
-            )
+            assert (
+                len(final_judgements) == initial_count + 1
+            ), "Judgement should flow through to backend"
 
         # Test model comparison functionality with both DAGs
         comparison = compare_models(
@@ -221,8 +223,8 @@ class TestE2EModelEvaluation:
             str(dag.final_step.resolution_path),
             str(self.dag2.final_step.resolution_path),
         }
-        assert expected_keys.issubset(comparison.keys()), (
-            "Comparison should include both models"
-        )
+        assert expected_keys.issubset(
+            comparison.keys()
+        ), "Comparison should include both models"
         for key in expected_keys:
             assert len(comparison[key]) == 2, "Each model should have precision/recall"

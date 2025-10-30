@@ -17,7 +17,7 @@ from matchbox.common.factories.models import (
 from matchbox.common.factories.sources import linked_sources_factory, source_factory
 
 
-def test_model_factory_entity_preservation():
+def test_model_factory_entity_preservation() -> None:
     """Test that model_factory preserves keys with incomplete probabilities."""
     linked = linked_sources_factory()
     all_true_sources = list(linked.true_entities)
@@ -63,7 +63,7 @@ def test_model_type_creation(
     right_testkit: None | str,
     expected_type: str,
     should_have_right: bool,
-):
+) -> None:
     """Test that model creation and core operations work correctly for each type."""
     # Create our source objects from the string parameters
     linked = linked_sources_factory()
@@ -126,18 +126,18 @@ def test_model_type_creation(
     if expected_type == "linker":
         left_ids = set(model.left_data["id"].to_pylist())
         right_ids = set(model.right_data["id"].to_pylist())
-        assert not (left_ids & right_ids), (
-            "Left and right IDs should be disjoint in linker"
-        )
+        assert not (
+            left_ids & right_ids
+        ), "Left and right IDs should be disjoint in linker"
 
         prob_left_ids = set(model.probabilities["left_id"].to_list())
         prob_right_ids = set(model.probabilities["right_id"].to_list())
-        assert prob_left_ids <= left_ids, (
-            "Probability left IDs should be subset of left IDs"
-        )
-        assert prob_right_ids <= right_ids, (
-            "Probability right IDs should be subset of right IDs"
-        )
+        assert (
+            prob_left_ids <= left_ids
+        ), "Probability left IDs should be subset of left IDs"
+        assert (
+            prob_right_ids <= right_ids
+        ), "Probability right IDs should be subset of right IDs"
 
 
 @pytest.mark.parametrize(
@@ -284,7 +284,7 @@ def test_model_pipeline_with_dummy_methodology(
 )
 def test_model_factory_validation(
     kwargs: dict[str, Any], expected_error: type[Exception], expected_message: str
-):
+) -> None:
     """Test that model_factory validates inputs correctly."""
     with pytest.raises(expected_error, match=expected_message):
         model_factory(**kwargs)
@@ -504,9 +504,9 @@ def test_model_factory_with_sources(source_config: dict, expected_checks: dict) 
         set(left_testkit.entities)
         | set(right_testkit.entities if right_testkit else {})
     )
-    assert input_keys == sum(model.entities), (
-        "Model entities should preserve all source keys"
-    )
+    assert input_keys == sum(
+        model.entities
+    ), "Model entities should preserve all source keys"
 
 
 @pytest.mark.parametrize(
@@ -516,7 +516,9 @@ def test_model_factory_with_sources(source_config: dict, expected_checks: dict) 
         pytest.param(1, 2, False, id="different_seeds"),
     ],
 )
-def test_model_factory_seed_behavior(seed1: int, seed2: int, should_be_equal: bool):
+def test_model_factory_seed_behavior(
+    seed1: int, seed2: int, should_be_equal: bool
+) -> None:
     """Test that model_factory handles seeds correctly for reproducibility."""
     dummy1 = model_factory(seed=seed1)
     dummy2 = model_factory(seed=seed2)
@@ -537,7 +539,7 @@ def test_model_factory_seed_behavior(seed1: int, seed2: int, should_be_equal: bo
         assert not dummy1.probabilities.equals(dummy2.probabilities)
 
 
-def test_query_to_model_factory_validation():
+def test_query_to_model_factory_validation() -> None:
     """Test validation in query_to_model_factory."""
     # Create test resources using existing factory
     linked = linked_sources_factory()
@@ -602,7 +604,7 @@ def test_query_to_model_factory_validation():
 )
 def test_query_to_model_factory_creation(
     test_config: dict[str, Any], expected_checks: dict[str, Any]
-):
+) -> None:
     """Test basic model creation from queries."""
     # Create linked sources with factory
     linked = linked_sources_factory()
@@ -660,7 +662,7 @@ def test_query_to_model_factory_creation(
 )
 def test_query_to_model_factory_seed_behavior(
     seed1: int, seed2: int, should_be_equal: bool
-):
+) -> None:
     """Test that query_to_model_factory handles seeds correctly for reproducibility."""
     # Create linked sources with factory
     linked = linked_sources_factory()
@@ -699,7 +701,7 @@ def test_query_to_model_factory_seed_behavior(
             assert not model1.probabilities.equals(model2.probabilities)
 
 
-def test_query_to_model_factory_compare_with_model_factory():
+def test_query_to_model_factory_compare_with_model_factory() -> None:
     """Test that query_to_model_factory produces equivalent results to model_factory."""
     # Create linked sources with factory
     linked = linked_sources_factory(seed=42)

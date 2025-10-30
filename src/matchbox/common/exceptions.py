@@ -33,7 +33,7 @@ class MatchboxException(Exception):
 class MatchboxNameError(MatchboxException, ValueError):
     """Name did not pass validation."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str) -> None:
         """Initialise the exception."""
         super().__init__(message)
 
@@ -41,7 +41,7 @@ class MatchboxNameError(MatchboxException, ValueError):
 class MatchboxArrowSchemaMismatch(MatchboxException):
     """Arrow schema mismatch."""
 
-    def __init__(self, expected: Schema, actual: Schema):
+    def __init__(self, expected: Schema, actual: Schema) -> None:
         """Initialise the exception."""
         message = f"Schema mismatch. Expected:\n{expected}\nGot:\n{actual}"
 
@@ -57,7 +57,7 @@ class MatchboxClientSettingsException(MatchboxException):
     def __init__(
         self,
         message: str | None = None,
-    ):
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Incorrect configuration provided to client."
@@ -74,7 +74,7 @@ class MatchboxUnparsedClientRequest(MatchboxException):
     def __init__(
         self,
         message: str | None = None,
-    ):
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "The API could not parse the content of the client request"
@@ -85,7 +85,7 @@ class MatchboxUnparsedClientRequest(MatchboxException):
 class MatchboxUnhandledServerResponse(MatchboxException):
     """The API sent an unexpected response."""
 
-    def __init__(self, http_status: int, details: str | None = None):
+    def __init__(self, http_status: int, details: str | None = None) -> None:
         """Initialise the exception."""
         message = f"The API sent an unexpected response with status {http_status}"
         if details:
@@ -97,7 +97,9 @@ class MatchboxUnhandledServerResponse(MatchboxException):
 class MatchboxEmptyServerResponse(MatchboxException):
     """The server returned an empty response when data was expected."""
 
-    def __init__(self, message: str | None = None, operation: str | None = None):
+    def __init__(
+        self, message: str | None = None, operation: str | None = None
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "The server returned an empty response when data was expected."
@@ -128,7 +130,7 @@ class MatchboxSourceExtractTransformError(MatchboxException):
     def __init__(
         self,
         logic: str | None = None,
-    ):
+    ) -> None:
         """Initialise the exception."""
         message = "Invalid ETL logic detected."
         if logic is not None:
@@ -144,7 +146,7 @@ class MatchboxSourceTableError(MatchboxException):
         self,
         message: str | None = None,
         table_name: str | None = None,
-    ):
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Table doesn't exist in your source data warehouse."
@@ -158,7 +160,7 @@ class MatchboxSourceTableError(MatchboxException):
 class MatchboxServerFileError(MatchboxException):
     """There was a problem with file upload."""
 
-    def __init__(self, message: str | None = None):
+    def __init__(self, message: str | None = None) -> None:
         """Initialise the exception."""
         if message is None:
             message = "There was a problem with file upload."
@@ -172,7 +174,7 @@ class MatchboxServerFileError(MatchboxException):
 class MatchboxModelConfigError(MatchboxException):
     """There was a problem with ModelConfig."""
 
-    def __init__(self, message: str | None = None):
+    def __init__(self, message: str | None = None) -> None:
         """Initialise the exception."""
         if message is None:
             message = "There was a problem with ModelConfig."
@@ -186,7 +188,7 @@ class MatchboxModelConfigError(MatchboxException):
 class MatchboxUserNotFoundError(MatchboxException):
     """User not found."""
 
-    def __init__(self, message: str | None = None, user_id: str | None = None):
+    def __init__(self, message: str | None = None, user_id: str | None = None) -> None:
         """Initialise the exception."""
         if message is None:
             message = "User not found."
@@ -200,7 +202,9 @@ class MatchboxUserNotFoundError(MatchboxException):
 class MatchboxResolutionNotFoundError(MatchboxException):
     """Resolution not found."""
 
-    def __init__(self, message: str | None = None, name: ResolutionName | None = None):
+    def __init__(
+        self, message: str | None = None, name: ResolutionName | None = None
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Resolution not found."
@@ -214,7 +218,9 @@ class MatchboxResolutionNotFoundError(MatchboxException):
 class MatchboxCollectionNotFoundError(MatchboxException):
     """Collection not found."""
 
-    def __init__(self, message: str | None = None, name: CollectionName | None = None):
+    def __init__(
+        self, message: str | None = None, name: CollectionName | None = None
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Collection not found."
@@ -228,7 +234,7 @@ class MatchboxCollectionNotFoundError(MatchboxException):
 class MatchboxRunNotFoundError(MatchboxException):
     """Run not found."""
 
-    def __init__(self, message: str | None = None, run_id: RunID | None = None):
+    def __init__(self, message: str | None = None, run_id: RunID | None = None) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Run not found."
@@ -246,8 +252,8 @@ class MatchboxDataNotFound(MatchboxException):
         self,
         message: str | None = None,
         table: str | None = None,
-        data: Any | None = None,
-    ):
+        data: str | dict[str, Any] | list[Any] | set[Any] | None = None,
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Data doesn't exist in Matchbox."
@@ -273,7 +279,7 @@ class MatchboxDeletionNotConfirmed(MatchboxException):
 
     def __init__(
         self, message: str | None = None, children: list[str | int] | None = None
-    ):
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Deletion must be confirmed: if certain, rerun with certain=True."

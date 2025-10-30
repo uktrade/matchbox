@@ -28,7 +28,7 @@ def get_formatter() -> logging.Formatter:
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Failed to load logging plugin: {e}")
 
-    if len(_PLUGINS):
+    if _PLUGINS:
         return _PLUGINS[0]
 
     return logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -45,7 +45,11 @@ class PrefixedLoggerAdapter(logging.LoggerAdapter):
     without modifying the underlying logger.
     """
 
-    def process(self, msg: Any, kwargs: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+    def process(
+        self,
+        msg: Any,  # noqa: ANN401
+        kwargs: dict[str, Any],  # noqa: ANN401
+    ) -> tuple[Any, dict[str, Any]]:  # noqa: ANN401
         """Process the log message, adding a prefix if provided.
 
         Args:

@@ -33,7 +33,7 @@ else:
     S3Client = Any
 
 
-def test_file_to_s3(s3: S3Client):
+def test_file_to_s3(s3: S3Client) -> None:
     """Test that a file can be uploaded to S3."""
     # Create a mock bucket
     s3.create_bucket(
@@ -116,7 +116,7 @@ def test_file_to_s3(s3: S3Client):
 
 
 @pytest.fixture(scope="function")
-def tracker_instance(request: pytest.FixtureRequest, tracker: str):
+def tracker_instance(request: pytest.FixtureRequest, tracker: str) -> UploadTracker:
     """Create a fresh tracker instance for each test."""
     tracker_obj = request.getfixturevalue(tracker)
     return tracker_obj
@@ -132,10 +132,10 @@ def tracker_instance(request: pytest.FixtureRequest, tracker: str):
 @pytest.mark.docker
 class TestUploadTracker:
     @pytest.fixture(autouse=True)
-    def setup(self, tracker_instance: str):
+    def setup(self, tracker_instance: str) -> None:
         self.tracker: UploadTracker = tracker_instance
 
-    def test_basic_upload_tracking(self):
+    def test_basic_upload_tracking(self) -> None:
         """Test adding upload to tracker and retrieving."""
         source_path = ResolutionPath(name="source", collection="default", run=1)
         model_path = ResolutionPath(name="model", collection="default", run=1)
@@ -164,7 +164,7 @@ class TestUploadTracker:
         assert model_entry.status.id == model_upload_id
         assert isinstance(model_entry.status.update_timestamp, datetime)
 
-    def test_status_management(self):
+    def test_status_management(self) -> None:
         """Test status update functionality."""
         # Create entry and verify initial status
         upload_id = self.tracker.add_source(
@@ -189,7 +189,7 @@ class TestUploadTracker:
             self.tracker.update("nonexistent", UploadStage.PROCESSING)
 
     @patch("matchbox.server.uploads.datetime")
-    def test_timestamp_updates(self, mock_datetime: Mock):
+    def test_timestamp_updates(self, mock_datetime: Mock) -> None:
         """Test that timestamps update correctly on different operations."""
 
         creation_timestamp = datetime(2024, 1, 1, 12, 0)
@@ -216,7 +216,7 @@ class TestUploadTracker:
         assert entry.status.update_timestamp == update_timestamp
 
 
-def test_process_upload_deletes_file_on_failure(s3: S3Client):
+def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:
     """Test that files are deleted from S3 even when processing fails.
 
     Other behaviours of this task are captured in the API integration tests for adding a
@@ -267,13 +267,13 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
 
     # Check that the status was updated to failed
     status = tracker.get(upload_id).status
-    assert status.stage == UploadStage.FAILED, (
-        f"Expected status 'failed', got '{status.stage}'"
-    )
+    assert (
+        status.stage == UploadStage.FAILED
+    ), f"Expected status 'failed', got '{status.stage}'"
 
     # Verify file was deleted despite the failure
     with pytest.raises(ClientError) as excinfo:
         s3.head_object(Bucket=bucket, Key=test_key)
-    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
-        f"File was not deleted: {str(excinfo.value)}"
-    )
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(
+        excinfo.value
+    ), f"File was not deleted: {str(excinfo.value)}"

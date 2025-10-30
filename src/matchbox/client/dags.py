@@ -34,25 +34,25 @@ from matchbox.common.transform import truth_int_to_float
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         """Initialises empty DAG."""
         self.name: CollectionName = CollectionName(name)
         self._run: RunID | None = None
         self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
 
-    def _check_dag(self, dag: Self):
+    def _check_dag(self, dag: Self) -> None:
         """Check that the given DAG is the same as this one."""
         if self != dag:
             raise ValueError("Cannot mix DAGs")
 
-    def set_downstream_to_rerun(self, step_name: ResolutionName):
+    def set_downstream_to_rerun(self, step_name: ResolutionName) -> None:
         """Mark step and downstream steps as not run."""
         self.nodes[step_name].last_run = None
 
         descendants: set[str] = set()
 
-        def dfs(node):
+        def dfs(node: str) -> None:
             for child, parents in self.graph.items():
                 if node in parents:
                     descendants.add(child)
@@ -157,14 +157,14 @@ class DAG:
         else:
             return steps[0]
 
-    def source(self, *args, **kwargs) -> Source:
+    def source(self, *args: Any, **kwargs: Any) -> Source:
         """Create Source and add it to the DAG."""
         source = Source(*args, **kwargs, dag=self)
         self._add_step(source)
 
         return source
 
-    def model(self, *args, **kwargs) -> Model:
+    def model(self, *args: Any, **kwargs: Any) -> Model:
         """Create Model and add it to the DAG."""
         model = Model(*args, **kwargs, dag=self)
         self._add_step(model)
@@ -249,7 +249,7 @@ class DAG:
 
         return node
 
-    def query(self, *args, **kwargs) -> Query:
+    def query(self, *args: Any, **kwargs: Any) -> Query:
         """Create Query object."""
         return Query(*args, **kwargs, dag=self)
 
@@ -310,7 +310,7 @@ class DAG:
         result: list[str] = [head_collection, head_run, ""]
         visited = set()
 
-        def format_children(node: str, prefix=""):
+        def format_children(node: str, prefix: str = "") -> None:
             """Recursively format the children of a node."""
             children = []
             # Get all outgoing edges from this node
@@ -379,7 +379,7 @@ class DAG:
 
         return self
 
-    def set_client(self, client: Any) -> Self:
+    def set_client(self, client: Any) -> Self:  # noqa: ANN401
         """Assign a client to all sources at once."""
         for node in self.nodes.values():
             if isinstance(node, Source):
@@ -462,14 +462,14 @@ class DAG:
         full_rerun: bool = False,
         start: str | None = None,
         finish: str | None = None,
-    ):
+    ) -> None:
         """Run entire DAG and send results to server."""
         start_time = datetime.datetime.now()
 
         # Determine order of execution steps
         root_node = self.final_step.name
 
-        def depth_first(node: str, sequence: list):
+        def depth_first(node: str, sequence: list) -> None:
             sequence.append(node)
             for neighbour in self.graph[node]:
                 if neighbour not in sequence:

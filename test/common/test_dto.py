@@ -12,7 +12,7 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxNameError
 
 
-def test_validate_names():
+def test_validate_names() -> None:
     """Names are validated when they're instantiated."""
     name_classes = [
         CollectionName,
@@ -28,7 +28,7 @@ def test_validate_names():
             NameClass("invalid name")
 
 
-def test_match_validates():
+def test_match_validates() -> None:
     """Match objects are validated when they're instantiated."""
     source_path = ResolutionPath(name="source", collection="default", run=1)
     target_path = ResolutionPath(name="target", collection="default", run=1)
@@ -53,7 +53,7 @@ def test_match_validates():
         Match(cluster=1, source=source_path, target=target_path)
 
 
-def test_validate_collection():
+def test_validate_collection() -> None:
     """Default run name needs to be within all runs."""
     # No default
     Collection(runs=[1, 2])

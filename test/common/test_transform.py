@@ -37,7 +37,7 @@ class TestClusterHierarchy:
             for i in range(1, 7)
         ]
 
-    def test_add_leaves_to_disjoint_set(self, leaf_nodes: list[Cluster]):
+    def test_add_leaves_to_disjoint_set(self, leaf_nodes: list[Cluster]) -> None:
         """Test adding leaf nodes to a DisjointSet."""
         # Create a DisjointSet and add leaves
         djs = DisjointSet[Cluster]()
@@ -50,7 +50,7 @@ class TestClusterHierarchy:
         for component in components:
             assert len(component) == 1
 
-    def test_union_leaves_in_disjoint_set(self, leaf_nodes: list[Cluster]):
+    def test_union_leaves_in_disjoint_set(self, leaf_nodes: list[Cluster]) -> None:
         """Test creating unions of leaf nodes in DisjointSet."""
         djs = DisjointSet[Cluster]()
         for node in leaf_nodes:
@@ -69,7 +69,7 @@ class TestClusterHierarchy:
         component_sizes = [len(comp) for comp in components]
         assert sorted(component_sizes) == [2, 2, 2]
 
-    def test_create_clusters_from_components(self, leaf_nodes: list[Cluster]):
+    def test_create_clusters_from_components(self, leaf_nodes: list[Cluster]) -> None:
         """Test creating new clusters from DisjointSet components."""
         # Add leaves to DisjointSet and create unions
         djs = DisjointSet[Cluster]()
@@ -104,7 +104,7 @@ class TestClusterHierarchy:
             if cluster.leaves is not None:
                 assert cluster.probability == 100
 
-    def test_level1_clusters_in_disjoint_set(self, leaf_nodes: list[Cluster]):
+    def test_level1_clusters_in_disjoint_set(self, leaf_nodes: list[Cluster]) -> None:
         """Test using level-1 clusters in another DisjointSet."""
         # Create level-1 clusters as in previous test
         djs1 = DisjointSet[Cluster]()
@@ -144,7 +144,7 @@ class TestClusterHierarchy:
         component_sizes = [len(comp) for comp in components2]
         assert sorted(component_sizes) == [1, 2]
 
-    def test_leaf_preservation_in_hierarchy(self, leaf_nodes: list[Cluster]):
+    def test_leaf_preservation_in_hierarchy(self, leaf_nodes: list[Cluster]) -> None:
         """Test that leaf nodes are preserved in the cluster hierarchy."""
         # Follow the same steps as in previous tests to build a hierarchy
         # Step 1: Create level-1 clusters
@@ -201,7 +201,7 @@ class TestClusterHierarchy:
         # Verify probability as expected
         assert level2_cluster.probability == 80
 
-    def test_combine_with_single_cluster(self, leaf_nodes: list[Cluster]):
+    def test_combine_with_single_cluster(self, leaf_nodes: list[Cluster]) -> None:
         """Test that combine works correctly with a single cluster.
 
         When Cluster.combine() receives only one cluster but with a new probability,
@@ -237,7 +237,7 @@ class TestClusterHierarchy:
 
     def test_combine_with_leaf_and_non_leaf(
         self, intmap: IntMap, leaf_nodes: list[Cluster]
-    ):
+    ) -> None:
         """Test combine with a mix of leaf and non-leaf clusters."""
         # Create a non-leaf cluster
         non_leaf = Cluster(intmap=intmap, leaves=[leaf_nodes[0], leaf_nodes[1]])
@@ -255,7 +255,9 @@ class TestClusterHierarchy:
         # Verify probability as expected
         assert result.probability == 70
 
-    def test_hash_consistency_regardless_of_order(self, leaf_nodes: list[Cluster]):
+    def test_hash_consistency_regardless_of_order(
+        self, leaf_nodes: list[Cluster]
+    ) -> None:
         """Test that the hash is consistent regardless of the order of leaves."""
         # Create two clusters with the same leaves but in different order
         cluster1 = Cluster.combine([leaf_nodes[0], leaf_nodes[1]])
@@ -273,7 +275,7 @@ class TestClusterHierarchy:
         assert cluster3.hash == cluster4.hash
         assert cluster4.hash == cluster5.hash
 
-    def test_hash_based_on_leaf_hashes_only(self, leaf_nodes: list[Cluster]):
+    def test_hash_based_on_leaf_hashes_only(self, leaf_nodes: list[Cluster]) -> None:
         """Test that cluster hashes are based on leaf node hashes only."""
         # Create two different paths to the same set of leaf nodes
 
@@ -294,7 +296,9 @@ class TestClusterHierarchy:
         # Should still have the same hash
         assert direct.hash == combined.hash
 
-    def test_hash_generation_for_complex_hierarchy(self, leaf_nodes: list[Cluster]):
+    def test_hash_generation_for_complex_hierarchy(
+        self, leaf_nodes: list[Cluster]
+    ) -> None:
         """Test that hash generation works correctly for complex hierarchies."""
         # Create level 1 clusters
         cluster_a = Cluster.combine([leaf_nodes[0], leaf_nodes[1]])
@@ -326,7 +330,7 @@ class TestClusterHierarchy:
 
     def test_combine_single_cluster_with_new_probability(
         self, leaf_nodes: list[Cluster]
-    ):
+    ) -> None:
         """Test that combine respects new probability even with single cluster.
 
         When Cluster.combine() receives only one cluster but with a new probability,

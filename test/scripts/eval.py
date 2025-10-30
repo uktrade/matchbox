@@ -3,7 +3,8 @@
 
 import logging
 import tempfile
-from contextlib import contextmanager
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -33,7 +34,7 @@ def _get_backend() -> MatchboxDBAdapter:
 
 
 @contextmanager
-def scenario_setup(scenario_name: str):
+def scenario_setup(scenario_name: str) -> Generator[dict[str, object], None, None]:
     """Context manager that sets up scenario data and yields CLI parameters."""
 
     # Create temporary SQLite database
@@ -85,14 +86,10 @@ def scenario_setup(scenario_name: str):
 
     finally:
         # Clean up
-        try:
+        with suppress(Exception):
             backend.clear(certain=True)
-        except Exception:
-            pass
-        try:
+        with suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def main(
@@ -109,7 +106,7 @@ def main(
             help="Log file path to redirect all logging output (keeps UI clean)",
         ),
     ] = None,
-):
+) -> None:
     """Run the scenario-based evaluation app via CLI."""
     # Set up basic logging for this script
     logging.basicConfig(level=logging.INFO, format="%(message)s")

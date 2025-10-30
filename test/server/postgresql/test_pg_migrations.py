@@ -12,7 +12,9 @@ from matchbox.server.postgresql import MatchboxPostgres, MatchboxPostgresSetting
 
 
 @pytest.mark.docker
-def test_migrations_stairway(matchbox_postgres_settings: MatchboxPostgresSettings):
+def test_migrations_stairway(
+    matchbox_postgres_settings: MatchboxPostgresSettings,
+) -> None:
     """Tests that all migrations can be applied and then rolled back in sequence.
 
     This test runs migrations in their natural order and shows which one fails.
@@ -54,7 +56,7 @@ def test_migrations_stairway(matchbox_postgres_settings: MatchboxPostgresSetting
 @pytest.mark.docker
 def test_migrations_stairway_with_data(
     matchbox_postgres: MatchboxPostgres, sqlite_warehouse: Engine
-):
+) -> None:
     """Tests that all migrations can be applied and rolled back with data.
 
     This shows that the migrations are not only schema changes but also data changes.

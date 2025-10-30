@@ -100,7 +100,7 @@ class UploadTracker(ABC):
         return entry.status.id
 
     @abstractmethod
-    def _register_entry(self, UploadEntry) -> str:
+    def _register_entry(self, entry: UploadEntry) -> str:
         """Register UploadEntry object to tracker and return its ID."""
         ...
 
@@ -122,7 +122,7 @@ class UploadTracker(ABC):
 class InMemoryUploadTracker(UploadTracker):
     """In-memory upload tracker, only usable with single server instance."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialise tracker data structure."""
         self._tracker = {}
 
@@ -143,13 +143,15 @@ class InMemoryUploadTracker(UploadTracker):
 class RedisUploadTracker(UploadTracker):
     """Upload tracker backed by Redis."""
 
-    def __init__(self, redis_url: str, expiry_minutes: int, key_space: str = "upload"):
+    def __init__(
+        self, redis_url: str, expiry_minutes: int, key_space: str = "upload"
+    ) -> None:
         """Connect Redis and initialise tracker object."""
         self.expiry_minutes = expiry_minutes
         self.redis = redis.Redis.from_url(redis_url)
         self.key_prefix = f"{key_space}:"
 
-    def _to_redis(self, key: str, value: str):
+    def _to_redis(self, key: str, value: str) -> None:
         expiry_seconds = self.expiry_minutes * 60
         self.redis.setex(f"{self.key_prefix}{key}", expiry_seconds, value)
 
@@ -274,7 +276,7 @@ celery.conf.update(
 )
 
 
-def initialise_celery_worker():
+def initialise_celery_worker() -> None:
     """Initialise backend and tracker for celery worker."""
     global CELERY_SETTINGS
     global CELERY_BACKEND

@@ -5,7 +5,7 @@ from matchbox.common.arrow import SCHEMA_CLUSTER_EXPANSION, SCHEMA_JUDGEMENTS
 from matchbox.common.eval import Judgement, precision_recall, process_judgements
 
 
-def test_judgement_validation():
+def test_judgement_validation() -> None:
     """Judgement validates source cluster IDs."""
     with pytest.raises(ValueError):
         Judgement(user_id=1, shown=10, endorsed=[[1, 2, 3], [3, 4, 5]])
@@ -17,7 +17,7 @@ def test_judgement_validation():
     Judgement(user_id=1, shown=10, endorsed=[[1, 2, 3], [4, 5]])
 
 
-def test_precision_recall_fails():
+def test_precision_recall_fails() -> None:
     """Test instances where PR computation raises."""
     # No judgements
     model = pl.DataFrame([{"root": 12, "leaf": 1}, {"root": 12, "leaf": 2}])
@@ -42,7 +42,7 @@ def test_precision_recall_fails():
         )
 
 
-def test_precision_recall():
+def test_precision_recall() -> None:
     """Test calculation of precision and recall from root-leaf tables."""
     # In this test, one-digit cluster IDs are for source clusters.
     # Multiple-digit cluster IDs decompose to source cluster IDs.
@@ -127,7 +127,7 @@ def test_precision_recall():
     assert pr_scores[1] == (0, 0)
 
 
-def test_process_judgements():
+def test_process_judgements() -> None:
     """Can convert judgements and expansion to pairs, pair counts and set of leaves."""
     # In this test:
     # cluster IDs < 100 are source clusters

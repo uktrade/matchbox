@@ -23,7 +23,7 @@ def test_get_samples(
     sqlite_warehouse: Engine,
     sqlite_in_memory_warehouse: Engine,
     env_setter: Callable[[str, str], None],
-):
+) -> None:
     # Make dummmy data
     user_id = 12
 

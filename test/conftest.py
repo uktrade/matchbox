@@ -15,7 +15,7 @@ pytest_plugins = [
 TEST_ROOT = Path(__file__).resolve().parent
 
 
-def pytest_configure():
+def pytest_configure() -> None:
     """Configure pytest settings."""
 
     # Quieten down the logging for specific loggers

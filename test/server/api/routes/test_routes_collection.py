@@ -22,7 +22,7 @@ from matchbox.common.factories.sources import source_factory
 # Collection management tests
 
 
-def test_list_collections(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_list_collections(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test listing all collections."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.list_collections = Mock(return_value=["default", "test_collection"])
@@ -34,7 +34,7 @@ def test_list_collections(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     mock_backend.list_collections.assert_called_once()
 
 
-def test_get_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test retrieving a specific collection."""
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -71,7 +71,7 @@ def test_collection_not_found_404(
     backend_method: str,
     extra_params: dict[str, bool],
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test 404 responses when collection doesn't exist."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_method = getattr(mock_backend, backend_method)
@@ -83,7 +83,7 @@ def test_collection_not_found_404(
     assert response.json()["entity"] == BackendResourceType.COLLECTION
 
 
-def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test creating a new collection."""
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -98,7 +98,7 @@ def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_create_collection_already_exists(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test creating a collection that already exists."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.create_collection = Mock(side_effect=MatchboxCollectionAlreadyExists())
@@ -111,7 +111,7 @@ def test_create_collection_already_exists(
     assert response.json()["details"] == "Collection already exists."
 
 
-def test_delete_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_delete_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test deleting a collection with confirmation."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.delete_collection = Mock()
@@ -130,7 +130,7 @@ def test_delete_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_delete_collection_needs_confirmation(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test deleting a collection that requires confirmation."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.delete_collection = Mock(
@@ -149,7 +149,7 @@ def test_delete_collection_needs_confirmation(
 # Run management tests
 
 
-def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test retrieving a specific run."""
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -226,7 +226,7 @@ def test_run_endpoints_404(
     backend_method: str,
     extra_params: dict[str, Any],
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test 404 responses for run endpoints when resources don't exist."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_method = getattr(mock_backend, backend_method)
@@ -241,7 +241,7 @@ def test_run_endpoints_404(
     assert response.json()["entity"] == expected_entity
 
 
-def test_create_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_create_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test creating a new run."""
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -262,7 +262,7 @@ def test_create_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     mock_backend.create_run.assert_called_once_with(collection="test_collection")
 
 
-def test_set_run_mutable(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_set_run_mutable(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test setting run mutability."""
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -283,7 +283,7 @@ def test_set_run_mutable(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_set_run_mutable_missing_flag(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test setting run mutability without providing the flag."""
     test_client, _, _ = api_client_and_mocks
 
@@ -292,7 +292,7 @@ def test_set_run_mutable_missing_flag(
     assert response.status_code == 422
 
 
-def test_set_run_default(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_set_run_default(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test setting run as default."""
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -313,7 +313,7 @@ def test_set_run_default(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_set_run_default_missing_flag(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test setting run default without providing the flag."""
     test_client, _, _ = api_client_and_mocks
 
@@ -351,7 +351,7 @@ def test_run_patch_endpoints_404(
     exception_type: type[Exception],
     expected_entity: BackendResourceType,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test 404 responses for run PATCH endpoints when resource doesn't exist."""
     test_client, mock_backend, _ = api_client_and_mocks
     method_name = f"set_run_{endpoint}"
@@ -366,7 +366,7 @@ def test_run_patch_endpoints_404(
     assert response.json()["entity"] == expected_entity
 
 
-def test_delete_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
+def test_delete_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test deleting a run with confirmation."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.delete_run = Mock()
@@ -385,7 +385,7 @@ def test_delete_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 
 def test_delete_run_needs_confirmation(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
+) -> None:
     """Test deleting a run that requires confirmation."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.delete_run = Mock(

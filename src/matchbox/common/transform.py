@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Iterable
-from typing import Any, Generic, Self, TypeVar
+from typing import Generic, Self, TypeVar
 
 import numpy as np
 import polars as pl
@@ -137,7 +137,7 @@ class DisjointSet(Generic[T]):
     algorithms. MIT press, 2022
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the disjoint set."""
         self.parent: dict[T, T] = {}
         self.rank: dict[T, int] = {}
@@ -214,7 +214,7 @@ class Cluster:
         leaves: tuple["Cluster"] | list["Cluster"] | None = None,
         id: int | None = None,
         hash: bytes | None = None,
-    ):
+    ) -> None:
         """Initialise the Cluster.
 
         Args:
@@ -253,7 +253,7 @@ class Cluster:
         """Return a hash of the cluster based on its hash bytes."""
         return hash(self.hash)
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         """Check equality of two Cluster objects based on their hash."""
         if not isinstance(other, Cluster):
             return False

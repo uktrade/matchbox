@@ -9,7 +9,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_linked_sources_factory_default():
+def test_linked_sources_factory_default() -> None:
     """Test that factory generates sources with default parameters."""
     linked = linked_sources_factory()
 
@@ -33,7 +33,7 @@ def test_linked_sources_factory_default():
             assert len(keys) > 0
 
 
-def test_linked_sources_custom_config(sqlite_in_memory_warehouse: Engine):
+def test_linked_sources_custom_config(sqlite_in_memory_warehouse: Engine) -> None:
     """Test linked_sources_factory with custom source configurations."""
 
     features = {
@@ -79,7 +79,7 @@ def test_linked_sources_custom_config(sqlite_in_memory_warehouse: Engine):
     assert len(source_b_entities) == 3
 
 
-def test_linked_sources_find_entities():
+def test_linked_sources_find_entities() -> None:
     """Test the find_entities method with different criteria."""
     linked = linked_sources_factory(n_true_entities=10)
 
@@ -113,7 +113,7 @@ def test_linked_sources_find_entities():
         assert len(entity.get_keys("duns")) <= 2
 
 
-def test_entity_value_consistency():
+def test_entity_value_consistency() -> None:
     """Test that entity base values remain consistent across sources."""
     linked = linked_sources_factory(n_true_entities=5)
 
@@ -136,7 +136,7 @@ def test_entity_value_consistency():
                     assert base_values[feature.name] in entity_rows[feature.name].values
 
 
-def test_source_entity_equality():
+def test_source_entity_equality() -> None:
     """Test SourceEntity equality and hashing behavior."""
     linked = linked_sources_factory(n_true_entities=3)
 
@@ -158,7 +158,7 @@ def test_source_entity_equality():
     assert len(entity_set) == 2  # Only unique entities
 
 
-def test_seed_reproducibility():
+def test_seed_reproducibility() -> None:
     """Test that linked sources generation is reproducible with same seed."""
     source_parameters = SourceTestkitParameters(
         name="test_source",
@@ -191,7 +191,7 @@ def test_seed_reproducibility():
     )
 
 
-def test_empty_source_handling():
+def test_empty_source_handling() -> None:
     """Test handling of sources with zero entities."""
     source_parameters = SourceTestkitParameters(
         name="empty_source",
@@ -207,7 +207,7 @@ def test_empty_source_handling():
     assert len(linked.true_entities) == 0
 
 
-def test_large_entity_count():
+def test_large_entity_count() -> None:
     """Test handling of sources with large number of entities."""
     source_parameters = SourceTestkitParameters(
         name="large_source",
@@ -222,7 +222,7 @@ def test_large_entity_count():
     assert len(linked.sources["large_source"].data) == 10_000
 
 
-def test_feature_inheritance():
+def test_feature_inheritance() -> None:
     """Test that entities inherit all features from their source configurations."""
     features = {
         "name": FeatureConfig(name="name", base_generator="name"),
@@ -255,7 +255,7 @@ def test_feature_inheritance():
             assert "phone" in entity.base_values
 
 
-def test_unique_feature_values():
+def test_unique_feature_values() -> None:
     """Test that unique features generate distinct values across entities."""
     source_parameters = SourceTestkitParameters(
         name="test_source",
@@ -282,7 +282,7 @@ def test_unique_feature_values():
     assert len(categories) < 100
 
 
-def test_source_references():
+def test_source_references() -> None:
     """Test adding and retrieving source references."""
     linked = linked_sources_factory(n_true_entities=2)
     entity = next(iter(linked.true_entities))
@@ -303,7 +303,7 @@ def test_source_references():
     assert entity.get_keys("nonexistent") == set()
 
 
-def test_linked_sources_entity_hierarchy():
+def test_linked_sources_entity_hierarchy() -> None:
     """Test that LinkedSourcesTestkit correctly maintains entity hierarchy."""
     # Create linked sources with multiple sources
     features = {
@@ -344,9 +344,9 @@ def test_linked_sources_entity_hierarchy():
             ]
 
             # Each cluster entity must have at least one parent
-            assert len(matching_parents) > 0, (
-                f"ClusterEntity in {source_name} has no parent in true_entities"
-            )
+            assert (
+                len(matching_parents) > 0
+            ), f"ClusterEntity in {source_name} has no parent in true_entities"
 
             # The source keys from the cluster entity should be a subset of
             # at least one true entity's keys
@@ -356,7 +356,9 @@ def test_linked_sources_entity_hierarchy():
             ), f"ClusterEntity in {source_name} not a proper subset of any true entity"
 
 
-def test_linked_sources_entity_count_behavior(sqlite_in_memory_warehouse: Engine):
+def test_linked_sources_entity_count_behavior(
+    sqlite_in_memory_warehouse: Engine,
+) -> None:
     """Test different n_true_entities behaviors in linked_sources_factory."""
     base_feature = FeatureConfig(name="name", base_generator="name")
 
@@ -418,9 +420,9 @@ def test_linked_sources_entity_count_behavior(sqlite_in_memory_warehouse: Engine
     override_source_b = [
         e for e in linked_override.true_entities if "source_b" in e.keys
     ]
-    assert len(override_source_a) == 15, (
-        "SourceConfig A should be overridden to 15 entities"
-    )
-    assert len(override_source_b) == 15, (
-        "SourceConfig B should be overridden to 15 entities"
-    )
+    assert (
+        len(override_source_a) == 15
+    ), "SourceConfig A should be overridden to 15 entities"
+    assert (
+        len(override_source_b) == 15
+    ), "SourceConfig B should be overridden to 15 entities"

@@ -71,7 +71,7 @@ class MatchboxPostgresSettings(MatchboxServerSettings):
 class MatchboxDatabase:
     """Matchbox PostgreSQL database connection."""
 
-    def __init__(self, settings: MatchboxPostgresSettings):
+    def __init__(self, settings: MatchboxPostgresSettings) -> None:
         """Initialise the database connection."""
         self.settings = settings
         self._engine: Engine | None = None
@@ -94,7 +94,7 @@ class MatchboxDatabase:
             f"{self.settings.postgres.database}"
         )
 
-    def _connect(self):
+    def _connect(self) -> None:
         """Connect to the database."""
         self._engine = create_engine(
             url=self.connection_string(), logging_name="matchbox.engine", echo=False
@@ -103,7 +103,7 @@ class MatchboxDatabase:
             autocommit=False, autoflush=False, bind=self._engine
         )
 
-    def _disconnect(self):
+    def _disconnect(self) -> None:
         if self._engine:
             self._engine.dispose()
             self._engine = None
@@ -160,7 +160,7 @@ class MatchboxDatabase:
         finally:
             conn.close()
 
-    def run_migrations(self):
+    def run_migrations(self) -> None:
         """Create the database and all tables expected in the schema."""
         alembic_version = self._look_for_alembic_version()
         engine = self.get_engine()
@@ -177,7 +177,7 @@ class MatchboxDatabase:
                 conn.commit()
             command.upgrade(self.alembic_config, "head")
 
-    def clear_database(self):
+    def clear_database(self) -> None:
         """Delete all rows in every table in the database schema.
 
         - TRUNCATE tables that are part of the core ORM (preserves structure)
@@ -231,7 +231,7 @@ class MatchboxDatabase:
                 session.rollback()
                 raise
 
-    def drop_database(self):
+    def drop_database(self) -> None:
         """Drop all tables in the database schema and re-recreate them."""
         command.downgrade(self.alembic_config, "base")
         command.upgrade(self.alembic_config, "head")

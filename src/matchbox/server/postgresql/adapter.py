@@ -162,7 +162,7 @@ class FilteredResolutions(BaseModel):
 class MatchboxPostgres(MatchboxDBAdapter):
     """A PostgreSQL adapter for Matchbox."""
 
-    def __init__(self, settings: MatchboxPostgresSettings):
+    def __init__(self, settings: MatchboxPostgresSettings) -> None:
         """Initialise the PostgreSQL adapter."""
         self.settings = settings
         MBDB.settings = settings
@@ -326,7 +326,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Resolution management
 
-    def _check_writeable(self, path: ResolutionPath):
+    def _check_writeable(self, path: ResolutionPath) -> None:
         run = Runs.from_id(collection=path.collection, run_id=path.run)
         if not run.is_mutable:
             raise MatchboxRunNotWriteable(

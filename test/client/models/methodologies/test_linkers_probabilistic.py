@@ -201,7 +201,7 @@ PROBABILISTIC_LINKERS = [
 @patch.object(Query, "run")
 def test_probabilistic_scores_generation(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
-):
+) -> None:
     """Test that linkers can generate varying probability scores."""
 
     # Create sources with variations

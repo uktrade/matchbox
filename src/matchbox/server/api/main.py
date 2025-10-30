@@ -1,5 +1,6 @@
 """API routes for the Matchbox server."""
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -26,6 +27,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pyarrow import ArrowInvalid
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import HTMLResponse
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
@@ -156,7 +158,9 @@ async def deletion_not_confirmed_handler(
 
 
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def add_security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Improve security by adding headers to all responses."""
     response: Response = await call_next(request)
     response.headers["Cache-control"] = "no-store, no-cache"
@@ -528,7 +532,7 @@ def clear_database(
 
 
 @app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui_html():
+async def custom_swagger_ui_html() -> HTMLResponse:
     """Get locally hosted docs."""
     return get_swagger_ui_html(
         openapi_url=app.openapi_url,
@@ -541,6 +545,6 @@ async def custom_swagger_ui_html():
 
 
 @app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
-async def swagger_ui_redirect():
+async def swagger_ui_redirect() -> HTMLResponse:
     """Helper for OAuth2."""
     return get_swagger_ui_oauth2_redirect_html()

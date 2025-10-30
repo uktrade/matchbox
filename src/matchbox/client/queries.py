@@ -41,7 +41,7 @@ class Query:
         combine_type: QueryCombineType = QueryCombineType.CONCAT,
         threshold: float | None = None,
         cleaning: dict[str, str] | None = None,
-    ):
+    ) -> None:
         """Initialise query.
 
         Args:
@@ -379,7 +379,9 @@ def _clean(
         return conn.execute(query.sql(dialect="duckdb")).pl()
 
 
-def _convert_df(data: PolarsDataFrame, return_type: QueryReturnType):
+def _convert_df(
+    data: PolarsDataFrame, return_type: QueryReturnType
+) -> QueryReturnClass:
     match return_type:
         case QueryReturnType.POLARS:
             return data

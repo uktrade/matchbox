@@ -17,7 +17,9 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_relational_db_location_instantiation(sqlite_in_memory_warehouse: Engine):
+def test_relational_db_location_instantiation(
+    sqlite_in_memory_warehouse: Engine,
+) -> None:
     """Test that RelationalDBLocation can be instantiated with valid parameters."""
     location = RelationalDBLocation(name="dbname")
     assert location.config.type == LocationType.RDBMS
@@ -103,7 +105,7 @@ def test_relational_db_location_instantiation(sqlite_in_memory_warehouse: Engine
 )
 def test_relational_db_extract_transform(
     sql: str, dialects: str, postgres_warehouse: Engine, sqlite_warehouse: Engine
-):
+) -> None:
     """Test SQL validation in validate_extract_transform."""
 
     if dialects == "none":
@@ -139,7 +141,7 @@ def test_relational_db_extract_transform(
             ).validate_extract_transform(sql)
 
 
-def test_relational_db_infer_types(sqlite_warehouse: Engine):
+def test_relational_db_infer_types(sqlite_warehouse: Engine) -> None:
     """Test that types are inferred correctly from the extract transform SQL."""
     source_testkit = source_from_tuple(
         data_tuple=(
@@ -166,7 +168,7 @@ def test_relational_db_infer_types(sqlite_warehouse: Engine):
     assert inferred_types["bar"] == DataTypes.INT64
 
 
-def test_relational_db_execute(sqlite_warehouse: Engine):
+def test_relational_db_execute(sqlite_warehouse: Engine) -> None:
     """Test executing a query and returning results using a real SQLite database."""
     features = [
         FeatureConfig(name="company", base_generator="company"),
@@ -214,7 +216,7 @@ def test_relational_db_execute(sqlite_warehouse: Engine):
     assert_frame_equal(unfiltered_results, combined_df)
 
 
-def test_relational_db_execute_invalid(sqlite_warehouse: Engine):
+def test_relational_db_execute_invalid(sqlite_warehouse: Engine) -> None:
     """Test that invalid queries are handled correctly when executing."""
     location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
 

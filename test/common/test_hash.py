@@ -10,7 +10,7 @@ from matchbox.common.hash import (
 )
 
 
-def test_intmap_basic():
+def test_intmap_basic() -> None:
     im1 = IntMap(salt=10)
     a = im1.index(1, 2)
     b = im1.index(3, 4)
@@ -20,7 +20,7 @@ def test_intmap_basic():
     assert max(a, b, c) < 0
 
 
-def test_intmap_same():
+def test_intmap_same() -> None:
     im1 = IntMap(salt=10)
     a = im1.index(1, 2)
     b = im1.index(3, 4)
@@ -34,7 +34,7 @@ def test_intmap_same():
     assert (a, b, c) == (x, y, z)
 
 
-def test_intmap_different():
+def test_intmap_different() -> None:
     im1 = IntMap(salt=10)
     a = im1.index(1, 2)
     b = im1.index(3, 4)
@@ -49,7 +49,7 @@ def test_intmap_different():
         assert v1 != v2
 
 
-def test_intmap_unordered():
+def test_intmap_unordered() -> None:
     im1 = IntMap(salt=10)
     a = im1.index(1, 2, 3)
     b = im1.index(3, 1, 2)
@@ -64,7 +64,7 @@ def test_intmap_unordered():
         pytest.param(HashMethod.XXH3_128, id="xxh3_128"),
     ],
 )
-def test_hash_rows(method: HashMethod):
+def test_hash_rows(method: HashMethod) -> None:
     data = pl.DataFrame(
         {
             "string_col": ["abc", "def", "ghi"],
@@ -97,7 +97,7 @@ class TestArrowTableHashing:
     """Test basic Arrow table hashing with order invariance."""
 
     @classmethod
-    def setup_class(cls):
+    def setup_class(cls) -> None:
         """Set up test data for basic hashing tests."""
         cls.tables = {
             "original": pa.Table.from_pydict({"a": [1, 2, 3], "b": [4, 5, 6]}),
@@ -109,7 +109,7 @@ class TestArrowTableHashing:
             "content_swapped": pa.Table.from_pydict({"b": [1, 2, 3], "a": [4, 5, 6]}),
         }
 
-    def test_order_invariance(self, method: HashMethod):
+    def test_order_invariance(self, method: HashMethod) -> None:
         """Test that field and row order don't affect hash values."""
         # Calculate all hashes
         hashes = {
@@ -128,18 +128,18 @@ class TestArrowTableHashing:
             "both_reordered",
         ]
         equivalent_hashes = [hashes[name] for name in equivalent_tables]
-        assert all(h == equivalent_hashes[0] for h in equivalent_hashes), (
-            "Tables with same data but different ordering should hash identically"
-        )
+        assert all(
+            h == equivalent_hashes[0] for h in equivalent_hashes
+        ), "Tables with same data but different ordering should hash identically"
 
         # These should all hash differently
         different_tables = ["empty", "different_data", "content_swapped"]
         for table_name in different_tables:
-            assert hashes["original"] != hashes[table_name], (
-                f"Table '{table_name}' should hash differently from original"
-            )
+            assert (
+                hashes["original"] != hashes[table_name]
+            ), f"Table '{table_name}' should hash differently from original"
 
-    def test_consistency_across_calls(self, method: HashMethod):
+    def test_consistency_across_calls(self, method: HashMethod) -> None:
         """Test that identical tables always produce the same hash."""
         table = self.tables["original"]
 
@@ -148,7 +148,7 @@ class TestArrowTableHashing:
 
         assert hash1 == hash2, "Identical calls should produce identical hashes"
 
-    def test_list_fields_order_invariance(self, method: HashMethod):
+    def test_list_fields_order_invariance(self, method: HashMethod) -> None:
         """Test that order within list fields doesn't affect hash."""
         table_ordered = pa.Table.from_pydict(
             {
@@ -166,11 +166,11 @@ class TestArrowTableHashing:
         hash_ordered = hash_arrow_table(table_ordered, method=method)
         hash_reordered = hash_arrow_table(table_list_reordered, method=method)
 
-        assert hash_ordered == hash_reordered, (
-            "Order of elements within list fields should not affect hash"
-        )
+        assert (
+            hash_ordered == hash_reordered
+        ), "Order of elements within list fields should not affect hash"
 
-    def test_binary_fields_handling(self, method: HashMethod):
+    def test_binary_fields_handling(self, method: HashMethod) -> None:
         """Test that binary fields including non-UTF-8 bytes are handled correctly."""
         table_with_binary = pa.Table.from_pydict(
             {
@@ -194,7 +194,7 @@ class TestStructHashing:
     """Test hashing of struct/JSON data within Arrow tables."""
 
     @classmethod
-    def setup_class(cls):
+    def setup_class(cls) -> None:
         """Set up test data for struct hashing tests."""
         cls.tables = {
             "basic_struct": pa.Table.from_pydict(
@@ -245,25 +245,25 @@ class TestStructHashing:
             ),
         }
 
-    def test_struct_field_order_invariance(self, method: HashMethod):
+    def test_struct_field_order_invariance(self, method: HashMethod) -> None:
         """Test that order of fields within structs doesn't affect hash."""
         table_basic = self.tables["basic_struct"]
         table_reordered = self.tables["struct_fields_reordered"]
 
         # Verify we're actually testing struct data
         df = pl.from_arrow(table_basic)
-        assert isinstance(df["metadata"].dtype, pl.Struct), (
-            "Test should be working with struct data type"
-        )
+        assert isinstance(
+            df["metadata"].dtype, pl.Struct
+        ), "Test should be working with struct data type"
 
         hash_basic = hash_arrow_table(table_basic, method=method)
         hash_reordered = hash_arrow_table(table_reordered, method=method)
 
-        assert hash_basic == hash_reordered, (
-            "Struct field order should not affect hash value"
-        )
+        assert (
+            hash_basic == hash_reordered
+        ), "Struct field order should not affect hash value"
 
-    def test_struct_content_sensitivity(self, method: HashMethod):
+    def test_struct_content_sensitivity(self, method: HashMethod) -> None:
         """Test that changes in struct content produce different hashes."""
         hash_basic = hash_arrow_table(self.tables["basic_struct"], method=method)
         hash_changed = hash_arrow_table(
@@ -271,14 +271,14 @@ class TestStructHashing:
         )
         hash_nested = hash_arrow_table(self.tables["nested_struct"], method=method)
 
-        assert hash_basic != hash_changed, (
-            "Changed struct content should produce different hash"
-        )
-        assert hash_basic != hash_nested, (
-            "Different struct structure should produce different hash"
-        )
+        assert (
+            hash_basic != hash_changed
+        ), "Changed struct content should produce different hash"
+        assert (
+            hash_basic != hash_nested
+        ), "Different struct structure should produce different hash"
 
-    def test_nested_struct_consistency(self, method: HashMethod):
+    def test_nested_struct_consistency(self, method: HashMethod) -> None:
         """Test that nested structs are handled consistently."""
         table = self.tables["nested_struct"]
 
@@ -299,7 +299,7 @@ class TestNormalisation:
     """Test ID normalisation functionality in Arrow table hashing."""
 
     @classmethod
-    def setup_class(cls):
+    def setup_class(cls) -> None:
         """Set up test data for normalisation tests."""
         cls.tables = {
             "original": pa.Table.from_pydict(
@@ -360,7 +360,7 @@ class TestNormalisation:
             ),
         }
 
-    def test_normalisation_disabled_by_default(self, method: HashMethod):
+    def test_normalisation_disabled_by_default(self, method: HashMethod) -> None:
         """Test that without normalisation, ID order affects hash."""
         table_original = self.tables["original"]
         table_swapped = self.tables["ids_swapped"]
@@ -368,11 +368,11 @@ class TestNormalisation:
         hash_original = hash_arrow_table(table_original, method=method)
         hash_swapped = hash_arrow_table(table_swapped, method=method)
 
-        assert hash_original != hash_swapped, (
-            "Without normalisation, swapped IDs should produce different hashes"
-        )
+        assert (
+            hash_original != hash_swapped
+        ), "Without normalisation, swapped IDs should produce different hashes"
 
-    def test_normalisation_makes_id_order_irrelevant(self, method: HashMethod):
+    def test_normalisation_makes_id_order_irrelevant(self, method: HashMethod) -> None:
         """Test that normalisation makes ID column order irrelevant."""
         sorted_list_cols = ["left_id", "right_id"]
 
@@ -387,9 +387,9 @@ class TestNormalisation:
             hashes.append(hash_val)
 
         # All should be equal despite different ID arrangements
-        assert all(h == hashes[0] for h in hashes), (
-            "Normalisation should make ID order irrelevant"
-        )
+        assert all(
+            h == hashes[0] for h in hashes
+        ), "Normalisation should make ID order irrelevant"
 
         # But different data should still produce different hash
         hash_different = hash_arrow_table(
@@ -397,11 +397,11 @@ class TestNormalisation:
             method=method,
             as_sorted_list=sorted_list_cols,
         )
-        assert hashes[0] != hash_different, (
-            "Different data should still produce different hash even with normalisation"
-        )
+        assert (
+            hashes[0] != hash_different
+        ), "Different data should still produce different hash even with normalisation"
 
-    def test_normalisation_with_multiple_columns(self, method: HashMethod):
+    def test_normalisation_with_multiple_columns(self, method: HashMethod) -> None:
         """Test normalisation across more than two columns."""
         table_abc = pa.Table.from_pydict(
             {
@@ -430,11 +430,11 @@ class TestNormalisation:
             table_cab, method=method, as_sorted_list=sorted_list_cols
         )
 
-        assert hash_abc == hash_cab, (
-            "Multi-column normalisation should handle arbitrary column reordering"
-        )
+        assert (
+            hash_abc == hash_cab
+        ), "Multi-column normalisation should handle arbitrary column reordering"
 
-    def test_normalisation_handles_nulls(self, method: HashMethod):
+    def test_normalisation_handles_nulls(self, method: HashMethod) -> None:
         """Test that normalisation works correctly with null values."""
         sorted_list_cols = ["left_id", "right_id"]
 
@@ -451,7 +451,7 @@ class TestNormalisation:
 
         assert hash_a == hash_b, "Normalisation should handle null values correctly"
 
-    def test_normalisation_edge_cases(self, method: HashMethod):
+    def test_normalisation_edge_cases(self, method: HashMethod) -> None:
         """Test normalisation with edge cases like duplicates and empty tables."""
         sorted_list_cols = ["left_id", "right_id"]
 
@@ -460,15 +460,15 @@ class TestNormalisation:
         hash_dupes = hash_arrow_table(
             table_dupes, method=method, as_sorted_list=sorted_list_cols
         )
-        assert isinstance(hash_dupes, bytes), (
-            "Should handle duplicate values in sorted_listd columns"
-        )
+        assert isinstance(
+            hash_dupes, bytes
+        ), "Should handle duplicate values in sorted_listd columns"
 
         # Test with empty table
         table_empty = self.tables["empty"]
         hash_empty = hash_arrow_table(
             table_empty, method=method, as_sorted_list=sorted_list_cols
         )
-        assert hash_empty == b"empty_table_hash", (
-            "Empty tables should return consistent special hash value"
-        )
+        assert (
+            hash_empty == b"empty_table_hash"
+        ), "Empty tables should return consistent special hash value"

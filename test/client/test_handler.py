@@ -8,7 +8,7 @@ from matchbox.client._handler import create_client, healthcheck, login
 from matchbox.client._settings import ClientSettings
 
 
-def test_create_client():
+def test_create_client() -> None:
     mock_settings = ClientSettings(api_root="http://example.com", timeout=20)
     client = create_client(mock_settings)
 
@@ -20,7 +20,7 @@ def test_create_client():
     assert client.timeout.write == 60 * 30
 
 
-def test_retry_decorator_applied(matchbox_api: MockRouter):
+def test_retry_decorator_applied(matchbox_api: MockRouter) -> None:
     """Test that retry decorator works by mocking API errors."""
 
     # Check that the function has retry attributes (indicating decorator was applied)
@@ -50,7 +50,7 @@ def test_retry_decorator_applied(matchbox_api: MockRouter):
     assert len(matchbox_api.calls) == 3
 
 
-def test_healthcheck(matchbox_api: MockRouter):
+def test_healthcheck(matchbox_api: MockRouter) -> None:
     """Test the healthcheck endpoint works."""
     matchbox_api.get("/health").mock(
         side_effect=[

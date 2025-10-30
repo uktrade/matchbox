@@ -1,7 +1,7 @@
 """ORM classes for the Matchbox PostgreSQL database."""
 
 import json
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import (
     BIGINT,
@@ -501,7 +501,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     @staticmethod
     def _create_closure_entries(
         session: Session, child: "Resolutions", parent: "Resolutions"
-    ):
+    ) -> None:
         """Create closure table entries for a parent-child relationship."""
         # Direct relationship
         session.add(
@@ -716,8 +716,8 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
         self,
         key_field: SourceFields | None = None,
         index_fields: list[SourceFields] | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Initialise SourceConfigs with optional field objects."""
         super().__init__(**kwargs)
 

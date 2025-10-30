@@ -12,7 +12,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_add_single_source():
+def test_add_single_source() -> None:
     """Test adding a standalone source testkit."""
     dag_testkit = TestkitDAG()
 
@@ -38,7 +38,7 @@ def test_add_single_source():
     assert len(dag_testkit.linked) == 0
 
 
-def test_add_linked_sources():
+def test_add_linked_sources() -> None:
     """Test adding a LinkedSourcesTestkit."""
     dag_testkit = TestkitDAG()
 
@@ -69,7 +69,7 @@ def test_add_linked_sources():
     assert "source2" in dag_testkit.dag.nodes
 
 
-def test_add_model():
+def test_add_model() -> None:
     """Test adding a model testkit."""
     dag_testkit = TestkitDAG()
 
@@ -94,7 +94,7 @@ def test_add_model():
     assert dag_testkit.dag.nodes["test_model"] == model.model
 
 
-def test_get_linked_testkit_for_source():
+def test_get_linked_testkit_for_source() -> None:
     """Test getting linked testkit for a source."""
     dag_testkit = TestkitDAG()
 
@@ -118,7 +118,7 @@ def test_get_linked_testkit_for_source():
     assert "nonexistent" not in dag_testkit.source_to_linked
 
 
-def test_multiple_linked_testkits():
+def test_multiple_linked_testkits() -> None:
     """Test handling multiple LinkedSourcesTestkit objects."""
     dag_testkit = TestkitDAG()
 
@@ -162,7 +162,7 @@ def test_multiple_linked_testkits():
     assert dag_testkit.source_to_linked["bar1"] == linked2
 
 
-def test_empty_dag_properties():
+def test_empty_dag_properties() -> None:
     """Test properties of an empty TestkitDAG."""
     dag_testkit = TestkitDAG()
 

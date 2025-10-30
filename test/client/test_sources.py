@@ -35,7 +35,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_source_infers_type(sqlite_warehouse: Engine):
+def test_source_infers_type(sqlite_warehouse: Engine) -> None:
     """Creating a source with type inference works."""
     # Create test data
     source_testkit = source_factory(
@@ -63,7 +63,7 @@ def test_source_infers_type(sqlite_warehouse: Engine):
     )
 
 
-def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine):
+def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> None:
     """SQL on RelationalDBLocation is preserved.
 
     SQLGlot transpiles INSTR() to STR_POSITION() in its default dialect.
@@ -115,7 +115,7 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine):
     assert len(df) == 3
 
 
-def test_source_fetch(sqlite_warehouse: Engine):
+def test_source_fetch(sqlite_warehouse: Engine) -> None:
     """Test the query method with default parameters."""
     # Create test data
     source_testkit = source_factory(
@@ -167,7 +167,7 @@ def test_source_fetch(sqlite_warehouse: Engine):
 @patch("matchbox.client.locations.RelationalDBLocation.execute")
 def test_source_fetch_name_qualification(
     mock_execute: Mock, qualify_names: bool, sqlite_in_memory_warehouse: Engine
-):
+) -> None:
     """Test that column names are qualified when requested."""
     # Mock the location execute method to verify parameters
     mock_execute.return_value = (x for x in [None])  # execute needs to be a generator
@@ -219,7 +219,7 @@ def test_source_fetch_batching(
     batch_size: int,
     expected_call_kwargs: dict,
     sqlite_in_memory_warehouse: Engine,
-):
+) -> None:
     """Test query with batching options."""
     # Mock the location execute method to verify parameters
     mock_execute.return_value = (x for x in [None])  # execute needs to be a generator
@@ -253,7 +253,7 @@ def test_source_fetch_batching(
         pytest.param(2, id="with_batching"),
     ],
 )
-def test_source_run(sqlite_warehouse: Engine, batch_size: int):
+def test_source_run(sqlite_warehouse: Engine, batch_size: int) -> None:
     """Test the run method produces expected hash format."""
     # Create test data with unique values
     n_true_entities = 3
@@ -300,7 +300,7 @@ def test_source_run(sqlite_warehouse: Engine, batch_size: int):
 @patch("matchbox.client.sources.Source.fetch")
 def test_source_run_null_identifier(
     mock_fetch: Mock, sqlite_in_memory_warehouse: Engine
-):
+) -> None:
     """Test hashing data raises an error when source primary keys contain nulls."""
     # Create a source
     location = RelationalDBLocation(name="sqlite").set_client(
@@ -324,7 +324,7 @@ def test_source_run_null_identifier(
         source.run()
 
 
-def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
+def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
     """Test source syncing flow through the API."""
     # Mock Source
     testkit = source_factory(

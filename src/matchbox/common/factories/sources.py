@@ -4,6 +4,7 @@ import warnings
 from collections.abc import Callable
 from functools import cache, wraps
 from itertools import product
+from math import prod
 from typing import Any, ParamSpec, Self, TypeVar
 
 import pandas as pd
@@ -380,6 +381,13 @@ def generate_rows(
         for feature in features:
             base = entity.base_values[feature.name]
 
+            for rule in feature.variations:
+                if not isinstance(base, rule.type):
+                    raise TypeError(
+                        f"{rule.__class__.__name__} requires {rule.type} "
+                        f"but {feature.name} generates {type(base)}"
+                    )
+
             variations = []
             # Apply all variations as long as they change the value
             for v in (rule.apply(base) for rule in feature.variations):
@@ -388,6 +396,13 @@ def generate_rows(
 
             values = variations if feature.drop_base else variations + [base]
             possible_values.append(values or [base])
+
+        if (num_variations := prod(len(values) for values in possible_values)) > 100:
+            raise RuntimeError(
+                f"Entity {entity.id} would generate {num_variations:,} variations, "
+                "which exceeds the maximum of 100. This would cause a Cartesian "
+                "explosion."
+            )
 
         for values in product(*possible_values):
             for _ in range(repetition + 1):

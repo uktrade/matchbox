@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from functools import cache
 from random import getrandbits
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
 
 import pandas as pd
 import polars as pl
@@ -25,68 +25,64 @@ if TYPE_CHECKING:
 else:
     SourceTestkit = Any
 
+T = TypeVar("T")
 
-class VariationRule(BaseModel, ABC):
+
+class VariationRule(BaseModel, Generic[T], ABC):
     """Abstract base class for variation rules."""
 
     model_config = ConfigDict(frozen=True)
 
+    @property
     @abstractmethod
-    def apply(self, value: str) -> str:
+    def type(self) -> type[T]:
+        """Python type this rule can be applied to."""
+        pass
+
+    @abstractmethod
+    def apply(self, value: T) -> T:
         """Apply the variation to a value."""
         pass
 
-    @property
-    @abstractmethod
-    def type(self) -> str:
-        """Return the type of variation."""
-        pass
 
-
-class SuffixRule(VariationRule):
+class SuffixRule(VariationRule[str]):
     """Add a suffix to a value."""
 
     suffix: str
 
-    def apply(self, value: str) -> str:
-        """Apply the suffix to the value."""
+    @property
+    def type(self) -> type[str]:  # noqa: D102
+        return str
+
+    def apply(self, value: str) -> str:  # noqa: D102
         return f"{value}{self.suffix}"
 
-    @property
-    def type(self) -> str:
-        """Return the type of variation."""
-        return "suffix"
 
-
-class PrefixRule(VariationRule):
+class PrefixRule(VariationRule[str]):
     """Add a prefix to a value."""
 
     prefix: str
 
-    def apply(self, value: str) -> str:
-        """Apply the prefix to the value."""
+    @property
+    def type(self) -> type[str]:  # noqa: D102
+        return str
+
+    def apply(self, value: str) -> str:  # noqa: D102
         return f"{self.prefix}{value}"
 
-    @property
-    def type(self) -> str:
-        """Return the type of variation."""
-        return "prefix"
 
-
-class ReplaceRule(VariationRule):
+class ReplaceRule(VariationRule[str]):
     """Replace occurrences of a string with another."""
 
     old: str
     new: str
 
-    def apply(self, value: str) -> str:
-        """Apply the replacement to the value."""
-        return value.replace(self.old, self.new)
-
     @property
-    def type(self) -> str:
-        """Return the type of variation."""
-        return "replace"
+    def type(self) -> type[str]:  # noqa: D102
+        return str
+
+    def apply(self, value: str) -> str:  # noqa: D102
+        return value.replace(self.old, self.new)
 
 
 def infer_data_type(base: str, parameters: tuple | None) -> DataTypes:

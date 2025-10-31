@@ -10,7 +10,12 @@ from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
 from matchbox.common.factories.dags import TestkitDAG
-from matchbox.common.factories.entities import FeatureConfig, SuffixRule
+from matchbox.common.factories.entities import (
+    FeatureConfig,
+    PrefixRule,
+    ReplaceRule,
+    SuffixRule,
+)
 from matchbox.common.factories.models import query_to_model_factory
 from matchbox.common.factories.sources import (
     SourceTestkitParameters,
@@ -566,6 +571,322 @@ def create_convergent_scenario(
 
         # Add to DAG
         dag_testkit.add_model(model_testkit)
+
+    return dag_testkit
+
+
+@register_scenario("mega")
+def create_mega_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create a TestkitDAG scenario that produces large clusters.
+
+    Aims to produce "mega" clusters with more features than the CLI has screen rows,
+    and more variations than the CLI has screen columns.
+
+    Args:
+        backend: MatchboxDBAdapter instance
+        warehouse_engine: SQLAlchemy engine for data warehouse
+        n_entities: Number of true product entities to generate
+        seed: Random seed for reproducibility
+        **kwargs: Additional arguments
+
+    Returns:
+        TestkitDAG with extensive product data and linking model
+    """
+    dag_testkit = TestkitDAG()
+
+    # Create collection and run
+    backend.create_collection(name=dag_testkit.dag.name)
+    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+
+    # ===== FEATURES WITH VARIATIONS (5 string features, 1 variation each) =====
+
+    product_name = FeatureConfig(
+        name="product_name",
+        base_generator="catch_phrase",
+    ).add_variations(
+        SuffixRule(suffix=" Pro"),
+    )
+
+    product_sku = FeatureConfig(
+        name="product_sku",
+        base_generator="bothify",
+        parameters=(("text", "SKU-####-???"),),
+    ).add_variations(
+        ReplaceRule(old="-", new=""),
+    )
+
+    primary_colour = FeatureConfig(
+        name="primary_colour",
+        base_generator="color_name",
+    ).add_variations(
+        PrefixRule(prefix="Colour: "),
+    )
+
+    primary_material = FeatureConfig(
+        name="primary_material",
+        base_generator="random_element",
+        parameters=(
+            (
+                "elements",
+                (
+                    "Plastic",
+                    "Metal",
+                    "Wood",
+                    "Glass",
+                    "Ceramic",
+                    "Fabric",
+                    "Leather",
+                    "Rubber",
+                    "Silicon",
+                    "Carbon Fiber",
+                ),
+            ),
+        ),
+        unique=False,
+    ).add_variations(
+        PrefixRule(prefix="Material: "),
+    )
+
+    manufacturer_code = FeatureConfig(
+        name="manufacturer_code",
+        base_generator="bothify",
+        parameters=(("text", "MFR-###??"),),
+    ).add_variations(
+        ReplaceRule(old="-", new="_"),
+    )
+
+    # ===== FEATURES WITHOUT VARIATIONS (45 features) =====
+
+    # Numeric features
+    def _numeric_feature(name: str, pattern: str, **kwargs: Any) -> FeatureConfig:
+        """Helper to create a numeric feature with bothify pattern."""
+        return FeatureConfig(
+            name=name,
+            base_generator="bothify",
+            parameters=(("text", pattern),),
+            **kwargs,
+        )
+
+    height_cm = FeatureConfig(
+        name="height_cm",
+        base_generator="pyfloat",
+        parameters=(
+            ("min_value", 1.0),
+            ("max_value", 500.0),
+            ("right_digits", 1),
+        ),
+    )
+    width_cm = _numeric_feature("width_cm", "###.#")
+    depth_cm = _numeric_feature("depth_cm", "###.#")
+    weight_kg = _numeric_feature("weight_kg", "##.##")
+    capacity_litres = _numeric_feature("capacity_litres", "##.#")
+    wattage = _numeric_feature("wattage", "####")
+    max_temp_c = _numeric_feature("max_temp_c", "###")
+    battery_life_hours = _numeric_feature("battery_life_hours", "###")
+    quality_rating = _numeric_feature("quality_rating", "#.#")
+    speed_rpm = _numeric_feature("speed_rpm", "#####")
+    pressure_psi = _numeric_feature("pressure_psi", "###")
+    decibel_level = _numeric_feature("decibel_level", "###")
+    gauge = _numeric_feature("gauge", "##")
+
+    # Simple text features
+    secondary_colour = FeatureConfig(
+        name="secondary_colour", base_generator="color_name"
+    )
+    origin_country = FeatureConfig(name="origin_country", base_generator="country")
+    brand_name = FeatureConfig(name="brand_name", base_generator="company")
+
+    # Categorical features
+    def _categorical_feature(name: str, *choices: str, **kwargs: Any) -> FeatureConfig:
+        """Helper to create a categorical feature with random_element."""
+        return FeatureConfig(
+            name=name,
+            base_generator="random_element",
+            parameters=(("elements", choices),),
+            unique=False,
+            **kwargs,
+        )
+
+    voltage = _categorical_feature("voltage", "110V", "220V", "240V", "12V", "24V")
+    warranty_months = _categorical_feature("warranty_months", "12", "24", "36")
+    shipping_days = _categorical_feature("shipping_days", "1", "2", "3")
+    box_size = _categorical_feature("box_size", "Small", "Medium", "Large")
+    safety_cert = _categorical_feature("safety_cert", "CE", "UL", "FCC")
+    frequency_hz = _categorical_feature("frequency_hz", "50", "60", "400", "1000")
+    thread_count = _categorical_feature("thread_count", "100", "200", "300")
+    ply_count = _categorical_feature("ply_count", "1", "2", "3", "4", "5", "6")
+    hardness_rating = _categorical_feature("hardness_rating", "Soft", "Medium", "Hard")
+    water_resistance = _categorical_feature("water_resistance", "IPX4", "IPX5")
+    dust_rating = _categorical_feature("dust_rating", "IP5X", "IP6X")
+    flex_rating = _categorical_feature("flex_rating", "Rigid", "Flexible", "Ultra-flex")
+    texture = _categorical_feature("texture", "Matte", "Glossy", "Satin")
+    transparency = _categorical_feature("transparency", "Opaque", "Translucent")
+    reflectivity = _categorical_feature("reflectivity", "Non-reflective", "Reflective")
+    elasticity = _categorical_feature("elasticity", "Rigid", "Elastic")
+    conductivity = _categorical_feature("conductivity", "Conductive", "Insulating")
+    magnetic_property = _categorical_feature("magnetic_property", "Magnetic")
+    thermal_conductivity = _categorical_feature("thermal_conductivity", "High", "Low")
+    uv_resistance = _categorical_feature("uv_resistance", "Standard", "Indoor-only")
+    chemical_resistance = _categorical_feature("chemical_resistance", "High", "Low")
+    recyclability = _categorical_feature("recyclability", "Recyclable")
+    fire_rating = _categorical_feature("fire_rating", "Class A", "Class B")
+    odour_level = _categorical_feature("odour_level", "Odourless", "Scented")
+    taste_safe = _categorical_feature("taste_safe", "Food-safe", "BPA-free")
+    allergen_info = _categorical_feature("allergen_info", "Hypoallergenic", "Standard")
+    assembly_required = _categorical_feature("assembly_required", "Full assembly")
+    tool_requirements = _categorical_feature("tool_requirements", "Basic tools")
+    skill_level = _categorical_feature("skill_level", "Beginner", "Advanced", "Expert")
+    age_range = _categorical_feature("age_range", "0-3", "3-6", "Adult", "All ages")
+    user_capacity = _categorical_feature("user_capacity", "1", "2", "3")
+
+    # ===== CREATE TWO SOURCES WITH OVERLAPPING FEATURES =====
+
+    # Source A: Marketplace A
+    marketplace_a_params = SourceTestkitParameters(
+        name="marketplace_a",
+        engine=warehouse_engine,
+        features=(
+            product_name,
+            product_sku,
+            manufacturer_code,
+            height_cm,
+            width_cm,
+            depth_cm,
+            weight_kg,
+            primary_colour,
+            secondary_colour,
+            primary_material,
+            capacity_litres,
+            wattage,
+            voltage,
+            max_temp_c,
+            battery_life_hours,
+            warranty_months,
+            shipping_days,
+            box_size,
+            quality_rating,
+            safety_cert,
+            origin_country,
+            brand_name,
+            speed_rpm,
+            pressure_psi,
+            frequency_hz,
+            decibel_level,
+            thread_count,
+        ),
+        n_true_entities=n_entities,
+        repetition=2,
+        drop_base=False,
+    )
+
+    # Source B: Marketplace B
+    marketplace_b_params = SourceTestkitParameters(
+        name="marketplace_b",
+        engine=warehouse_engine,
+        features=(
+            product_name,
+            product_sku,
+            manufacturer_code,
+            height_cm,
+            width_cm,
+            weight_kg,
+            primary_colour,
+            primary_material,
+            ply_count,
+            gauge,
+            hardness_rating,
+            water_resistance,
+            dust_rating,
+            flex_rating,
+            texture,
+            transparency,
+            reflectivity,
+            elasticity,
+            conductivity,
+            magnetic_property,
+            thermal_conductivity,
+            uv_resistance,
+            chemical_resistance,
+            recyclability,
+            fire_rating,
+            odour_level,
+            taste_safe,
+            allergen_info,
+            assembly_required,
+            tool_requirements,
+            skill_level,
+            age_range,
+            user_capacity,
+        ),
+        n_true_entities=n_entities,
+        repetition=2,
+        drop_base=False,
+    )
+
+    # Create linked sources
+    linked = linked_sources_factory(
+        source_parameters=(marketplace_a_params, marketplace_b_params),
+        dag=dag_testkit.dag,
+        seed=seed,
+    )
+    dag_testkit.add_linked_sources(linked)
+
+    # Write sources to warehouse
+    for source_testkit in dag_testkit.sources.values():
+        source_testkit.write_to_location(set_client=warehouse_engine)
+
+    # Index sources in backend
+    for source_testkit in dag_testkit.sources.values():
+        backend.create_resolution(
+            resolution=source_testkit.source.to_resolution(),
+            path=source_testkit.resolution_path,
+        )
+        backend.insert_source_data(
+            path=source_testkit.resolution_path,
+            data_hashes=source_testkit.data_hashes,
+        )
+
+    # ===== CREATE LINKING MODEL =====
+
+    # Get sources for linking
+    marketplace_a = dag_testkit.sources["marketplace_a"]
+    marketplace_b = dag_testkit.sources["marketplace_b"]
+
+    # Query both sources
+    marketplace_a_data = backend.query(source=marketplace_a.resolution_path)
+    marketplace_b_data = backend.query(source=marketplace_b.resolution_path)
+
+    # Create linking model
+    link_model = query_to_model_factory(
+        left_query=Query(marketplace_a.source, dag=dag_testkit.dag),
+        left_data=marketplace_a_data,
+        left_keys={"marketplace_a": "key"},
+        right_query=Query(marketplace_b.source, dag=dag_testkit.dag),
+        right_data=marketplace_b_data,
+        right_keys={"marketplace_b": "key"},
+        true_entities=tuple(linked.true_entities),
+        name="mega_product_linker",
+        description="Links products across marketplace_a and marketplace_b catalogues",
+        prob_range=(0.8, 1.0),
+        seed=seed,
+    )
+
+    # Add model to backend
+    backend.create_resolution(
+        resolution=link_model.model.to_resolution(),
+        path=link_model.resolution_path,
+    )
+    backend.insert_model_data(
+        path=link_model.resolution_path,
+        results=link_model.probabilities.to_arrow(),
+    )
+    dag_testkit.add_model(link_model)
 
     return dag_testkit
 

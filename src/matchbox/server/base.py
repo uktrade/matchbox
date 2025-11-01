@@ -18,10 +18,10 @@ from matchbox.common.dtos import (
     ModelResolutionPath,
     Resolution,
     ResolutionPath,
-    ResolutionType,
     Run,
     RunID,
     SourceResolutionPath,
+    UploadStage,
 )
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.logging import LogLevelType
@@ -421,25 +421,30 @@ class MatchboxDBAdapter(ABC):
         Args:
             resolution: Resolution object with a source or model config
             path: The resolution path for the source
-
-        Raises:
-            MatchboxModelConfigError: If the configuration is invalid, such as
-                the ModelConfig's resolutions sharing ancestors
         """
         ...
 
     @abstractmethod
-    def get_resolution(
-        self, path: ResolutionPath, validate: ResolutionType | None = None
-    ) -> Resolution:
+    def get_resolution(self, path: ResolutionPath) -> Resolution:
         """Get a resolution from its path.
 
         Args:
             path: The resolution path for the source
-            validate: The expected type of the resolution
 
         Returns:
             A Resolution object
+        """
+        ...
+
+    @abstractmethod
+    def update_resolution(self, resolution: Resolution, path: ResolutionPath) -> None:
+        """Updates resolution metadata.
+
+        It cannot be used to update a resolution's fingerprint.
+
+        Args:
+            resolution: Resolution object with a source or model config
+            path: The resolution path for the source
         """
         ...
 
@@ -448,7 +453,7 @@ class MatchboxDBAdapter(ABC):
         """Delete a resolution from the database.
 
         Args:
-            path: The name of the resolution to delete.
+            path: The path of the resolution to delete.
             certain: Whether to delete the model without confirmation.
         """
         ...
@@ -456,10 +461,32 @@ class MatchboxDBAdapter(ABC):
     # Data insertion
 
     @abstractmethod
+    def set_resolution_stage(self, path: ResolutionPath, stage: UploadStage) -> None:
+        """Sets upload stage of resolution data.
+
+        Args:
+            path: The path of the resolution to target.
+            stage: The stage to set for the resolution.
+        """
+        ...
+
+    @abstractmethod
+    def get_resolution_stage(self, path: ResolutionPath) -> UploadStage:
+        """Retrieves upload stage of resolution data.
+
+        Args:
+            path: The path of the resolution to target.
+        """
+        ...
+
+    @abstractmethod
     def insert_source_data(
         self, path: SourceResolutionPath, data_hashes: Table
     ) -> None:
         """Inserts hash data for a source resolution.
+
+        Only possible if data fingerprint matches fingerprint declared when the
+        resolution was created. Data can only be set once on a resolution.
 
         Args:
             path: The path of the source resolution to index.
@@ -469,22 +496,16 @@ class MatchboxDBAdapter(ABC):
 
     @abstractmethod
     def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:
-        """Inserts results data for a model resolution."""
+        """Inserts results data for a model resolution.
+
+        Only possible if data fingerprint matches fingerprint declared when the
+        resolution was created. Data can only be set once on a resolution.
+        """
         ...
 
     @abstractmethod
     def get_model_data(self, path: ModelResolutionPath) -> Table:
         """Get the results for a model resolution."""
-        ...
-
-    @abstractmethod
-    def set_model_truth(self, path: ModelResolutionPath, truth: int) -> None:
-        """Sets the truth threshold for this model, changing the default clusters."""
-        ...
-
-    @abstractmethod
-    def get_model_truth(self, path: ModelResolutionPath) -> int:
-        """Gets the current truth threshold for this model."""
         ...
 
     # Data management

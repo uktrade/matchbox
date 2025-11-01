@@ -2,8 +2,8 @@
 
 import inspect
 import json
-import warnings
-from datetime import datetime
+from collections.abc import Callable
+from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
 from matchbox.client import _handler
@@ -20,8 +20,10 @@ from matchbox.common.dtos import (
     ModelType,
     Resolution,
     ResolutionType,
+    UploadStage,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
+from matchbox.common.hash import hash_model_results
 from matchbox.common.logging import logger
 from matchbox.common.transform import truth_float_to_int, truth_int_to_float
 
@@ -32,6 +34,7 @@ else:
 
 P = ParamSpec("P")
 R = TypeVar("R")
+T = TypeVar("T")
 
 
 _MODEL_CLASSES = {
@@ -46,6 +49,24 @@ def add_model_class(ModelClass: type[Linker] | type[Deduper]) -> None:
         _MODEL_CLASSES[ModelClass.__name__] = ModelClass
     else:
         raise ValueError("The argument is not a proper subclass of Deduper or Linker.")
+
+
+def post_run(method: Callable[..., T]) -> Callable[..., T]:
+    """Decorator to ensure that a method is called after model run.
+
+    Raises:
+        RuntimeError: If run hasn't happened.
+    """
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self.results is None:
+            raise RuntimeError(
+                "The model must be run before attempting this operation."
+            )
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class Model:
@@ -101,7 +122,6 @@ class Model:
             right_query: The query that will get the data to link on the right.
             description: Optional description of the model
         """
-        self.last_run: datetime | None = None
         self.dag = dag
         self.name = name
         self.description = description
@@ -139,6 +159,7 @@ class Model:
             right_query=self.right_query.config if self.right_query else None,
         )
 
+    @post_run
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""
         return Resolution(
@@ -146,6 +167,7 @@ class Model:
             truth=self._truth,
             resolution_type=ResolutionType.MODEL,
             config=self.config,
+            fingerprint=hash_model_results(self.results.probabilities),
         )
 
     @classmethod
@@ -198,30 +220,21 @@ class Model:
         result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
         return result.success
 
-    def run(self, for_validation: bool = False, full_rerun: bool = False) -> Results:
+    def run(self, for_validation: bool = False) -> Results:
         """Execute the model pipeline and return results.
 
         Args:
             for_validation: Whether to download and store extra data to explore and
                     score results.
-            full_rerun: Whether to force a re-run even if the results are cached
         """
-        if self.last_run and not full_rerun:
-            warnings.warn("Model already run, skipping.", UserWarning, stacklevel=2)
-            return self.results
-
         left_df = self.left_query.run(
-            return_leaf_id=for_validation,
-            batch_size=settings.batch_size,
-            full_rerun=full_rerun,
+            return_leaf_id=for_validation, batch_size=settings.batch_size
         )
         right_df = None
 
         if self.config.type == ModelType.LINKER:
             right_df = self.right_query.run(
-                return_leaf_id=for_validation,
-                batch_size=settings.batch_size,
-                full_rerun=full_rerun,
+                return_leaf_id=for_validation, batch_size=settings.batch_size
             )
 
             self.model_instance.prepare(left_df, right_df)
@@ -241,37 +254,44 @@ class Model:
         else:
             self.results = Results(probabilities=results)
 
-        self.last_run = datetime.now()
         return self.results
 
+    @post_run
     def sync(self) -> None:
-        """Send the model config, truth and results to the server."""
+        """Send the model config and results to the server."""
+        log_prefix = f"Sync {self.name}"
         resolution = self.to_resolution()
         try:
             existing_resolution = _handler.get_resolution(path=self.resolution_path)
         except MatchboxResolutionNotFoundError:
+            logger.info("Found existing resolution", prefix=log_prefix)
             existing_resolution = None
-        # Check if config matches
+
         if existing_resolution:
-            if existing_resolution.config != self.config:
-                raise ValueError(
-                    f"Resolution {self.resolution_path} already exists with different "
-                    "configuration. Please delete the existing resolution "
-                    "or use a different name. "
+            if (existing_resolution.fingerprint == resolution.fingerprint) and (
+                existing_resolution.config.parents == resolution.config.parents
+            ):
+                logger.info("Updating existing resolution", prefix=log_prefix)
+                _handler.update_resolution(
+                    resolution=resolution, path=self.resolution_path
                 )
             else:
-                log_prefix = f"Resolution {self.resolution_path}"
-                logger.warning("Already exists. Passing.", prefix=log_prefix)
-        else:
+                logger.info(
+                    "Update not possible. Deleting existing resolution",
+                    prefix=log_prefix,
+                )
+                _handler.delete_resolution(path=self.resolution_path, certain=True)
+                existing_resolution = None
+
+        if not existing_resolution:
+            logger.info("Creating new resolution", prefix=log_prefix)
             _handler.create_resolution(resolution=resolution, path=self.resolution_path)
 
-        _handler.set_truth(path=self.resolution_path, truth=self._truth)
-
-        if self.results and len(self.results.probabilities):
+        upload_stage = _handler.get_resolution_stage(self.resolution_path)
+        if upload_stage == UploadStage.READY:
+            logger.info("Setting data for new resolution", prefix=log_prefix)
             _handler.set_data(
-                path=self.resolution_path,
-                data=self.results.probabilities,
-                validate_type=ResolutionType.MODEL,
+                path=self.resolution_path, data=self.results.probabilities
             )
 
     def download_results(self) -> Results:

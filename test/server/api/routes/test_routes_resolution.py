@@ -1,9 +1,6 @@
-from time import sleep
-from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
-from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import table_to_buffer
@@ -13,6 +10,7 @@ from matchbox.common.dtos import (
     NotFoundError,
     ResolutionPath,
     ResourceOperationStatus,
+    UploadInfo,
     UploadStage,
 )
 from matchbox.common.exceptions import (
@@ -22,14 +20,9 @@ from matchbox.common.exceptions import (
 from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import source_factory
 
-if TYPE_CHECKING:
-    from mypy_boto3_s3.client import S3Client
-else:
-    S3Client = Any
-
 
 def test_get_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    source_testkit = source_factory(name="foo")
+    source_testkit = source_factory(name="foo").fake_run()
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(
         return_value=source_testkit.source.to_resolution(),  # Second call (SOURCE)
@@ -43,7 +36,9 @@ def test_get_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
 def test_get_model(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     testkit = model_factory(name="test_model", description="test description")
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
+    mock_backend.get_resolution = Mock(
+        return_value=testkit.fake_run().model.to_resolution()
+    )
 
     response = test_client.get("/collections/default/runs/1/resolutions/test_model")
 
@@ -63,10 +58,11 @@ def test_get_resolution_404(
     assert response.json()["entity"] == BackendResourceType.RESOLUTION
 
 
-def test_insert_model(
+def test_insert_resolution(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
-    testkit = model_factory(name="test_model")
+    """Resolution metadata can be created."""
+    testkit = model_factory(name="test_model").fake_run()
     test_client, mock_backend, _ = api_client_and_mocks
 
     response = test_client.post(
@@ -79,7 +75,7 @@ def test_insert_model(
         response.json()
         == ResourceOperationStatus(
             success=True,
-            name="test_model",
+            target="Resolution default/1/test_model",
             operation=CRUDOperation.CREATE,
             details=None,
         ).model_dump()
@@ -91,7 +87,7 @@ def test_insert_model(
     )
 
 
-def test_insert_model_error(
+def test_insert_resolution_error(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
     test_client, mock_backend, _ = api_client_and_mocks
@@ -99,6 +95,46 @@ def test_insert_model_error(
     testkit = model_factory()
 
     response = test_client.post(
+        "/collections/default/runs/1/resolutions/name",
+        json=testkit.fake_run().model.to_resolution().model_dump(),
+    )
+
+    assert response.status_code == 500
+    assert response.json()["success"] is False
+    assert response.json()["details"] == "Test error"
+
+
+def test_update_resolution(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Resolution metadata can be updated."""
+    testkit = model_factory(name="test_model").fake_run()
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    response = test_client.put(
+        "/collections/default/runs/1/resolutions/test_model",
+        json=testkit.model.to_resolution().model_dump(),
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json()
+        == ResourceOperationStatus(
+            success=True,
+            target="Resolution default/1/test_model",
+            operation=CRUDOperation.UPDATE,
+            details=None,
+        ).model_dump()
+    )
+
+    mock_backend.update_resolution.assert_called_once_with(
+        resolution=testkit.model.to_resolution(),
+        path=ResolutionPath(name="test_model", collection="default", run=1),
+    )
+
+    # Errors are handled
+    mock_backend.update_resolution = Mock(side_effect=Exception("Test error"))
+    response = test_client.put(
         "/collections/default/runs/1/resolutions/name",
         json=testkit.model.to_resolution().model_dump(),
     )
@@ -108,54 +144,44 @@ def test_insert_model_error(
     assert response.json()["details"] == "Test error"
 
 
-@pytest.mark.parametrize("model_type", ["deduper", "linker"])
-def test_complete_model_upload_process(
-    s3: S3Client,
-    model_type: str,
+# We can patch BackgroundTasks, since the api_client_and_mocks fixture
+# ensures the API runs the task (not Celery)
+@patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
+@patch("matchbox.server.api.routers.collection.table_to_s3")
+def test_complete_upload_process(
+    mock_add_task: Mock,
+    mock_s3_upload: Mock,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
-    """Test the complete upload process for models from creation through processing."""
+    """Test the complete resolution data upload from creation through processing."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-    mock_backend.insert_model_data = Mock(return_value=None)
 
-    # Create test bucket
-    s3.create_bucket(
-        Bucket="test-bucket",
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
-    )
-
-    # Create test data with specified model type
-    testkit = model_factory(model_type=model_type)
-
-    # Set up the mock to return the actual model metadata and data
-    mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
-    mock_backend.get_model_data = Mock(return_value=testkit.probabilities.to_arrow())
-
+    # Create test data
+    testkit = model_factory(model_type="linker").fake_run()
     collection = testkit.resolution_path.collection
     run = testkit.resolution_path.run
 
-    # Step 1: Create model
+    # Mock insertion of data
+    mock_backend.insert_model_data = Mock(return_value=None)
+    # Mock retrieval of resolution metadata and data
+    mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
+    mock_backend.get_model_data = Mock(return_value=testkit.probabilities.to_arrow())
+    # Mock upload status checking - in the beginning, it's ready to receive
+    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.READY)
+
+    # Step 1: Create resolution
     response = test_client.post(
         f"/collections/{collection}/runs/{run}/resolutions/{testkit.model.name}",
         json=testkit.model.to_resolution().model_dump(),
     )
     assert response.status_code == 201
-    assert response.json()["success"] is True
-    assert response.json()["name"] == testkit.model.name
+    resolution_post_info = ResourceOperationStatus.model_validate(response.json())
+    assert resolution_post_info.success
+    assert testkit.model.name in resolution_post_info.target
 
-    # Step 2: Initialize results upload
+    # Step 2: Upload data file
     response = test_client.post(
-        f"/collections/{collection}/runs/{run}/resolutions/{testkit.model.name}/data"
-    )
-    assert response.status_code == 202
-    upload_id = response.json()["id"]
-    assert response.json()["stage"] == UploadStage.AWAITING_UPLOAD
-
-    # Step 3: Upload results file with real background tasks
-    response = test_client.post(
-        f"/upload/{upload_id}",
+        f"/collections/{collection}/runs/{run}/resolutions/{testkit.model.name}/data",
         files={
             "file": (
                 "results.parquet",
@@ -165,101 +191,163 @@ def test_complete_model_upload_process(
         },
     )
     assert response.status_code == 202
-    assert response.json()["stage"] == UploadStage.QUEUED
+    data_post_info = ResourceOperationStatus.model_validate(response.json())
+    upload_id = data_post_info.details
+    assert mock_s3_upload.called
+    assert mock_add_task.called
 
-    # Step 4: Poll status until complete or timeout
-    max_attempts = 10
-    current_attempt = 0
-    stage = None
+    # Update upload status mock - now, it's complete
+    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.COMPLETE)
 
-    while current_attempt < max_attempts:
-        response = test_client.get(f"/upload/{upload_id}/status")
-        assert response.status_code == 200
-
-        stage = response.json()["stage"]
-        if stage == UploadStage.COMPLETE:
-            break
-        elif stage == UploadStage.FAILED:
-            pytest.fail(f"Upload failed: {response.json().get('details')}")
-        elif stage in [UploadStage.PROCESSING, UploadStage.QUEUED]:
-            sleep(0.1)  # Small delay between polls
-        else:
-            pytest.fail(f"Unexpected stage: {stage}")
-
-        current_attempt += 1
-
-    assert current_attempt < max_attempts, (
-        "Timed out waiting for processing to complete"
+    # Step 3: Get upload status
+    response = test_client.get(
+        f"/collections/{collection}/runs/{run}/resolutions/{testkit.model.name}/data/status",
+        params={"upload_id": upload_id},
     )
-    assert stage == UploadStage.COMPLETE
     assert response.status_code == 200
+    upload_info = UploadInfo.model_validate(response.json())
+    assert upload_info.stage == UploadStage.COMPLETE
 
-    # Step 5: Verify results were stored correctly
-    mock_backend.insert_model_data.assert_called_once()
-    call_args = mock_backend.insert_model_data.call_args
-    assert (
-        call_args[1]["path"] == testkit.resolution_path
-    )  # Check model resolution name matches
-    assert call_args[1]["results"].equals(
-        testkit.probabilities.to_arrow()
-    )  # Check results data matches
-
-    # Step 6: Verify we can retrieve the results
+    # Step 4: We can retrieve the results
     response = test_client.get(
         f"/collections/default/runs/1/resolutions/{testkit.model.name}/data"
     )
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"
 
-    # Verify the model truth can be set and retrieved
-    truth_value = 85
-    mock_backend.get_model_truth = Mock(return_value=truth_value)
 
-    response = test_client.patch(
-        f"/collections/default/runs/1/resolutions/{testkit.model.name}/truth",
-        json=truth_value,
-    )
-    assert response.status_code == 200
-
-    response = test_client.get(
-        f"/collections/default/runs/1/resolutions/{testkit.model.name}/truth"
-    )
-    assert response.status_code == 200
-    assert response.json() == truth_value
-
-    # Verify file is deleted from S3 after processing
-    with pytest.raises(ClientError):
-        s3.head_object(Bucket="test-bucket", Key=f"{upload_id}.parquet")
-
-
-def test_set_results(
+@patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
+@patch("matchbox.server.api.routers.collection.table_to_s3")
+def test_set_data_404(
+    mock_add_task: Mock,
+    mock_s3_upload: Mock,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ):
-    testkit = model_factory()
+    """Test setting data for a non-existent resolution."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
-
-    response = test_client.post(
-        f"/collections/default/runs/1/resolutions/{testkit.model.name}/data"
+    mock_backend.get_resolution_stage = Mock(
+        side_effect=MatchboxResolutionNotFoundError()
     )
-
-    assert response.status_code == 202
-    assert response.json()["stage"] == UploadStage.AWAITING_UPLOAD
-
-
-def test_set_results_model_not_found(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test setting results for a non-existent model."""
-    test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(side_effect=MatchboxResolutionNotFoundError())
 
     response = test_client.post(
-        "/collections/default/runs/1/resolutions/nonexistent-model/data"
+        "/collections/default/runs/1/resolutions/nonexistent-model/data",
+        files={
+            "file": (
+                "hashes.parquet",
+                table_to_buffer(source_factory().data_hashes),
+                "application/octet-stream",
+            ),
+        },
+    )
+
+    # Correct error response
+    assert response.status_code == 404
+    error404 = NotFoundError.model_validate(response.json())
+    assert error404.entity == BackendResourceType.RESOLUTION
+    # Upload doesn't proceed
+    mock_s3_upload.assert_not_called()
+    mock_add_task.assert_not_called()
+
+
+@patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
+@patch("matchbox.server.api.routers.collection.table_to_s3")
+def test_set_data_file_format(
+    mock_add_task: Mock,
+    mock_s3_upload: Mock,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Test that file uploaded has Parquet magic bytes."""
+    # Setup
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.READY)
+
+    # Make request with mocked background task
+    response = test_client.post(
+        "/collections/default/runs/1/resolutions/resolution/data",
+        files={
+            "file": (
+                "hashes.parquet",
+                b"dummy\ndata",
+                "application/octet-stream",
+            ),
+        },
+    )
+
+    # Correct error response
+    assert response.status_code == 400
+    operation_status = ResourceOperationStatus.model_validate(response.json())
+    assert "invalid parquet" in operation_status.details.lower()
+    # Upload doesn't proceed
+    mock_s3_upload.assert_not_called()
+    mock_add_task.assert_not_called()
+
+
+@patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
+@patch("matchbox.server.api.routers.collection.table_to_s3")
+def test_set_data_already_queued(
+    mock_add_task: Mock,
+    mock_s3_upload: Mock,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Test attempting to upload when status is already queued."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.PROCESSING)
+
+    response = test_client.post(
+        "/collections/default/runs/1/resolutions/resolution/data",
+        files={
+            "file": (
+                "hashes.parquet",
+                table_to_buffer(source_factory().data_hashes),
+                "application/octet-stream",
+            ),
+        },
+    )
+
+    # Correct error response
+    assert response.status_code == 400
+    operation_status = ResourceOperationStatus.model_validate(response.json())
+    assert "Not expecting upload" in operation_status.details
+    # Upload doesn't proceed
+    mock_s3_upload.assert_not_called()
+    mock_add_task.assert_not_called()
+
+
+def test_get_upload_status_404(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Test getting upload status for a non-existent resolution."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution_stage = Mock(
+        side_effect=MatchboxResolutionNotFoundError()
+    )
+
+    response = test_client.get(
+        "/collections/default/runs/1/resolutions/nonexistent-model/data/status"
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RESOLUTION
+    error404 = NotFoundError.model_validate(response.json())
+    error404.entity = BackendResourceType.RESOLUTION
+
+
+def test_get_upload_status_gets_errors(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+):
+    """Test getting failed upload status."""
+    test_client, mock_backend, mock_tracker = api_client_and_mocks
+    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.READY)
+    mock_tracker.set("upload_id", "error message")
+
+    response = test_client.get(
+        "/collections/default/runs/1/resolutions/nonexistent-model/data/status",
+        params={"upload_id": "upload_id"},
+    )
+
+    assert response.status_code == 200
+    info = UploadInfo.model_validate(response.json())
+    assert info.error == "error message"
 
 
 def test_get_results(
@@ -277,112 +365,6 @@ def test_get_results(
     assert response.headers["content-type"] == "application/octet-stream"
 
 
-def test_set_truth(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    testkit = model_factory()
-    test_client, mock_backend, _ = api_client_and_mocks
-
-    response = test_client.patch(
-        f"/collections/{testkit.resolution_path.collection}"
-        f"/runs/{testkit.resolution_path.run}"
-        f"/resolutions/{testkit.resolution_path.name}"
-        "/truth",
-        json=95,
-    )
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    mock_backend.set_model_truth.assert_called_once_with(
-        path=testkit.resolution_path, truth=95
-    )
-
-
-def test_set_truth_invalid_value(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    """Test setting an invalid truth value (outside 0-1 range)."""
-    testkit = model_factory()
-    test_client, _, _ = api_client_and_mocks
-
-    # Test value > 1
-    response = test_client.patch(
-        f"/collections/default/runs/1/resolutions/{testkit.model.name}/truth",
-        json=150,
-    )
-    assert response.status_code == 422
-
-    # Test value < 0
-    response = test_client.patch(
-        f"/collections/default/runs/1/resolutions/{testkit.model.name}/truth",
-        json=-50,
-    )
-    assert response.status_code == 422
-
-
-def test_get_truth(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    testkit = model_factory()
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_model_truth = Mock(return_value=95)
-
-    response = test_client.get(
-        f"/collections/default/runs/1/resolutions/{testkit.model.name}/truth"
-    )
-
-    assert response.status_code == 200
-    assert response.json() == 95
-
-
-@pytest.mark.parametrize(
-    "endpoint",
-    ["data", "truth"],
-)
-def test_model_get_endpoints_404(
-    endpoint: str,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Test 404 responses for model GET endpoints when model doesn't exist."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    # Map endpoint to actual backend method name
-    method_name = "get_model_data" if endpoint == "data" else f"get_model_{endpoint}"
-    mock_method = getattr(mock_backend, method_name)
-    mock_method.side_effect = MatchboxResolutionNotFoundError()
-
-    response = test_client.get(
-        f"/collections/default/runs/1/resolutions/nonexistent-model/{endpoint}"
-    )
-
-    assert response.status_code == 404
-    error = NotFoundError.model_validate(response.json())
-    assert error.entity == BackendResourceType.RESOLUTION
-
-
-@pytest.mark.parametrize(
-    ("endpoint", "payload"),
-    [
-        ("truth", 95),
-    ],
-)
-def test_model_patch_endpoints_404(
-    endpoint: str,
-    payload: float | list[dict[str, Any]],
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Test 404 responses for model PATCH endpoints when model doesn't exist."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_method = getattr(mock_backend, f"set_model_{endpoint}")
-    mock_method.side_effect = MatchboxResolutionNotFoundError()
-
-    response = test_client.patch(
-        f"/collections/default/runs/1/resolutions/nonexistent-model/{endpoint}",
-        json=payload,
-    )
-
-    assert response.status_code == 404
-    error = NotFoundError.model_validate(response.json())
-    assert error.entity == BackendResourceType.RESOLUTION
-
-
 def test_delete_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test deletion of a resolution."""
     testkit = model_factory()
@@ -397,7 +379,7 @@ def test_delete_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
         response.json()
         == ResourceOperationStatus(
             success=True,
-            name=testkit.model.name,
+            target=f"Resolution default/1/{testkit.model.name}",
             operation=CRUDOperation.DELETE,
             details=None,
         ).model_dump()
@@ -441,107 +423,3 @@ def test_delete_resolution_404(
     assert response.status_code == 404
     error = NotFoundError.model_validate(response.json())
     assert error.entity == BackendResourceType.RESOLUTION
-
-
-def test_complete_source_upload_process(
-    s3: S3Client,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test the complete upload process from source creation through processing."""
-    # Create test data
-    source_testkit = source_factory()
-
-    # Setup the backend
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-
-    mock_backend.get_resolution = Mock(
-        return_value=source_testkit.source.to_resolution()
-    )
-    mock_backend.create_resolution = Mock(return_value=None)
-    mock_backend.insert_source_data = Mock(return_value=None)
-
-    # Create test bucket
-    s3.create_bucket(
-        Bucket="test-bucket",
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
-    )
-
-    # Step 1: Add source
-    response = test_client.post(
-        f"/collections/default/runs/1/resolutions/{source_testkit.name}",
-        json=source_testkit.source.to_resolution().model_dump(mode="json"),
-    )
-    assert response.status_code == 201
-    status = ResourceOperationStatus.model_validate(response.json())
-    assert response.status_code == 201, response.json()
-    assert status.name == source_testkit.name
-
-    # Assert backend given the config but not yet the data
-    mock_backend.create_resolution.assert_called_once_with(
-        resolution=source_testkit.source.to_resolution(),
-        path=ResolutionPath(
-            name=source_testkit.name,
-            collection="default",
-            run=1,
-        ),
-    )
-    mock_backend.insert_source_data.assert_not_called()
-
-    response = test_client.post(
-        f"/collections/default/runs/1/resolutions/{source_testkit.name}/data"
-    )
-    upload_id = response.json()["id"]
-    assert response.status_code == 202
-    assert response.json()["stage"] == UploadStage.AWAITING_UPLOAD
-
-    # Step 2: Upload file with real background tasks
-    response = test_client.post(
-        f"/upload/{upload_id}",
-        files={
-            "file": (
-                "hashes.parquet",
-                table_to_buffer(source_testkit.data_hashes),
-                "application/octet-stream",
-            ),
-        },
-    )
-    assert response.status_code == 202
-    assert response.json()["stage"] == UploadStage.QUEUED
-
-    # Step 3: Poll status until complete or timeout
-    max_attempts = 10
-    current_attempt = 0
-    while current_attempt < max_attempts:
-        response = test_client.get(f"/upload/{upload_id}/status")
-        assert response.status_code == 200
-
-        stage = response.json()["stage"]
-        if stage == UploadStage.COMPLETE:
-            break
-        elif stage == UploadStage.FAILED:
-            pytest.fail(f"Upload failed: {response.json().get('details')}")
-        elif stage in [UploadStage.PROCESSING, UploadStage.QUEUED]:
-            sleep(0.1)  # Small delay between polls
-        else:
-            pytest.fail(f"Unexpected stage: {stage}")
-
-        current_attempt += 1
-
-    assert current_attempt < max_attempts, (
-        "Timed out waiting for processing to complete"
-    )
-    assert stage == UploadStage.COMPLETE
-    assert response.status_code == 200
-
-    # Verify backend methods were called with correct arguments
-    mock_backend.insert_source_data.assert_called_once()
-
-    # Check resolution matches
-    call_args = mock_backend.insert_source_data.call_args
-    assert call_args[1]["data_hashes"].equals(source_testkit.data_hashes)  # Check data
-
-    # Verify file is deleted from S3 after processing
-    with pytest.raises(ClientError):
-        s3.head_object(Bucket="test-bucket", Key=f"{upload_id}.parquet")

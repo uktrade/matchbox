@@ -153,7 +153,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test retrieving a specific run."""
     test_client, mock_backend, _ = api_client_and_mocks
 
-    source = source_factory().source
+    source = source_factory().fake_run().source
     run = Run(
         run_id=1,
         resolutions={source.name: source.to_resolution()},
@@ -245,7 +245,7 @@ def test_create_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     """Test creating a new run."""
     test_client, mock_backend, _ = api_client_and_mocks
 
-    source = source_factory().source
+    source = source_factory().fake_run().source
     run = Run(
         run_id=1,
         resolutions={source.name: source.to_resolution()},

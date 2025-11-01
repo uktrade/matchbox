@@ -1,8 +1,8 @@
 """Objects to define a DAG which indexes, deduplicates and links data."""
 
-import datetime
 import json
-from typing import Any, Self
+from enum import StrEnum
+from typing import Any, Self, TypeAlias
 
 from pyarrow import Table as ArrowTable
 
@@ -31,6 +31,17 @@ from matchbox.common.logging import logger
 from matchbox.common.transform import truth_int_to_float
 
 
+class DAGNodeExecutionStatus(StrEnum):
+    """Enumeration of node execution statuses."""
+
+    SKIPPED = "skipped"
+    DONE = "done"
+    DOING = "doing"
+
+
+DAGExecutionStatus: TypeAlias = dict[str, DAGNodeExecutionStatus]
+
+
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
 
@@ -45,23 +56,6 @@ class DAG:
         """Check that the given DAG is the same as this one."""
         if self != dag:
             raise ValueError("Cannot mix DAGs")
-
-    def set_downstream_to_rerun(self, step_name: ResolutionName):
-        """Mark step and downstream steps as not run."""
-        self.nodes[step_name].last_run = None
-
-        descendants: set[str] = set()
-
-        def dfs(node):
-            for child, parents in self.graph.items():
-                if node in parents:
-                    descendants.add(child)
-                    dfs(child)
-
-        dfs(self.nodes[step_name])
-
-        for d in descendants:
-            self.nodes[d].last_run = None
 
     def _add_step(self, step: Source | Model) -> None:
         """Validate and add sources and models to DAG."""
@@ -86,7 +80,6 @@ class DAG:
             logger.info(
                 f"Overwriting node '{step.name}' and resetting its descendants."
             )
-            self.set_downstream_to_rerun(step.name)
 
         if isinstance(step, Model):
             self._check_dag(step.left_query.dag)
@@ -253,16 +246,11 @@ class DAG:
         """Create Query object."""
         return Query(*args, **kwargs, dag=self)
 
-    def draw(
-        self,
-        start_time: datetime.datetime | None = None,
-        doing: str | None = None,
-        skipped: list[str] | None = None,
-    ) -> str:
+    def draw(self, status: DAGExecutionStatus | None = None) -> str:
         """Create a string representation of the DAG as a tree structure.
 
-        If `start_time` is provided, it will show the status of each node
-        based on the last run time. The status indicators are:
+        If `status` is provided, it will show the status of each node.
+        The status indicators are:
 
         * ✅ Done
         * 🔄 Working
@@ -270,9 +258,7 @@ class DAG:
         * ⏭️ Skipped
 
         Args:
-            start_time: Start time of the DAG run. Used to calculate node status.
-            doing: Name of the node currently being processed (if any).
-            skipped: List of node names that were skipped.
+            status: Object describing the status of each node.
 
         Returns:
             String representation of the DAG with status indicators.
@@ -285,23 +271,16 @@ class DAG:
         if not apex_nodes:
             return "No apex nodes found (possible cycle in DAG)"
 
-        skipped = skipped or []
-
-        def _get_node_status(name: str) -> str:
+        def _get_node_indicator(name: str) -> str:
             """Determine the status indicator for a node."""
-            if name in skipped:
-                return "⏭️"
-            elif doing and name == doing:
-                return "🔄"
-            elif (
-                (node := self.nodes.get(name))
-                and node.last_run
-                and start_time
-                and node.last_run > start_time
-            ):
-                return "✅"
-            else:
+            if name not in status:
                 return "⏸️"
+            elif status[name] == DAGNodeExecutionStatus.SKIPPED:
+                return "⏭️"
+            elif status[name] == DAGNodeExecutionStatus.DOING:
+                return "🔄"
+            elif status[name] == DAGNodeExecutionStatus.DONE:
+                return "✅"
 
         # Header with collection and run info
         head_collection: str = f"Collection: {self.name}"
@@ -323,10 +302,10 @@ class DAG:
             for i, child in enumerate(children):
                 is_last = i == len(children) - 1
 
-                # Add status indicator if start_time is provided
-                if start_time is not None:
-                    status = _get_node_status(child)
-                    child_display = f"{status} {child}"
+                # Add status indicator if status is provided
+                if status is not None:
+                    indicator = _get_node_indicator(child)
+                    child_display = f"{indicator} {child}"
                 else:
                     child_display = child
 
@@ -346,10 +325,9 @@ class DAG:
 
             visited.add(root_name)
 
-            # Add status indicator if start_time is provided
-            if start_time is not None:
-                status = _get_node_status(root_name)
-                result.append(f"{status} {root_name}")
+            if status is not None:
+                indicator = _get_node_indicator(root_name)
+                result.append(f"{indicator} {root_name}")
             else:
                 result.append(root_name)
 
@@ -459,13 +437,10 @@ class DAG:
 
     def run_and_sync(
         self,
-        full_rerun: bool = False,
         start: str | None = None,
         finish: str | None = None,
     ):
         """Run entire DAG and send results to server."""
-        start_time = datetime.datetime.now()
-
         # Determine order of execution steps
         root_node = self.final_step.name
 
@@ -501,29 +476,23 @@ class DAG:
             end_index = len(sequence)
 
         sequence = sequence[start_index:end_index]
-        if not full_rerun:
-            # Exclude nodes that already run, unless a full re-run is forced
-            already_run = [node for node in sequence if self.nodes[node].last_run]
-            skipped_nodes.extend(already_run)
-            sequence = [node for node in sequence if node not in already_run]
+
+        status = {
+            step_name: DAGNodeExecutionStatus.SKIPPED for step_name in skipped_nodes
+        }
 
         for step_name in sequence:
             node = self.nodes[step_name]
-
-            logger.info(
-                "\n"
-                + self.draw(
-                    start_time=start_time, doing=node.name, skipped=skipped_nodes
-                )
-            )
+            status[step_name] = DAGNodeExecutionStatus.DOING
+            logger.info("\n" + self.draw(status=status))
             try:
-                node.run(full_rerun=full_rerun)
+                node.run()
                 node.sync()
             except Exception as e:
                 logger.error(f"❌ {node.name} failed: {e}")
                 raise e
-
-        logger.info("\n" + self.draw(start_time=start_time, skipped=skipped_nodes))
+            status[step_name] = DAGNodeExecutionStatus.DONE
+        logger.info("\n" + self.draw(status=status))
 
     def set_default(self) -> None:
         """Set the current run as the default for the collection.

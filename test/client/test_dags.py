@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 from unittest.mock import Mock, patch
 
 import polars as pl
@@ -10,7 +9,7 @@ from polars.testing import assert_frame_equal
 from respx import MockRouter
 from sqlalchemy import Engine
 
-from matchbox.client.dags import DAG
+from matchbox.client.dags import DAG, DAGNodeExecutionStatus
 from matchbox.client.models import Model
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
@@ -25,6 +24,7 @@ from matchbox.common.dtos import (
     Resolution,
     ResolutionName,
     ResolutionPath,
+    ResolutionType,
     ResourceOperationStatus,
     Run,
 )
@@ -345,14 +345,14 @@ def test_dag_draw(sqlite_warehouse: Engine):
         "Tree representation doesn't use expected formatting characters"
     )
 
-    # Test 2: Drawing with timestamps (status indicators)
-    # Set d_foo as processing and foo_bar as completed
-    start_time = datetime.now()
-    doing = "d_foo"
-    foo_bar.last_run = datetime.now()
+    # Test 2: Drawing with status indicators
 
-    # Draw the DAG with status indicators
-    tree_str_with_status = dag.draw(start_time=start_time, doing=doing)
+    tree_str_with_status = dag.draw(
+        status={
+            foo_bar.name: DAGNodeExecutionStatus.DOING,
+            d_foo.name: DAGNodeExecutionStatus.DONE,
+        }
+    )
     status_lines = tree_str_with_status.strip().split("\n")[3:]
 
     # Verify status indicators are present
@@ -362,9 +362,9 @@ def test_dag_draw(sqlite_warehouse: Engine):
     # Check specific statuses: foo_bar done, d_foo working, others awaiting
     for line in status_lines:
         name = line.split()[-1]
-        if name == "foo_bar":
+        if name == d_foo.name:
             assert "✅" in line
-        elif name == "d_foo":
+        elif name == foo_bar.name:
             assert "🔄" in line
         elif name in [foo.name, bar.name, baz.name]:
             assert "⏸️" in line
@@ -379,7 +379,7 @@ def test_dag_draw(sqlite_warehouse: Engine):
     # Test 4: Drawing with skipped nodes
     skipped_nodes = [foo.name, d_foo.name]
     tree_str_with_skipped = dag.draw(
-        start_time=start_time, doing=doing, skipped=skipped_nodes
+        status={node: DAGNodeExecutionStatus.SKIPPED for node in skipped_nodes}
     )
     skipped_lines = tree_str_with_skipped.strip().split("\n")[3:]
 
@@ -390,9 +390,12 @@ def test_dag_draw(sqlite_warehouse: Engine):
             assert "⏭️" in line
 
     # Test all status indicators together
-    doing = "foo_bar_baz"
     tree_str_all_statuses = dag.draw(
-        start_time=start_time, doing=doing, skipped=skipped_nodes
+        status={
+            foo_bar.name: DAGNodeExecutionStatus.DOING,
+            d_foo.name: DAGNodeExecutionStatus.DONE,
+            foo.name: DAGNodeExecutionStatus.SKIPPED,
+        }
     )
     assert all(
         indicator in tree_str_all_statuses for indicator in ["✅", "🔄", "⏸️", "⏭️"]
@@ -493,9 +496,14 @@ def test_extract_lookup(
             json=Run(
                 run_id=1,
                 resolutions={
-                    foo.name: foo.source.to_resolution(),
-                    bar.name: bar.source.to_resolution(),
-                    "root": dag.get_model("root").to_resolution(),
+                    foo.name: foo.fake_run().source.to_resolution(),
+                    bar.name: bar.fake_run().source.to_resolution(),
+                    "root": Resolution(
+                        fingerprint=b"mock",
+                        truth=1,
+                        resolution_type=ResolutionType.MODEL,
+                        config=dag.get_model("root").config,
+                    ),
                 },
             ).model_dump(),
         )
@@ -765,11 +773,11 @@ def test_from_resolution():
 
     for testkit in [crn_testkit, duns_testkit]:
         t1_dag.add_resolution(
-            name=testkit.name, resolution=testkit.source.to_resolution()
+            name=testkit.name, resolution=testkit.fake_run().source.to_resolution()
         )
     for testkit in [deduper_model_testkit, linker_model_testkit]:
         t1_dag.add_resolution(
-            name=testkit.name, resolution=testkit.model.to_resolution()
+            name=testkit.name, resolution=testkit.fake_run().model.to_resolution()
         )
 
     # Verify reconstruction matches original
@@ -785,7 +793,7 @@ def test_from_resolution():
     with pytest.raises(ValueError, match="not found in DAG"):
         t2_dag.add_resolution(
             name=linker_model_testkit.name,
-            resolution=linker_model_testkit.model.to_resolution(),
+            resolution=linker_model_testkit.fake_run().model.to_resolution(),
         )
 
 
@@ -823,7 +831,7 @@ def test_dag_creates_new_collection(
             200,
             json=ResourceOperationStatus(
                 success=True,
-                name="test_collection",
+                target="Collection test_collection",
                 operation=CRUDOperation.CREATE,
             ).model_dump(),
         )
@@ -879,7 +887,7 @@ def test_dag_uses_existing_collection(
                     200,
                     json=ResourceOperationStatus(
                         success=True,
-                        name=run_id,
+                        target=f"Run {run_id}",
                         operation=CRUDOperation.DELETE,
                     ).model_dump(),
                 )
@@ -908,22 +916,22 @@ def test_dag_load_server_run(matchbox_api: MockRouter):
 
     # Create test sources and model
     linked_testkit = linked_sources_factory(dag=test_dag)
-    crn_testkit = linked_testkit.sources["crn"]
-    duns_testkit = linked_testkit.sources["duns"]
+    crn_testkit = linked_testkit.sources["crn"].fake_run()
+    duns_testkit = linked_testkit.sources["duns"].fake_run()
 
     deduper_model_testkit = model_factory(
         name="deduper",
         left_testkit=crn_testkit,
         true_entities=linked_testkit.true_entities,
         dag=test_dag,
-    )
+    ).fake_run()
     linker_model_testkit = model_factory(
         name="linker",
         left_testkit=deduper_model_testkit,
         right_testkit=duns_testkit,
         true_entities=linked_testkit.true_entities,
         dag=test_dag,
-    )
+    ).fake_run()
 
     # Add to DAG
     test_dag.source(**crn_testkit.into_dag())
@@ -1038,8 +1046,8 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter):
     test_dag = TestkitDAG().dag
 
     linked_testkit = linked_sources_factory(dag=test_dag)
-    crn_testkit = linked_testkit.sources["crn"]
-    duns_testkit = linked_testkit.sources["duns"]
+    crn_testkit = linked_testkit.sources["crn"].fake_run()
+    duns_testkit = linked_testkit.sources["duns"].fake_run()
 
     # model_inner depends on 2 sources (count=2)
     model_inner_testkit = model_factory(
@@ -1048,7 +1056,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter):
         right_testkit=duns_testkit,
         true_entities=linked_testkit.true_entities,
         dag=test_dag,
-    )
+    ).fake_run()
 
     # model_outer ALSO depends on 2 things: model_inner + a source (count=2)
     # Same count as model_inner, but MUST be loaded AFTER model_inner
@@ -1058,7 +1066,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter):
         right_testkit=crn_testkit,
         true_entities=linked_testkit.true_entities,
         dag=test_dag,
-    )
+    ).fake_run()
 
     # Add to original DAG
     test_dag.source(**crn_testkit.into_dag())
@@ -1137,7 +1145,7 @@ def test_dag_set_default_ok(matchbox_api: MockRouter):
             200,
             json=ResourceOperationStatus(
                 success=True,
-                name=dag.run,
+                target=f"Run {dag.run}",
                 operation=CRUDOperation.UPDATE,
             ).model_dump(),
         )
@@ -1151,7 +1159,7 @@ def test_dag_set_default_ok(matchbox_api: MockRouter):
             200,
             json=ResourceOperationStatus(
                 success=True,
-                name=dag.run,
+                target=f"Run {dag.run}",
                 operation=CRUDOperation.UPDATE,
             ).model_dump(),
         )

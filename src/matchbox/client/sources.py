@@ -1,8 +1,7 @@
 """Interface to source data."""
 
-import warnings
 from collections.abc import Callable, Generator, Iterable
-from datetime import datetime
+from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 import polars as pl
@@ -22,9 +21,10 @@ from matchbox.common.dtos import (
     SourceField,
     SourceResolutionName,
     SourceResolutionPath,
+    UploadStage,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
-from matchbox.common.hash import HashMethod, hash_rows
+from matchbox.common.hash import HashMethod, hash_arrow_table, hash_rows
 from matchbox.common.logging import logger
 
 if TYPE_CHECKING:
@@ -36,6 +36,24 @@ else:
 
 
 T = TypeVar("T")
+
+
+def post_run(method: Callable[..., T]) -> Callable[..., T]:
+    """Decorator to ensure that a method is called after source run.
+
+    Raises:
+        RuntimeError: If run hasn't happened.
+    """
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self.hashes is None:
+            raise RuntimeError(
+                "The source must be run before attempting this operation."
+            )
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class Source:
@@ -105,12 +123,12 @@ class Source:
         if validate_etl:
             location.validate_extract_transform(extract_transform)
 
-        self.last_run: datetime | None = None
         self.location = location
         self.dag = dag
         self.name = name
         self.description = description
         self.extract_transform = extract_transform
+        self.hashes: ArrowTable | None = None
 
         if infer_types:
             self._validate_fields(key_field, index_fields, str)
@@ -157,6 +175,7 @@ class Source:
             index_fields=self.index_fields,
         )
 
+    @post_run
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""
         return Resolution(
@@ -164,6 +183,7 @@ class Source:
             truth=None,
             resolution_type=ResolutionType.SOURCE,
             config=self.config,
+            fingerprint=hash_arrow_table(self.hashes),
         )
 
     @classmethod
@@ -245,9 +265,7 @@ class Source:
                 return_type=return_type,
             )
 
-    def run(
-        self, batch_size: int | None = None, full_rerun: bool = False
-    ) -> ArrowTable:
+    def run(self, batch_size: int | None = None) -> ArrowTable:
         """Hash a dataset from its warehouse, ready to be inserted, and cache hashes.
 
         Hashes the index fields defined in the source based on the
@@ -258,21 +276,15 @@ class Source:
         Args:
             batch_size: If set, process data in batches internally. Indicates the
                 size of each batch.
-            full_rerun: Whether to force a re-run even if the hashes are cached
-
 
         Returns:
             A PyArrow Table containing source keys and their hashes.
         """
-        if self.last_run and not full_rerun:
-            warnings.warn("Source already run, skipping.", UserWarning, stacklevel=2)
-            return self.hashes
-
         log_prefix = f"Hash {self.name}"
         batch_info = (
             f"with batch size {batch_size:,}" if batch_size else "without batching"
         )
-        logger.debug(f"Retrieving and hashing {batch_info}", prefix=log_prefix)
+        logger.info(f"Retrieving and hashing {batch_info}", prefix=log_prefix)
 
         key_field: str = self.config.key_field.name
         index_fields: list[str] = [field.name for field in self.config.index_fields]
@@ -303,8 +315,6 @@ class Source:
         self.hashes = (
             pl.concat(all_results).group_by("hash").agg(pl.col("keys")).to_arrow()
         )
-
-        self.last_run = datetime.now()
 
         return self.hashes
 
@@ -358,33 +368,41 @@ class Source:
         """
         return self.config.f(self.name, fields)
 
+    @post_run
     def sync(self) -> None:
         """Send the source config and hashes to the server."""
+        log_prefix = f"Sync {self.name}"
         resolution = self.to_resolution()
         try:
             existing_resolution = _handler.get_resolution(path=self.resolution_path)
         except MatchboxResolutionNotFoundError:
+            logger.info("Found existing resolution", prefix=log_prefix)
             existing_resolution = None
-        # Check if config matches
+
         if existing_resolution:
-            if existing_resolution.config != self.config:
-                raise ValueError(
-                    f"Resolution {self.resolution_path} already exists with different "
-                    "configuration. Please delete the existing resolution "
-                    "or use a different name. "
+            if (existing_resolution.fingerprint == resolution.fingerprint) and (
+                existing_resolution.config.parents == resolution.config.parents
+            ):
+                logger.info("Updating existing resolution", prefix=log_prefix)
+                _handler.update_resolution(
+                    resolution=resolution, path=self.resolution_path
                 )
             else:
-                log_prefix = f"Resolution {self.resolution_path}"
-                logger.warning("Already exists. Passing.", prefix=log_prefix)
-        else:
+                logger.info(
+                    "Update not possible. Deleting existing resolution",
+                    prefix=log_prefix,
+                )
+                _handler.delete_resolution(path=self.resolution_path, certain=True)
+                existing_resolution = None
+
+        if not existing_resolution:
+            logger.info("Creating new resolution", prefix=log_prefix)
             _handler.create_resolution(resolution=resolution, path=self.resolution_path)
 
-        if self.hashes:
-            _handler.set_data(
-                path=self.resolution_path,
-                data=self.hashes,
-                validate_type=ResolutionType.SOURCE,
-            )
+        upload_stage = _handler.get_resolution_stage(self.resolution_path)
+        if upload_stage == UploadStage.READY:
+            logger.info("Setting data for new resolution", prefix=log_prefix)
+            _handler.set_data(path=self.resolution_path, data=self.hashes)
 
     def query(self, **kwargs) -> Query:
         """Generate a query for this source."""

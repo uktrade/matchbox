@@ -18,7 +18,13 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql.selectable import Select
 
 from matchbox.common.db import sql_to_df
-from matchbox.common.dtos import Match, ResolutionPath, SourceResolutionPath
+from matchbox.common.dtos import (
+    Match,
+    ResolutionPath,
+    SourceResolutionPath,
+    UploadStage,
+)
+from matchbox.common.exceptions import MatchboxResolutionNotQueriable
 from matchbox.common.logging import logger
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
@@ -481,6 +487,9 @@ def query(
         else:
             truth_resolution: Resolutions = source_resolution
 
+        if truth_resolution.upload_stage != UploadStage.COMPLETE:
+            raise MatchboxResolutionNotQueriable
+
         id_query: Select = build_unified_query(
             resolution=truth_resolution,
             sources=[source_config],
@@ -595,6 +604,9 @@ def match(
         truth_resolution: Resolutions = Resolutions.from_path(
             path=point_of_truth, session=session
         )
+
+        if truth_resolution.upload_stage != UploadStage.COMPLETE:
+            raise MatchboxResolutionNotQueriable
 
         target_configs: list[SourceConfigs] = [
             Resolutions.from_path(path=target, session=session).source_config

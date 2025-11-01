@@ -12,7 +12,7 @@ from matchbox.client.dags import DAG
 from matchbox.client.eval import get_samples
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.common.arrow import SCHEMA_EVAL_SAMPLES, table_to_buffer
-from matchbox.common.dtos import Collection, Run
+from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
@@ -77,11 +77,21 @@ def test_get_samples(
         run_id=dag.run,
         mutable=True,
         resolutions={
-            "foo": foo_testkit.source.to_resolution(),
-            "bar": bar_testkit.source.to_resolution(),
-            "baz": baz_testkit.source.to_resolution(),
-            "linker1": foo_bar.to_resolution(),
-            "linker2": foo_bar_baz.to_resolution(),
+            "foo": foo_testkit.fake_run().source.to_resolution(),
+            "bar": bar_testkit.fake_run().source.to_resolution(),
+            "baz": baz_testkit.fake_run().source.to_resolution(),
+            "linker1": Resolution(
+                fingerprint=b"mock",
+                truth=1,
+                resolution_type=ResolutionType.MODEL,
+                config=foo_bar.config,
+            ),
+            "linker2": Resolution(
+                fingerprint=b"mock2",
+                truth=1,
+                resolution_type=ResolutionType.MODEL,
+                config=foo_bar_baz.config,
+            ),
         },
     )
 

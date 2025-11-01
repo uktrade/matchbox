@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Enum,
     ForeignKey,
     Identity,
     Index,
@@ -31,6 +32,7 @@ from matchbox.common.dtos import (
     ResolutionPath,
     ResolutionType,
     RunID,
+    UploadStage,
 )
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
 from matchbox.common.dtos import Resolution as CommonResolution
@@ -232,10 +234,15 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     run_id = Column(
         BIGINT, ForeignKey("runs.run_id", ondelete="CASCADE"), nullable=False
     )
+    upload_stage = Column(
+        Enum(UploadStage, native_enum=True, name="upload_stages"),
+        nullable=False,
+        default=UploadStage.READY,
+    )
     name = Column(TEXT, nullable=False)
     description = Column(TEXT, nullable=True)
     type = Column(TEXT, nullable=False)
-    hash = Column(BYTEA, nullable=True)
+    fingerprint = Column(BYTEA, nullable=False)
     truth = Column(SMALLINT, nullable=True)
 
     # Relationships
@@ -451,6 +458,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             description=resolution.description,
             type=resolution.resolution_type.value,
             truth=resolution.truth,
+            fingerprint=resolution.fingerprint,
         )
         session.add(resolution_orm)
         session.flush()  # Get resolution_id
@@ -496,6 +504,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             truth=self.truth,
             resolution_type=ResolutionType(self.type),
             config=config,
+            fingerprint=self.fingerprint,
         )
 
     @staticmethod

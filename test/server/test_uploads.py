@@ -1,7 +1,6 @@
-from datetime import datetime
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -10,14 +9,11 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from matchbox.common.arrow import table_to_buffer
-from matchbox.common.dtos import (
-    BackendUploadType,
-    ResolutionPath,
-    UploadStage,
-)
+from matchbox.common.dtos import ResolutionPath, ResolutionType, UploadStage
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
+from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import source_factory
 from matchbox.server.uploads import (
     InMemoryUploadTracker,
@@ -135,85 +131,115 @@ class TestUploadTracker:
     def setup(self, tracker_instance: str):
         self.tracker: UploadTracker = tracker_instance
 
-    def test_basic_upload_tracking(self):
-        """Test adding upload to tracker and retrieving."""
-        source_path = ResolutionPath(name="source", collection="default", run=1)
-        model_path = ResolutionPath(name="model", collection="default", run=1)
+    def test_getting_and_setting(self):
+        assert self.tracker.get("upload_id") is None
+        self.tracker.set("upload_id", "error_message")
+        assert self.tracker.get("upload_id") == "error_message"
 
-        # Add the source and the model
-        source_upload_id = self.tracker.add_source(source_path)
-        assert isinstance(source_upload_id, str)
 
-        model_upload_id = self.tracker.add_model(model_path)
-        assert isinstance(source_upload_id, str)
+@pytest.mark.parametrize(
+    "resolution_type",
+    [
+        pytest.param(ResolutionType.SOURCE, id="source"),
+        pytest.param(ResolutionType.MODEL, id="model"),
+    ],
+)
+def test_process_upload_success(s3: S3Client, resolution_type: ResolutionType):
+    """Test that upload process hands data to backend."""
+    # Prepare data
+    if resolution_type == ResolutionType.SOURCE:
+        testkit = source_factory().fake_run()
+        resolution = testkit.source.to_resolution()
+        data = testkit.data_hashes
+    else:
+        testkit = model_factory().fake_run()
+        resolution = testkit.model.to_resolution()
+        data = testkit.probabilities.to_arrow()
 
-        # Retrieve and verify
-        source_entry = self.tracker.get(source_upload_id)
-        assert source_entry is not None
-        assert source_entry.path == source_path
-        assert source_entry.status.stage == UploadStage.AWAITING_UPLOAD
-        assert source_entry.status.entity == BackendUploadType.INDEX
-        assert source_entry.status.id == source_upload_id
-        assert isinstance(source_entry.status.update_timestamp, datetime)
+    # Setup mock backend and tracker
+    mock_backend = Mock()
+    mock_backend.settings.datastore.get_client.return_value = s3
+    mock_backend.get_resolution = Mock(return_value=resolution)
 
-        model_entry = self.tracker.get(model_upload_id)
-        assert model_entry is not None
-        assert model_entry.path == model_path
-        assert model_entry.status.stage == UploadStage.AWAITING_UPLOAD
-        assert model_entry.status.entity == BackendUploadType.RESULTS
-        assert model_entry.status.id == model_upload_id
-        assert isinstance(model_entry.status.update_timestamp, datetime)
+    # Create bucket
+    bucket = "test-bucket"
+    test_key = "test-upload-id.parquet"
 
-    def test_status_management(self):
-        """Test status update functionality."""
-        # Create entry and verify initial status
-        upload_id = self.tracker.add_source(
-            ResolutionPath(name="source", collection="default", run=1)
-        )
-        entry = self.tracker.get(upload_id)
-        assert entry.status.stage == UploadStage.AWAITING_UPLOAD
+    s3.create_bucket(
+        Bucket=bucket, CreateBucketConfiguration={"LocationConstraint": "eu-west-2"}
+    )
 
-        # Update status
-        self.tracker.update(upload_id, UploadStage.PROCESSING)
-        entry = self.tracker.get(upload_id)
-        assert entry.status.stage == UploadStage.PROCESSING
+    # Add parquet to S3 and verify
+    buffer = table_to_buffer(data)
+    s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
 
-        # Update with details
-        self.tracker.update(upload_id, UploadStage.FAILED, "Error details")
-        entry = self.tracker.get(upload_id)
-        assert entry.status.stage == UploadStage.FAILED
-        assert entry.status.details == "Error details"
+    assert s3.head_object(Bucket=bucket, Key=test_key)
 
-        # Try updating non-existent entry
-        with pytest.raises(KeyError):
-            self.tracker.update("nonexistent", UploadStage.PROCESSING)
+    process_upload(
+        backend=mock_backend,
+        tracker=InMemoryUploadTracker(),
+        s3_client=s3,
+        upload_id="upload_id",
+        bucket=bucket,
+        filename=test_key,
+        resolution_path=ResolutionPath(
+            collection="collection", run=1, name="resolution"
+        ),
+    )
 
-    @patch("matchbox.server.uploads.datetime")
-    def test_timestamp_updates(self, mock_datetime: Mock):
-        """Test that timestamps update correctly on different operations."""
+    # Verify file was deleted
+    with pytest.raises(ClientError) as excinfo:
+        s3.head_object(Bucket=bucket, Key=test_key)
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
+        f"File was not deleted: {str(excinfo.value)}"
+    )
 
-        creation_timestamp = datetime(2024, 1, 1, 12, 0)
-        get_timestamp = datetime(2024, 1, 1, 12, 15)
-        update_timestamp = datetime(2024, 1, 1, 12, 30)
+    # Ensure data was inserted
+    if resolution_type == ResolutionType.SOURCE:
+        assert mock_backend.insert_source_data.called
+    else:
+        assert mock_backend.insert_model_data.called
 
-        # Initial creation
-        mock_datetime.now.return_value = creation_timestamp
-        upload_id = self.tracker.add_source(
-            ResolutionPath(name="source", collection="default", run=1)
-        )
-        entry = self.tracker.get(upload_id)
-        assert entry.status.update_timestamp == datetime(2024, 1, 1, 12, 0)
 
-        # Get operation does not update timestamp
-        mock_datetime.now.return_value = get_timestamp
-        entry = self.tracker.get(upload_id)
-        assert entry.status.update_timestamp == creation_timestamp
+def test_process_upload_empty_table(s3: S3Client):
+    """Test that files representing empty table can be handled."""
+    # Setup mock backend
+    mock_backend = Mock()
+    mock_backend.settings.datastore.get_client.return_value = s3
 
-        # Status update updates timestamp
-        mock_datetime.now.return_value = update_timestamp
-        self.tracker.update(upload_id, UploadStage.PROCESSING)
-        entry = self.tracker.get(upload_id)
-        assert entry.status.update_timestamp == update_timestamp
+    # Create bucket
+    bucket = "test-bucket"
+    test_key = "test-upload-id.parquet"
+    s3.create_bucket(
+        Bucket=bucket,
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
+    )
+
+    # Add empty parquet to S3 and verify
+    buffer = table_to_buffer(pa.Table.from_arrays([]))
+    s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
+
+    assert s3.head_object(Bucket=bucket, Key=test_key)
+
+    # Trigger upload processing
+    process_upload(
+        backend=mock_backend,
+        tracker=InMemoryUploadTracker(),
+        s3_client=s3,
+        upload_id="upload_id",
+        bucket=bucket,
+        filename=test_key,
+        resolution_path=ResolutionPath(
+            collection="collection", run=1, name="resolution"
+        ),
+    )
+
+    # Verify file was deleted
+    with pytest.raises(ClientError) as excinfo:
+        s3.head_object(Bucket=bucket, Key=test_key)
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
+        f"File was not deleted: {str(excinfo.value)}"
+    )
 
 
 def test_process_upload_deletes_file_on_failure(s3: S3Client):
@@ -222,15 +248,21 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     Other behaviours of this task are captured in the API integration tests for adding a
     source or a model.
     """
-    # Setup
+    # Prepare data
+    source_testkit = source_factory().fake_run()
+
+    # Setup mock backend and tracker
     tracker = InMemoryUploadTracker()
     mock_backend = Mock()
     mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.create_resolution = Mock(return_value=None)
+    mock_backend.get_resolution = Mock(
+        return_value=source_testkit.source.to_resolution()
+    )
     mock_backend.insert_source_data = Mock(
         side_effect=ValueError("Simulated processing failure")
     )
 
+    # Create bucket
     bucket = "test-bucket"
     test_key = "test-upload-id.parquet"
 
@@ -240,15 +272,10 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
     )
 
     # Add parquet to S3 and verify
-    source_testkit = source_factory()
     buffer = table_to_buffer(source_testkit.data_hashes)
     s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
 
     assert s3.head_object(Bucket=bucket, Key=test_key)
-
-    # Setup metadata store with test data
-    upload_id = tracker.add_source(source_testkit.resolution_path)
-    tracker.update(upload_id, UploadStage.AWAITING_UPLOAD)
 
     # Run the process, expecting it to fail
     with pytest.raises(MatchboxServerFileError) as excinfo:
@@ -256,24 +283,29 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client):
             backend=mock_backend,
             tracker=tracker,
             s3_client=s3,
-            upload_id=upload_id,
+            upload_id="upload_id",
             bucket=bucket,
             filename=test_key,
-            upload_type="type",
-            resolution_name="name",
+            resolution_path=ResolutionPath(
+                collection="collection", run=1, name="resolution"
+            ),
         )
 
     assert "Simulated processing failure" in str(excinfo.value)
 
-    # Check that the status was updated to failed
-    status = tracker.get(upload_id).status
-    assert status.stage == UploadStage.FAILED, (
-        f"Expected status 'failed', got '{status.stage}'"
-    )
+    # Check that the error was added to tracker
+    error = tracker.get("upload_id")
+    assert "Simulated processing failure" in error
 
     # Verify file was deleted despite the failure
     with pytest.raises(ClientError) as excinfo:
         s3.head_object(Bucket=bucket, Key=test_key)
     assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
         f"File was not deleted: {str(excinfo.value)}"
+    )
+
+    # Ensure resolution is marked as ready again
+    assert mock_backend.set_resolution_stage.called
+    assert (
+        mock_backend.set_resolution_stage.call_args.kwargs["stage"] == UploadStage.READY
     )

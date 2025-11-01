@@ -20,6 +20,13 @@ from matchbox.common.dtos import (
     Run,
     RunID,
     SourceResolutionPath,
+    UploadStage,
+)
+from matchbox.common.dtos import (
+    ModelConfig as CommonModelConfig,
+)
+from matchbox.common.dtos import (
+    SourceConfig as CommonSourceConfig,
 )
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.eval import ModelComparison
@@ -28,6 +35,7 @@ from matchbox.common.exceptions import (
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxNoJudgements,
+    MatchboxResolutionUpdateError,
     MatchboxRunNotWriteable,
 )
 from matchbox.common.logging import logger
@@ -43,12 +51,14 @@ from matchbox.server.postgresql.orm import (
     Collections,
     Contains,
     EvalJudgements,
+    ModelConfigs,
     PKSpace,
     Probabilities,
     Resolutions,
     Results,
     Runs,
     SourceConfigs,
+    SourceFields,
     Users,
 )
 from matchbox.server.postgresql.utils import evaluation
@@ -349,13 +359,87 @@ class MatchboxPostgres(MatchboxDBAdapter):
             )
 
     def get_resolution(  # noqa: D102
-        self, path: ResolutionPath, validate: ResolutionType | None = None
+        self, path: ResolutionPath
     ) -> Resolution:
         with MBDB.get_session() as session:
-            resolution = Resolutions.from_path(
-                path=path, res_type=validate, session=session
-            )
+            resolution = Resolutions.from_path(path=path, session=session)
             return resolution.to_dto()
+
+    def update_resolution(  # noqa: D102
+        self, resolution: Resolution, path: ResolutionPath
+    ) -> None:
+        new_config = resolution.config
+        with MBDB.get_session() as session:
+            # Get current ORM entry
+            old_resolution = Resolutions.from_path(path=path, session=session)
+            # Check current ORM entry can be updated
+            if old_resolution.fingerprint != resolution.fingerprint:
+                raise MatchboxResolutionUpdateError(
+                    "Cannot update resolution with non-matching fingerprint."
+                )
+            # The following condition also protects against change of resolution type:
+            # sources must have 0 parents, models must have 1 or more
+            if old_resolution.to_dto().config.parents != new_config.parents:
+                raise MatchboxResolutionUpdateError(
+                    "Cannot change parents of a resolution."
+                )
+
+            # Update top-level metadata
+            old_resolution.description = resolution.description
+            old_resolution.truth = resolution.truth
+
+            # Update config
+            if old_resolution.type == "source":
+                old_config: SourceConfigs = old_resolution.source_config
+                assert isinstance(new_config, CommonSourceConfig)
+                old_config.location_name = new_config.location_config.name
+                old_config.location_type = str(new_config.location_config.type)
+                old_config.extract_transform = new_config.extract_transform
+
+                # Update source fields
+                if (
+                    old_config.to_dto().key_field != new_config.key_field
+                    or old_config.to_dto().index_fields != new_config.index_fields
+                ):
+                    # If any field differs, delete and start again
+                    old_config.fields.clear()
+                    session.flush()
+
+                    new_fields = [
+                        SourceFields(
+                            index=0,
+                            name=new_config.key_field.name,
+                            is_key=True,
+                            type=new_config.key_field.type.value,
+                        )
+                    ]
+                    new_fields.extend(
+                        [
+                            SourceFields(
+                                index=idx + 1,
+                                name=field.name,
+                                is_key=False,
+                                type=field.type.value,
+                            )
+                            for idx, field in enumerate(new_config.index_fields)
+                        ]
+                    )
+
+                    old_config.fields = new_fields
+
+            else:
+                old_config: ModelConfigs = old_resolution.model_config
+                assert isinstance(new_config, CommonModelConfig)
+                old_config.model_class = new_config.model_class
+                old_config.model_settings = new_config.model_settings
+                old_config.left_query = new_config.left_query.model_dump_json()
+                old_config.right_query = (
+                    None
+                    if not new_config.right_query
+                    else new_config.right_query.model_dump_json()
+                )
+
+            session.commit()
 
     def delete_resolution(self, path: ResolutionPath, certain: bool) -> None:  # noqa: D102
         self._check_writeable(path)
@@ -378,6 +462,21 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
     # Data insertion
 
+    def set_resolution_stage(self, path: ResolutionPath, stage: UploadStage) -> None:  # noqa: D102
+        self._check_writeable(path)
+        with MBDB.get_session() as session:
+            resolution = Resolutions.from_path(path=path, session=session)
+            if resolution.upload_stage == UploadStage.COMPLETE:
+                raise ValueError(
+                    "Once set to complete, resolution data stage cannot be changed."
+                )
+            resolution.upload_stage = stage
+            session.commit()
+
+    def get_resolution_stage(self, path: ResolutionPath) -> UploadStage:  # noqa: D102
+        resolution = Resolutions.from_path(path)
+        return UploadStage(resolution.upload_stage)
+
     def insert_source_data(  # noqa: D102
         self, path: SourceResolutionPath, data_hashes: Table
     ) -> None:
@@ -385,10 +484,12 @@ class MatchboxPostgres(MatchboxDBAdapter):
         insert_hashes(
             path=path, data_hashes=data_hashes, batch_size=self.settings.batch_size
         )
+        self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
 
     def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:  # noqa: D102
         self._check_writeable(path)
         insert_results(path=path, results=results, batch_size=self.settings.batch_size)
+        self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
 
     def get_model_data(self, path: ModelResolutionPath) -> Table:  # noqa: D102
         with MBDB.get_session() as session:
@@ -405,19 +506,6 @@ class MatchboxPostgres(MatchboxDBAdapter):
             return sql_to_df(
                 stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
             )
-
-    def set_model_truth(self, path: ModelResolutionPath, truth: int) -> None:  # noqa: D102
-        with MBDB.get_session() as session:
-            self._check_writeable(path)
-            resolution = Resolutions.from_path(
-                path=path, res_type=ResolutionType.MODEL, session=session
-            )
-            resolution.truth = truth
-            session.commit()
-
-    def get_model_truth(self, path: ModelResolutionPath) -> int:  # noqa: D102
-        resolution = Resolutions.from_path(path=path, res_type=ResolutionType.MODEL)
-        return resolution.truth
 
     # Data management
 

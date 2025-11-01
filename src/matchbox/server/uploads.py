@@ -1,9 +1,7 @@
 """Worker logic to process user uploads."""
 
-import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Generator
-from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -12,13 +10,12 @@ import redis
 from celery import Celery, Task
 from fastapi import UploadFile
 from pyarrow import parquet as pq
-from pydantic import BaseModel
 
+from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
 from matchbox.common.dtos import (
-    BackendUploadType,
     ResolutionPath,
+    ResolutionType,
     UploadStage,
-    UploadStatus,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.logging import logger
@@ -42,106 +39,36 @@ celery_logger = get_task_logger(__name__)
 # -- Upload trackers --
 
 
-class UploadEntry(BaseModel):
-    """Entry in upload tracker, combining private metadata and public upload status."""
-
-    status: UploadStatus
-    path: ResolutionPath
-
-
 class UploadTracker(ABC):
-    """Abstract class for upload tracker."""
-
-    @staticmethod
-    def _create_entry(
-        path: ResolutionPath, upload_type: BackendUploadType
-    ) -> UploadEntry:
-        """Create initial UploadEntry object."""
-        upload_id = str(uuid.uuid4())
-
-        return UploadEntry(
-            path=path,
-            status=UploadStatus(
-                id=upload_id,
-                stage=UploadStage.AWAITING_UPLOAD,
-                update_timestamp=datetime.now(),
-                entity=upload_type,
-            ),
-        )
-
-    def _get_updated_entry(
-        self, upload_id: str, stage: str, details: str | None
-    ) -> UploadEntry:
-        """Create new UploadEntry object as update on previous entry."""
-        entry = self.get(upload_id)
-        if not entry:
-            raise KeyError(f"Entry {upload_id} not found.")
-
-        status = entry.status.model_copy(
-            update={"stage": stage, "update_timestamp": datetime.now()}
-        )
-        if details:
-            status.details = details
-
-        return UploadEntry(status=status, path=entry.path)
-
-    def add_source(self, path: ResolutionPath) -> str:
-        """Register source resolution and return ID."""
-        entry = self._create_entry(path, BackendUploadType.INDEX)
-        self._register_entry(entry)
-
-        return entry.status.id
-
-    def add_model(self, path: ResolutionPath) -> str:
-        """Register model resolution and return ID."""
-        entry = self._create_entry(path, BackendUploadType.RESULTS)
-        self._register_entry(entry)
-
-        return entry.status.id
+    """Upload error tracker."""
 
     @abstractmethod
-    def _register_entry(self, UploadEntry) -> str:
-        """Register UploadEntry object to tracker and return its ID."""
+    def get(self, upload_id: str) -> str | None:
+        """Retrieve error message from tracker."""
         ...
 
     @abstractmethod
-    def get(self, upload_id: str) -> UploadEntry | None:
-        """Retrieve entry by ID if not expired."""
-        ...
-
-    @abstractmethod
-    def update(self, upload_id: str, stage: str, details: str | None = None) -> None:
-        """Update the stage and details for an upload.
-
-        Raises:
-            KeyError: If entry not found.
-        """
+    def set(self, upload_id: str, message: str) -> None:
+        """Add error message to tracker."""
         ...
 
 
-class InMemoryUploadTracker(UploadTracker):
-    """In-memory upload tracker, only usable with single server instance."""
+class InMemoryUploadTracker:
+    """In-memory error tracker."""
 
     def __init__(self):
-        """Initialise tracker data structure."""
-        self._tracker = {}
+        """Initialise dictionary."""
+        self.tracker: dict[str, str] = {}
 
-    def _register_entry(self, entry: UploadEntry) -> None:
-        self._tracker[entry.status.id] = entry
+    def get(self, upload_id: str) -> str | None:  # noqa: D102
+        return self.tracker.get(upload_id)
 
-    def get(self, upload_id: str) -> UploadEntry | None:  # noqa: D102
-        return self._tracker.get(upload_id)
-
-    def update(  # noqa: D102
-        self, upload_id: str, stage: str, details: str | None = None
-    ) -> None:
-        self._tracker[upload_id] = self._get_updated_entry(
-            upload_id=upload_id, stage=stage, details=details
-        )
+    def set(self, upload_id: str, message: str) -> None:  # noqa: D102
+        self.tracker[upload_id] = message
 
 
-class RedisUploadTracker(UploadTracker):
-    """Upload tracker backed by Redis."""
+class RedisUploadTracker:
+    """Error tracker backed by Redis."""
 
     def __init__(self, redis_url: str, expiry_minutes: int, key_space: str = "upload"):
         """Connect Redis and initialise tracker object."""
@@ -149,32 +76,15 @@ class RedisUploadTracker(UploadTracker):
         self.redis = redis.Redis.from_url(redis_url)
         self.key_prefix = f"{key_space}:"
 
-    def _to_redis(self, key: str, value: str):
+    def get(self, upload_id: str) -> str | None:  # noqa: D102
+        results = self.redis.get(f"{self.key_prefix}{upload_id}")
+        if results:
+            return results.decode("utf-8")
+        return None
+
+    def set(self, upload_id: str, message: str) -> None:  # noqa: D102
         expiry_seconds = self.expiry_minutes * 60
-        self.redis.setex(f"{self.key_prefix}{key}", expiry_seconds, value)
-
-    def _register_entry(self, entry: UploadEntry) -> str:  # noqa: D102
-        self._to_redis(entry.status.id, entry.model_dump_json())
-
-        return entry.status.id
-
-    def get(self, upload_id: str) -> UploadEntry | None:  # noqa: D102
-        data = self.redis.get(f"{self.key_prefix}{upload_id}")
-        if not data:
-            return None
-
-        entry = UploadEntry.model_validate_json(data)
-
-        return entry
-
-    def update(  # noqa: D102
-        self, upload_id: str, stage: str, details: str | None = None
-    ) -> None:
-        entry = self._get_updated_entry(
-            upload_id=upload_id, stage=stage, details=details
-        )
-
-        self._to_redis(upload_id, entry.model_dump_json())
+        self.redis.setex(f"{self.key_prefix}{upload_id}", expiry_seconds, message)
 
 
 _IN_MEMORY_TRACKER = InMemoryUploadTracker()
@@ -290,57 +200,53 @@ def process_upload(
     backend: MatchboxDBAdapter,
     tracker: UploadTracker,
     s3_client: S3Client,
-    upload_type: str,
-    resolution_name: str,
+    resolution_path: ResolutionPath,
     upload_id: str,
     bucket: str,
     filename: str,
 ) -> None:
     """Generic task to process uploaded file, usable by FastAPI BackgroundTasks."""
-    tracker.update(upload_id, UploadStage.PROCESSING)
-    upload = tracker.get(upload_id)
-
     try:
-        data = pa.Table.from_batches(
-            [
-                batch
-                for batch in s3_to_recordbatch(
-                    client=s3_client, bucket=bucket, key=filename
-                )
-            ]
-        )
+        resolution = backend.get_resolution(path=resolution_path)
 
-        if upload.status.entity == BackendUploadType.INDEX:
-            backend.insert_source_data(path=upload.path, data_hashes=data)
-        elif upload.status.entity == BackendUploadType.RESULTS:
-            backend.insert_model_data(path=upload.path, results=data)
+        batches = [
+            batch
+            for batch in s3_to_recordbatch(
+                client=s3_client, bucket=bucket, key=filename
+            )
+        ]
+
+        # If successful, either backend method marks resolution as complete
+        if resolution.resolution_type == ResolutionType.SOURCE:
+            backend.insert_source_data(
+                path=resolution_path,
+                data_hashes=pa.Table.from_batches(batches, schema=SCHEMA_INDEX),
+            )
         else:
-            raise ValueError(f"Unknown upload type: {upload.status.entity}")
-
-        tracker.update(upload_id, UploadStage.COMPLETE)
+            backend.insert_model_data(
+                path=resolution_path,
+                results=pa.Table.from_batches(batches, schema=SCHEMA_RESULTS),
+            )
 
     except Exception as e:
         error_context = {
             "upload_id": upload_id,
-            "upload_type": upload_type,
-            "resolution_name": resolution_name,
+            "resolution_path": str(resolution_path),
             "bucket": bucket,
             "key": filename,
         }
         logger.error(
             f"Upload processing failed with context: {error_context}", exc_info=True
         )
-        details = (
-            f"Error: {e}. Context: "
-            f"Upload type: {getattr(upload.status, 'entity', 'unknown')}, "
-            f"Resolution path: {getattr(upload, 'path', 'unknown')}"
-        )
-        tracker.update(
-            upload_id,
-            UploadStage.FAILED,
-            details=details,
-        )
-        raise MatchboxServerFileError(message=details) from e
+
+        # After failure, signal to clients they can try again
+        backend.set_resolution_stage(path=resolution_path, stage=UploadStage.READY)
+        # Attach error to upload ID to inform clients
+        tracker.set(upload_id=upload_id, message=str(e))
+
+        raise MatchboxServerFileError(
+            message=f"Error: {e}. Context: {error_context}"
+        ) from e
     finally:
         try:
             s3_client.delete_object(Bucket=bucket, Key=filename)
@@ -352,18 +258,14 @@ def process_upload(
 
 @celery.task(ignore_result=True, bind=True, max_retries=3)
 def process_upload_celery(
-    self: Task,
-    upload_type: str,
-    resolution_name: str,
-    upload_id: str,
-    bucket: str,
-    filename: str,
+    self: Task, resolution_path_json: str, upload_id: str, bucket: str, filename: str
 ) -> None:
     """Celery task to process uploaded file, with only serialisable arguments."""
     initialise_celery_worker()
+    resolution_path = ResolutionPath.model_validate_json(resolution_path_json)
 
     celery_logger.info(
-        "Uploading data for resolution %s, ID %s", resolution_name, upload_id
+        "Uploading data for resolution %s, ID %s", str(resolution_path), upload_id
     )
 
     upload_function = partial(
@@ -375,8 +277,7 @@ def process_upload_celery(
 
     try:
         upload_function(
-            upload_type=upload_type,
-            resolution_name=resolution_name,
+            resolution_path=resolution_path,
             upload_id=upload_id,
             bucket=bucket,
             filename=filename,
@@ -384,16 +285,13 @@ def process_upload_celery(
     except Exception as exc:  # noqa: BLE001
         celery_logger.error(
             "Upload failed for resolution %s, ID %s. Retrying...",
-            resolution_name,
+            str(resolution_path),
             upload_id,
         )
         try:
             raise self.retry(exc=exc) from None
         except MaxRetriesExceededError:
-            if CELERY_TRACKER:
-                CELERY_TRACKER.update(
-                    upload_id, UploadStage.FAILED, f"Max retries exceeded: {exc}"
-                )
+            CELERY_TRACKER.set(upload_id, f"Max retries exceeded: {exc}")
             raise
 
-    celery_logger.info("Upload complete for %s, ID %s", resolution_name, upload_id)
+    celery_logger.info("Upload complete for %s, ID %s", str(resolution_path), upload_id)

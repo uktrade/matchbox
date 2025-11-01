@@ -1,10 +1,22 @@
 """Collection and resolution API routes for the Matchbox server."""
 
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from pyarrow import ArrowInvalid
+from pyarrow import parquet as pq
 
-from matchbox.common.arrow import table_to_buffer
+from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS, table_to_buffer
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
@@ -18,7 +30,8 @@ from matchbox.common.dtos import (
     ResourceOperationStatus,
     Run,
     RunID,
-    UploadStatus,
+    UploadInfo,
+    UploadStage,
 )
 from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
@@ -27,13 +40,16 @@ from matchbox.common.exceptions import (
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
+    MatchboxServerFileError,
 )
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
+    SettingsDependency,
     UploadTrackerDependency,
     authorisation_dependencies,
 )
+from matchbox.server.uploads import process_upload, process_upload_celery, table_to_s3
 
 router = APIRouter(prefix="/collections", tags=["collection"])
 
@@ -73,7 +89,7 @@ def get_collection(
     responses={
         409: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_409_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     status_code=status.HTTP_201_CREATED,
@@ -89,14 +105,16 @@ def create_collection(
     try:
         backend.create_collection(name=collection)
         return ResourceOperationStatus(
-            success=True, name=collection, operation=CRUDOperation.CREATE
+            success=True,
+            target=f"Collection {collection}",
+            operation=CRUDOperation.CREATE,
         )
     except MatchboxCollectionAlreadyExists as e:
         raise HTTPException(
             status_code=409,
             detail=ResourceOperationStatus(
                 success=False,
-                name=collection,
+                target=f"Collection {collection}",
                 operation=CRUDOperation.CREATE,
                 details=str(e),
             ),
@@ -109,11 +127,11 @@ def create_collection(
         404: {"model": NotFoundError},
         409: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_409_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
         500: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     dependencies=[Depends(authorisation_dependencies)],
@@ -131,7 +149,9 @@ def delete_collection(
     try:
         backend.delete_collection(name=collection, certain=certain)
         return ResourceOperationStatus(
-            success=True, name=collection, operation=CRUDOperation.DELETE
+            success=True,
+            target=f"Collection {collection}",
+            operation=CRUDOperation.DELETE,
         )
     except (
         MatchboxCollectionNotFoundError,
@@ -143,7 +163,7 @@ def delete_collection(
             status_code=500,
             detail=ResourceOperationStatus(
                 success=False,
-                name=collection,
+                target=f"Collection {collection}",
                 operation=CRUDOperation.DELETE,
                 details=str(e),
             ),
@@ -174,7 +194,7 @@ def get_run(
         404: {"model": NotFoundError},
         409: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_409_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     status_code=status.HTTP_201_CREATED,
@@ -194,7 +214,7 @@ def create_run(
             status_code=409,
             detail=ResourceOperationStatus(
                 success=False,
-                name=collection,
+                target=f"Collection {collection}",
                 operation=CRUDOperation.CREATE,
                 details=str(e),
             ),
@@ -207,7 +227,7 @@ def create_run(
         404: {"model": NotFoundError},
         500: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     dependencies=[Depends(authorisation_dependencies)],
@@ -225,7 +245,7 @@ def set_run_mutable(
         backend.set_run_mutable(collection=collection, run_id=run_id, mutable=mutable)
         return ResourceOperationStatus(
             success=True,
-            name=run_id,
+            target=f"Run {run_id}",
             operation=CRUDOperation.UPDATE,
         )
     except (
@@ -238,7 +258,7 @@ def set_run_mutable(
             status_code=500,
             detail=ResourceOperationStatus(
                 success=False,
-                name=run_id,
+                target=f"Run {run_id}",
                 operation=CRUDOperation.UPDATE,
                 details=str(e),
             ).model_dump(),
@@ -251,7 +271,7 @@ def set_run_mutable(
         404: {"model": NotFoundError},
         500: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     dependencies=[Depends(authorisation_dependencies)],
@@ -269,7 +289,7 @@ def set_run_default(
         backend.set_run_default(collection=collection, run_id=run_id, default=default)
         return ResourceOperationStatus(
             success=True,
-            name=run_id,
+            target=f"Run {run_id}",
             operation=CRUDOperation.UPDATE,
         )
     except (
@@ -282,7 +302,7 @@ def set_run_default(
             status_code=500,
             detail=ResourceOperationStatus(
                 success=False,
-                name=run_id,
+                target=f"Run {run_id}",
                 operation=CRUDOperation.UPDATE,
                 details=str(e),
             ).model_dump(),
@@ -295,11 +315,11 @@ def set_run_default(
         404: {"model": NotFoundError},
         409: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_409_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
         500: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     dependencies=[Depends(authorisation_dependencies)],
@@ -316,7 +336,7 @@ def delete_run(
     try:
         backend.delete_run(collection=collection, run_id=run_id, certain=certain)
         return ResourceOperationStatus(
-            success=True, name=run_id, operation=CRUDOperation.DELETE
+            success=True, target=f"Run {run_id}", operation=CRUDOperation.DELETE
         )
     except (
         MatchboxCollectionNotFoundError,
@@ -329,7 +349,7 @@ def delete_run(
             status_code=500,
             detail=ResourceOperationStatus(
                 success=False,
-                name=run_id,
+                target=f"Run {run_id}",
                 operation=CRUDOperation.DELETE,
                 details=str(e),
             ),
@@ -344,11 +364,11 @@ def delete_run(
     responses={
         409: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_409_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
         500: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     status_code=status.HTTP_201_CREATED,
@@ -364,16 +384,17 @@ def create_resolution(
     resolution: Resolution,
 ) -> ResourceOperationStatus:
     """Create a resolution (model or source)."""
+    resolution_path = ResolutionPath(
+        name=resolution_name, collection=collection, run=run_id
+    )
     try:
         backend.create_resolution(
             resolution=resolution,
-            path=ResolutionPath(
-                name=resolution_name, collection=collection, run=run_id
-            ),
+            path=resolution_path,
         )
         return ResourceOperationStatus(
             success=True,
-            name=resolution_name,
+            target=f"Resolution {resolution_path}",
             operation=CRUDOperation.CREATE,
         )
     except (
@@ -386,7 +407,7 @@ def create_resolution(
             status_code=409,
             detail=ResourceOperationStatus(
                 success=False,
-                name=resolution_name,
+                target=f"Resolution {resolution_path}",
                 operation=CRUDOperation.CREATE,
                 details=str(e),
             ),
@@ -396,7 +417,7 @@ def create_resolution(
             status_code=500,
             detail=ResourceOperationStatus(
                 success=False,
-                name=resolution_name,
+                target=f"Resolution {resolution_path}",
                 operation=CRUDOperation.CREATE,
                 details=str(e),
             ).model_dump(),
@@ -414,13 +435,75 @@ def get_resolution(
     collection: CollectionName,
     run_id: RunID,
     resolution: ResolutionName,
-    validate_type: ResolutionType | None = None,
 ) -> Resolution:
     """Get a resolution (model or source) from the backend."""
     return backend.get_resolution(
-        path=ResolutionPath(collection=collection, run=run_id, name=resolution),
-        validate=validate_type,
+        path=ResolutionPath(collection=collection, run=run_id, name=resolution)
     )
+
+
+@router.put(
+    "/{collection}/runs/{run_id}/resolutions/{resolution_name}",
+    responses={
+        404: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+        500: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+    },
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(authorisation_dependencies)],
+    summary="Update a resolution",
+    description="Update an existing resolution (model or source) in the specified run.",
+)
+def update_resolution(
+    backend: BackendDependency,
+    collection: CollectionName,
+    run_id: RunID,
+    resolution_name: ResolutionName,
+    resolution: Resolution,
+) -> ResourceOperationStatus:
+    """Update an existing resolution (model or source)."""
+    resolution_path = ResolutionPath(
+        name=resolution_name, collection=collection, run=run_id
+    )
+    try:
+        backend.update_resolution(
+            resolution=resolution,
+            path=resolution_path,
+        )
+        return ResourceOperationStatus(
+            success=True,
+            target=f"Resolution {resolution_path}",
+            operation=CRUDOperation.UPDATE,
+        )
+    except (
+        MatchboxCollectionNotFoundError,
+        MatchboxRunNotFoundError,
+        MatchboxResolutionNotFoundError,
+    ) as e:
+        raise HTTPException(
+            status_code=404,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution {resolution_path}",
+                operation=CRUDOperation.UPDATE,
+                details=str(e),
+            ),
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution {resolution_path}",
+                operation=CRUDOperation.UPDATE,
+                details=str(e),
+            ).model_dump(),
+        ) from e
 
 
 @router.delete(
@@ -429,11 +512,11 @@ def get_resolution(
         404: {"model": NotFoundError},
         409: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_409_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
         500: {
             "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
+            **ResourceOperationStatus.error_examples(),
         },
     },
     dependencies=[Depends(authorisation_dependencies)],
@@ -450,14 +533,15 @@ def delete_resolution(
     ] = False,
 ) -> ResourceOperationStatus:
     """Delete a resolution from the backend."""
+    resolution_path = ResolutionPath(collection=collection, run=run_id, name=resolution)
     try:
         backend.delete_resolution(
-            name=ResolutionPath(collection=collection, run=run_id, name=resolution),
+            name=resolution_path,
             certain=certain,
         )
         return ResourceOperationStatus(
             success=True,
-            name=resolution,
+            target=f"Resolution {resolution_path}",
             operation=CRUDOperation.DELETE,
         )
     except (
@@ -472,7 +556,7 @@ def delete_resolution(
             status_code=500,
             detail=ResourceOperationStatus(
                 success=False,
-                name=resolution,
+                target=f"Resolution {resolution_path}",
                 operation=CRUDOperation.DELETE,
                 details=str(e),
             ),
@@ -480,8 +564,14 @@ def delete_resolution(
 
 
 @router.post(
-    "/{collection}/runs/{run_id}/resolutions/{resolution}/data",
-    responses={404: {"model": NotFoundError}},
+    "/{collection}/runs/{run_id}/resolutions/{resolution_name}/data",
+    responses={
+        404: {"model": NotFoundError},
+        400: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+    },
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(authorisation_dependencies)],
     summary="Set resolution data",
@@ -490,22 +580,145 @@ def delete_resolution(
 def set_data(
     backend: BackendDependency,
     upload_tracker: UploadTrackerDependency,
+    settings: SettingsDependency,
+    background_tasks: BackgroundTasks,
     collection: CollectionName,
     run_id: RunID,
-    resolution: ModelResolutionName,
-    validate_type: ResolutionType | None = None,
-) -> UploadStatus:
+    resolution_name: ModelResolutionName,
+    file: UploadFile,
+) -> ResourceOperationStatus:
     """Create an upload task for source hashes or model results."""
-    # Get resolution from the specified run
-    resolution_path = ResolutionPath(collection=collection, run=run_id, name=resolution)
-    resolution = backend.get_resolution(path=resolution_path, validate=validate_type)
+    resolution_path = ResolutionPath(
+        collection=collection, run=run_id, name=resolution_name
+    )
+    if backend.get_resolution_stage(path=resolution_path) != UploadStage.READY:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details="Not expecting upload for this resolution.",
+            ),
+        )
+    # Signal to clients that resolution is not ready to receive data
+    backend.set_resolution_stage(path=resolution_path, stage=UploadStage.PROCESSING)
+    resolution = backend.get_resolution(path=resolution_path)
+
+    upload_id = str(uuid.uuid4())
+
+    # Validate file
+    if ".parquet" not in file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details=f"Expected .parquet file, got {file.filename.split('.')[-1]}",
+            ),
+        )
+
+    # pyarrow validates Parquet magic numbers when loading file
+    try:
+        pq.ParquetFile(file.file)
+    except ArrowInvalid as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details=f"Invalid Parquet file: {str(e)}",
+            ),
+        ) from e
+
+    # Upload to S3
+    client = backend.settings.datastore.get_client()
+    bucket = backend.settings.datastore.cache_bucket_name
+    key = f"{upload_id}.parquet"
 
     if resolution.resolution_type == ResolutionType.SOURCE:
-        upload_id = upload_tracker.add_source(path=resolution_path)
-        return upload_tracker.get(upload_id=upload_id).status
+        expected_schema = SCHEMA_INDEX
+    else:
+        expected_schema = SCHEMA_RESULTS
 
-    upload_id = upload_tracker.add_model(path=resolution_path)
-    return upload_tracker.get(upload_id=upload_id).status
+    try:
+        table_to_s3(
+            client=client,
+            bucket=bucket,
+            key=key,
+            file=file,
+            expected_schema=expected_schema,
+        )
+    except MatchboxServerFileError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details=f"Could not upload file to object storage: {str(e)}",
+            ),
+        ) from e
+
+    # Start background processing
+    match settings.task_runner:
+        case "api":
+            background_tasks.add_task(
+                process_upload,
+                backend=backend,
+                tracker=upload_tracker,
+                s3_client=client,
+                resolution_path=resolution_path,
+                upload_id=upload_id,
+                bucket=bucket,
+                filename=key,
+            )
+        case "celery":
+            process_upload_celery.delay(
+                resolution_path_json=resolution_path.model_dump_json(),
+                upload_id=upload_id,
+                bucket=bucket,
+                filename=key,
+            )
+        case _:
+            raise RuntimeError("Unsupported task runner.")
+
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Resolution data {resolution_path}",
+        operation=CRUDOperation.CREATE,
+        details=upload_id,
+    )
+
+
+@router.get(
+    "/{collection}/runs/{run_id}/resolutions/{resolution}/data/status",
+    responses={404: {"model": NotFoundError}},
+    status_code=status.HTTP_200_OK,
+)
+def get_upload_status(
+    backend: BackendDependency,
+    upload_tracker: UploadTrackerDependency,
+    collection: CollectionName,
+    run_id: RunID,
+    resolution: ResolutionName,
+    upload_id: Annotated[str | None, Query()] = None,
+) -> UploadInfo:
+    """Get the status of an upload process.
+
+    Optionally looks for error message if given an upload ID.
+    """
+    error = None
+    if upload_id:
+        error = upload_tracker.get(upload_id=upload_id)
+
+    resolution_stage = backend.get_resolution_stage(
+        path=ResolutionPath(collection=collection, run=run_id, name=resolution)
+    )
+
+    return UploadInfo(stage=resolution_stage, error=error)
 
 
 @router.get(
@@ -527,70 +740,3 @@ def get_results(
 
     buffer = table_to_buffer(res)
     return ParquetResponse(buffer.getvalue())
-
-
-@router.patch(
-    "/{collection}/runs/{run_id}/resolutions/{resolution}/truth",
-    responses={
-        404: {"model": NotFoundError},
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.status_500_examples(),
-        },
-    },
-    dependencies=[Depends(authorisation_dependencies)],
-    summary="Set resolution truth",
-    description="Set truth data for a resolution.",
-)
-def set_truth(
-    backend: BackendDependency,
-    collection: CollectionName,
-    run_id: RunID,
-    resolution: ModelResolutionName,
-    truth: Annotated[int, Body(ge=0, le=100)],
-) -> ResourceOperationStatus:
-    """Set truth data for a resolution."""
-    try:
-        backend.set_model_truth(
-            path=ResolutionPath(collection=collection, run=run_id, name=resolution),
-            truth=truth,
-        )
-        return ResourceOperationStatus(
-            success=True,
-            name=resolution,
-            operation=CRUDOperation.UPDATE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-        MatchboxResolutionNotFoundError,
-    ):
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                name=resolution,
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
-
-
-@router.get(
-    "/{collection}/runs/{run_id}/resolutions/{resolution}/truth",
-    responses={404: {"model": NotFoundError}},
-    summary="Get resolution truth",
-    description="Get truth data for a resolution.",
-)
-def get_truth(
-    backend: BackendDependency,
-    collection: CollectionName,
-    run_id: RunID,
-    resolution: ModelResolutionName,
-) -> float:
-    """Get truth data for a resolution."""
-    return backend.get_model_truth(
-        path=ResolutionPath(collection=collection, run=run_id, name=resolution)
-    )

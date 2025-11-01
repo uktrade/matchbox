@@ -1,4 +1,3 @@
-from datetime import datetime
 from unittest.mock import Mock, patch
 
 import polars as pl
@@ -15,21 +14,16 @@ from matchbox.client.sources import (
 )
 from matchbox.common.dtos import (
     BackendResourceType,
-    BackendUploadType,
     CRUDOperation,
     DataTypes,
     NotFoundError,
     Resolution,
-    ResolutionType,
     ResourceOperationStatus,
     SourceField,
+    UploadInfo,
     UploadStage,
-    UploadStatus,
 )
-from matchbox.common.exceptions import (
-    MatchboxServerFileError,
-)
-from matchbox.common.factories.models import model_factory
+from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.factories.sources import (
     source_factory,
 )
@@ -291,10 +285,7 @@ def test_source_run(sqlite_warehouse: Engine, batch_size: int):
     assert "keys" in result.column_names
     assert len(result) == n_true_entities
 
-    with pytest.warns(match="already run"):
-        source.run()
-
-    source.run(full_rerun=True)
+    source.run()
 
 
 @patch("matchbox.client.sources.Source.fetch")
@@ -326,100 +317,170 @@ def test_source_run_null_identifier(
 
 def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine):
     """Test source syncing flow through the API."""
-    # Mock Source
+    # Mock source
     testkit = source_factory(
         features=[{"name": "company_name", "base_generator": "company"}],
         engine=sqlite_warehouse,
     ).write_to_location()
 
-    # Mock the routes
+    # Mock the routes:
+    # Resolution doesn't yet exist
     matchbox_api.get(
         f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}"
     ).mock(
         return_value=Response(
             404,
             json=NotFoundError(
-                details="Model not found", entity=BackendResourceType.RESOLUTION
+                details="Source not found", entity=BackendResourceType.RESOLUTION
             ).model_dump(),
         )
     )
+    # Resolution can be inserted
     insert_config_route = matchbox_api.post(
         f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}"
     ).mock(
         return_value=Response(
             201,
-            json=ResourceOperationStatus(
+            content=ResourceOperationStatus(
                 success=True,
-                name=testkit.source.name,
+                target=f"Resolution {testkit.source.name}",
                 operation=CRUDOperation.CREATE,
-            ).model_dump(),
+            ).model_dump_json(),
         )
     )
-    matchbox_api.post(
+    # Resolution data can be inserted
+    insert_hashes_route = matchbox_api.post(
         f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}/data"
     ).mock(
         return_value=Response(
             202,
-            content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.AWAITING_UPLOAD,
-                update_timestamp=datetime.now(),
-                entity=BackendUploadType.RESULTS,
-            ).model_dump_json(),
+            json=ResourceOperationStatus(
+                success=True, target="", operation=CRUDOperation.CREATE
+            ).model_dump(),
         )
     )
 
-    # Mock the data upload
-    upload_route = matchbox_api.post("/upload/test-upload-id").mock(
+    # Later, resolution can be updated
+    update_route = matchbox_api.put(
+        f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}"
+    ).mock(
         return_value=Response(
-            202,
-            content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.COMPLETE,
-                update_timestamp=datetime.now(),
-                entity=BackendUploadType.INDEX,
+            200,
+            content=ResourceOperationStatus(
+                success=True,
+                target=f"Resolution {testkit.source.name}",
+                operation=CRUDOperation.UPDATE,
             ).model_dump_json(),
         )
     )
 
-    # Index the source
+    # Later, resolution can be deleted and recreated
+    delete_route = matchbox_api.delete(
+        f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}"
+    ).mock(
+        return_value=Response(
+            200,
+            content=ResourceOperationStatus(
+                success=True,
+                target=f"Resolution {testkit.source.name}",
+                operation=CRUDOperation.DELETE,
+            ).model_dump_json(),
+        )
+    )
+
+    # -- ERRORS --
+
+    # Can't sync before running
+    with pytest.raises(RuntimeError, match="must be run"):
+        testkit.source.sync()
+
+    # We now run, but test that upload failure is handled
+    testkit.fake_run()
+    # Before and after upload, server accepts data - the second time reporting error
+    matchbox_api.get(
+        f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}/data/status"
+    ).mock(
+        side_effect=[
+            Response(200, json=UploadInfo(stage=UploadStage.READY).model_dump()),
+            Response(
+                200,
+                json=UploadInfo(stage=UploadStage.READY, error="error").model_dump(),
+            ),
+        ]
+    )
+    with pytest.raises(MatchboxServerFileError, match="error"):
+        testkit.source.sync()
+
+    # -- FIRST TIME INSERTION --
+
+    # Before upload, resolution is ready for data, after it is complete
+    matchbox_api.get(
+        f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}/data/status"
+    ).mock(
+        side_effect=[
+            Response(200, json=UploadInfo(stage=UploadStage.READY).model_dump()),
+            Response(200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()),
+        ]
+    )
+
+    # Sync the source, successfully
     testkit.source.run()
     testkit.source.sync()
-
-    # Verify the API calls
+    # Source was created, not updated or deleted
+    assert insert_config_route.called
+    assert not update_route.called
+    assert not delete_route.called
+    # Resolution metadata was correct
     resolution_call = Resolution.model_validate_json(
         insert_config_route.calls.last.request.content.decode("utf-8")
     )
-    # Check key fields match (allowing for different descriptions)
-    assert resolution_call.resolution_type == ResolutionType.SOURCE
-    assert resolution_call.config == testkit.source.to_resolution().config
-    assert "test-upload-id" in upload_route.calls.last.request.url.path
-    assert b"Content-Disposition: form-data;" in upload_route.calls.last.request.content
-    assert b"PAR1" in upload_route.calls.last.request.content
-
-    # Now check client handling of server error
-    matchbox_api.post("/upload/test-upload-id").mock(
-        return_value=Response(
-            400,
-            content=UploadStatus(
-                id="test-upload-id",
-                stage=UploadStage.FAILED,
-                update_timestamp=datetime.now(),
-                details="Invalid schema",
-                entity=BackendUploadType.INDEX,
-            ).model_dump_json(),
-        )
+    assert resolution_call == testkit.source.to_resolution()
+    # Resolution data was correct
+    assert (
+        b"Content-Disposition: form-data;"
+        in insert_hashes_route.calls.last.request.content
     )
+    assert b"PAR1" in insert_hashes_route.calls.last.request.content
 
-    # Verify the error is propagated
-    with pytest.raises(MatchboxServerFileError):
-        testkit.source.sync()
+    # -- SOFT UPDATE --
 
-    # Mock earlier endpoint generating a name clash
-    model = model_factory().model
+    insert_hashes_route.reset()
+    # Mock endpoint now returns existing resolution
     matchbox_api.get(
         f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}"
-    ).mock(return_value=Response(200, json=model.to_resolution().model_dump()))
+    ).mock(return_value=Response(200, json=testkit.source.to_resolution().model_dump()))
 
-    with pytest.raises(ValueError, match="existing resolution"):
-        testkit.source.sync()
+    # Mock endpoint now declares data is present already
+    matchbox_api.get(
+        f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}/data/status"
+    ).mock(
+        return_value=Response(
+            200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()
+        )
+    )
+    testkit.source.sync()
+    # Resolution was compatible: ensure it was updated, not deleted
+    assert update_route.called
+    assert not delete_route.called
+    # The data did not need to be updated
+    assert not insert_hashes_route.called
+
+    # -- HARD UPDATE --
+
+    insert_hashes_route.reset()
+    # Changing data requires deletion and re-insertion
+    testkit.data_hashes = testkit.data_hashes.slice(1, 3)
+    testkit.fake_run()
+    # Resolution data is first ready to upload, and then uploaded
+    matchbox_api.get(
+        f"/collections/{testkit.source.dag.name}/runs/{testkit.source.dag.run}/resolutions/{testkit.source.name}/data/status"
+    ).mock(
+        side_effect=[
+            Response(200, json=UploadInfo(stage=UploadStage.READY).model_dump()),
+            Response(200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()),
+        ]
+    )
+    testkit.source.sync()
+
+    assert delete_route.called
+    assert insert_hashes_route.called

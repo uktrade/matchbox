@@ -59,16 +59,13 @@ def api_client_and_mocks(
     app.dependency_overrides[dependencies.backend] = lambda: mock_backend
 
     # 3) Override upload tracker with fully functioning mock
-    # Note that we don't need to patch the tracker used by the task, as later
-    # we set the API as the task runner, and we assume that in that setting
+    # Note that we don't need to patch the tracker used by the delayed task,
+    # as later we set the API as the task runner, and we assume that in that setting
     # the tracker is passed to the background task via dependency injection
     tracker = InMemoryUploadTracker()
     mock_tracker = Mock()
     mock_tracker.get.side_effect = tracker.get
-    mock_tracker.update.side_effect = tracker.update
-    mock_tracker.add_model.side_effect = tracker.add_model
-    mock_tracker.add_source.side_effect = tracker.add_source
-    mock_tracker._tracker = tracker
+    mock_tracker.set.side_effect = tracker.set
     app.dependency_overrides[dependencies.upload_tracker] = lambda: mock_tracker
 
     # 4) Override server settings used by API

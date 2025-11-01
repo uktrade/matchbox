@@ -4,11 +4,10 @@ import json
 import re
 import textwrap
 from collections.abc import Iterable
-from datetime import datetime
 from enum import StrEnum
 from importlib.metadata import version
 from json import JSONDecodeError
-from typing import Any, Self, TypeAlias
+from typing import Annotated, Any, Self, TypeAlias
 
 import polars as pl
 from pydantic import (
@@ -17,6 +16,8 @@ from pydantic import (
     Field,
     GetCoreSchemaHandler,
     GetJsonSchemaHandler,
+    PlainSerializer,
+    PlainValidator,
     field_serializer,
     field_validator,
     model_validator,
@@ -25,8 +26,8 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from sqlglot import errors, expressions, parse_one
 
-from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
 from matchbox.common.exceptions import MatchboxNameError
+from matchbox.common.hash import base64_to_hash, hash_to_base64
 
 
 class DataTypes(StrEnum):
@@ -186,21 +187,6 @@ class BackendParameterType(StrEnum):
 
     SAMPLE_SIZE = "sample_size"
     NAME = "name"
-
-
-class BackendUploadType(StrEnum):
-    """Enumeration of supported backend upload types."""
-
-    INDEX = "index"
-    RESULTS = "results"
-
-    @property
-    def schema(self):
-        """Get the schema for the upload type."""
-        return {
-            BackendUploadType.INDEX: SCHEMA_INDEX,
-            BackendUploadType.RESULTS: SCHEMA_RESULTS,
-        }[self]
 
 
 class CRUDOperation(StrEnum):
@@ -392,7 +378,7 @@ class SourceConfig(BaseModel):
             raise ValueError("Key field must not be in the index fields. ")
 
         if self.key_field.type != DataTypes.STRING:
-            raise ValueError("Key field must be a string. ")
+            raise ValueError("Key field must have string type.")
 
         return self
 
@@ -642,6 +628,11 @@ class Resolution(BaseModel):
 
     description: str | None = Field(default=None, description="Description")
     truth: int | None = Field(default=None, ge=0, le=100, strict=True)
+    fingerprint: Annotated[
+        bytes,
+        PlainSerializer(hash_to_base64, return_type=str),
+        PlainValidator(base64_to_hash),
+    ]
 
     # Discriminator field
     resolution_type: ResolutionType
@@ -727,13 +718,13 @@ class ResourceOperationStatus(BaseModel):
     """Status response for any resource operation."""
 
     success: bool
-    name: ResolutionPath | CollectionName | RunID
+    target: str
     operation: CRUDOperation
     details: str | None = None
 
     @classmethod
-    def status_409_examples(cls) -> dict:
-        """Examples for 409 status code."""
+    def error_examples(cls) -> dict:
+        """Examples for error codes."""
         return {
             "content": {
                 "application/json": {
@@ -742,10 +733,12 @@ class ResourceOperationStatus(BaseModel):
                             "summary": "Delete operation requires confirmation. ",
                             "value": cls(
                                 success=False,
-                                name=ModelResolutionPath(
-                                    collection="default",
-                                    run=1,
-                                    name="example_model",
+                                target=str(
+                                    ModelResolutionPath(
+                                        collection="default",
+                                        run=1,
+                                        name="example_model",
+                                    )
                                 ),
                                 operation=CRUDOperation.DELETE,
                                 details=(
@@ -760,18 +753,6 @@ class ResourceOperationStatus(BaseModel):
                                 ),
                             ).model_dump(),
                         },
-                    },
-                }
-            }
-        }
-
-    @classmethod
-    def status_500_examples(cls) -> dict:
-        """Examples for 500 status code."""
-        return {
-            "content": {
-                "application/json": {
-                    "examples": {
                         "unhandled": {
                             "summary": (
                                 "Unhandled exception encountered while updating the "
@@ -779,10 +760,12 @@ class ResourceOperationStatus(BaseModel):
                             ),
                             "value": cls(
                                 success=False,
-                                name=ModelResolutionPath(
-                                    collection="default",
-                                    run=1,
-                                    name="example_model",
+                                target=str(
+                                    ModelResolutionPath(
+                                        collection="default",
+                                        run=1,
+                                        name="example_model",
+                                    )
                                 ),
                                 operation=CRUDOperation.UPDATE,
                             ).model_dump(),
@@ -803,73 +786,15 @@ class UploadStage(StrEnum):
     """Enumeration of stages of a file upload and its processing."""
 
     READY = "ready"
-    AWAITING_UPLOAD = "awaiting_upload"
-    QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETE = "complete"
-    FAILED = "failed"
-    UNKNOWN = "unknown"
 
 
-class UploadStatus(BaseModel):
-    """Response model for any file upload processes."""
+class UploadInfo(BaseModel):
+    """Response model for file upload processes."""
 
-    id: str
-    stage: UploadStage
-    update_timestamp: datetime
-    details: str | None = None
-    entity: BackendUploadType | None = None
-
-    _status_code_mapping = {
-        UploadStage.READY: 200,
-        UploadStage.COMPLETE: 200,
-        UploadStage.FAILED: 400,
-        UploadStage.AWAITING_UPLOAD: 202,
-        UploadStage.QUEUED: 200,
-        UploadStage.PROCESSING: 200,
-    }
-
-    def get_http_code(self) -> int:
-        """Get the HTTP status code for the upload stage."""
-        if self.stage == UploadStage.FAILED:
-            return 400
-        return self._status_code_mapping[self.stage]
-
-    @classmethod
-    def status_400_examples(cls) -> dict:
-        """Examples for 400 status code."""
-        return {
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "expired_id": {
-                            "summary": "Upload ID expired",
-                            "value": cls(
-                                id="example_id",
-                                stage=UploadStage.FAILED,
-                                details=(
-                                    "Upload ID not found or expired. Entries expire "
-                                    "after 30 minutes of inactivity, including "
-                                    "failed processes."
-                                ),
-                                entity=BackendUploadType.INDEX,
-                                update_timestamp=datetime.now(),
-                            ).model_dump(),
-                        },
-                        "schema_mismatch": {
-                            "summary": "Schema validation error",
-                            "value": cls(
-                                id="example_id",
-                                stage=UploadStage.FAILED,
-                                details="Schema mismatch. Expected: ... Got: ...",
-                                entity=BackendUploadType.INDEX,
-                                update_timestamp=datetime.now(),
-                            ).model_dump(),
-                        },
-                    },
-                }
-            }
-        }
+    stage: UploadStage | None = None
+    error: str | None = None
 
 
 class NotFoundError(BaseModel):

@@ -38,7 +38,7 @@ deduper_results = deduper.run()
 linker_results = linker.run()
 ```
 
-The steps need to be run in order, but once you've finalised your DAG, it's better to automatically run all of them using a single DAG command, as is shown later. When you run a step, either directly or through the DAG, its data is cached so that running it again won't do anything, unless you force a re-run.
+The steps need to be run in order, but once you've finalised your DAG, it's better to automatically run all of them using a single DAG command, as is shown later.
 
 ## Setting up your environment
 
@@ -388,8 +388,6 @@ Once you've defined all your steps, you can run and store the results of your [`
     ```python    
     # Run the entire DAG
     dag.run_and_sync()
-    # Optionally, you can force the re-run of all steps if some of them had already run
-    dag.run_and_sync(full_rerun=True)
     ```
 
 Once you're happy with your results, you need to publish your DAG so that other users can query from it.

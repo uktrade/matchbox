@@ -131,6 +131,12 @@ class SourceTestkit(BaseModel):
         """Return the SourceConfig from the source."""
         return self.source.config
 
+    def fake_run(self) -> Self:
+        """Set source hashes before source is run."""
+        self.source.hashes = self.data_hashes
+
+        return self
+
     def into_dag(self) -> dict:
         """Turn source into kwargs for `dag.source()`, detaching from original DAG."""
         return {

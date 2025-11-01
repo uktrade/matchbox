@@ -208,7 +208,7 @@ class TestE2EPipelineBuilder:
                 },
             ),
             name="final",
-            description="Link sources A and B on registration_id",
+            description="Link sources A and B on registration ID",
             model_class=DeterministicLinker,
             model_settings={"comparisons": ["l.registration_id = r.registration_id"]},
         )
@@ -216,6 +216,10 @@ class TestE2EPipelineBuilder:
         # === FIRST RUN ===
         logging.info("Running DAG for the first time")
         dag.run_and_sync()
+
+        # Update metadata of one node, will check later
+        link_a_b.description = "Updated description"
+        link_a_b.sync()
 
         # Basic verification - we have some linked results and can retrieve them
         final_df = link_a_b.query(source_a, source_b).run()
@@ -252,6 +256,8 @@ class TestE2EPipelineBuilder:
         # Load default
         reconstructed_dag = DAG("companies").load_default()
         assert reconstructed_dag.run == dag.run
+        # Previous update was effective
+        assert reconstructed_dag.get_model("final").description == "Updated description"
 
         # Can directly read data from default
         assert matches == reconstructed_dag.lookup_key(

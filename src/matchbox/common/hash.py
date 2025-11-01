@@ -29,9 +29,11 @@ def hash_to_base64(hash: bytes) -> str:
     return base64.urlsafe_b64encode(hash).decode("utf-8")
 
 
-def base64_to_hash(b64: str) -> bytes:
-    """Converts a base64 string to a hash."""
-    return base64.urlsafe_b64decode(b64)
+def base64_to_hash(value: str | bytes) -> bytes:
+    """Converts a base64 string to a hash, or returns a hash as is."""
+    if isinstance(value, bytes):
+        return value
+    return base64.urlsafe_b64decode(value)
 
 
 def prep_for_hash(item: HashableItem) -> bytes:
@@ -213,6 +215,11 @@ def hash_arrow_table(
     all_hashes: bytes = b"".join(row_hashes.sort().to_list())
 
     return HASH_FUNC(all_hashes).digest()
+
+
+def hash_model_results(results: pa.Table) -> bytes:
+    """Fingerprint model results."""
+    return hash_arrow_table(results, as_sorted_list=["left_id", "right_id"])
 
 
 class IntMap:

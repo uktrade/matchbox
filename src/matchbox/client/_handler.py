@@ -44,13 +44,12 @@ from matchbox.common.dtos import (
     OKMessage,
     Resolution,
     ResolutionPath,
-    ResolutionType,
     ResourceOperationStatus,
     Run,
     RunID,
     SourceResolutionPath,
+    UploadInfo,
     UploadStage,
-    UploadStatus,
 )
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.exceptions import (
@@ -115,11 +114,7 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
         return res
 
     if res.status_code == 400:
-        if UploadStatus.model_validate_json(res.content, strict=False):
-            error = UploadStatus.model_validate(res.json())
-            raise MatchboxServerFileError(error.details)
-        else:
-            raise RuntimeError(f"Unexpected 400 error: {res.content}")
+        raise RuntimeError(f"Unexpected 400 error: {res.content}")
 
     if res.status_code == 404:
         try:
@@ -395,24 +390,36 @@ def create_resolution(
 
 
 @http_retry
-def get_resolution(
-    path: ResolutionPath, validate_type: ResolutionType | None = None
-) -> Resolution | None:
+def update_resolution(
+    resolution: Resolution,
+    path: ResolutionPath,
+) -> ResourceOperationStatus:
+    """Update a resolution (model or source)."""
+    log_prefix = f"Resolution {path}"
+    logger.debug("Updating", prefix=log_prefix)
+
+    res = CLIENT.put(
+        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}",
+        json=resolution.model_dump(),
+    )
+
+    return ResourceOperationStatus.model_validate(res.json())
+
+
+@http_retry
+def get_resolution(path: ResolutionPath) -> Resolution | None:
     """Get a resolution from Matchbox."""
     log_prefix = f"Resolution {path}"
     logger.debug("Retrieving metadata", prefix=log_prefix)
 
     res = CLIENT.get(
-        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}",
-        params=url_params({"validate_type": validate_type}),
+        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}"
     )
     return Resolution.model_validate(res.json())
 
 
 @http_retry
-def set_data(
-    path: ResolutionPath, data: pl.DataFrame | Table, validate_type: ResolutionType
-) -> UploadStatus:
+def set_data(path: ResolutionPath, data: pl.DataFrame | Table) -> None:
     """Upload source hashes or model results to server."""
     log_prefix = f"Resolution {path}"
     logger.debug("Uploading results", prefix=log_prefix)
@@ -421,37 +428,40 @@ def set_data(
     buffer = table_to_buffer(table=data_arrow)
 
     # Initialise upload
+    logger.debug("Uploading data", prefix=log_prefix)
     metadata_res = CLIENT.post(
         f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/data",
-        params=url_params({"validate_type": validate_type}),
+        files={"file": ("data.parquet", buffer, "application/octet-stream")},
     )
 
-    upload = UploadStatus.model_validate(metadata_res.json())
-
-    # Upload data
-    upload_res = CLIENT.post(
-        f"/upload/{upload.id}",
-        files={"file": (f"{upload.id}.parquet", buffer, "application/octet-stream")},
-    )
-
-    logger.debug("Uploading data", prefix=log_prefix)
+    upload_id = ResourceOperationStatus.model_validate(metadata_res.json()).details
 
     # Poll until complete with retry/timeout configuration
-    status = UploadStatus.model_validate(upload_res.json())
-    while status.stage not in [UploadStage.COMPLETE, UploadStage.FAILED]:
-        status_res = CLIENT.get(f"/upload/{upload.id}/status")
-        status = UploadStatus.model_validate(status_res.json())
+    stage = UploadStage.PROCESSING
+    while stage == UploadStage.PROCESSING:
+        status_res = CLIENT.get(
+            f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/data/status",
+            params=url_params({"upload_id": upload_id}),
+        )
+        info = UploadInfo.model_validate(status_res.json())
+        stage = info.stage
+        logger.debug(f"Uploading data: {stage}", prefix=log_prefix)
 
-        logger.debug(f"Uploading data: {status.stage}", prefix=log_prefix)
-
-        if status.stage == UploadStage.FAILED:
-            raise MatchboxServerFileError(status.details)
+        if stage == UploadStage.READY:
+            raise MatchboxServerFileError(info.error)
 
         time.sleep(settings.retry_delay)
 
     logger.debug("Finished", prefix=log_prefix)
 
-    return status
+
+@http_retry
+def get_resolution_stage(path: ResolutionPath) -> UploadStage:
+    status_res = CLIENT.get(
+        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/data/status"
+    )
+    upload_info = UploadInfo.model_validate(status_res.json())
+    return upload_info.stage
 
 
 @http_retry
@@ -465,31 +475,6 @@ def get_results(path: ModelResolutionPath) -> Table:
     )
     buffer = BytesIO(res.content)
     return read_table(buffer)
-
-
-@http_retry
-def set_truth(path: ModelResolutionPath, truth: int) -> ResourceOperationStatus:
-    """Set the truth threshold for a model in Matchbox."""
-    log_prefix = f"Model {path}"
-    logger.debug("Setting truth value", prefix=log_prefix)
-
-    res = CLIENT.patch(
-        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/truth",
-        json=truth,
-    )
-    return ResourceOperationStatus.model_validate(res.json())
-
-
-@http_retry
-def get_truth(path: ModelResolutionPath) -> int:
-    """Get the truth threshold for a model in Matchbox."""
-    log_prefix = f"Model {path}"
-    logger.debug("Retrieving truth value", prefix=log_prefix)
-
-    res = CLIENT.get(
-        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/truth"
-    )
-    return res.json()
 
 
 @http_retry

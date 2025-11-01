@@ -4,9 +4,8 @@ from collections.abc import Iterator
 
 import polars as pl
 import pyarrow as pa
-from sqlalchemy import delete, select, update
+from sqlalchemy import func, join, select
 from sqlalchemy.dialects.postgresql import BYTEA
-from sqlalchemy.exc import SQLAlchemyError
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -14,7 +13,11 @@ from matchbox.common.dtos import (
     ResolutionType,
     SourceResolutionPath,
 )
-from matchbox.common.hash import IntMap, hash_arrow_table
+from matchbox.common.exceptions import (
+    MatchboxResolutionExistingData,
+    MatchboxResolutionInvalidData,
+)
+from matchbox.common.hash import IntMap, hash_arrow_table, hash_model_results
 from matchbox.common.logging import logger
 from matchbox.common.transform import Cluster, DisjointSet
 from matchbox.server.postgresql.db import MBDB
@@ -26,6 +29,7 @@ from matchbox.server.postgresql.orm import (
     Probabilities,
     Resolutions,
     Results,
+    SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import (
     compile_sql,
@@ -46,20 +50,42 @@ def insert_hashes(
         path: The path of the source resolution
         data_hashes: Arrow table containing hash data
         batch_size: Batch size for bulk operations
+
+    Raises:
+        MatchboxResolutionNotFoundError: If the specified resolution doesn't exist.
+        MatchboxResolutionInvalidData: If data fingerprint conflicts with resolution.
+        MatchboxResolutionExistingData: If data was already inserted for resolution.
     """
     log_prefix = f"Index hashes {path}"
-    content_hash = hash_arrow_table(data_hashes)
+    if data_hashes.num_rows == 0:
+        logger.info("No hashes given.", prefix=log_prefix)
+        return
+
+    fingerprint = hash_arrow_table(data_hashes)
 
     with MBDB.get_session() as session:
         resolution = Resolutions.from_path(
             path=path, res_type=ResolutionType.SOURCE, session=session
         )
         # Check if the content hash is the same
-        if resolution.hash == content_hash:
-            logger.info("Source data matches index. Finished", prefix=log_prefix)
-            return
+        if resolution.fingerprint != fingerprint:
+            raise MatchboxResolutionInvalidData
 
-        resolution_id = resolution.resolution_id
+        existing_keys = session.execute(
+            select(func.count())
+            .select_from(
+                join(
+                    ClusterSourceKey,
+                    SourceConfigs,
+                    ClusterSourceKey.source_config_id == SourceConfigs.source_config_id,
+                )
+            )
+            .where(SourceConfigs.resolution_id == resolution.resolution_id)
+        ).scalar_one()
+
+        if existing_keys > 0:
+            raise MatchboxResolutionExistingData
+
         source_config_id = resolution.source_config.source_config_id
 
     # Don't insert new hashes, but new keys need existing hash IDs
@@ -172,17 +198,6 @@ def insert_hashes(
         Clusters.__table__.fullname,
         ClusterSourceKey.__table__.fullname,
     )
-
-    # Insert successful, safe to update the resolution's content hash
-    with MBDB.get_session() as session:
-        if not keys_records.is_empty():
-            stmt = (
-                update(Resolutions)
-                .where(Resolutions.resolution_id == resolution_id)
-                .values(hash=content_hash)
-            )
-            session.execute(stmt)
-            session.commit()
 
     if cluster_records.is_empty() and keys_records.is_empty():
         logger.info("No new records to add", prefix=log_prefix)
@@ -497,49 +512,39 @@ def insert_results(
         batch_size: Number of records to insert in each batch
 
     Raises:
-        MatchboxResolutionNotFoundError: If the specified model doesn't exist.
+        MatchboxResolutionNotFoundError: If the specified resolution doesn't exist.
+        MatchboxResolutionInvalidData: If data fingerprint conflicts with resolution.
+        MatchboxResolutionExistingData: If data was already inserted for resolution.
     """
+    log_prefix = f"Model {path.name}"
+    if results.num_rows == 0:
+        logger.info("Empty results given.", prefix=log_prefix)
+        return
+
     resolution = Resolutions.from_path(path=path, res_type=ResolutionType.MODEL)
 
-    log_prefix = f"Model {resolution.name}"
+    # Check if the content hash is the same
+    fingerprint = hash_model_results(results)
+    if resolution.fingerprint != fingerprint:
+        raise MatchboxResolutionInvalidData
+
+    with MBDB.get_session() as session:
+        existing_results = session.execute(
+            select(func.count())
+            .select_from(Results)
+            .where(Results.resolution_id == resolution.resolution_id)
+        ).scalar_one()
+
+        if existing_results > 0:
+            raise MatchboxResolutionExistingData
+
     logger.info(
         f"Writing results data with batch size {batch_size:,}", prefix=log_prefix
     )
 
-    # Check if the content hash is the same
-    content_hash = hash_arrow_table(results, as_sorted_list=["left_id", "right_id"])
-    if resolution.hash == content_hash:
-        logger.info("Results already uploaded. Finished", prefix=log_prefix)
-        return
-
     clusters, contains, probabilities = _results_to_insert_tables(
         resolution=resolution, probabilities=results
     )
-
-    with MBDB.get_session() as session:
-        try:
-            # Clear existing probabilities and results for this resolution
-            stmt = delete(Probabilities).where(
-                Probabilities.resolution_id == resolution.resolution_id
-            )
-            session.execute(stmt)
-
-            stmt = delete(Results).where(
-                Results.resolution_id == resolution.resolution_id
-            )
-            session.execute(stmt)
-
-            session.commit()
-            logger.info("Removed old probabilities and results", prefix=log_prefix)
-
-        except SQLAlchemyError as e:
-            session.rollback()
-            logger.error(
-                "Failed to clear old probabilities and results "
-                f"or update content hash: {str(e)}",
-                prefix=log_prefix,
-            )
-            raise
 
     with MBDB.get_adbc_connection() as adbc_connection:
         try:
@@ -618,15 +623,5 @@ def insert_results(
         Probabilities.__table__.fullname,
         Results.__table__.fullname,
     )
-
-    # Insert successful, safe to update the resolution's content hash
-    with MBDB.get_session() as session:
-        stmt = (
-            update(Resolutions)
-            .where(Resolutions.resolution_id == resolution.resolution_id)
-            .values(hash=content_hash)
-        )
-        session.execute(stmt)
-        session.commit()
 
     logger.info("Insert operation complete!", prefix=log_prefix)

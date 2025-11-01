@@ -1,7 +1,5 @@
 """Definition of model inputs."""
 
-import warnings
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self
 
 import duckdb
@@ -69,7 +67,6 @@ class Query:
             cleaning (optional): A dictionary mapping an output column name to a SQL
                 expression that will populate a new column.
         """
-        self.last_run: datetime | None = None
         self.raw_data: PolarsDataFrame | None = None
         self.dag = dag
         self.sources = sources
@@ -127,7 +124,6 @@ class Query:
         return_type: QueryReturnType = QueryReturnType.POLARS,
         return_leaf_id: bool = False,
         batch_size: int | None = None,
-        full_rerun: bool = False,
         cache_raw: bool = False,
     ) -> QueryReturnClass:
         """Runs queries against the selected backend.
@@ -140,7 +136,6 @@ class Query:
             batch_size (optional): The size of each batch when fetching data from the
                 warehouse, which helps reduce memory usage and load on the database.
                 Default is None.
-            full_rerun: Whether to force a re-run of the query
             cache_raw: Whether to store the pre-cleaned data to iterate on cleaning.
 
         Returns: Data in the requested return type
@@ -148,10 +143,6 @@ class Query:
         Raises:
             MatchboxEmptyServerResponse: If no data was returned by the server.
         """
-        if self.last_run and not full_rerun:
-            warnings.warn("Query already run, skipping.", UserWarning, stacklevel=2)
-            return self.data
-
         source_results: list[PolarsDataFrame] = []
         for source in self.sources:
             mb_ids = pl.from_arrow(
@@ -222,7 +213,6 @@ class Query:
             ),
             return_type=return_type,
         )
-        self.last_run = datetime.now()
 
         return self.data
 

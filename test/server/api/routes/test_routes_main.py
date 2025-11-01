@@ -1,7 +1,7 @@
 from importlib.metadata import version
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from matchbox.client.authorisation import (
     generate_json_web_token,
 )
-from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
+from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import (
     BackendResourceType,
     LoginAttempt,
@@ -18,8 +18,6 @@ from matchbox.common.dtos import (
     Match,
     OKMessage,
     SourceResolutionPath,
-    UploadStage,
-    UploadStatus,
 )
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
@@ -27,7 +25,6 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
 )
-from matchbox.common.factories.sources import source_factory
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -60,249 +57,6 @@ def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     assert response.status_code == 200
     response = LoginResult.model_validate(response.json())
     assert response.user_id == 1
-
-
-# We can patch BackgroundTasks as the api_client_and_mocks fixture
-# ensures the API runs the task (not Celery)
-@patch("matchbox.server.api.main.BackgroundTasks.add_task")
-def test_upload(
-    mock_add_task: Mock,
-    s3: S3Client,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test uploading a file, happy path."""
-    # Setup
-    test_client, mock_backend, mock_tracker = api_client_and_mocks
-
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-    mock_backend.create_resolution = Mock(return_value=None)
-    mock_backend.insert_source_data = Mock(return_value=None)
-    s3.create_bucket(
-        Bucket="test-bucket",
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
-    )
-
-    source_testkit = source_factory()
-
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-
-    # Make request with mocked background task
-    response = test_client.post(
-        f"/upload/{update_id}",
-        files={
-            "file": (
-                "hashes.parquet",
-                table_to_buffer(source_testkit.data_hashes),
-                "application/octet-stream",
-            ),
-        },
-    )
-
-    # Validate response
-    assert UploadStatus.model_validate(response.json())
-    assert response.status_code == 202, response.json()
-    assert (
-        response.json()["stage"] == UploadStage.QUEUED
-    )  # Updated to check for queued status
-    # Check both status updates were called in correct order
-    assert mock_tracker.update.call_args_list == [
-        call(update_id, UploadStage.QUEUED),
-    ]
-    mock_backend.create_resolution.assert_not_called()  # Index happens in background
-    mock_backend.insert_source_data.assert_not_called()
-    mock_add_task.assert_called_once()  # Verify task was queued
-
-
-@patch("matchbox.server.api.main.BackgroundTasks.add_task")
-def test_upload_wrong_filetype(
-    mock_add_task: Mock,
-    s3: S3Client,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test uploading a file that is not Parquet."""
-    # Setup
-    test_client, mock_backend, mock_tracker = api_client_and_mocks
-
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-    mock_backend.insert_resolution = Mock(return_value=None)
-    mock_backend.insert_source_data = Mock(return_value=None)
-    s3.create_bucket(
-        Bucket="test-bucket",
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
-    )
-
-    source_testkit = source_factory()
-
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-
-    # Make request with mocked background task
-    response = test_client.post(
-        f"/upload/{update_id}",
-        files={
-            "file": (
-                "hashes.csv",
-                table_to_buffer(source_testkit.data),
-                "application/octet-stream",
-            ),
-        },
-    )
-
-    # Should fail when trying to read parquet table
-    assert response.status_code == 400
-    assert "server expected .parquet" in response.json()["details"].lower()
-    mock_add_task.assert_not_called()
-
-
-@patch("matchbox.server.api.main.BackgroundTasks.add_task")
-def test_upload_wrong_file_format(
-    mock_add_task: Mock,
-    s3: S3Client,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test that file uploaded has Parquet magic bytes."""
-    # Setup
-    test_client, mock_backend, mock_tracker = api_client_and_mocks
-
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-    mock_backend.insert_resolution = Mock(return_value=None)
-    mock_backend.insert_source_data = Mock(return_value=None)
-    s3.create_bucket(
-        Bucket="test-bucket",
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
-    )
-
-    source_testkit = source_factory()
-
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-
-    # Make request with mocked background task
-    response = test_client.post(
-        f"/upload/{update_id}",
-        files={
-            "file": (
-                "hashes.parquet",
-                b"dummy\ndata",
-                "application/octet-stream",
-            ),
-        },
-    )
-
-    # Should fail when trying to read parquet table
-    assert response.status_code == 400
-    assert "invalid parquet file" in response.json()["details"].lower()
-    mock_add_task.assert_not_called()
-
-
-# We can patch BackgroundTasks as the api_client_and_mocks fixture
-# ensures the API runs the task (not Celery)
-@patch("matchbox.server.api.main.BackgroundTasks.add_task")
-def test_upload_wrong_schema(
-    mock_add_task: Mock,
-    s3: S3Client,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-):
-    """Test uploading a file with wrong schema."""
-    test_client, mock_backend, mock_tracker = api_client_and_mocks
-    mock_backend.settings.datastore.get_client.return_value = s3
-    mock_backend.settings.datastore.cache_bucket_name = "test-bucket"
-
-    # Create source with results schema instead of index
-    source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-
-    response = test_client.post(
-        f"/upload/{update_id}",
-        files={
-            "file": (
-                "hashes.parquet",
-                table_to_buffer(source_testkit.data),
-                "application/octet-stream",
-            ),
-        },
-    )
-
-    # Should fail before task starts
-    assert response.status_code == 400
-    assert response.json()["stage"] == UploadStage.FAILED
-    assert "schema mismatch" in response.json()["details"].lower()
-    mock_add_task.assert_not_called()
-
-
-def test_upload_status_check(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    """Test checking status of an upload using the status endpoint."""
-    test_client, _, mock_tracker = api_client_and_mocks
-    source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-    mock_tracker.update(update_id, UploadStage.PROCESSING)
-    mock_tracker.reset_mock()
-
-    response = test_client.get(f"/upload/{update_id}/status")
-
-    # Should return current status
-    assert response.status_code == 200
-    assert response.json()["stage"] == UploadStage.PROCESSING
-    mock_tracker.update.assert_not_called()
-
-
-def test_upload_already_processing(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    """Test attempting to upload when status is already processing."""
-    test_client, _, mock_tracker = api_client_and_mocks
-    source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-    mock_tracker.update(update_id, UploadStage.PROCESSING)
-
-    response = test_client.post(
-        f"/upload/{update_id}",
-        files={
-            "file": (
-                "test.parquet",
-                table_to_buffer(source_testkit.data),
-                "application/octet-stream",
-            )
-        },
-    )
-
-    # Should return 400 with current status
-    assert response.status_code == 400
-    assert response.json()["stage"] == UploadStage.PROCESSING
-
-
-def test_upload_already_queued(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    """Test attempting to upload when status is already queued."""
-    test_client, _, mock_tracker = api_client_and_mocks
-    source_testkit = source_factory()
-    update_id = mock_tracker.add_source(source_testkit.resolution_path)
-    mock_tracker.update(update_id, UploadStage.QUEUED)
-
-    response = test_client.post(
-        f"/upload/{update_id}",
-        files={
-            "file": (
-                "test.parquet",
-                table_to_buffer(source_testkit.data),
-                "application/octet-stream",
-            )
-        },
-    )
-
-    # Should return 400 with current status
-    assert response.status_code == 400
-    assert response.json()["stage"] == UploadStage.QUEUED
-
-
-def test_status_check_not_found(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
-    """Test checking status for non-existent upload ID."""
-    test_client, _, mock_tracker = api_client_and_mocks
-    mock_tracker.get.return_value = None
-
-    response = test_client.get("/upload/nonexistent-id/status")
-
-    assert response.status_code == 400
-    assert response.json()["stage"] == "unknown"
-    assert "not found or expired" in response.json()["details"].lower()
 
 
 # Retrieval
@@ -532,9 +286,9 @@ def test_clear_backend_errors(api_client_and_mocks: tuple[TestClient, Mock, Mock
 def test_api_key_authorisation(api_client_and_mocks: tuple[TestClient, Mock, Mock]):
     test_client, _, _ = api_client_and_mocks
     routes = [
-        (test_client.post, "/upload/upload_id"),
+        (test_client.post, "/collections/default/runs/1/resolutions/name/data"),
         (test_client.post, "/collections/default/runs/1/resolutions/name"),
-        (test_client.patch, "/collections/default/runs/1/resolutions/name/truth"),
+        (test_client.put, "/collections/default/runs/1/resolutions/name"),
         (test_client.delete, "/collections/default/runs/1/resolutions/name"),
         (test_client.delete, "/database"),
     ]

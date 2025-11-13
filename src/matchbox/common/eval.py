@@ -123,10 +123,15 @@ def precision_recall(
         and validation_net_count[(a, b)] > 0
     }
 
+    if not validation_pairs:
+        raise ValueError("Validation data has no pairs to evaluate.")
+
     # Compute PR scores for each model
     pr_scores: list[PrecisionRecall] = []
-    for model_pairs in pairs_per_model:
+    for i, model_pairs in enumerate(pairs_per_model):
         true_positive_pairs = model_pairs & validation_pairs
+        if not model_pairs:
+            raise ValueError(f"Model at index {i} has no pairs to evaluate.")
         pr_scores.append(
             (
                 len(true_positive_pairs) / len(model_pairs),

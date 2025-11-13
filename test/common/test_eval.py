@@ -41,6 +41,16 @@ def test_precision_recall_fails() -> None:
             models_root_leaf=[empty_model], judgements=judgements, expansion=expansion
         )
 
+    # No common leaves
+    mismatched_model = pl.DataFrame([{"root": 34, "leaf": 3}, {"root": 34, "leaf": 4}])
+
+    with pytest.raises(ValueError, match="no pairs to evaluate"):
+        precision_recall(
+            models_root_leaf=[model, mismatched_model],
+            judgements=judgements,
+            expansion=expansion,
+        )
+
 
 def test_precision_recall() -> None:
     """Test calculation of precision and recall from root-leaf tables."""

@@ -27,6 +27,12 @@ For security, use of [pre-commit](https://pre-commit.com) is expected. Ensure yo
 pre-commit install
 ```
 
+We also mandate [git trailers](https://git-scm.com/docs/git-interpret-trailers) to confirm your local hooks ran. Ensure pre-commit has the right permissions:
+
+```shell
+pre-commit install --install-hooks --overwrite -t commit-msg -t pre-commit
+```
+
 Task running is done with [just](https://just.systems/man/en/). To see all available commands:
 
 ```shell

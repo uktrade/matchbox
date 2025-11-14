@@ -461,6 +461,21 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 raise MatchboxDeletionNotConfirmed(children=children)
 
     # Data insertion
+    def lock_resolution(self, path: ResolutionPath, stage: UploadStage) -> None:
+        """Lock to prevent clients from initiating multiple uploads when READY."""
+        self._check_writeable(path)
+        with MBDB.get_session() as session:
+            resolution = Resolutions.from_path(
+                path=path, session=session, for_update=True
+            )
+            if resolution.upload_stage == UploadStage.COMPLETE:
+                # unlock row
+                session.rollback()
+                raise ValueError(
+                    "Once set to complete, resolution data stage cannot be changed."
+                )
+            resolution.upload_stage = stage
+            session.commit()
 
     def set_resolution_stage(self, path: ResolutionPath, stage: UploadStage) -> None:  # noqa: D102
         self._check_writeable(path)

@@ -461,31 +461,37 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 raise MatchboxDeletionNotConfirmed(children=children)
 
     # Data insertion
-    def lock_resolution(self, path: ResolutionPath, stage: UploadStage) -> None:
-        """Lock to prevent clients from initiating multiple uploads when READY."""
+    def lock_resolution_data(self, path: ResolutionPath) -> None:  # noqa: D102
         self._check_writeable(path)
         with MBDB.get_session() as session:
+            # lock resolution so only one client can initiate the upload
+            # will fail if already locked
             resolution = Resolutions.from_path(
                 path=path, session=session, for_update=True
             )
+
+            # check status
             if resolution.upload_stage == UploadStage.COMPLETE:
                 # unlock row
                 session.rollback()
                 raise ValueError(
                     "Once set to complete, resolution data stage cannot be changed."
                 )
-            resolution.upload_stage = stage
+            elif resolution.upload_stage == UploadStage.PROCESSING:
+                # unlock row
+                session.rollback()
+                raise ValueError("Upload already being processed.")
+
+            resolution.upload_stage = UploadStage.PROCESSING
             session.commit()
 
-    def set_resolution_stage(self, path: ResolutionPath, stage: UploadStage) -> None:  # noqa: D102
+    def unlock_resolution_data(self, path: ResolutionPath) -> None:  # noqa: D102
         self._check_writeable(path)
         with MBDB.get_session() as session:
-            resolution = Resolutions.from_path(path=path, session=session)
-            if resolution.upload_stage == UploadStage.COMPLETE:
-                raise ValueError(
-                    "Once set to complete, resolution data stage cannot be changed."
-                )
-            resolution.upload_stage = stage
+            resolution = Resolutions.from_path(
+                path=path, session=session, for_update=True
+            )
+            resolution.upload_stage = UploadStage.READY
             session.commit()
 
     def get_resolution_stage(self, path: ResolutionPath) -> UploadStage:  # noqa: D102
@@ -499,12 +505,12 @@ class MatchboxPostgres(MatchboxDBAdapter):
         insert_hashes(
             path=path, data_hashes=data_hashes, batch_size=self.settings.batch_size
         )
-        self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
+        # self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
 
     def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:  # noqa: D102
         self._check_writeable(path)
         insert_results(path=path, results=results, batch_size=self.settings.batch_size)
-        self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
+        # self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
 
     def get_model_data(self, path: ModelResolutionPath) -> Table:  # noqa: D102
         with MBDB.get_session() as session:

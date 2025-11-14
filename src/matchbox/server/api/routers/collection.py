@@ -31,7 +31,6 @@ from matchbox.common.dtos import (
     Run,
     RunID,
     UploadInfo,
-    UploadStage,
 )
 from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
@@ -588,18 +587,6 @@ def set_data(
     resolution_path = ResolutionPath(
         collection=collection, run=run_id, name=resolution_name
     )
-    # Not resistant to race conditions: currently, multiple requests to set data
-    # could go through
-    if backend.get_resolution_stage(path=resolution_path) != UploadStage.READY:
-        raise HTTPException(
-            status_code=400,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution data {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details="Not expecting upload for this resolution.",
-            ),
-        )
     resolution = backend.get_resolution(path=resolution_path)
 
     upload_id = str(uuid.uuid4())
@@ -661,7 +648,10 @@ def set_data(
         ) from e
 
     # Start background processing
-    backend.set_resolution_stage(path=resolution_path, stage=UploadStage.PROCESSING)
+
+    # check if data is locked, lock it if not
+    backend.lock_resolution_data(path=resolution_path)
+
     match settings.task_runner:
         case "api":
             background_tasks.add_task(
@@ -682,6 +672,7 @@ def set_data(
                 filename=key,
             )
         case _:
+            backend.unlock_resolution_data(path=resolution_path)
             raise RuntimeError("Unsupported task runner.")
 
     return ResourceOperationStatus(

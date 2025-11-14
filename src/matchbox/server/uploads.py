@@ -15,7 +15,6 @@ from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
 from matchbox.common.dtos import (
     ResolutionPath,
     ResolutionType,
-    UploadStage,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.logging import logger
@@ -223,7 +222,7 @@ def process_upload(
         )
 
         # After failure, signal to clients they can try again
-        backend.set_resolution_stage(path=resolution_path, stage=UploadStage.READY)
+        backend.unlock_resolution_data(path=resolution_path)
         # Attach error to upload ID to inform clients
         tracker.set(upload_id=upload_id, message=str(e))
 

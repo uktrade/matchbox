@@ -31,7 +31,7 @@ repos:
 
 # Mandatory internal hooks
 - repo: https://github.com/uktrade/github-standards
-  rev: v0.0.18  # update periodically with pre-commit autoupdate
+  rev: v0.0.19  # update periodically with pre-commit autoupdate
   hooks:
     - id: run-security-scan
       verbose: false

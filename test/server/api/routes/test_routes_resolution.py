@@ -293,13 +293,17 @@ def test_set_data_already_queued(
     """Test attempting to upload when status is already queued."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution_stage = Mock(return_value=UploadStage.PROCESSING)
+    mock_backend.lock_resolution_data.side_effect = ValueError(
+        "Upload already being processed."
+    )
+    testkit = model_factory(model_type="linker").fake_run()
 
     response = test_client.post(
         "/collections/default/runs/1/resolutions/resolution/data",
         files={
             "file": (
                 "hashes.parquet",
-                table_to_buffer(source_factory().data_hashes),
+                table_to_buffer(testkit.probabilities.to_arrow()),
                 "application/octet-stream",
             ),
         },
@@ -308,7 +312,7 @@ def test_set_data_already_queued(
     # Correct error response
     assert response.status_code == 400
     operation_status = ResourceOperationStatus.model_validate(response.json())
-    assert "Not expecting upload" in operation_status.details
+    assert "Upload already being processed." in operation_status.details
     # Upload doesn't proceed
     mock_s3_upload.assert_not_called()
     mock_add_task.assert_not_called()

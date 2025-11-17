@@ -650,7 +650,18 @@ def set_data(
     # Start background processing
 
     # check if data is locked, lock it if not
-    backend.lock_resolution_data(path=resolution_path)
+    try:
+        backend.lock_resolution_data(path=resolution_path)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details=e,
+            ),
+        ) from e
 
     match settings.task_runner:
         case "api":

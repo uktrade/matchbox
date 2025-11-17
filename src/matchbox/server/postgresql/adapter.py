@@ -473,13 +473,11 @@ class MatchboxPostgres(MatchboxDBAdapter):
             # check status
             # will fail if stage not READY
             if resolution.upload_stage == UploadStage.COMPLETE:
-                # unlock row
                 session.rollback()
                 raise ValueError(
                     "Once set to complete, resolution data stage cannot be changed."
                 )
             elif resolution.upload_stage == UploadStage.PROCESSING:
-                # unlock row
                 session.rollback()
                 raise ValueError("Upload already being processed.")
 

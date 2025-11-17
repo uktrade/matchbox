@@ -672,6 +672,7 @@ def set_data(
                 filename=key,
             )
         case _:
+            # return to READY
             backend.unlock_resolution_data(path=resolution_path)
             raise RuntimeError("Unsupported task runner.")
 

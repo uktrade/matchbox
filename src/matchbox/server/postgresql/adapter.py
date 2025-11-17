@@ -512,12 +512,12 @@ class MatchboxPostgres(MatchboxDBAdapter):
         insert_hashes(
             path=path, data_hashes=data_hashes, batch_size=self.settings.batch_size
         )
-        self.unlock_resolution_data(path=path)
+        self.unlock_resolution_data(path=path, complete=True)
 
     def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:  # noqa: D102
         self._check_writeable(path)
         insert_results(path=path, results=results, batch_size=self.settings.batch_size)
-        self.unlock_resolution_data(path=path)
+        self.unlock_resolution_data(path=path, complete=True)
 
     def get_model_data(self, path: ModelResolutionPath) -> Table:  # noqa: D102
         with MBDB.get_session() as session:

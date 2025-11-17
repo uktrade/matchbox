@@ -4,6 +4,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 import polars as pl
+from psycopg.errors import LockNotAvailable
 from pyarrow import Table
 from pydantic import BaseModel
 from sqlalchemy import and_, bindparam, delete, func, or_, select, update
@@ -33,6 +34,7 @@ from matchbox.common.exceptions import (
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxNoJudgements,
+    MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
     MatchboxRunNotWriteable,
 )
@@ -461,14 +463,18 @@ class MatchboxPostgres(MatchboxDBAdapter):
                 raise MatchboxDeletionNotConfirmed(children=children)
 
     # Data insertion
+
     def lock_resolution_data(self, path: ResolutionPath) -> None:  # noqa: D102
         self._check_writeable(path)
         with MBDB.get_session() as session:
             # lock resolution so only one client can initiate the upload
             # will fail if already locked
-            resolution = Resolutions.from_path(
-                path=path, session=session, for_update=True
-            )
+            try:
+                resolution = Resolutions.from_path(
+                    path=path, session=session, for_update=True
+                )
+            except LockNotAvailable as e:
+                raise MatchboxResolutionNotQueriable("Resolution is locked.") from e
 
             # check status
             # will fail if stage not READY

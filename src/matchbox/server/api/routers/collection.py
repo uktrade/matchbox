@@ -38,6 +38,7 @@ from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
+    MatchboxResolutionNotQueriable,
     MatchboxRunNotFoundError,
     MatchboxServerFileError,
 )
@@ -595,6 +596,16 @@ def set_data(
     try:
         backend.lock_resolution_data(path=resolution_path)
     except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details=str(e),
+            ),
+        ) from e
+    except MatchboxResolutionNotQueriable as e:
         raise HTTPException(
             status_code=400,
             detail=ResourceOperationStatus(

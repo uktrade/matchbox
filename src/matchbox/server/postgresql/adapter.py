@@ -471,6 +471,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             )
 
             # check status
+            # will fail if stage not READY
             if resolution.upload_stage == UploadStage.COMPLETE:
                 # unlock row
                 session.rollback()
@@ -485,14 +486,20 @@ class MatchboxPostgres(MatchboxDBAdapter):
             resolution.upload_stage = UploadStage.PROCESSING
             session.commit()
 
-    def unlock_resolution_data(self, path: ResolutionPath) -> None:  # noqa: D102
+    def unlock_resolution_data(  # noqa: D102
+        self, path: ResolutionPath, complete: bool = False
+    ) -> None:
         self._check_writeable(path)
         with MBDB.get_session() as session:
             resolution = Resolutions.from_path(
                 path=path, session=session, for_update=True
             )
-            resolution.upload_stage = UploadStage.READY
-            session.commit()
+            if complete:
+                resolution.upload_stage = UploadStage.COMPLETE
+                session.commit()
+            else:
+                resolution.upload_stage = UploadStage.READY
+                session.commit()
 
     def get_resolution_stage(self, path: ResolutionPath) -> UploadStage:  # noqa: D102
         resolution = Resolutions.from_path(path)
@@ -505,12 +512,12 @@ class MatchboxPostgres(MatchboxDBAdapter):
         insert_hashes(
             path=path, data_hashes=data_hashes, batch_size=self.settings.batch_size
         )
-        # self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
+        self.unlock_resolution_data(path=path)
 
     def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:  # noqa: D102
         self._check_writeable(path)
         insert_results(path=path, results=results, batch_size=self.settings.batch_size)
-        # self.set_resolution_stage(path=path, stage=UploadStage.COMPLETE)
+        self.unlock_resolution_data(path=path)
 
     def get_model_data(self, path: ModelResolutionPath) -> Table:  # noqa: D102
         with MBDB.get_session() as session:

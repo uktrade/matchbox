@@ -405,7 +405,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             query = query.where(cls.type == res_type.value)
 
         if for_update:
-            query = query.with_for_update()
+            query = query.with_for_update(nowait=True)
 
         if session:
             resolution = session.execute(query).scalar()

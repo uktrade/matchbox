@@ -591,6 +591,20 @@ def set_data(
 
     upload_id = str(uuid.uuid4())
 
+    # check if data is locked, lock it if not
+    try:
+        backend.lock_resolution_data(path=resolution_path)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Resolution data {resolution_path}",
+                operation=CRUDOperation.CREATE,
+                details=str(e),
+            ),
+        ) from e
+
     # Validate file
     if ".parquet" not in file.filename:
         raise HTTPException(
@@ -644,22 +658,6 @@ def set_data(
                 target=f"Resolution data {resolution_path}",
                 operation=CRUDOperation.CREATE,
                 details=f"Could not upload file to object storage: {str(e)}",
-            ),
-        ) from e
-
-    # Start background processing
-
-    # check if data is locked, lock it if not
-    try:
-        backend.lock_resolution_data(path=resolution_path)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution data {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details=e,
             ),
         ) from e
 

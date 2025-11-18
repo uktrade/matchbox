@@ -1,15 +1,16 @@
 """CLI tool for EdDSA key pair generation and JWT token creation."""
 
 import json
+import sys
 import time
 from base64 import urlsafe_b64encode
-from pathlib import Path
 from typing import Annotated
 
 import typer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from rich import print, print_json
 
 app = typer.Typer()
 
@@ -72,45 +73,19 @@ def generate_json_web_token(
 
 # CLI commands
 @app.command()
-def keygen(
-    output_dir: Annotated[
-        Path,
-        typer.Option(
-            "--output-dir",
-            "-o",
-            help="Directory to save the key files",
-        ),
-    ] = Path("."),
-    private_key_name: Annotated[
-        str,
-        typer.Option(
-            "--private-name",
-            "-p",
-            help="Filename for private key",
-        ),
-    ] = DEFAULT_PRIVATE_KEY,
-    public_key_name: Annotated[
-        str,
-        typer.Option(
-            "--public-name",
-            "-P",
-            help="Filename for public key",
-        ),
-    ] = DEFAULT_PUBLIC_KEY,
-) -> None:
-    """Generate an EdDSA key pair and save to files."""
+def keygen() -> None:
+    """Generate an EdDSA key pair and output as JSON.
+
+    Pipe to a .json to save.
+    """
     unencrypted_pem_private_key, pem_public_key = generate_EdDSA_key_pair()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output = {
+        "private_key": unencrypted_pem_private_key.decode("utf-8"),
+        "public_key": pem_public_key.decode("utf-8"),
+    }
 
-    private_key_path = output_dir / private_key_name
-    public_key_path = output_dir / public_key_name
-
-    private_key_path.write_bytes(unencrypted_pem_private_key)
-    public_key_path.write_bytes(pem_public_key)
-
-    typer.echo(f"✓ Private key saved to: {private_key_path}")
-    typer.echo(f"✓ Public key saved to: {public_key_path}")
+    print_json(json.dumps(output))
 
 
 @app.command()
@@ -123,14 +98,6 @@ def jwt(
             help="Subject claim for the JWT",
         ),
     ],
-    private_key_path: Annotated[
-        Path,
-        typer.Option(
-            "--private-key",
-            "-k",
-            help="Path to private key PEM file",
-        ),
-    ] = Path(DEFAULT_PRIVATE_KEY),
     api_root: Annotated[
         str,
         typer.Option(
@@ -148,21 +115,29 @@ def jwt(
         ),
     ] = EXPIRY_AFTER_X_HOURS,
 ) -> None:
-    """Create a JWT token using a private key and subject."""
-    if not private_key_path.exists():
-        typer.echo(f"Error: Private key file not found: {private_key_path}", err=True)
-        raise typer.Exit(1)
+    """Generate JWT from stdin private key.
+    
+    Use with keygen like:
 
-    private_key_bytes = private_key_path.read_bytes()
+    uv run test/scripts/authorisation.py keygen > keys.json
+    
+    cat keys.json | \
+    jq -r .private_key | \
+    uv run test/scripts/authorisation.py jwt \
+        --sub user@example.com \
+        --api-root http://api.example.com/ \
+        --expiry 2
+    """
+    private_key_pem = sys.stdin.read()
+
     token = generate_json_web_token(
-        private_key_bytes=private_key_bytes,
+        private_key_bytes=private_key_pem.encode(),
         sub=sub,
         api_root=api_root,
         expiry_hours=expiry_hours,
     )
 
-    typer.echo("\n✓ JWT Token generated:")
-    typer.echo(token)
+    print(token)
 
 
 if __name__ == "__main__":

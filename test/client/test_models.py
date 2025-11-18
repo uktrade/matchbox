@@ -27,9 +27,7 @@ from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
 from matchbox.common.factories.models import MockLinker, model_factory
-from matchbox.common.factories.sources import (
-    source_factory,
-)
+from matchbox.common.factories.sources import source_factory
 
 
 def test_init_and_run_model(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:

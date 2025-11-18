@@ -30,6 +30,7 @@ from matchbox.common.arrow import (
     table_to_buffer,
 )
 from matchbox.common.dtos import (
+    AuthStatusResponse,
     BackendCountableType,
     BackendParameterType,
     BackendResourceType,
@@ -180,6 +181,9 @@ def healthcheck() -> OKMessage:
     return OKMessage.model_validate(CLIENT.get("/health").json())
 
 
+# Authentication
+
+
 @http_retry
 def login(user_name: str) -> int:
     """Log into Matchbox and return the user ID."""
@@ -188,6 +192,14 @@ def login(user_name: str) -> int:
         "/auth/login", json=LoginAttempt(user_name=user_name).model_dump()
     )
     return LoginResult.model_validate(response.json()).user_id
+
+
+@http_retry
+def auth_status() -> AuthStatusResponse:
+    """Check authentication status and return user details."""
+    logger.debug("Checking authentication status")
+    response = CLIENT.get("/auth/status")
+    return AuthStatusResponse.model_validate(response.json())
 
 
 # Retrieval

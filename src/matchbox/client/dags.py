@@ -10,6 +10,7 @@ from matchbox.client import _handler
 from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
+from matchbox.client.results import ResolvedData
 from matchbox.client.sources import Source
 from matchbox.common.dtos import (
     Collection,
@@ -555,25 +556,24 @@ class DAG:
         # If no matches, _handler will raise
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
-    def extract_lookup(
+    def resolve(
         self,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
-    ) -> ArrowTable:
-        """Return matchbox IDs to source key mapping, optionally filtering.
+    ) -> ResolvedData:
+        """Returns `ResolvedData`, optionally filtering.
 
         Args:
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
         """
-        # Get all sources in scope of the DAG run
-        sources = {
+        available_sources = {
             node_name: node
             for node_name, node in self.nodes.items()
             if isinstance(node, Source)
         }
 
-        filtered_source_names = list(sources.keys())
+        filtered_source_names = list(available_sources.keys())
 
         if source_filter:
             filtered_source_names = [
@@ -584,45 +584,22 @@ class DAG:
             filtered_source_names = [
                 s
                 for s in filtered_source_names
-                if sources[s].config.location_config.name in location_names
+                if available_sources[s].config.location_config.name in location_names
             ]
 
         if not filtered_source_names:
             raise MatchboxResolutionNotFoundError("No compatible source was found")
 
-        source_mb_ids: list[ArrowTable] = []
-        source_to_key_field: dict[str, str] = {}
-
+        resolved_sources: list[Source] = []
+        query_results: list[ArrowTable] = []
         for source_name in filtered_source_names:
-            # Get Matchbox IDs from backend
-            source_mb_ids.append(
+            resolved_sources.append(available_sources[source_name])
+            query_results.append(
                 _handler.query(
-                    source=sources[source_name].resolution_path,
+                    source=available_sources[source_name].resolution_path,
                     resolution=self.final_step.resolution_path,
-                    return_leaf_id=False,
+                    return_leaf_id=True,
                 )
             )
 
-            source_to_key_field[source_name] = sources[source_name].key_field.name
-
-        # Join Matchbox IDs to form mapping table
-        mapping = source_mb_ids[0]
-        mapping = mapping.rename_columns(
-            {
-                "key": sources[filtered_source_names[0]].config.qualified_key(
-                    filtered_source_names[0]
-                )
-            }
-        )
-        if len(filtered_source_names) > 1:
-            for source_name, mb_ids in zip(
-                filtered_source_names[1:], source_mb_ids[1:], strict=True
-            ):
-                mapping = mapping.join(
-                    right_table=mb_ids, keys="id", join_type="full outer"
-                )
-                mapping = mapping.rename_columns(
-                    {"key": sources[source_name].config.qualified_key(source_name)}
-                )
-
-        return mapping
+        return ResolvedData(sources=resolved_sources, query_results=query_results)

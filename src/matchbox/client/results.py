@@ -4,8 +4,10 @@ from collections.abc import Hashable
 from typing import ParamSpec, TypeVar
 
 import polars as pl
+from pyarrow import Table as ArrowTable
 from pydantic import ConfigDict
 
+from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.hash import IntMap
 from matchbox.common.transform import to_clusters
@@ -134,3 +136,40 @@ class Results:
         )
 
         return pl.concat([root_leaf_res, unmerged_ids_rows])
+
+
+class ResolvedData:
+    """Data according to resolution."""
+
+    def __init__(self, sources: list[Source], query_results: list[ArrowTable]) -> None:
+        """Initialise resolved data.
+
+        Args:
+            sources: List of Source objects
+            query_results: List of tabls with SCHEMA_QUERY_WITH_LEAVES
+        """
+        self.sources = sources
+        self.query_results = query_results
+
+    def get_lookup(self) -> ArrowTable:
+        """Return lookup across matchbox ID and source keys."""
+        lookup = (
+            self.query_results[0]
+            .rename_columns(
+                {"key": self.sources[0].config.qualified_key(self.sources[0].name)}
+            )
+            .drop_columns("leaf_id")
+        )
+
+        if len(self.sources) > 1:
+            for source, source_results in zip(
+                self.sources[1:], self.query_results[1:], strict=True
+            ):
+                lookup = lookup.join(
+                    right_table=source_results, keys="id", join_type="full outer"
+                )
+                lookup = lookup.rename_columns(
+                    {"key": source.config.qualified_key(source.name)}
+                ).drop_columns("leaf_id")
+
+        return lookup

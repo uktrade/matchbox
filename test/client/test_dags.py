@@ -1,11 +1,9 @@
 import json
 from unittest.mock import Mock, patch
 
-import polars as pl
 import pyarrow as pa
 import pytest
 from httpx import Response
-from polars.testing import assert_frame_equal
 from respx import MockRouter
 from sqlalchemy import Engine
 
@@ -14,7 +12,7 @@ from matchbox.client.models import Model
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.sources import Source
-from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
+from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES, table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
@@ -38,7 +36,6 @@ from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
-    source_from_tuple,
 )
 
 
@@ -402,27 +399,29 @@ def test_dag_draw(sqlite_warehouse: Engine) -> None:
 # Lookups
 
 
-def test_extract_lookup(
-    sqlite_warehouse: Engine,
-    sqlite_in_memory_warehouse: Engine,
-    matchbox_api: MockRouter,
-) -> None:
-    """Entire lookup can be extracted from DAG."""
+def test_resolve(matchbox_api: MockRouter) -> None:
+    """Resolved data can be generated from DAG."""
     # Make dummy data
-    foo = source_from_tuple(
-        name="foo",
-        location_name="sqlite",
-        engine=sqlite_warehouse,
-        data_keys=[1, 2, 3],
-        data_tuple=({"col": 0}, {"col": 1}, {"col": 2}),
-    ).write_to_location()
-    bar = source_from_tuple(
-        name="bar",
-        location_name="sqlite_memory",
-        engine=sqlite_in_memory_warehouse,
-        data_keys=["a", "b", "c"],
-        data_tuple=({"col": 10}, {"col": 11}, {"col": 12}),
-    ).write_to_location()
+    foo = source_factory(name="foo", location_name="sqlite")
+    bar = source_factory(name="bar", location_name="postgres")
+
+    foo_data = pa.Table.from_pylist(
+        [
+            {"id": 14, "leaf_id": 1, "key": "1"},
+            {"id": 2, "leaf_id": 2, "key": "2"},
+            {"id": 356, "leaf_id": 3, "key": "3"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    bar_data = pa.Table.from_pylist(
+        [
+            {"id": 14, "leaf_id": 4, "key": "a"},
+            {"id": 356, "leaf_id": 5, "key": "b"},
+            {"id": 356, "leaf_id": 6, "key": "c"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
 
     dag = DAG("companies")
 
@@ -431,11 +430,7 @@ def test_extract_lookup(
     matchbox_api.get(f"/collections/{dag.name}").mock(
         return_value=Response(
             200,
-            json=Collection(
-                name=dag.name,
-                runs=[],
-                default_run=None,
-            ).model_dump(),
+            json=Collection(name=dag.name, runs=[], default_run=None).model_dump(),
         )
     )
 
@@ -458,11 +453,7 @@ def test_extract_lookup(
     matchbox_api.get(f"/collections/{dag.name}").mock(
         return_value=Response(
             200,
-            json=Collection(
-                name=dag.name,
-                runs=[1],
-                default_run=1,
-            ).model_dump(),
+            json=Collection(name=dag.name, runs=[1], default_run=1).model_dump(),
         )
     )
 
@@ -490,16 +481,7 @@ def test_extract_lookup(
     ).mock(
         return_value=Response(
             200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"id": 1, "key": "1"},
-                        {"id": 2, "key": "2"},
-                        {"id": 3, "key": "3"},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
+            content=table_to_buffer(foo_data).read(),
         )
     )
 
@@ -508,94 +490,54 @@ def test_extract_lookup(
     ).mock(
         return_value=Response(
             200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"id": 1, "key": "a"},
-                        {"id": 3, "key": "b"},
-                        {"id": 3, "key": "c"},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
+            content=table_to_buffer(bar_data).read(),
         )
     )
 
-    # Because of FULL OUTER JOIN, we expect some values to be null, and some explosions
-    expected_foo_bar_mapping = pl.DataFrame(
-        [
-            {"id": 1, "foo_key": "1", "bar_key": "a"},
-            {"id": 2, "foo_key": "2", "bar_key": None},
-            {"id": 3, "foo_key": "3", "bar_key": "b"},
-            {"id": 3, "foo_key": "3", "bar_key": "c"},
-        ]
-    )
-
-    # When selecting single source, we won't explode
-    expected_foo_mapping = expected_foo_bar_mapping.select(["id", "foo_key"]).unique()
-
-    # Case 0: No sources are found
+    # No sources are found
     with pytest.raises(MatchboxResolutionNotFoundError):
-        dag.extract_lookup(source_filter=["nonexistent"])
+        dag.resolve(source_filter=["nonexistent"])
 
     with pytest.raises(MatchboxResolutionNotFoundError):
-        dag.extract_lookup(location_names=["nonexistent"])
+        dag.resolve(location_names=["nonexistent"])
 
-    # Case 1: Retrieve single table
     # With URI filter
-    foo_mapping = dag.extract_lookup(location_names=["sqlite"])
+    uri_filter_resolved = dag.resolve(location_names=["sqlite"])
 
-    assert_frame_equal(
-        pl.from_arrow(foo_mapping),
-        expected_foo_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
+    assert len(uri_filter_resolved.sources) == 1
+    assert uri_filter_resolved.sources[0].name == "foo"
 
     # With source filter
-    foo_mapping = dag.extract_lookup(source_filter="foo")
+    source_filter_resolved = dag.resolve(source_filter="foo")
 
-    assert_frame_equal(
-        pl.from_arrow(foo_mapping),
-        expected_foo_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
+    assert len(source_filter_resolved.sources) == 1
+    assert source_filter_resolved.sources[0].name == "foo"
 
-    # With both filters
-    foo_mapping = dag.extract_lookup(source_filter="foo", location_names="sqlite")
-
-    assert_frame_equal(
-        pl.from_arrow(foo_mapping),
-        expected_foo_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
-
-    # Case 2: Retrieve multiple tables
     # With no filter
-    foo_bar_mapping = dag.extract_lookup()
+    full_resolved = dag.resolve()
+    assert len(full_resolved.sources) == 2
+    assert len(full_resolved.query_results) == 2
+    assert [
+        full_resolved.sources[0].name,
+        full_resolved.sources[1].name,
+    ] == ["foo", "bar"]
+    assert [
+        full_resolved.query_results[0],
+        full_resolved.query_results[1],
+    ] == [foo_data, bar_data]
 
-    assert_frame_equal(
-        pl.from_arrow(foo_bar_mapping),
-        expected_foo_bar_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
-
-    # With source filter
-    foo_bar_mapping = dag.extract_lookup(source_filter=["foo", "bar"])
-
-    assert_frame_equal(
-        pl.from_arrow(foo_bar_mapping),
-        expected_foo_bar_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
-
-    # Case 3: Retrieve from reconstituted DAG
-    reconstituted_dag = DAG("companies").load_default()
-    assert reconstituted_dag.extract_lookup() == foo_bar_mapping
+    # Retrieve from reconstituted DAG
+    reconstituted_resolved = DAG("companies").load_default().resolve()
+    assert len(reconstituted_resolved.sources) == 2
+    assert len(reconstituted_resolved.query_results) == 2
+    assert [
+        reconstituted_resolved.sources[0].name,
+        reconstituted_resolved.sources[1].name,
+    ] == ["foo", "bar"]
+    assert [
+        reconstituted_resolved.query_results[0],
+        reconstituted_resolved.query_results[1],
+    ] == [foo_data, bar_data]
 
 
 def test_lookup_key_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:

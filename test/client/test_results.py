@@ -1,8 +1,11 @@
 import polars as pl
+import pyarrow as pa
 import pytest
 from polars.testing import assert_frame_equal
 
-from matchbox.client.results import Results
+from matchbox.client.results import ResolvedData, Results
+from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES
+from matchbox.common.factories.sources import source_factory
 
 
 def test_clusters_and_root_leaf() -> None:
@@ -90,3 +93,64 @@ def test_clusters_and_root_leaf() -> None:
     only_prob_results = Results(probabilities=probabilities)
     with pytest.raises(RuntimeError, match="instantiated for validation"):
         only_prob_results.root_leaf()
+
+
+def test_get_lookup() -> None:
+    """Lookup can be generated from resolved data."""
+    foo = source_factory(name="foo").source
+    bar = source_factory(name="bar").source
+
+    foo_query_data = pa.Table.from_pylist(
+        [
+            {"id": 14, "leaf_id": 1, "key": "1"},
+            {"id": 2, "leaf_id": 2, "key": "2"},
+            {"id": 356, "leaf_id": 3, "key": "3"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    bar_query_data = pa.Table.from_pylist(
+        [
+            {"id": 14, "leaf_id": 4, "key": "a"},
+            {"id": 356, "leaf_id": 5, "key": "b"},
+            {"id": 356, "leaf_id": 6, "key": "c"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    # Because of FULL OUTER JOIN, we expect some values to be null, and some explosions
+    expected_foo_bar_mapping = pl.DataFrame(
+        [
+            {"id": 14, "foo_key": "1", "bar_key": "a"},
+            {"id": 2, "foo_key": "2", "bar_key": None},
+            {"id": 356, "foo_key": "3", "bar_key": "b"},
+            {"id": 356, "foo_key": "3", "bar_key": "c"},
+        ]
+    )
+
+    # When selecting single source, we won't explode
+    expected_foo_mapping = expected_foo_bar_mapping.select(["id", "foo_key"]).unique()
+
+    # Retrieve single table
+    foo_mapping = ResolvedData(
+        sources=[foo], query_results=[foo_query_data]
+    ).get_lookup()
+
+    assert_frame_equal(
+        pl.from_arrow(foo_mapping),
+        expected_foo_mapping,
+        check_row_order=False,
+        check_column_order=False,
+    )
+
+    # Retrieve multiple tables
+    foo_bar_mapping = ResolvedData(
+        sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+    ).get_lookup()
+
+    assert_frame_equal(
+        pl.from_arrow(foo_bar_mapping),
+        expected_foo_bar_mapping,
+        check_row_order=False,
+        check_column_order=False,
+    )

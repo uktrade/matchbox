@@ -32,5 +32,5 @@ You can download an entire lookup as a PyArrow table.
     ```python
     from matchbox.client.dags import DAG
 
-    lookup = DAG("companies").load_default().extract_lookup()
+    lookup = DAG("companies").load_default().resolve().lookup()
     ```

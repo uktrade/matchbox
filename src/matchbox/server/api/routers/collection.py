@@ -592,7 +592,7 @@ def set_data(
 
     upload_id = str(uuid.uuid4())
 
-    # check if data is locked, lock it if not
+    # Check if data is locked, lock it if not
     try:
         backend.lock_resolution_data(path=resolution_path)
     except ValueError as e:
@@ -692,7 +692,7 @@ def set_data(
                 filename=key,
             )
         case _:
-            # return to READY
+            # Return to READY
             backend.unlock_resolution_data(path=resolution_path)
             raise RuntimeError("Unsupported task runner.")
 

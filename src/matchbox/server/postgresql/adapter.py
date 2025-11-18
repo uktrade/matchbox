@@ -467,8 +467,8 @@ class MatchboxPostgres(MatchboxDBAdapter):
     def lock_resolution_data(self, path: ResolutionPath) -> None:  # noqa: D102
         self._check_writeable(path)
         with MBDB.get_session() as session:
-            # lock resolution so only one client can initiate the upload
-            # will fail if already locked
+            # Lock resolution so only one client can initiate the upload
+            # Will fail if already locked
             try:
                 resolution = Resolutions.from_path(
                     path=path, session=session, for_update=True
@@ -476,8 +476,8 @@ class MatchboxPostgres(MatchboxDBAdapter):
             except LockNotAvailable as e:
                 raise MatchboxResolutionNotQueriable("Resolution is locked.") from e
 
-            # check status
-            # will fail if stage not READY
+            # Check status
+            # Will fail if stage not READY
             if resolution.upload_stage == UploadStage.COMPLETE:
                 session.rollback()
                 raise ValueError(

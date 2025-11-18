@@ -10,8 +10,6 @@ from matchbox.client._settings import settings
 from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import (
     BackendResourceType,
-    LoginAttempt,
-    LoginResult,
     Match,
     OKMessage,
     SourceResolutionPath,
@@ -35,20 +33,6 @@ def test_healthcheck(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
     response = OKMessage.model_validate(response.json())
     assert response.status == "OK"
     assert response.version == version("matchbox-db")
-
-
-def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
-    """Test the login endpoint."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.login = Mock(return_value=1)
-
-    response = test_client.post(
-        "/login", json=LoginAttempt(user_name="alice").model_dump()
-    )
-
-    assert response.status_code == 200
-    response = LoginResult.model_validate(response.json())
-    assert response.user_id == 1
 
 
 # Retrieval

@@ -185,7 +185,7 @@ def login(user_name: str) -> int:
     """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
     response = CLIENT.post(
-        "/login", json=LoginAttempt(user_name=user_name).model_dump()
+        "/auth/login", json=LoginAttempt(user_name=user_name).model_dump()
     )
     return LoginResult.model_validate(response.json()).user_id
 

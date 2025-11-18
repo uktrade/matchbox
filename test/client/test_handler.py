@@ -32,7 +32,7 @@ def test_retry_decorator_applied(matchbox_api: MockRouter) -> None:
     assert retry_state.stop.max_attempt_number == 5
 
     # Mock the API to fail twice with network errors, then succeed
-    matchbox_api.post("/login").mock(
+    matchbox_api.post("/auth/login").mock(
         side_effect=[
             httpx.ConnectError("Connection failed"),  # First call fails
             httpx.ConnectError("Connection failed"),  # Second call fails

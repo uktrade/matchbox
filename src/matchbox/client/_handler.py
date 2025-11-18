@@ -20,7 +20,6 @@ from tenacity import (
 )
 
 from matchbox.client._settings import ClientSettings, settings
-from matchbox.client.authorisation import generate_json_web_token
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
     SCHEMA_JUDGEMENTS,
@@ -169,8 +168,6 @@ def create_headers(settings: ClientSettings) -> dict[str, str]:
     headers = {"X-Matchbox-Client-Version": version("matchbox_db")}
     if settings.jwt:
         headers["Authorization"] = settings.jwt
-    elif settings.user and settings.private_key:
-        headers["Authorization"] = generate_json_web_token(sub=settings.user)
     return headers
 
 

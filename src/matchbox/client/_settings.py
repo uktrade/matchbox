@@ -1,6 +1,5 @@
 """Module to load client settings from env file."""
 
-from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.exceptions import MatchboxClientSettingsException
@@ -9,7 +8,6 @@ from matchbox.common.exceptions import MatchboxClientSettingsException
 class ClientSettings(BaseSettings):
     api_root: str
     timeout: float | None = None
-    private_key: SecretStr | None = None
     retry_delay: float = 15.0
     default_warehouse: str | None = None
     jwt: str | None = None

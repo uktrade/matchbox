@@ -561,7 +561,7 @@ class DAG:
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
     ) -> ResolvedMatches:
-        """Returns `ResolvedData`, optionally filtering.
+        """Returns ResolvedMatches, optionally filtering.
 
         Args:
             source_filter: An optional list of source resolution names to filter by.

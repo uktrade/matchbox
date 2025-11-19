@@ -102,8 +102,8 @@ class TestModelResults:
             only_prob_results.root_leaf()
 
 
-class TestResolvedData:
-    """Test ResolvedData objects."""
+class TestResolvedMatches:
+    """Test ResolvedMatches objects."""
 
     @pytest.fixture(scope="function")  # warehouse is function-scoped
     def dummy_data(
@@ -280,3 +280,51 @@ class TestResolvedData:
             check_row_order=False,
             check_column_order=False,
         )
+
+    def test_merge(self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]) -> None:
+        """Can merge two instances of resolved matches."""
+        # Define first resolved matches
+        foo, bar, foo_query_data, bar_query_data = dummy_data
+
+        resolved_one = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        )
+
+        # Define alternative resolved matches
+        alt_foo_query_data = pa.Table.from_pylist(
+            [
+                {"id": 12, "leaf_id": 1, "key": "1"},
+                {"id": 12, "leaf_id": 2, "key": "2"},
+                {"id": 35, "leaf_id": 3, "key": "3"},
+            ],
+            schema=SCHEMA_QUERY_WITH_LEAVES,
+        )
+
+        alt_bar_query_data = pa.Table.from_pylist(
+            [
+                {"id": 4, "leaf_id": 4, "key": "a"},
+                {"id": 35, "leaf_id": 5, "key": "b"},
+                {"id": 6, "leaf_id": 6, "key": "c"},
+            ],
+            schema=SCHEMA_QUERY_WITH_LEAVES,
+        )
+
+        resolved_two = ResolvedMatches(
+            sources=[foo, bar], query_results=[alt_foo_query_data, alt_bar_query_data]
+        )
+
+        # Merge the two
+        merged_resolved = resolved_one.merge(resolved_two)
+        new_clusters = (
+            merged_resolved.as_cluster_key_map().group_by("id").agg("leaf_id")
+        )
+        # The sources are unchanged
+        assert merged_resolved.sources == [foo, bar]
+        # All cluster IDs now have negative integers
+        assert (new_clusters["id"] < 0).all()
+        # New clusters contain leaves we expect
+        leaf_sets = []
+        for ls in new_clusters["leaf_id"].to_list():
+            leaf_sets.append(sorted(ls))
+
+        assert sorted(leaf_sets) == [[1, 2, 4], [3, 5, 6]]

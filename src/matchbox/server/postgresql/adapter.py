@@ -33,8 +33,8 @@ from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
+    MatchboxLockError,
     MatchboxNoJudgements,
-    MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
     MatchboxRunNotWriteable,
 )
@@ -474,18 +474,18 @@ class MatchboxPostgres(MatchboxDBAdapter):
                     path=path, session=session, for_update=True
                 )
             except LockNotAvailable as e:
-                raise MatchboxResolutionNotQueriable("Resolution is locked.") from e
+                raise MatchboxLockError("Resolution is locked.") from e
 
             # Check status
             # Will fail if stage not READY
             if resolution.upload_stage == UploadStage.COMPLETE:
                 session.rollback()
-                raise ValueError(
+                raise MatchboxLockError(
                     "Once set to complete, resolution data stage cannot be changed."
                 )
             elif resolution.upload_stage == UploadStage.PROCESSING:
                 session.rollback()
-                raise ValueError("Upload already being processed.")
+                raise MatchboxLockError("Upload already being processed.")
 
             resolution.upload_stage = UploadStage.PROCESSING
             session.commit()

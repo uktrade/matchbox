@@ -15,6 +15,7 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
+    MatchboxLockError,
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.factories.models import model_factory
@@ -293,7 +294,7 @@ def test_set_data_already_queued(
     """Test attempting to upload when status is already queued."""
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution_stage = Mock(return_value=UploadStage.PROCESSING)
-    mock_backend.lock_resolution_data.side_effect = ValueError(
+    mock_backend.lock_resolution_data.side_effect = MatchboxLockError(
         "Upload already being processed."
     )
     testkit = model_factory(model_type="linker").fake_run()

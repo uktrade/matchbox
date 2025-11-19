@@ -588,9 +588,6 @@ def set_data(
     resolution_path = ResolutionPath(
         collection=collection, run=run_id, name=resolution_name
     )
-    resolution = backend.get_resolution(path=resolution_path)
-
-    upload_id = str(uuid.uuid4())
 
     # Check if data is locked, lock it if not
     try:
@@ -641,6 +638,12 @@ def set_data(
                 details=f"Invalid Parquet file: {str(e)}",
             ),
         ) from e
+
+    # Get resolution
+    resolution = backend.get_resolution(path=resolution_path)
+
+    # Gernerate unique upload id
+    upload_id = str(uuid.uuid4())
 
     # Upload to S3
     client = backend.settings.datastore.get_client()

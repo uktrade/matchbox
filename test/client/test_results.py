@@ -5,8 +5,9 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.results import ModelResults, ResolvedMatches
+from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES
-from matchbox.common.factories.sources import source_factory, source_from_tuple
+from matchbox.common.factories.sources import source_from_tuple
 
 
 class TestModelResults:
@@ -104,115 +105,11 @@ class TestModelResults:
 class TestResolvedData:
     """Test ResolvedData objects."""
 
-    def test_as_lookup(self) -> None:
-        """Lookup can be generated from resolved data."""
-        foo = source_factory(name="foo").source
-        bar = source_factory(name="bar").source
-
-        foo_query_data = pa.Table.from_pylist(
-            [
-                {"id": 14, "leaf_id": 1, "key": "1"},
-                {"id": 2, "leaf_id": 2, "key": "2"},
-                {"id": 356, "leaf_id": 3, "key": "3"},
-            ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
-        )
-
-        bar_query_data = pa.Table.from_pylist(
-            [
-                {"id": 14, "leaf_id": 4, "key": "a"},
-                {"id": 356, "leaf_id": 5, "key": "b"},
-                {"id": 356, "leaf_id": 6, "key": "c"},
-            ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
-        )
-
-        # Because of FULL OUTER JOIN, we expect some nulls, and some explosions
-        expected_foo_bar_mapping = pl.DataFrame(
-            [
-                {"id": 14, "foo_key": "1", "bar_key": "a"},
-                {"id": 2, "foo_key": "2", "bar_key": None},
-                {"id": 356, "foo_key": "3", "bar_key": "b"},
-                {"id": 356, "foo_key": "3", "bar_key": "c"},
-            ]
-        )
-
-        # When selecting single source, we won't explode
-        expected_foo_mapping = expected_foo_bar_mapping.select(
-            ["id", "foo_key"]
-        ).unique()
-
-        # Retrieve single table
-        foo_mapping = ResolvedMatches(
-            sources=[foo], query_results=[foo_query_data]
-        ).as_lookup()
-
-        assert_frame_equal(
-            pl.from_arrow(foo_mapping),
-            expected_foo_mapping,
-            check_row_order=False,
-            check_column_order=False,
-        )
-
-        # Retrieve multiple tables
-        foo_bar_mapping = ResolvedMatches(
-            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
-        ).as_lookup()
-
-        assert_frame_equal(
-            pl.from_arrow(foo_bar_mapping),
-            expected_foo_bar_mapping,
-            check_row_order=False,
-            check_column_order=False,
-        )
-
-    def test_as_cluster_key_map(self) -> None:
-        """Mapping across root, leaf, source and key can be generated."""
-        foo = source_factory(name="foo").source
-        bar = source_factory(name="bar").source
-
-        foo_query_data = pa.Table.from_pylist(
-            [
-                {"id": 14, "leaf_id": 1, "key": "1"},
-                {"id": 2, "leaf_id": 2, "key": "2"},
-                {"id": 356, "leaf_id": 3, "key": "3"},
-            ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
-        )
-
-        bar_query_data = pa.Table.from_pylist(
-            [
-                {"id": 14, "leaf_id": 4, "key": "a"},
-                {"id": 356, "leaf_id": 5, "key": "b"},
-                {"id": 356, "leaf_id": 6, "key": "c"},
-            ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
-        )
-
-        mapping = ResolvedMatches(
-            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
-        ).as_cluster_key_map()
-
-        expected_mapping = pl.DataFrame(
-            [
-                {"source": "foo", "id": 14, "leaf_id": 1, "key": "1"},
-                {"source": "foo", "id": 2, "leaf_id": 2, "key": "2"},
-                {"source": "foo", "id": 356, "leaf_id": 3, "key": "3"},
-                {"source": "bar", "id": 14, "leaf_id": 4, "key": "a"},
-                {"source": "bar", "id": 356, "leaf_id": 5, "key": "b"},
-                {"source": "bar", "id": 356, "leaf_id": 6, "key": "c"},
-            ]
-        )
-
-        assert_frame_equal(
-            pl.from_arrow(mapping),
-            expected_mapping,
-            check_row_order=False,
-            check_column_order=False,
-        )
-
-    def test_view_cluster(self, sqlite_in_memory_warehouse: Engine) -> None:
-        """Single cluster can be viewed with source data."""
+    @pytest.fixture(scope="function")  # warehouse is function-scoped
+    def dummy_data(
+        self, sqlite_in_memory_warehouse: Engine
+    ) -> tuple[Source, Source, pa.Table, pa.Table]:
+        """Create foo, bar and associated matches."""
         foo = (
             source_from_tuple(
                 name="foo",
@@ -259,6 +156,87 @@ class TestResolvedData:
             ],
             schema=SCHEMA_QUERY_WITH_LEAVES,
         )
+
+        return foo, bar, foo_query_data, bar_query_data
+
+    def test_as_lookup(
+        self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]
+    ) -> None:
+        """Lookup can be generated from resolved data."""
+        foo, bar, foo_query_data, bar_query_data = dummy_data
+
+        # Because of FULL OUTER JOIN, we expect some nulls, and some explosions
+        expected_foo_bar_mapping = pl.DataFrame(
+            [
+                {"id": 14, "foo_key": "1", "bar_key": "a"},
+                {"id": 2, "foo_key": "2", "bar_key": None},
+                {"id": 356, "foo_key": "3", "bar_key": "b"},
+                {"id": 356, "foo_key": "3", "bar_key": "c"},
+            ]
+        )
+
+        # When selecting single source, we won't explode
+        expected_foo_mapping = expected_foo_bar_mapping.select(
+            ["id", "foo_key"]
+        ).unique()
+
+        # Retrieve single table
+        foo_mapping = ResolvedMatches(
+            sources=[foo], query_results=[foo_query_data]
+        ).as_lookup()
+
+        assert_frame_equal(
+            pl.from_arrow(foo_mapping),
+            expected_foo_mapping,
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+        # Retrieve multiple tables
+        foo_bar_mapping = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        ).as_lookup()
+
+        assert_frame_equal(
+            pl.from_arrow(foo_bar_mapping),
+            expected_foo_bar_mapping,
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+    def test_as_cluster_key_map(
+        self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]
+    ) -> None:
+        """Mapping across root, leaf, source and key can be generated."""
+        foo, bar, foo_query_data, bar_query_data = dummy_data
+
+        mapping = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        ).as_cluster_key_map()
+
+        expected_mapping = pl.DataFrame(
+            [
+                {"source": "foo", "id": 14, "leaf_id": 1, "key": "1"},
+                {"source": "foo", "id": 2, "leaf_id": 2, "key": "2"},
+                {"source": "foo", "id": 356, "leaf_id": 3, "key": "3"},
+                {"source": "bar", "id": 14, "leaf_id": 4, "key": "a"},
+                {"source": "bar", "id": 356, "leaf_id": 5, "key": "b"},
+                {"source": "bar", "id": 356, "leaf_id": 6, "key": "c"},
+            ]
+        )
+
+        assert_frame_equal(
+            pl.from_arrow(mapping),
+            expected_mapping,
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+    def test_view_cluster(
+        self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]
+    ) -> None:
+        """Single cluster can be viewed with source data."""
+        foo, bar, foo_query_data, bar_query_data = dummy_data
 
         cluster = ResolvedMatches(
             sources=[foo, bar], query_results=[foo_query_data, bar_query_data]

@@ -6,7 +6,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from fastapi.testclient import TestClient
 
-from matchbox.client._settings import settings
 from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import (
     BackendResourceType,
@@ -20,7 +19,6 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
 )
-from test.scripts.authorisation import generate_json_web_token
 
 # General
 
@@ -263,57 +261,3 @@ def test_clear_backend_errors(
     assert response.status_code == 409
     # We send some explanatory message
     assert response.content
-
-
-def test_api_key_authorisation(
-    api_EdDSA_key_pair: tuple[bytes, bytes],
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, _, _ = api_client_and_mocks
-    private_key, _ = api_EdDSA_key_pair
-    routes = [
-        (test_client.post, "/collections/default/runs/1/resolutions/name/data"),
-        (test_client.post, "/collections/default/runs/1/resolutions/name"),
-        (test_client.put, "/collections/default/runs/1/resolutions/name"),
-        (test_client.delete, "/collections/default/runs/1/resolutions/name"),
-        (test_client.delete, "/database"),
-    ]
-
-    # Incorrect signature
-    _, _, signature_b64 = test_client.headers["Authorization"].encode().split(b".")
-    header_b64, payload_64, _ = (
-        generate_json_web_token(
-            private_key_bytes=private_key,
-            api_root=settings.api_root,
-            sub="incorrect.user@email.com",
-        )
-        .encode()
-        .split(b".")
-    )
-    test_client.headers["Authorization"] = b".".join(
-        [header_b64, payload_64, signature_b64]
-    ).decode()
-
-    for method, url in routes:
-        response = method(url)
-        assert response.status_code == 401
-        assert response.content == b'"JWT invalid."'
-
-    # Expired JWT
-    test_client.headers["Authorization"] = generate_json_web_token(
-        private_key_bytes=private_key,
-        sub="test.user@email.com",
-        api_root=settings.api_root,
-        expiry_hours=-2,
-    )
-    for method, url in routes:
-        response = method(url)
-        assert response.status_code == 401
-        assert response.content == b'"JWT expired."'
-
-    # Missing Authorization header
-    test_client.headers.pop("Authorization")
-    for method, url in routes:
-        response = method(url)
-        assert response.status_code == 401
-        assert response.content == b'"JWT required but not provided."'

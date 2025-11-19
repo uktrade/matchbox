@@ -605,6 +605,7 @@ def set_data(
 
     # Validate file
     if ".parquet" not in file.filename:
+        backend.unlock_resolution_data(path=resolution_path)
         raise HTTPException(
             status_code=400,
             detail=ResourceOperationStatus(
@@ -628,6 +629,8 @@ def set_data(
                 details=f"Invalid Parquet file: {str(e)}",
             ),
         ) from e
+    finally:
+        backend.unlock_resolution_data(path=resolution_path)
 
     # Get resolution
     resolution = backend.get_resolution(path=resolution_path)
@@ -664,6 +667,8 @@ def set_data(
                 details=f"Could not upload file to object storage: {str(e)}",
             ),
         ) from e
+    finally:
+        backend.unlock_resolution_data(path=resolution_path)
 
     match settings.task_runner:
         case "api":

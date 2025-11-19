@@ -1,9 +1,11 @@
 import json
 from unittest.mock import Mock, patch
 
+import polars as pl
 import pyarrow as pa
 import pytest
 from httpx import Response
+from polars.testing import assert_frame_equal
 from respx import MockRouter
 from sqlalchemy import Engine
 
@@ -521,10 +523,8 @@ def test_resolve(matchbox_api: MockRouter) -> None:
         full_resolved.sources[0].name,
         full_resolved.sources[1].name,
     ] == ["foo", "bar"]
-    assert [
-        full_resolved.query_results[0],
-        full_resolved.query_results[1],
-    ] == [foo_data, bar_data]
+    assert_frame_equal(full_resolved.query_results[0], pl.from_arrow(foo_data))
+    assert_frame_equal(full_resolved.query_results[1], pl.from_arrow(bar_data))
 
     # Retrieve from reconstituted DAG
     reconstituted_resolved = DAG("companies").load_default().resolve()
@@ -534,10 +534,9 @@ def test_resolve(matchbox_api: MockRouter) -> None:
         reconstituted_resolved.sources[0].name,
         reconstituted_resolved.sources[1].name,
     ] == ["foo", "bar"]
-    assert [
-        reconstituted_resolved.query_results[0],
-        reconstituted_resolved.query_results[1],
-    ] == [foo_data, bar_data]
+
+    assert_frame_equal(reconstituted_resolved.query_results[0], pl.from_arrow(foo_data))
+    assert_frame_equal(reconstituted_resolved.query_results[1], pl.from_arrow(bar_data))
 
 
 def test_lookup_key_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:

@@ -275,8 +275,8 @@ class TestE2EPipelineBuilder:
 
         # The lookup is identical
         assert_frame_equal(
-            pl.from_arrow(rerun_dag.resolve().as_lookup()),
-            pl.from_arrow(dag1_lookup),
+            rerun_dag.resolve().as_lookup(),
+            dag1_lookup,
             check_column_order=False,
             check_row_order=False,
         )

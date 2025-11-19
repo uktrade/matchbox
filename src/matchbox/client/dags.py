@@ -4,7 +4,7 @@ import json
 from enum import StrEnum
 from typing import Any, Self, TypeAlias
 
-from pyarrow import Table as ArrowTable
+import polars as pl
 
 from matchbox.client import _handler
 from matchbox.client.locations import Location
@@ -591,14 +591,16 @@ class DAG:
             raise MatchboxResolutionNotFoundError("No compatible source was found")
 
         resolved_sources: list[Source] = []
-        query_results: list[ArrowTable] = []
+        query_results: list[pl.DataFrame] = []
         for source_name in filtered_source_names:
             resolved_sources.append(available_sources[source_name])
             query_results.append(
-                _handler.query(
-                    source=available_sources[source_name].resolution_path,
-                    resolution=self.final_step.resolution_path,
-                    return_leaf_id=True,
+                pl.from_arrow(
+                    _handler.query(
+                        source=available_sources[source_name].resolution_path,
+                        resolution=self.final_step.resolution_path,
+                        return_leaf_id=True,
+                    )
                 )
             )
 

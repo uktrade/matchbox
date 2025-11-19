@@ -4,7 +4,6 @@ from collections.abc import Hashable
 from typing import ParamSpec, Self, TypeVar
 
 import polars as pl
-from pyarrow import Table as ArrowTable
 from pydantic import ConfigDict
 
 from matchbox.client.sources import Source
@@ -141,7 +140,9 @@ class ModelResults:
 class ResolvedMatches:
     """Matches according to resolution."""
 
-    def __init__(self, sources: list[Source], query_results: list[ArrowTable]) -> None:
+    def __init__(
+        self, sources: list[Source], query_results: list[pl.DataFrame]
+    ) -> None:
         """Initialise resolved data.
 
         Args:
@@ -157,26 +158,27 @@ class ResolvedMatches:
         if len(sources) != len(query_results):
             raise ValueError("Mismatched length of sources and query results.")
 
-    def as_lookup(self) -> ArrowTable:
+    def as_lookup(self) -> pl.DataFrame:
         """Return lookup across matchbox ID and source keys."""
         lookup = (
             self.query_results[0]
-            .rename_columns(
-                {"key": self.sources[0].config.qualified_key(self.sources[0].name)}
-            )
-            .drop_columns("leaf_id")
+            .rename({"key": self.sources[0].config.qualified_key(self.sources[0].name)})
+            .drop("leaf_id")
         )
 
         if len(self.sources) > 1:
             for source, source_results in zip(
                 self.sources[1:], self.query_results[1:], strict=True
             ):
-                lookup = lookup.join(
-                    right_table=source_results, keys="id", join_type="full outer"
+                lookup = (
+                    lookup.join(source_results, on="id", how="full")
+                    .with_columns(pl.coalesce(["id", "id_right"]).alias("id"))
+                    .drop(["id_right"])
                 )
-                lookup = lookup.rename_columns(
+
+                lookup = lookup.rename(
                     {"key": source.config.qualified_key(source.name)}
-                ).drop_columns("leaf_id")
+                ).drop("leaf_id")
 
         return lookup
 
@@ -185,7 +187,7 @@ class ResolvedMatches:
         concat_dfs = []
         for source, query_res in zip(self.sources, self.query_results, strict=True):
             source_col = pl.lit(source.name).alias("source")
-            df_with_source = pl.from_arrow(query_res).with_columns([source_col])
+            df_with_source = query_res.with_columns([source_col])
             concat_dfs.append(df_with_source)
         return pl.DataFrame(pl.concat(concat_dfs))
 
@@ -200,11 +202,7 @@ class ResolvedMatches:
         cluster_rows = []
         for source, query_res in zip(self.sources, self.query_results, strict=True):
             # For each source, get rows for selected cluster
-            source_keys = (
-                pl.from_arrow(query_res)
-                .filter(pl.col("id") == cluster_id)["key"]
-                .to_list()
-            )
+            source_keys = query_res.filter(pl.col("id") == cluster_id)["key"].to_list()
 
             # Determine column names of output dataframe
             rename_keys = {source.key_field.name: source.qualified_key}
@@ -247,7 +245,7 @@ class ResolvedMatches:
         for resolved_instance in [self, other]:
             unioned_root_leaf = pl.concat(
                 [
-                    pl.from_arrow(result).select("id", "leaf_id")
+                    result.select(["id", "leaf_id"])
                     for result in resolved_instance.query_results
                 ]
             )
@@ -278,8 +276,8 @@ class ResolvedMatches:
         ):
             unioned_leaf_key = pl.concat(
                 [
-                    pl.from_arrow(self_result).select("leaf_id", "key"),
-                    pl.from_arrow(other_result).select("leaf_id", "key"),
+                    self_result.select("leaf_id", "key"),
+                    other_result.select("leaf_id", "key"),
                 ]
             ).unique()
             source_query_results = unioned_leaf_key.join(

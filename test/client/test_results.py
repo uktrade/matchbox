@@ -1,5 +1,4 @@
 import polars as pl
-import pyarrow as pa
 import pytest
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
@@ -108,7 +107,7 @@ class TestResolvedMatches:
     @pytest.fixture(scope="function")  # warehouse is function-scoped
     def dummy_data(
         self, sqlite_in_memory_warehouse: Engine
-    ) -> tuple[Source, Source, pa.Table, pa.Table]:
+    ) -> tuple[Source, Source, pl.DataFrame, pl.DataFrame]:
         """Create foo, bar and associated matches."""
         foo = (
             source_from_tuple(
@@ -139,28 +138,28 @@ class TestResolvedMatches:
             .source
         )
 
-        foo_query_data = pa.Table.from_pylist(
+        foo_query_data = pl.DataFrame(
             [
                 {"id": 14, "leaf_id": 1, "key": "1"},
                 {"id": 2, "leaf_id": 2, "key": "2"},
                 {"id": 356, "leaf_id": 3, "key": "3"},
             ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
+            schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
         )
 
-        bar_query_data = pa.Table.from_pylist(
+        bar_query_data = pl.DataFrame(
             [
                 {"id": 14, "leaf_id": 4, "key": "a"},
                 {"id": 356, "leaf_id": 5, "key": "b"},
                 {"id": 356, "leaf_id": 6, "key": "c"},
             ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
+            schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
         )
 
         return foo, bar, foo_query_data, bar_query_data
 
     def test_as_lookup(
-        self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
         """Lookup can be generated from resolved data."""
         foo, bar, foo_query_data, bar_query_data = dummy_data
@@ -186,7 +185,7 @@ class TestResolvedMatches:
         ).as_lookup()
 
         assert_frame_equal(
-            pl.from_arrow(foo_mapping),
+            foo_mapping,
             expected_foo_mapping,
             check_row_order=False,
             check_column_order=False,
@@ -198,14 +197,14 @@ class TestResolvedMatches:
         ).as_lookup()
 
         assert_frame_equal(
-            pl.from_arrow(foo_bar_mapping),
+            foo_bar_mapping,
             expected_foo_bar_mapping,
             check_row_order=False,
             check_column_order=False,
         )
 
     def test_as_cluster_key_map(
-        self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
         """Mapping across root, leaf, source and key can be generated."""
         foo, bar, foo_query_data, bar_query_data = dummy_data
@@ -226,14 +225,11 @@ class TestResolvedMatches:
         )
 
         assert_frame_equal(
-            pl.from_arrow(mapping),
-            expected_mapping,
-            check_row_order=False,
-            check_column_order=False,
+            mapping, expected_mapping, check_row_order=False, check_column_order=False
         )
 
     def test_view_cluster(
-        self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
         """Single cluster can be viewed with source data."""
         foo, bar, foo_query_data, bar_query_data = dummy_data
@@ -253,10 +249,7 @@ class TestResolvedMatches:
         )
 
         assert_frame_equal(
-            pl.from_arrow(cluster),
-            expected_cluster,
-            check_row_order=False,
-            check_column_order=False,
+            cluster, expected_cluster, check_row_order=False, check_column_order=False
         )
 
         # Compact representation
@@ -275,13 +268,15 @@ class TestResolvedMatches:
         )
 
         assert_frame_equal(
-            pl.from_arrow(cluster_merged),
+            cluster_merged,
             expected_cluster_merged,
             check_row_order=False,
             check_column_order=False,
         )
 
-    def test_merge(self, dummy_data: tuple[Source, Source, pa.Table, pa.Table]) -> None:
+    def test_merge(
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
+    ) -> None:
         """Can merge two instances of resolved matches."""
         # Define first resolved matches
         foo, bar, foo_query_data, bar_query_data = dummy_data
@@ -291,22 +286,22 @@ class TestResolvedMatches:
         )
 
         # Define alternative resolved matches
-        alt_foo_query_data = pa.Table.from_pylist(
+        alt_foo_query_data = pl.DataFrame(
             [
                 {"id": 12, "leaf_id": 1, "key": "1"},
                 {"id": 12, "leaf_id": 2, "key": "2"},
                 {"id": 35, "leaf_id": 3, "key": "3"},
             ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
+            schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
         )
 
-        alt_bar_query_data = pa.Table.from_pylist(
+        alt_bar_query_data = pl.DataFrame(
             [
                 {"id": 4, "leaf_id": 4, "key": "a"},
                 {"id": 35, "leaf_id": 5, "key": "b"},
                 {"id": 6, "leaf_id": 6, "key": "c"},
             ],
-            schema=SCHEMA_QUERY_WITH_LEAVES,
+            schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
         )
 
         resolved_two = ResolvedMatches(

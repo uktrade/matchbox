@@ -113,9 +113,10 @@ class TestResolvedMatches:
             source_from_tuple(
                 name="foo",
                 engine=sqlite_in_memory_warehouse,
-                data_keys=["1", "2", "3"],
+                data_keys=["1", "2", "2b", "3"],
                 data_tuple=(
                     {"field_a": 10},
+                    {"field_a": 20},
                     {"field_a": 20},
                     {"field_a": 30},
                 ),
@@ -127,21 +128,26 @@ class TestResolvedMatches:
             source_from_tuple(
                 name="bar",
                 engine=sqlite_in_memory_warehouse,
-                data_keys=["a", "b", "c"],
+                data_keys=["a", "b", "c", "d"],
                 data_tuple=(
                     {"field_a": "value1x", "field_b": "value1y"},
                     {"field_a": "value2x", "field_b": "value2y"},
                     {"field_a": "value3x", "field_b": "value3y"},
+                    {"field_a": "value4x", "field_b": "value4y"},
                 ),
             )
             .write_to_location()
             .source
         )
 
+        # Both foo and bar have a record that's not linked
+        # Foo has two keys for one leaf ID
+        # Foo and bar have links across; bar also has link within
         foo_query_data = pl.DataFrame(
             [
                 {"id": 14, "leaf_id": 1, "key": "1"},
                 {"id": 2, "leaf_id": 2, "key": "2"},
+                {"id": 2, "leaf_id": 2, "key": "2b"},
                 {"id": 356, "leaf_id": 3, "key": "3"},
             ],
             schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
@@ -152,6 +158,7 @@ class TestResolvedMatches:
                 {"id": 14, "leaf_id": 4, "key": "a"},
                 {"id": 356, "leaf_id": 5, "key": "b"},
                 {"id": 356, "leaf_id": 6, "key": "c"},
+                {"id": 7, "leaf_id": 7, "key": "d"},
             ],
             schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
         )
@@ -169,15 +176,22 @@ class TestResolvedMatches:
             [
                 {"id": 14, "foo_key": "1", "bar_key": "a"},
                 {"id": 2, "foo_key": "2", "bar_key": None},
+                {"id": 2, "foo_key": "2b", "bar_key": None},
                 {"id": 356, "foo_key": "3", "bar_key": "b"},
                 {"id": 356, "foo_key": "3", "bar_key": "c"},
+                {"id": 7, "foo_key": None, "bar_key": "d"},
             ]
         )
 
         # When selecting single source, we won't explode
-        expected_foo_mapping = expected_foo_bar_mapping.select(
-            ["id", "foo_key"]
-        ).unique()
+        expected_foo_mapping = pl.DataFrame(
+            [
+                {"id": 14, "foo_key": "1"},
+                {"id": 2, "foo_key": "2"},
+                {"id": 2, "foo_key": "2b"},
+                {"id": 356, "foo_key": "3"},
+            ]
+        )
 
         # Retrieve single table
         foo_mapping = ResolvedMatches(
@@ -217,10 +231,12 @@ class TestResolvedMatches:
             [
                 {"source": "foo", "id": 14, "leaf_id": 1, "key": "1"},
                 {"source": "foo", "id": 2, "leaf_id": 2, "key": "2"},
+                {"source": "foo", "id": 2, "leaf_id": 2, "key": "2b"},
                 {"source": "foo", "id": 356, "leaf_id": 3, "key": "3"},
                 {"source": "bar", "id": 14, "leaf_id": 4, "key": "a"},
                 {"source": "bar", "id": 356, "leaf_id": 5, "key": "b"},
                 {"source": "bar", "id": 356, "leaf_id": 6, "key": "c"},
+                {"source": "bar", "id": 7, "leaf_id": 7, "key": "d"},
             ]
         )
 
@@ -274,6 +290,24 @@ class TestResolvedMatches:
             check_column_order=False,
         )
 
+        # View cluster with multiple keys per leaf
+        cluster_convergent = ResolvedMatches(
+            sources=[foo], query_results=[foo_query_data]
+        ).view_cluster(2)
+        expected_cluster_convergent = pl.DataFrame(
+            [
+                {"foo_key": "2", "foo_field_a": 20},
+                {"foo_key": "2b", "foo_field_a": 20},
+            ]
+        )
+
+        assert_frame_equal(
+            cluster_convergent,
+            expected_cluster_convergent,
+            check_row_order=False,
+            check_column_order=False,
+        )
+
     def test_merge(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
@@ -290,6 +324,7 @@ class TestResolvedMatches:
             [
                 {"id": 12, "leaf_id": 1, "key": "1"},
                 {"id": 12, "leaf_id": 2, "key": "2"},
+                {"id": 12, "leaf_id": 2, "key": "2b"},
                 {"id": 35, "leaf_id": 3, "key": "3"},
             ],
             schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
@@ -320,6 +355,7 @@ class TestResolvedMatches:
         # New clusters contain leaves we expect
         leaf_sets = []
         for ls in new_clusters["leaf_id"].to_list():
-            leaf_sets.append(sorted(ls))
+            # We remove duplicates created by multiple keys for same leaf
+            leaf_sets.append(sorted(set(ls)))
 
-        assert sorted(leaf_sets) == [[1, 2, 4], [3, 5, 6]]
+        assert sorted(leaf_sets) == [[1, 2, 4], [3, 5, 6], [7]]

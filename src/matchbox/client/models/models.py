@@ -12,7 +12,7 @@ from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.queries import CacheMode, Query
-from matchbox.client.results import Results
+from matchbox.client.results import ModelResults
 from matchbox.common.dtos import (
     ModelConfig,
     ModelResolutionName,
@@ -130,7 +130,7 @@ class Model:
         self._truth: int = truth_float_to_int(truth)
         self.left_query = left_query
         self.right_query = right_query
-        self.results: Results | None = None
+        self.results: ModelResults | None = None
 
         if isinstance(model_class, str):
             self.model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
@@ -223,7 +223,9 @@ class Model:
         result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
         return result.success
 
-    def run(self, for_validation: bool = False, cache_queries: bool = False) -> Results:
+    def run(
+        self, for_validation: bool = False, cache_queries: bool = False
+    ) -> ModelResults:
         """Execute the model pipeline and return results.
 
         Args:
@@ -257,7 +259,7 @@ class Model:
             results = self.model_instance.dedupe(data=left_df)
 
         if for_validation:
-            self.results = Results(
+            self.results = ModelResults(
                 probabilities=results,
                 left_root_leaf=self.left_query.leaf_id,
                 right_root_leaf=self.right_query.leaf_id
@@ -265,7 +267,7 @@ class Model:
                 else None,
             )
         else:
-            self.results = Results(probabilities=results)
+            self.results = ModelResults(probabilities=results)
 
         return self.results
 
@@ -307,10 +309,10 @@ class Model:
                 path=self.resolution_path, data=self.results.probabilities
             )
 
-    def download_results(self) -> Results:
+    def download_results(self) -> ModelResults:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(name=self.name)
-        return Results(probabilities=results, metadata=self.config)
+        return ModelResults(probabilities=results, metadata=self.config)
 
     def query(self, *sources: Source, **kwargs: Any) -> Query:
         """Generate a query for this model."""

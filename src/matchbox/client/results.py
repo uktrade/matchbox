@@ -17,7 +17,7 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-class Results:
+class ModelResults:
     """Results of a model run.
 
     Contains:
@@ -138,8 +138,8 @@ class Results:
         return pl.concat([root_leaf_res, unmerged_ids_rows])
 
 
-class ResolvedData:
-    """Data according to resolution."""
+class ResolvedMatches:
+    """Matches according to resolution."""
 
     def __init__(self, sources: list[Source], query_results: list[ArrowTable]) -> None:
         """Initialise resolved data.
@@ -151,7 +151,13 @@ class ResolvedData:
         self.sources = sources
         self.query_results = query_results
 
-    def get_lookup(self) -> ArrowTable:
+        if not len(sources):
+            raise ValueError("At least 1 source must be resolved.")
+
+        if len(sources) != len(query_results):
+            raise ValueError("Mismatched length of sources and query results.")
+
+    def as_lookup(self) -> ArrowTable:
         """Return lookup across matchbox ID and source keys."""
         lookup = (
             self.query_results[0]
@@ -173,3 +179,12 @@ class ResolvedData:
                 ).drop_columns("leaf_id")
 
         return lookup
+
+    def as_cluster_key_map(self) -> pl.DataFrame:
+        """Return mapping across root, leaf, source and keys."""
+        concat_dfs = []
+        for source, query_res in zip(self.sources, self.query_results, strict=True):
+            source_col = pl.lit(source.name).alias("source")
+            df_with_source = pl.from_arrow(query_res).with_columns([source_col])
+            concat_dfs.append(df_with_source)
+        return pl.DataFrame(pl.concat(concat_dfs))

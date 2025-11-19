@@ -8,7 +8,7 @@ from sqlalchemy.exc import OperationalError
 
 from matchbox.client import _handler
 from matchbox.client.dags import DAG
-from matchbox.client.results import Results
+from matchbox.client.results import ModelResults
 from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
 from matchbox.common.eval import Judgement, ModelComparison, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
@@ -197,7 +197,7 @@ class EvalData:
         self.judgements, self.expansion = _handler.download_eval_data()
 
     def precision_recall(
-        self, results: Results, threshold: float
+        self, results: ModelResults, threshold: float
     ) -> tuple[float, float]:
         """Compute precision and recall for a given Results object."""
         if not len(results.clusters):

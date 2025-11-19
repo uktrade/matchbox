@@ -10,7 +10,7 @@ from matchbox.client import _handler
 from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
-from matchbox.client.results import ResolvedData
+from matchbox.client.results import ResolvedMatches
 from matchbox.client.sources import Source
 from matchbox.common.dtos import (
     Collection,
@@ -560,7 +560,7 @@ class DAG:
         self,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
-    ) -> ResolvedData:
+    ) -> ResolvedMatches:
         """Returns `ResolvedData`, optionally filtering.
 
         Args:
@@ -602,4 +602,4 @@ class DAG:
                 )
             )
 
-        return ResolvedData(sources=resolved_sources, query_results=query_results)
+        return ResolvedMatches(sources=resolved_sources, query_results=query_results)

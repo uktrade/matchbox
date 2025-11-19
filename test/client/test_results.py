@@ -2,10 +2,11 @@ import polars as pl
 import pyarrow as pa
 import pytest
 from polars.testing import assert_frame_equal
+from sqlalchemy import Engine
 
 from matchbox.client.results import ModelResults, ResolvedMatches
 from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES
-from matchbox.common.factories.sources import source_factory
+from matchbox.common.factories.sources import source_factory, source_from_tuple
 
 
 class TestModelResults:
@@ -206,6 +207,98 @@ class TestResolvedData:
         assert_frame_equal(
             pl.from_arrow(mapping),
             expected_mapping,
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+    def test_view_cluster(self, sqlite_in_memory_warehouse: Engine) -> None:
+        """Single cluster can be viewed with source data."""
+        foo = (
+            source_from_tuple(
+                name="foo",
+                engine=sqlite_in_memory_warehouse,
+                data_keys=["1", "2", "3"],
+                data_tuple=(
+                    {"field_a": 10},
+                    {"field_a": 20},
+                    {"field_a": 30},
+                ),
+            )
+            .write_to_location()
+            .source
+        )
+        bar = (
+            source_from_tuple(
+                name="bar",
+                engine=sqlite_in_memory_warehouse,
+                data_keys=["a", "b", "c"],
+                data_tuple=(
+                    {"field_a": "value1x", "field_b": "value1y"},
+                    {"field_a": "value2x", "field_b": "value2y"},
+                    {"field_a": "value3x", "field_b": "value3y"},
+                ),
+            )
+            .write_to_location()
+            .source
+        )
+
+        foo_query_data = pa.Table.from_pylist(
+            [
+                {"id": 14, "leaf_id": 1, "key": "1"},
+                {"id": 2, "leaf_id": 2, "key": "2"},
+                {"id": 356, "leaf_id": 3, "key": "3"},
+            ],
+            schema=SCHEMA_QUERY_WITH_LEAVES,
+        )
+
+        bar_query_data = pa.Table.from_pylist(
+            [
+                {"id": 14, "leaf_id": 4, "key": "a"},
+                {"id": 356, "leaf_id": 5, "key": "b"},
+                {"id": 356, "leaf_id": 6, "key": "c"},
+            ],
+            schema=SCHEMA_QUERY_WITH_LEAVES,
+        )
+
+        cluster = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        ).view_cluster(356)
+
+        # Expanded representation
+        expected_cluster = pl.DataFrame(
+            data=[
+                ["3", 30, None, None, None],
+                [None, None, "b", "value2x", "value2y"],
+                [None, None, "c", "value3x", "value3y"],
+            ],
+            schema=["foo_key", "foo_field_a", "bar_key", "bar_field_a", "bar_field_b"],
+        )
+
+        assert_frame_equal(
+            pl.from_arrow(cluster),
+            expected_cluster,
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+        # Compact representation
+        cluster_merged = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        ).view_cluster(356, merge_fields=True)
+
+        # Note: 30 gets cast to a string
+        expected_cluster_merged = pl.DataFrame(
+            data=[
+                ["3", None, "30", None],
+                [None, "b", "value2x", "value2y"],
+                [None, "c", "value3x", "value3y"],
+            ],
+            schema=["foo_key", "bar_key", "field_a", "field_b"],
+        )
+
+        assert_frame_equal(
+            pl.from_arrow(cluster_merged),
+            expected_cluster_merged,
             check_row_order=False,
             check_column_order=False,
         )

@@ -188,3 +188,46 @@ class ResolvedMatches:
             df_with_source = pl.from_arrow(query_res).with_columns([source_col])
             concat_dfs.append(df_with_source)
         return pl.DataFrame(pl.concat(concat_dfs))
+
+    def view_cluster(self, cluster_id: int, merge_fields: bool = False) -> pl.DataFrame:
+        """Return source data for all records in cluster.
+
+        Args:
+            cluster_id: ID of root cluster to view
+            merge_fields: whether to remove source qualifier when concatenating rows.
+                Only applies to index fields - key fields are not affected.
+        """
+        cluster_rows = []
+        for source, query_res in zip(self.sources, self.query_results, strict=True):
+            # For each source, get rows for selected cluster
+            source_keys = (
+                pl.from_arrow(query_res)
+                .filter(pl.col("id") == cluster_id)["key"]
+                .to_list()
+            )
+
+            # Determine column names of output dataframe
+            rename_keys = {source.key_field.name: source.qualified_key}
+            if not merge_fields:
+                rename_index_fields = {
+                    field.name: source.qualify_field(field.name)
+                    for field in source.index_fields
+                }
+                rename_dict = {**rename_keys, **rename_index_fields}
+            else:
+                rename_dict = rename_keys
+
+            # Fetch data for this source
+            source_data = pl.concat(
+                source.fetch(keys=source_keys, qualify_names=False)
+            ).rename(rename_dict)
+
+            cluster_rows.append(source_data)
+
+        # Coerce fields to their common super-type
+        source_concat = pl.concat(cluster_rows, how="diagonal_relaxed")
+        # Re-order columns to have keys at the beginning
+        key_cols = [source.qualified_key for source in self.sources]
+        remaining_cols = [col for col in source_concat.columns if col not in key_cols]
+
+        return source_concat.select(*key_cols, *remaining_cols)

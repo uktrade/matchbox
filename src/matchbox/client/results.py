@@ -191,6 +191,12 @@ class ResolvedMatches:
             concat_dfs.append(df_with_source)
         return pl.DataFrame(pl.concat(concat_dfs))
 
+    def as_leaf_sets(self) -> list[list[int]]:
+        """Return grouping of lead IDs."""
+        cluster_key_map = self.as_cluster_key_map()
+        groups = cluster_key_map.group_by("id").agg("leaf_id")["leaf_id"].to_list()
+        return [sorted(set(g)) for g in groups]
+
     def view_cluster(self, cluster_id: int, merge_fields: bool = False) -> pl.DataFrame:
         """Return source data for all records in cluster.
 

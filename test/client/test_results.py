@@ -244,6 +244,17 @@ class TestResolvedMatches:
             mapping, expected_mapping, check_row_order=False, check_column_order=False
         )
 
+    def test_as_leaf_sets(
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
+    ) -> None:
+        """Can generate grouping of lead IDs."""
+        foo, bar, foo_query_data, bar_query_data = dummy_data
+        leaf_sets = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        ).as_leaf_sets()
+
+        assert sorted(leaf_sets) == sorted([[1, 4], [2], [3, 5, 6], [7]])
+
     def test_view_cluster(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:

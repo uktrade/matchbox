@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 from fastapi import UploadFile
 
 from matchbox.common.arrow import table_to_buffer
-from matchbox.common.dtos import ResolutionPath, ResolutionType, UploadStage
+from matchbox.common.dtos import ResolutionPath, ResolutionType
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
@@ -275,7 +275,4 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:
     )
 
     # Ensure resolution is marked as ready again
-    assert mock_backend.set_resolution_stage.called
-    assert (
-        mock_backend.set_resolution_stage.call_args.kwargs["stage"] == UploadStage.READY
-    )
+    assert mock_backend.unlock_resolution_data.called

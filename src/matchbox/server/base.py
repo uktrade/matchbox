@@ -461,12 +461,25 @@ class MatchboxDBAdapter(ABC):
     # Data insertion
 
     @abstractmethod
-    def set_resolution_stage(self, path: ResolutionPath, stage: UploadStage) -> None:
-        """Sets upload stage of resolution data.
+    def lock_resolution_data(self, path: ResolutionPath) -> None:
+        """Change resolution upload stage to PROCESSING.
+
+        This will lock uploading data.
 
         Args:
             path: The path of the resolution to target.
-            stage: The stage to set for the resolution.
+        """
+        ...
+
+    @abstractmethod
+    def unlock_resolution_data(self, path: ResolutionPath, complete: bool) -> None:
+        """Change resolution upload stage to READY.
+
+        This will unlock uploading data.
+
+        Args:
+            path: The path of the resolution to target.
+            complete: Whether to label the resolution stage as COMPLETE.
         """
         ...
 

@@ -500,10 +500,9 @@ class MatchboxPostgres(MatchboxDBAdapter):
             )
             if complete:
                 resolution.upload_stage = UploadStage.COMPLETE
-                session.commit()
             else:
                 resolution.upload_stage = UploadStage.READY
-                session.commit()
+            session.commit()
 
     def get_resolution_stage(self, path: ResolutionPath) -> UploadStage:  # noqa: D102
         resolution = Resolutions.from_path(path)

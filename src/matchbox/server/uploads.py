@@ -211,6 +211,9 @@ def process_upload(
             )
 
     except Exception as e:
+        # After failure, signal to clients they can try again
+        backend.unlock_resolution_data(path=resolution_path)
+
         error_context = {
             "upload_id": upload_id,
             "resolution_path": str(resolution_path),
@@ -221,8 +224,6 @@ def process_upload(
             f"Upload processing failed with context: {error_context}", exc_info=True
         )
 
-        # After failure, signal to clients they can try again
-        backend.unlock_resolution_data(path=resolution_path)
         # Attach error to upload ID to inform clients
         tracker.set(upload_id=upload_id, message=str(e))
 

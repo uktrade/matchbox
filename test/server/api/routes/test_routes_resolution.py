@@ -167,8 +167,8 @@ def test_complete_upload_process(
     # Mock retrieval of resolution metadata and data
     mock_backend.get_resolution = Mock(return_value=testkit.model.to_resolution())
     mock_backend.get_model_data = Mock(return_value=testkit.probabilities.to_arrow())
-    # Mock upload status checking - in the beginning, it's ready to receive
-    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.READY)
+    # Mock checking of status after upload
+    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.COMPLETE)
 
     # Step 1: Create resolution
     response = test_client.post(
@@ -197,9 +197,6 @@ def test_complete_upload_process(
     assert mock_s3_upload.called
     assert mock_add_task.called
 
-    # Update upload status mock - now, it's complete
-    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.COMPLETE)
-
     # Step 3: Get upload status
     response = test_client.get(
         f"/collections/{collection}/runs/{run}/resolutions/{testkit.model.name}/data/status",
@@ -226,10 +223,11 @@ def test_set_data_404(
 ) -> None:
     """Test setting data for a non-existent resolution."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_resolution_stage = Mock(
+    # Because we expect error when getting lock, we don't test
+    # that lock was released
+    mock_backend.lock_resolution_data = Mock(
         side_effect=MatchboxResolutionNotFoundError()
     )
-    mock_backend.get_resolution = Mock(side_effect=MatchboxResolutionNotFoundError())
 
     response = test_client.post(
         "/collections/default/runs/1/resolutions/nonexistent-model/data",
@@ -261,7 +259,6 @@ def test_set_data_file_format(
     """Test that file uploaded has Parquet magic bytes."""
     # Setup
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.READY)
 
     # Make request with mocked background task
     response = test_client.post(
@@ -282,6 +279,7 @@ def test_set_data_file_format(
     # Upload doesn't proceed
     mock_s3_upload.assert_not_called()
     mock_add_task.assert_not_called()
+    mock_backend.unlock_resolution_data.assert_called()
 
 
 @patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
@@ -293,18 +291,18 @@ def test_set_data_already_queued(
 ) -> None:
     """Test attempting to upload when status is already queued."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.get_resolution_stage = Mock(return_value=UploadStage.PROCESSING)
+    # Because we expect error when getting lock, we don't test
+    # that lock was released
     mock_backend.lock_resolution_data.side_effect = MatchboxLockError(
         "Upload already being processed."
     )
-    testkit = model_factory(model_type="linker").fake_run()
 
     response = test_client.post(
         "/collections/default/runs/1/resolutions/resolution/data",
         files={
             "file": (
                 "hashes.parquet",
-                table_to_buffer(testkit.probabilities.to_arrow()),
+                table_to_buffer(source_factory().data_hashes),
                 "application/octet-stream",
             ),
         },

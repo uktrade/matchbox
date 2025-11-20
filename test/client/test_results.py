@@ -130,10 +130,10 @@ class TestResolvedMatches:
                 engine=sqlite_in_memory_warehouse,
                 data_keys=["a", "b", "c", "d"],
                 data_tuple=(
-                    {"field_a": "value1x", "field_b": "value1y"},
-                    {"field_a": "value2x", "field_b": "value2y"},
-                    {"field_a": "value3x", "field_b": "value3y"},
-                    {"field_a": "value4x", "field_b": "value4y"},
+                    {"field_a": "1x", "field_b": "1y"},
+                    {"field_a": "2x", "field_b": "2y"},
+                    {"field_a": "3x", "field_b": "3y"},
+                    {"field_a": "4x", "field_b": "4y"},
                 ),
             )
             .write_to_location()
@@ -267,12 +267,13 @@ class TestResolvedMatches:
 
         # Expanded representation
         expected_cluster = pl.DataFrame(
-            data=[
-                ["3", 30, None, None, None],
-                [None, None, "b", "value2x", "value2y"],
-                [None, None, "c", "value3x", "value3y"],
-            ],
-            schema=["foo_key", "foo_field_a", "bar_key", "bar_field_a", "bar_field_b"],
+            {
+                "foo_key": ["3", None, None],
+                "foo_field_a": [30, None, None],
+                "bar_key": [None, "b", "c"],
+                "bar_field_a": [None, "2x", "3x"],
+                "bar_field_b": [None, "2y", "3y"],
+            }
         )
 
         assert_frame_equal(
@@ -286,12 +287,11 @@ class TestResolvedMatches:
 
         # Note: 30 gets cast to a string
         expected_cluster_merged = pl.DataFrame(
-            data=[
-                ["3", None, "30", None],
-                [None, "b", "value2x", "value2y"],
-                [None, "c", "value3x", "value3y"],
-            ],
-            schema=["foo_key", "bar_key", "field_a", "field_b"],
+            [
+                {"foo_key": "3", "bar_key": None, "field_a": "30", "field_b": None},
+                {"foo_key": None, "bar_key": "b", "field_a": "2x", "field_b": "2y"},
+                {"foo_key": None, "bar_key": "c", "field_a": "3x", "field_b": "3y"},
+            ]
         )
 
         assert_frame_equal(

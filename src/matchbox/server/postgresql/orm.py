@@ -377,6 +377,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         path: ResolutionPath,
         res_type: ResolutionType | None = None,
         session: Session | None = None,
+        for_update: bool = False,
     ) -> "Resolutions":
         """Resolves a resolution name to a Resolution object.
 
@@ -384,6 +385,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             path: The path of the resolution to resolve.
             res_type: A resolution type to use as filter.
             session: A session to get the resolution for updates.
+            for_update: Locks the row until updated.
 
         Raises:
             MatchboxResolutionNotFoundError: If the resolution doesn't exist.
@@ -401,6 +403,9 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
         if res_type:
             query = query.where(cls.type == res_type.value)
+
+        if for_update:
+            query = query.with_for_update(nowait=True)
 
         if session:
             resolution = session.execute(query).scalar()

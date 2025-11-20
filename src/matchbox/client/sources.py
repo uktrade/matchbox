@@ -21,7 +21,6 @@ from matchbox.common.dtos import (
     SourceField,
     SourceResolutionName,
     SourceResolutionPath,
-    UploadStage,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import HashMethod, hash_arrow_table, hash_rows
@@ -370,7 +369,10 @@ class Source:
 
     @post_run
     def sync(self) -> None:
-        """Send the source config and hashes to the server."""
+        """Send the source config and hashes to the server.
+
+        Not resistant to race conditions: only one client should call sync at a time.
+        """
         log_prefix = f"Sync {self.name}"
         resolution = self.to_resolution()
         try:
@@ -384,6 +386,8 @@ class Source:
                 existing_resolution.config.parents == resolution.config.parents
             ):
                 logger.info("Updating existing resolution", prefix=log_prefix)
+                # Assumes that resolution hasn't been deleted or made incompatible
+                # Else, server will error
                 _handler.update_resolution(
                     resolution=resolution, path=self.resolution_path
                 )
@@ -392,15 +396,16 @@ class Source:
                     "Update not possible. Deleting existing resolution",
                     prefix=log_prefix,
                 )
+                # Assumes that resolution hasn't been deleted, else server will error
                 _handler.delete_resolution(path=self.resolution_path, certain=True)
                 existing_resolution = None
 
         if not existing_resolution:
             logger.info("Creating new resolution", prefix=log_prefix)
+            # Assumes that resolution hasn't since been re-created.
+            # Else, server will error
             _handler.create_resolution(resolution=resolution, path=self.resolution_path)
-
-        upload_stage = _handler.get_resolution_stage(self.resolution_path)
-        if upload_stage == UploadStage.READY:
+            # Assumes resolution has not been deleted or made incompatible
             logger.info("Setting data for new resolution", prefix=log_prefix)
             _handler.set_data(path=self.resolution_path, data=self.hashes)
 

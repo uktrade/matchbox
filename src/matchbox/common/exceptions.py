@@ -328,3 +328,7 @@ class MatchboxNoJudgements(MatchboxException):
 
 class MatchboxDatabaseWriteError(MatchboxException):
     """Could not be written to the backend DB, likely due to a constraint violation."""
+
+
+class MatchboxLockError(MatchboxException):
+    """Trying to modify locked data."""

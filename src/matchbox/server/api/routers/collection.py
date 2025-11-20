@@ -31,12 +31,12 @@ from matchbox.common.dtos import (
     Run,
     RunID,
     UploadInfo,
-    UploadStage,
 )
 from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
     MatchboxCollectionNotFoundError,
     MatchboxDeletionNotConfirmed,
+    MatchboxLockError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
@@ -588,108 +588,119 @@ def set_data(
     resolution_path = ResolutionPath(
         collection=collection, run=run_id, name=resolution_name
     )
-    # Not resistant to race conditions: currently, multiple requests to set data
-    # could go through
-    if backend.get_resolution_stage(path=resolution_path) != UploadStage.READY:
-        raise HTTPException(
-            status_code=400,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution data {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details="Not expecting upload for this resolution.",
-            ),
-        )
-    resolution = backend.get_resolution(path=resolution_path)
 
-    upload_id = str(uuid.uuid4())
-
-    # Validate file
-    if ".parquet" not in file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution data {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details=f"Expected .parquet file, got {file.filename.split('.')[-1]}",
-            ),
-        )
-
-    # pyarrow validates Parquet magic numbers when loading file
+    # Check if data is locked, lock it if not
     try:
-        pq.ParquetFile(file.file)
-    except ArrowInvalid as e:
+        backend.lock_resolution_data(path=resolution_path)
+    except MatchboxLockError as e:
         raise HTTPException(
             status_code=400,
             detail=ResourceOperationStatus(
                 success=False,
                 target=f"Resolution data {resolution_path}",
                 operation=CRUDOperation.CREATE,
-                details=f"Invalid Parquet file: {str(e)}",
+                details=str(e),
             ),
         ) from e
 
-    # Upload to S3
-    client = backend.settings.datastore.get_client()
-    bucket = backend.settings.datastore.cache_bucket_name
-    key = f"{upload_id}.parquet"
-
-    if resolution.resolution_type == ResolutionType.SOURCE:
-        expected_schema = SCHEMA_INDEX
-    else:
-        expected_schema = SCHEMA_RESULTS
-
-    table = pq.read_table(file.file)
-    if not table.schema.equals(expected_schema):
-        raise MatchboxServerFileError(
-            message=(
-                f"Schema mismatch. Expected:\n{expected_schema}\nGot:\n{table.schema}"
-            )
-        )
+    # Try-except to ensure we release the lock
     try:
-        file_to_s3(client=client, bucket=bucket, key=key, file=file)
-    except MatchboxServerFileError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution data {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details=f"Could not upload file to object storage: {str(e)}",
-            ),
-        ) from e
-
-    # Start background processing
-    backend.set_resolution_stage(path=resolution_path, stage=UploadStage.PROCESSING)
-    match settings.task_runner:
-        case "api":
-            background_tasks.add_task(
-                process_upload,
-                backend=backend,
-                tracker=upload_tracker,
-                s3_client=client,
-                resolution_path=resolution_path,
-                upload_id=upload_id,
-                bucket=bucket,
-                filename=key,
+        # Validate file
+        if ".parquet" not in file.filename:
+            extension = file.filename.split(".")[-1]
+            raise HTTPException(
+                status_code=400,
+                detail=ResourceOperationStatus(
+                    success=False,
+                    target=f"Resolution data {resolution_path}",
+                    operation=CRUDOperation.CREATE,
+                    details=f"Expected .parquet file, got {extension}",
+                ),
             )
-        case "celery":
-            process_upload_celery.delay(
-                resolution_path_json=resolution_path.model_dump_json(),
-                upload_id=upload_id,
-                bucket=bucket,
-                filename=key,
-            )
-        case _:
-            raise RuntimeError("Unsupported task runner.")
 
-    return ResourceOperationStatus(
-        success=True,
-        target=f"Resolution data {resolution_path}",
-        operation=CRUDOperation.CREATE,
-        details=upload_id,
-    )
+        # pyarrow validates Parquet magic numbers when loading file
+        try:
+            pq.ParquetFile(file.file)
+        except ArrowInvalid as e:
+            raise HTTPException(
+                status_code=400,
+                detail=ResourceOperationStatus(
+                    success=False,
+                    target=f"Resolution data {resolution_path}",
+                    operation=CRUDOperation.CREATE,
+                    details=f"Invalid Parquet file: {str(e)}",
+                ),
+            ) from e
+
+        # Get resolution
+        resolution = backend.get_resolution(path=resolution_path)
+
+        # Generate unique upload id
+        upload_id = str(uuid.uuid4())
+
+        # Upload to S3
+        client = backend.settings.datastore.get_client()
+        bucket = backend.settings.datastore.cache_bucket_name
+        key = f"{upload_id}.parquet"
+
+        if resolution.resolution_type == ResolutionType.SOURCE:
+            expected_schema = SCHEMA_INDEX
+        else:
+            expected_schema = SCHEMA_RESULTS
+
+        table = pq.read_table(file.file)
+        if not table.schema.equals(expected_schema):
+            raise MatchboxServerFileError(
+                message=(
+                    "Schema mismatch. "
+                    f"Expected:\n{expected_schema}\nGot:\n{table.schema}"
+                )
+            )
+
+        try:
+            file_to_s3(client=client, bucket=bucket, key=key, file=file)
+        except MatchboxServerFileError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=ResourceOperationStatus(
+                    success=False,
+                    target=f"Resolution data {resolution_path}",
+                    operation=CRUDOperation.CREATE,
+                    details=f"Could not upload file to object storage: {str(e)}",
+                ),
+            ) from e
+
+        match settings.task_runner:
+            case "api":
+                background_tasks.add_task(
+                    process_upload,
+                    backend=backend,
+                    tracker=upload_tracker,
+                    s3_client=client,
+                    resolution_path=resolution_path,
+                    upload_id=upload_id,
+                    bucket=bucket,
+                    filename=key,
+                )
+            case "celery":
+                process_upload_celery.delay(
+                    resolution_path_json=resolution_path.model_dump_json(),
+                    upload_id=upload_id,
+                    bucket=bucket,
+                    filename=key,
+                )
+            case _:
+                raise RuntimeError("Unsupported task runner.")
+
+        return ResourceOperationStatus(
+            success=True,
+            target=f"Resolution data {resolution_path}",
+            operation=CRUDOperation.CREATE,
+            details=upload_id,
+        )
+    except:
+        backend.unlock_resolution_data(path=resolution_path)
+        raise
 
 
 @router.get(

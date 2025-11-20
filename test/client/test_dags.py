@@ -536,7 +536,7 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     assert source_filter_resolved.sources[0].name == "foo"
 
     # Select intermediate model
-    intermediate_res = dag.resolve(model=foo_bar.name)
+    intermediate_res = dag.resolve(node=foo_bar.name)
     assert len(intermediate_res.sources) == 2
     assert set([s.name for s in intermediate_res.sources]) == {foo.name, bar.name}
 

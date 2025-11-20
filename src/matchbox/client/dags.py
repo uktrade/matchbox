@@ -558,19 +558,22 @@ class DAG:
 
     def resolve(
         self,
+        model: ModelResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
         Args:
+            model: Model to resolve within DAG. If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
         """
+        point_of_truth = self.get_model(model) if model else self.final_step
+
         available_sources = {
-            node_name: node
-            for node_name, node in self.nodes.items()
-            if isinstance(node, Source)
+            node_name: self.get_source(node_name)
+            for node_name in point_of_truth.sources
         }
 
         filtered_source_names = list(available_sources.keys())
@@ -598,7 +601,7 @@ class DAG:
                 pl.from_arrow(
                     _handler.query(
                         source=available_sources[source_name].resolution_path,
-                        resolution=self.final_step.resolution_path,
+                        resolution=point_of_truth.resolution_path,
                         return_leaf_id=True,
                     )
                 )

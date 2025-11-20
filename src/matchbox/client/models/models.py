@@ -20,6 +20,7 @@ from matchbox.common.dtos import (
     ModelType,
     Resolution,
     ResolutionType,
+    SourceResolutionName,
     UploadStage,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
@@ -160,6 +161,17 @@ class Model:
             left_query=self.left_query.config,
             right_query=self.right_query.config if self.right_query else None,
         )
+
+    @property
+    def sources(self) -> set[SourceResolutionName]:
+        """Set of source names upstream of this node."""
+        left_input = self.dag.nodes[self.left_query.config.point_of_truth]
+        model_sources = left_input.sources
+        if self.right_query:
+            right_input = self.dag.nodes[self.right_query.config.point_of_truth]
+            model_sources.update(right_input.sources)
+
+        return model_sources
 
     @post_run
     def to_resolution(self) -> Resolution:

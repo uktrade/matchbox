@@ -175,6 +175,11 @@ class Source:
             index_fields=self.index_fields,
         )
 
+    @property
+    def sources(self) -> set[SourceResolutionName]:
+        """Set of source names upstream of this node."""
+        return {self.name}
+
     @post_run
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""

@@ -406,21 +406,29 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     # Make dummy data
     foo = source_factory(name="foo", location_name="sqlite")
     bar = source_factory(name="bar", location_name="postgres")
+    baz = source_factory(name="baz", location_name="postgres")
 
+    # Nothing is merged - that's OK for this test
     foo_data = pa.Table.from_pylist(
         [
-            {"id": 14, "leaf_id": 1, "key": "1"},
+            {"id": 1, "leaf_id": 1, "key": "1"},
             {"id": 2, "leaf_id": 2, "key": "2"},
-            {"id": 356, "leaf_id": 3, "key": "3"},
         ],
         schema=SCHEMA_QUERY_WITH_LEAVES,
     )
 
     bar_data = pa.Table.from_pylist(
         [
-            {"id": 14, "leaf_id": 4, "key": "a"},
-            {"id": 356, "leaf_id": 5, "key": "b"},
-            {"id": 356, "leaf_id": 6, "key": "c"},
+            {"id": 3, "leaf_id": 3, "key": "a"},
+            {"id": 4, "leaf_id": 4, "key": "b"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    baz_data = pa.Table.from_pylist(
+        [
+            {"id": 5, "leaf_id": 5, "key": "x"},
+            {"id": 6, "leaf_id": 6, "key": "y"},
         ],
         schema=SCHEMA_QUERY_WITH_LEAVES,
     )
@@ -444,12 +452,22 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     )
 
     # Build dummy DAG
-    dag.new_run().source(**foo.into_dag()).query().linker(
-        dag.source(**bar.into_dag()).query(),
-        name="root",
+    foo_source = dag.source(**foo.into_dag())
+    bar_source = dag.source(**bar.into_dag())
+    baz_source = dag.source(**baz.into_dag())
+    foo_bar = foo_source.query().linker(
+        bar_source.query(),
+        name="foo_bar",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
+    foo_bar_baz = foo_bar.query(foo, bar).linker(
+        baz_source.query(),
+        name="foo_bar_baz",
+        model_class=DeterministicLinker,
+        model_settings={"comparisons": "l.field=r.field"},
+    )
+    dag.new_run()
 
     # Then the new run
     matchbox_api.get(f"/collections/{dag.name}").mock(
@@ -467,34 +485,36 @@ def test_resolve(matchbox_api: MockRouter) -> None:
                 resolutions={
                     foo.name: foo.fake_run().source.to_resolution(),
                     bar.name: bar.fake_run().source.to_resolution(),
-                    "root": Resolution(
+                    baz.name: baz.fake_run().source.to_resolution(),
+                    foo_bar.name: Resolution(
                         fingerprint=b"mock",
                         truth=1,
                         resolution_type=ResolutionType.MODEL,
-                        config=dag.get_model("root").config,
+                        config=foo_bar.config,
+                    ),
+                    foo_bar_baz.name: Resolution(
+                        fingerprint=b"mock",
+                        truth=1,
+                        resolution_type=ResolutionType.MODEL,
+                        config=foo_bar_baz.config,
                     ),
                 },
             ).model_dump(),
         )
     )
 
+    # Return dummy query data for all sources
     matchbox_api.get(
         "/query", params={"source": "foo", "run_id": 1, "collection": dag.name}
-    ).mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(foo_data).read(),
-        )
-    )
+    ).mock(return_value=Response(200, content=table_to_buffer(foo_data).read()))
 
     matchbox_api.get(
         "/query", params={"source": "bar", "run_id": 1, "collection": dag.name}
-    ).mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(bar_data).read(),
-        )
-    )
+    ).mock(return_value=Response(200, content=table_to_buffer(bar_data).read()))
+
+    matchbox_api.get(
+        "/query", params={"source": "baz", "run_id": 1, "collection": dag.name}
+    ).mock(return_value=Response(200, content=table_to_buffer(baz_data).read()))
 
     # No sources are found
     with pytest.raises(MatchboxResolutionNotFoundError):
@@ -515,28 +535,44 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     assert len(source_filter_resolved.sources) == 1
     assert source_filter_resolved.sources[0].name == "foo"
 
+    # Select intermediate model
+    intermediate_res = dag.resolve(model=foo_bar.name)
+    assert len(intermediate_res.sources) == 2
+    assert set([s.name for s in intermediate_res.sources]) == {foo.name, bar.name}
+
     # With no filter
     full_resolved = dag.resolve()
-    assert len(full_resolved.sources) == 2
-    assert len(full_resolved.query_results) == 2
-    assert [
+    assert len(full_resolved.sources) == 3
+    assert len(full_resolved.query_results) == 3
+    source_names = [
         full_resolved.sources[0].name,
         full_resolved.sources[1].name,
-    ] == ["foo", "bar"]
-    assert_frame_equal(full_resolved.query_results[0], pl.from_arrow(foo_data))
-    assert_frame_equal(full_resolved.query_results[1], pl.from_arrow(bar_data))
+        full_resolved.sources[2].name,
+    ]
+    foo_index = source_names.index("foo")
+    bar_index = source_names.index("bar")
+    baz_index = source_names.index("baz")
+
+    assert_frame_equal(full_resolved.query_results[foo_index], pl.from_arrow(foo_data))
+    assert_frame_equal(full_resolved.query_results[bar_index], pl.from_arrow(bar_data))
+    assert_frame_equal(full_resolved.query_results[baz_index], pl.from_arrow(baz_data))
 
     # Retrieve from reconstituted DAG
-    reconstituted_resolved = DAG("companies").load_default().resolve()
-    assert len(reconstituted_resolved.sources) == 2
-    assert len(reconstituted_resolved.query_results) == 2
-    assert [
-        reconstituted_resolved.sources[0].name,
-        reconstituted_resolved.sources[1].name,
-    ] == ["foo", "bar"]
+    loaded_res = DAG("companies").load_default().resolve()
+    assert len(loaded_res.sources) == 3
+    assert len(loaded_res.query_results) == 3
+    source_names = [
+        loaded_res.sources[0].name,
+        loaded_res.sources[1].name,
+        loaded_res.sources[2].name,
+    ]
+    foo_index = source_names.index("foo")
+    bar_index = source_names.index("bar")
+    baz_index = source_names.index("baz")
 
-    assert_frame_equal(reconstituted_resolved.query_results[0], pl.from_arrow(foo_data))
-    assert_frame_equal(reconstituted_resolved.query_results[1], pl.from_arrow(bar_data))
+    assert_frame_equal(loaded_res.query_results[foo_index], pl.from_arrow(foo_data))
+    assert_frame_equal(loaded_res.query_results[bar_index], pl.from_arrow(bar_data))
+    assert_frame_equal(loaded_res.query_results[baz_index], pl.from_arrow(baz_data))
 
 
 def test_lookup_key_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:

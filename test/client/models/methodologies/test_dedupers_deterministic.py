@@ -11,7 +11,7 @@ from matchbox.client.models import Model
 from matchbox.client.models.dedupers.base import Deduper
 from matchbox.client.models.dedupers.naive import NaiveDeduper, NaiveSettings
 from matchbox.client.queries import Query
-from matchbox.client.results import Results
+from matchbox.client.results import ModelResults
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.sources import (
     SourceTestkit,
@@ -102,7 +102,7 @@ def test_no_deduplication(
         model_settings=configure_deduper(source_testkit),
         left_query=Query(source_testkit.source, dag=linked.dag),
     )
-    results: Results = deduper.run()
+    results: ModelResults = deduper.run()
 
     # Validate results against ground truth
     identical, report = linked.diff_results(
@@ -155,7 +155,7 @@ def test_exact_duplicate_deduplication(
         model_settings=configure_deduper(source),
         left_query=Query(source.source, dag=linked.dag),
     )
-    results: Results = deduper.run()
+    results: ModelResults = deduper.run()
 
     # Validate results against ground truth
     identical, report = linked.diff_results(

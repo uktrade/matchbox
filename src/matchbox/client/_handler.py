@@ -68,7 +68,7 @@ from matchbox.common.exceptions import (
 from matchbox.common.hash import hash_to_base64
 from matchbox.common.logging import logger
 
-URLEncodeHandledType = str | int | float | bytes
+URLEncodeHandledType = str | int | float | bytes | StrEnum
 
 
 # Retry configuration for HTTP operations
@@ -88,6 +88,7 @@ def encode_param_value(
 ) -> str | list[str]:
     if isinstance(v, str):
         return v
+    # Also covers bool (subclass of int)
     if isinstance(v, StrEnum | int | float):
         return str(v)
     elif isinstance(v, bytes):

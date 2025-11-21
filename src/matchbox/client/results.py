@@ -9,6 +9,7 @@ from pydantic import ConfigDict
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.hash import IntMap
+from matchbox.common.logging import logger
 from matchbox.common.transform import DisjointSet, to_clusters
 
 T = TypeVar("T", bound=Hashable)
@@ -40,7 +41,13 @@ class ModelResults:
         left_root_leaf: pl.DataFrame | None = None,
         right_root_leaf: pl.DataFrame | None = None,
     ) -> None:
-        """Initialises and validates results."""
+        """Initialises and validates results.
+
+        Args:
+            probabilities: dataframe with SCHEMA_RESULTS
+            left_root_leaf: optional dataframe with columns: id, leaf_id
+            right_root_leaf: optional dataframe with columns: id, leaf_id
+        """
         self.left_root_leaf = None
         self.right_root_leaf = None
 
@@ -62,11 +69,30 @@ class ModelResults:
         if probabilities.height == 0:
             probabilities = pl.DataFrame(schema=pl.Schema(SCHEMA_RESULTS))
 
+        unique_probabilities = (
+            probabilities.with_columns(
+                pl.concat_list(
+                    [pl.col("left_id").cast(pl.Utf8), pl.col("right_id").cast(pl.Utf8)]
+                )
+                .list.sort()
+                .list.join("_")
+                .alias("sorted_ids")
+            )
+            .sort("probability")  # sort so smallest probability comes first
+            .unique(
+                subset=["sorted_ids"], keep="first"
+            )  # keep first occurrence after sorting
+        ).drop("sorted_ids")
+        if len(probabilities) != len(unique_probabilities):
+            logger.warning(
+                "Duplicate pairs! Keeping only pairs with lowest probability."
+            )
+
         # Process probability field if it contains floating-point or decimal values
-        probability_type = probabilities["probability"].dtype
+        probability_type = unique_probabilities["probability"].dtype
         if probability_type.is_float() or probability_type.is_decimal():
             probability_uint8 = pl.Series(
-                probabilities.select(
+                unique_probabilities.select(
                     pl.col("probability").mul(100).round(0).cast(pl.UInt8)
                 )
             )
@@ -78,12 +104,12 @@ class ModelResults:
                 p_min = probability_uint8.min()
                 raise ValueError(f"Probability range misconfigured: [{p_min}, {p_max}]")
 
-            probabilities = probabilities.replace_column(
-                probabilities.get_column_index("probability"), probability_uint8
+            unique_probabilities = unique_probabilities.replace_column(
+                unique_probabilities.get_column_index("probability"), probability_uint8
             )
 
         # need schema in format recognised by polars
-        self.probabilities = probabilities.cast(pl.Schema(SCHEMA_RESULTS))
+        self.probabilities = unique_probabilities.cast(pl.Schema(SCHEMA_RESULTS))
 
     @property
     def clusters(self) -> pl.DataFrame:

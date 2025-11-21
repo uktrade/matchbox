@@ -995,7 +995,7 @@ def test_dag_load_server_run(matchbox_api: MockRouter) -> None:
 def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     """Test that _load_run handles nodes with complex dependencies.
 
-    In particular, tests for DAGS where nodes have the same dependency count but
+    In particular, tests for DAGs where nodes have the same dependency count but
     inter-dependencies between them.
     """
     test_dag = TestkitDAG().dag
@@ -1003,6 +1003,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     linked_testkit = linked_sources_factory(dag=test_dag)
     crn_testkit = linked_testkit.sources["crn"].fake_run()
     dh_testkit = linked_testkit.sources["dh"].fake_run()
+    cdms_testkit = linked_testkit.sources["cdms"].fake_run()
 
     # model_inner depends on 2 sources (count=2)
     model_inner_testkit = model_factory(
@@ -1018,7 +1019,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     model_outer_testkit = model_factory(
         name="model_outer",
         left_testkit=model_inner_testkit,  # depends on model_inner!
-        right_testkit=crn_testkit,
+        right_testkit=cdms_testkit,
         true_entities=linked_testkit.true_entities,
         dag=test_dag,
     ).fake_run()
@@ -1026,6 +1027,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     # Add to original DAG
     test_dag.source(**crn_testkit.into_dag())
     test_dag.source(**dh_testkit.into_dag())
+    test_dag.source(**cdms_testkit.into_dag())
     test_dag.model(**model_inner_testkit.into_dag())
     test_dag.model(**model_outer_testkit.into_dag())
 
@@ -1034,6 +1036,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
         model_outer_testkit.name: model_outer_testkit.model.to_resolution(),  # 2 deps
         crn_testkit.name: crn_testkit.source.to_resolution(),  # 0 deps
         dh_testkit.name: dh_testkit.source.to_resolution(),  # 0 deps
+        cdms_testkit.name: cdms_testkit.source.to_resolution(),  # 0 deps
         model_inner_testkit.name: model_inner_testkit.model.to_resolution(),  # 2 deps
     }
 

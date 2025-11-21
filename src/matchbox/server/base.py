@@ -563,6 +563,14 @@ class MatchboxDBAdapter(ABC):
         """
         ...
 
+    @abstractmethod
+    def delete_orphans(self) -> None:
+        """Deletes orphan clusters.
+
+        Orphan clusters are clusters recorded in the Clusters table but that are
+        not referenced in other tables.
+        """
+
     # User management
 
     @abstractmethod

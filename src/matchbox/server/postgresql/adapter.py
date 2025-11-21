@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 import polars as pl
 from pyarrow import Table
 from pydantic import BaseModel
-from sqlalchemy import and_, bindparam, delete, func, or_, select, update
+from sqlalchemy import and_, bindparam, delete, func, or_, select, union_all, update
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -574,6 +574,47 @@ class MatchboxPostgres(MatchboxDBAdapter):
             snapshot=snapshot,
             batch_size=self.settings.batch_size,
         )
+
+    def delete_orphans(self) -> None:  # noqa: D102
+        with MBDB.get_session() as session:
+            # Get all cluster ids in related tables
+            union_all_cte = union_all(
+                select(EvalJudgements.endorsed_cluster_id.label("cluster_id")),
+                select(EvalJudgements.shown_cluster_id.label("cluster_id")),
+                select(ClusterSourceKey.cluster_id),
+                select(Probabilities.cluster_id),
+                select(Results.left_id.label("cluster_id")),
+                select(Results.right_id.label("cluster_id")),
+                select(Contains.root.label("cluster_id")),
+                select(Contains.leaf.label("cluster_id")),
+            ).cte("union_all_cte")
+
+            # Deduplicate only once
+            not_orphans = (
+                select(union_all_cte.c.cluster_id).distinct().cte("not_orphans")
+            )
+
+            # Return clusters not in related tables
+            orphans = (
+                select(Clusters.cluster_id)
+                .select_from(
+                    Clusters.outerjoin(
+                        not_orphans, Clusters.cluster_id == not_orphans.c.cluster_id
+                    )
+                )
+                .where(not_orphans.c.cluster_id.is_(None))
+            )
+
+            num_orphans = session.execute(orphans).scalar_one()
+            logger.info(f"Identified {num_orphans} orphans", prefix="Delete orphans")
+            # Delete orphans
+
+            deletion = session.execute(
+                delete(Clusters).where(Clusters.cluster_id.in_(orphans))
+            )
+            session.commit()
+
+            logger.info(f"Deleted {deletion.rowcount} orphans", prefix="Delete orphans")
 
     # User management
 

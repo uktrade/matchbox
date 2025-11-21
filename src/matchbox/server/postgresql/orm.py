@@ -1,7 +1,7 @@
 """ORM classes for the Matchbox PostgreSQL database."""
 
 import json
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from sqlalchemy import (
     BIGINT,
@@ -9,7 +9,6 @@ from sqlalchemy import (
     INTEGER,
     SMALLINT,
     CheckConstraint,
-    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -21,7 +20,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
-from sqlalchemy.orm import Session, relationship, selectinload
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
 from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import (
@@ -54,11 +53,13 @@ class Collections(CountMixin, MBDB.MatchboxBase):
 
     __tablename__ = "collections"
 
-    collection_id = Column(BIGINT, primary_key=True, autoincrement=True)
-    name = Column(TEXT, nullable=False)
+    collection_id: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True
+    )
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     # Relationships
-    runs = relationship("Runs", back_populates="collection")
+    runs: Mapped[list["Runs"]] = relationship(back_populates="collection")
 
     # Constraints
     __table_args__ = (UniqueConstraint("name", name="collections_name_key"),)
@@ -109,18 +110,18 @@ class Runs(CountMixin, MBDB.MatchboxBase):
 
     __tablename__ = "runs"
 
-    run_id = Column(BIGINT, primary_key=True, autoincrement=True)
-    collection_id = Column(
+    run_id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    collection_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("collections.collection_id", ondelete="CASCADE"),
         nullable=False,
     )
-    is_mutable = Column(BOOLEAN, default=False)
-    is_default = Column(BOOLEAN, default=False)
+    is_mutable: Mapped[bool] = mapped_column(BOOLEAN, default=False, nullable=True)
+    is_default: Mapped[bool] = mapped_column(BOOLEAN, default=False, nullable=True)
 
     # Relationships
-    collection = relationship("Collections", back_populates="runs")
-    resolutions = relationship("Resolutions", back_populates="run")
+    collection: Mapped["Collections"] = relationship(back_populates="runs")
+    resolutions: Mapped[list["Resolutions"]] = relationship(back_populates="run")
 
     # Constraints
     __table_args__ = (
@@ -201,18 +202,18 @@ class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "resolution_from"
 
     # Columns
-    parent = Column(
+    parent: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    child = Column(
+    child: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    level = Column(INTEGER, nullable=False)
-    truth_cache = Column(SMALLINT, nullable=True)
+    level: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    truth_cache: Mapped[int | None] = mapped_column(SMALLINT, nullable=True)
 
     # Constraints
     __table_args__ = (
@@ -230,46 +231,45 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "resolutions"
 
     # Columns
-    resolution_id = Column(BIGINT, primary_key=True, autoincrement=True)
-    run_id = Column(
+    resolution_id: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True
+    )
+    run_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("runs.run_id", ondelete="CASCADE"), nullable=False
     )
-    upload_stage = Column(
+    upload_stage: Mapped[UploadStage] = mapped_column(
         Enum(UploadStage, native_enum=True, name="upload_stages", schema="mb"),
         nullable=False,
         default=UploadStage.READY,
     )
-    name = Column(TEXT, nullable=False)
-    description = Column(TEXT, nullable=True)
-    type = Column(TEXT, nullable=False)
-    fingerprint = Column(BYTEA, nullable=False)
-    truth = Column(SMALLINT, nullable=True)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    description: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    type: Mapped[str] = mapped_column(TEXT, nullable=False)
+    fingerprint: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    truth: Mapped[int | None] = mapped_column(SMALLINT, nullable=True)
 
     # Relationships
-    source_config = relationship(
-        "SourceConfigs", back_populates="source_resolution", uselist=False
+    source_config: Mapped[Optional["SourceConfigs"]] = relationship(
+        back_populates="source_resolution", uselist=False
     )
-    model_config = relationship(
-        "ModelConfigs", back_populates="model_resolution", uselist=False
+    model_config: Mapped[Optional["ModelConfigs"]] = relationship(
+        back_populates="model_resolution", uselist=False
     )
-    probabilities = relationship(
-        "Probabilities",
+    probabilities: Mapped[list["Probabilities"]] = relationship(
         back_populates="proposed_by",
         passive_deletes=True,
     )
-    results = relationship(
-        "Results",
+    results: Mapped[list["Results"]] = relationship(
         back_populates="proposed_by",
         passive_deletes=True,
     )
-    children = relationship(
-        "Resolutions",
+    children: Mapped[list["Resolutions"]] = relationship(
         secondary=ResolutionFrom.__table__,
         primaryjoin="Resolutions.resolution_id == ResolutionFrom.parent",
         secondaryjoin="Resolutions.resolution_id == ResolutionFrom.child",
         backref="parents",
     )
-    run = relationship("Runs", back_populates="resolutions")
+    run: Mapped["Runs"] = relationship(back_populates="resolutions")
 
     # Constraints
     __table_args__ = (
@@ -529,8 +529,12 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
         # Transitive closure
         ancestors = (
-            session.query(ResolutionFrom)
-            .filter(ResolutionFrom.child == parent.resolution_id)
+            session.execute(
+                select(ResolutionFrom).where(
+                    ResolutionFrom.child == parent.resolution_id
+                )
+            )
+            .scalars()
             .all()
         )
 
@@ -550,9 +554,9 @@ class PKSpace(MBDB.MatchboxBase):
 
     __tablename__ = "pk_space"
 
-    id = Column(BIGINT, primary_key=True)
-    next_cluster_id = Column(BIGINT, nullable=False)
-    next_cluster_keys_id = Column(BIGINT, nullable=False)
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    next_cluster_id: Mapped[int] = mapped_column(BIGINT, nullable=False)
+    next_cluster_keys_id: Mapped[int] = mapped_column(BIGINT, nullable=False)
 
     @classmethod
     def initialise(cls) -> None:
@@ -602,20 +606,19 @@ class SourceFields(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "source_fields"
 
     # Columns
-    field_id = Column(BIGINT, primary_key=True)
-    source_config_id = Column(
+    field_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    source_config_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("source_configs.source_config_id", ondelete="CASCADE"),
         nullable=False,
     )
-    index = Column(INTEGER, nullable=False)
-    name = Column(TEXT, nullable=False)
-    type = Column(TEXT, nullable=False)
-    is_key = Column(BOOLEAN, nullable=False)
+    index: Mapped[int] = mapped_column(INTEGER, nullable=False)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    type: Mapped[str] = mapped_column(TEXT, nullable=False)
+    is_key: Mapped[bool] = mapped_column(BOOLEAN, nullable=False)
 
     # Relationships
-    source_config = relationship(
-        "SourceConfigs",
+    source_config: Mapped["SourceConfigs"] = relationship(
         back_populates="fields",
         foreign_keys=[source_config_id],
     )
@@ -639,20 +642,20 @@ class ClusterSourceKey(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "cluster_keys"
 
     # Columns
-    key_id = Column(BIGINT, primary_key=True)
-    cluster_id = Column(
+    key_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
-    source_config_id = Column(
+    source_config_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("source_configs.source_config_id", ondelete="CASCADE"),
         nullable=False,
     )
-    key = Column(TEXT, nullable=False)
+    key: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     # Relationships
-    cluster = relationship("Clusters", back_populates="keys")
-    source_config = relationship("SourceConfigs", back_populates="cluster_keys")
+    cluster: Mapped["Clusters"] = relationship(back_populates="keys")
+    source_config: Mapped["SourceConfigs"] = relationship(back_populates="cluster_keys")
 
     # Constraints and indices
     __table_args__ = (
@@ -669,15 +672,17 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "source_configs"
 
     # Columns
-    source_config_id = Column(BIGINT, Identity(start=1), primary_key=True)
-    resolution_id = Column(
+    source_config_id: Mapped[int] = mapped_column(
+        BIGINT, Identity(start=1), primary_key=True
+    )
+    resolution_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         nullable=False,
     )
-    location_type = Column(TEXT, nullable=False)
-    location_name = Column(TEXT, nullable=False)
-    extract_transform = Column(TEXT, nullable=False)
+    location_type: Mapped[str] = mapped_column(TEXT, nullable=False)
+    location_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    extract_transform: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     @property
     def name(self) -> str:
@@ -685,15 +690,15 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
         return self.source_resolution.name
 
     # Relationships
-    source_resolution = relationship("Resolutions", back_populates="source_config")
-    fields = relationship(
-        "SourceFields",
+    source_resolution: Mapped["Resolutions"] = relationship(
+        back_populates="source_config"
+    )
+    fields: Mapped[list["SourceFields"]] = relationship(
         back_populates="source_config",
         passive_deletes=True,
         cascade="all, delete-orphan",
     )
-    key_field = relationship(
-        "SourceFields",
+    key_field: Mapped[Optional["SourceFields"]] = relationship(
         primaryjoin=(
             "and_(SourceConfigs.source_config_id == SourceFields.source_config_id, "
             "SourceFields.is_key == True)"
@@ -701,8 +706,7 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
         viewonly=True,
         uselist=False,
     )
-    index_fields = relationship(
-        "SourceFields",
+    index_fields: Mapped[list["SourceFields"]] = relationship(
         primaryjoin=(
             "and_(SourceConfigs.source_config_id == SourceFields.source_config_id, "
             "SourceFields.is_key == False)"
@@ -711,13 +715,11 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
         order_by="SourceFields.index",
         collection_class=list,
     )
-    cluster_keys = relationship(
-        "ClusterSourceKey",
+    cluster_keys: Mapped[list["ClusterSourceKey"]] = relationship(
         back_populates="source_config",
         passive_deletes=True,
     )
-    clusters = relationship(
-        "Clusters",
+    clusters: Mapped[list["Clusters"]] = relationship(
         secondary=ClusterSourceKey.__table__,
         primaryjoin=(
             "SourceConfigs.source_config_id == ClusterSourceKey.source_config_id"
@@ -752,7 +754,7 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
     def list_all(cls) -> list["SourceConfigs"]:
         """Returns all source_configs in the database."""
         with MBDB.get_session() as session:
-            return session.query(cls).all()
+            return session.execute(select(cls)).scalars().all()
 
     @classmethod
     def from_dto(
@@ -806,16 +808,18 @@ class ModelConfigs(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "model_configs"
 
     # Columns
-    model_config_id = Column(BIGINT, Identity(start=1), primary_key=True)
-    resolution_id = Column(
+    model_config_id: Mapped[int] = mapped_column(
+        BIGINT, Identity(start=1), primary_key=True
+    )
+    resolution_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         nullable=False,
     )
-    model_class = Column(TEXT, nullable=False)
-    model_settings = Column(JSONB, nullable=False)
-    left_query = Column(JSONB, nullable=False)
-    right_query = Column(JSONB, nullable=True)
+    model_class: Mapped[str] = mapped_column(TEXT, nullable=False)
+    model_settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    left_query: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    right_query: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     @property
     def name(self) -> str:
@@ -823,13 +827,15 @@ class ModelConfigs(CountMixin, MBDB.MatchboxBase):
         return self.model_resolution.name
 
     # Relationships
-    model_resolution = relationship("Resolutions", back_populates="model_config")
+    model_resolution: Mapped["Resolutions"] = relationship(
+        back_populates="model_config"
+    )
 
     @classmethod
     def list_all(cls) -> list["SourceConfigs"]:
         """Returns all model_configs in the database."""
         with MBDB.get_session() as session:
-            return session.query(cls).all()
+            return session.execute(select(cls)).scalars().all()
 
     @classmethod
     def from_dto(
@@ -864,10 +870,10 @@ class Contains(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "contains"
 
     # Columns
-    root = Column(
+    root: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
-    leaf = Column(
+    leaf: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
 
@@ -885,30 +891,26 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "clusters"
 
     # Columns
-    cluster_id = Column(BIGINT, primary_key=True)
-    cluster_hash = Column(BYTEA, nullable=False)
+    cluster_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    cluster_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
 
     # Relationships
-    keys = relationship(
-        "ClusterSourceKey",
+    keys: Mapped[list["ClusterSourceKey"]] = relationship(
         back_populates="cluster",
         passive_deletes=True,
     )
-    probabilities = relationship(
-        "Probabilities",
+    probabilities: Mapped[list["Probabilities"]] = relationship(
         back_populates="proposes",
         passive_deletes=True,
     )
-    leaves = relationship(
-        "Clusters",
+    leaves: Mapped[list["Clusters"]] = relationship(
         secondary=Contains.__table__,
         primaryjoin="Clusters.cluster_id == Contains.root",
         secondaryjoin="Clusters.cluster_id == Contains.leaf",
         backref="roots",
     )
     # Add relationship to SourceConfigs through ClusterSourceKey
-    source_configs = relationship(
-        "SourceConfigs",
+    source_configs: Mapped[list["SourceConfigs"]] = relationship(
         secondary=ClusterSourceKey.__table__,
         primaryjoin="Clusters.cluster_id == ClusterSourceKey.cluster_id",
         secondaryjoin=(
@@ -927,10 +929,10 @@ class Users(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "users"
 
     # Columns
-    user_id = Column(BIGINT, primary_key=True)
-    name = Column(TEXT, nullable=False)
+    user_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
 
-    judgements = relationship("EvalJudgements", back_populates="user")
+    judgements: Mapped[list["EvalJudgements"]] = relationship(back_populates="user")
 
     __table_args__ = (UniqueConstraint("name", name="user_name_unique"),)
 
@@ -941,20 +943,20 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "eval_judgements"
 
     # Columns
-    judgement_id = Column(BIGINT, primary_key=True)
-    user_id = Column(
+    judgement_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
-    endorsed_cluster_id = Column(
+    endorsed_cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
-    shown_cluster_id = Column(
+    shown_cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
-    timestamp = Column(DateTime(timezone=True), nullable=False)
+    timestamp: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Relationships
-    user = relationship("Users", back_populates="judgements")
+    user: Mapped["Users"] = relationship(back_populates="judgements")
 
 
 class Probabilities(CountMixin, MBDB.MatchboxBase):
@@ -963,19 +965,19 @@ class Probabilities(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "probabilities"
 
     # Columns
-    resolution_id = Column(
+    resolution_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    cluster_id = Column(
+    cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
     )
-    probability = Column(SMALLINT, nullable=False)
+    probability: Mapped[int] = mapped_column(SMALLINT, nullable=False)
 
     # Relationships
-    proposed_by = relationship("Resolutions", back_populates="probabilities")
-    proposes = relationship("Clusters", back_populates="probabilities")
+    proposed_by: Mapped["Resolutions"] = relationship(back_populates="probabilities")
+    proposes: Mapped["Clusters"] = relationship(back_populates="probabilities")
 
     # Constraints
     __table_args__ = (
@@ -993,22 +995,22 @@ class Results(CountMixin, MBDB.MatchboxBase):
     __tablename__ = "results"
 
     # Columns
-    result_id = Column(BIGINT, primary_key=True, autoincrement=True)
-    resolution_id = Column(
+    result_id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    resolution_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         nullable=False,
     )
-    left_id = Column(
+    left_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
-    right_id = Column(
+    right_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
-    probability = Column(SMALLINT, nullable=False)
+    probability: Mapped[int] = mapped_column(SMALLINT, nullable=False)
 
     # Relationships
-    proposed_by = relationship("Resolutions", back_populates="results")
+    proposed_by: Mapped["Resolutions"] = relationship(back_populates="results")
 
     # Constraints
     __table_args__ = (

@@ -246,7 +246,7 @@ class TestE2EPipelineBuilder:
         assert len(matches[source_a.name]) >= 1
 
         # Can retrieve whole lookup
-        dag1_lookup = dag.extract_lookup()
+        dag1_lookup = dag.resolve().as_lookup()
 
         # Set as new default
         dag.set_default()
@@ -275,8 +275,8 @@ class TestE2EPipelineBuilder:
 
         # The lookup is identical
         assert_frame_equal(
-            pl.from_arrow(rerun_dag.extract_lookup()),
-            pl.from_arrow(dag1_lookup),
+            rerun_dag.resolve().as_lookup(),
+            dag1_lookup,
             check_column_order=False,
             check_row_order=False,
         )

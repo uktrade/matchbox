@@ -23,7 +23,7 @@ from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.models.models import Model
 from matchbox.client.queries import Query
-from matchbox.client.results import Results
+from matchbox.client.results import ModelResults
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.dtos import (
     ModelResolutionName,
@@ -630,7 +630,7 @@ class ModelTestkit(BaseModel):
 
     def fake_run(self) -> Self:
         """Set model results without running model."""
-        self.model.results = Results(probabilities=self.probabilities)
+        self.model.results = ModelResults(probabilities=self.probabilities)
 
         return self
 

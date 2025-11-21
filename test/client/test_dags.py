@@ -14,7 +14,7 @@ from matchbox.client.models import Model
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.sources import Source
-from matchbox.common.arrow import SCHEMA_QUERY, table_to_buffer
+from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES, table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
@@ -38,8 +38,14 @@ from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
-    source_from_tuple,
 )
+
+
+def test_dag_list(matchbox_api: MockRouter) -> None:
+    """Can retrieve list of DAG names."""
+    dummy_names = ["companies", "contacts"]
+    matchbox_api.get("/collections").mock(return_value=Response(200, json=dummy_names))
+    assert DAG.list_all() == ["companies", "contacts"]
 
 
 @patch.object(Source, "run")
@@ -402,27 +408,37 @@ def test_dag_draw(sqlite_warehouse: Engine) -> None:
 # Lookups
 
 
-def test_extract_lookup(
-    sqlite_warehouse: Engine,
-    sqlite_in_memory_warehouse: Engine,
-    matchbox_api: MockRouter,
-) -> None:
-    """Entire lookup can be extracted from DAG."""
+def test_resolve(matchbox_api: MockRouter) -> None:
+    """Resolved data can be generated from DAG."""
     # Make dummy data
-    foo = source_from_tuple(
-        name="foo",
-        location_name="sqlite",
-        engine=sqlite_warehouse,
-        data_keys=[1, 2, 3],
-        data_tuple=({"col": 0}, {"col": 1}, {"col": 2}),
-    ).write_to_location()
-    bar = source_from_tuple(
-        name="bar",
-        location_name="sqlite_memory",
-        engine=sqlite_in_memory_warehouse,
-        data_keys=["a", "b", "c"],
-        data_tuple=({"col": 10}, {"col": 11}, {"col": 12}),
-    ).write_to_location()
+    foo = source_factory(name="foo", location_name="sqlite")
+    bar = source_factory(name="bar", location_name="postgres")
+    baz = source_factory(name="baz", location_name="postgres")
+
+    # Nothing is merged - that's OK for this test
+    foo_data = pa.Table.from_pylist(
+        [
+            {"id": 1, "leaf_id": 1, "key": "1"},
+            {"id": 2, "leaf_id": 2, "key": "2"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    bar_data = pa.Table.from_pylist(
+        [
+            {"id": 3, "leaf_id": 3, "key": "a"},
+            {"id": 4, "leaf_id": 4, "key": "b"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    baz_data = pa.Table.from_pylist(
+        [
+            {"id": 5, "leaf_id": 5, "key": "x"},
+            {"id": 6, "leaf_id": 6, "key": "y"},
+        ],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
 
     dag = DAG("companies")
 
@@ -431,11 +447,7 @@ def test_extract_lookup(
     matchbox_api.get(f"/collections/{dag.name}").mock(
         return_value=Response(
             200,
-            json=Collection(
-                name=dag.name,
-                runs=[],
-                default_run=None,
-            ).model_dump(),
+            json=Collection(name=dag.name, runs=[], default_run=None).model_dump(),
         )
     )
 
@@ -447,22 +459,28 @@ def test_extract_lookup(
     )
 
     # Build dummy DAG
-    dag.new_run().source(**foo.into_dag()).query().linker(
-        dag.source(**bar.into_dag()).query(),
-        name="root",
+    foo_source = dag.source(**foo.into_dag())
+    bar_source = dag.source(**bar.into_dag())
+    baz_source = dag.source(**baz.into_dag())
+    foo_bar = foo_source.query().linker(
+        bar_source.query(),
+        name="foo_bar",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
+    foo_bar_baz = foo_bar.query(foo, bar).linker(
+        baz_source.query(),
+        name="foo_bar_baz",
+        model_class=DeterministicLinker,
+        model_settings={"comparisons": "l.field=r.field"},
+    )
+    dag.new_run()
 
     # Then the new run
     matchbox_api.get(f"/collections/{dag.name}").mock(
         return_value=Response(
             200,
-            json=Collection(
-                name=dag.name,
-                runs=[1],
-                default_run=1,
-            ).model_dump(),
+            json=Collection(name=dag.name, runs=[1], default_run=1).model_dump(),
         )
     )
 
@@ -474,128 +492,94 @@ def test_extract_lookup(
                 resolutions={
                     foo.name: foo.fake_run().source.to_resolution(),
                     bar.name: bar.fake_run().source.to_resolution(),
-                    "root": Resolution(
+                    baz.name: baz.fake_run().source.to_resolution(),
+                    foo_bar.name: Resolution(
                         fingerprint=b"mock",
                         truth=1,
                         resolution_type=ResolutionType.MODEL,
-                        config=dag.get_model("root").config,
+                        config=foo_bar.config,
+                    ),
+                    foo_bar_baz.name: Resolution(
+                        fingerprint=b"mock",
+                        truth=1,
+                        resolution_type=ResolutionType.MODEL,
+                        config=foo_bar_baz.config,
                     ),
                 },
             ).model_dump(),
         )
     )
 
+    # Return dummy query data for all sources
     matchbox_api.get(
         "/query", params={"source": "foo", "run_id": 1, "collection": dag.name}
-    ).mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"id": 1, "key": "1"},
-                        {"id": 2, "key": "2"},
-                        {"id": 3, "key": "3"},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
-        )
-    )
+    ).mock(return_value=Response(200, content=table_to_buffer(foo_data).read()))
 
     matchbox_api.get(
         "/query", params={"source": "bar", "run_id": 1, "collection": dag.name}
-    ).mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"id": 1, "key": "a"},
-                        {"id": 3, "key": "b"},
-                        {"id": 3, "key": "c"},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
-        )
-    )
+    ).mock(return_value=Response(200, content=table_to_buffer(bar_data).read()))
 
-    # Because of FULL OUTER JOIN, we expect some values to be null, and some explosions
-    expected_foo_bar_mapping = pl.DataFrame(
-        [
-            {"id": 1, "foo_key": "1", "bar_key": "a"},
-            {"id": 2, "foo_key": "2", "bar_key": None},
-            {"id": 3, "foo_key": "3", "bar_key": "b"},
-            {"id": 3, "foo_key": "3", "bar_key": "c"},
-        ]
-    )
+    matchbox_api.get(
+        "/query", params={"source": "baz", "run_id": 1, "collection": dag.name}
+    ).mock(return_value=Response(200, content=table_to_buffer(baz_data).read()))
 
-    # When selecting single source, we won't explode
-    expected_foo_mapping = expected_foo_bar_mapping.select(["id", "foo_key"]).unique()
-
-    # Case 0: No sources are found
+    # No sources are found
     with pytest.raises(MatchboxResolutionNotFoundError):
-        dag.extract_lookup(source_filter=["nonexistent"])
+        dag.resolve(source_filter=["nonexistent"])
 
     with pytest.raises(MatchboxResolutionNotFoundError):
-        dag.extract_lookup(location_names=["nonexistent"])
+        dag.resolve(location_names=["nonexistent"])
 
-    # Case 1: Retrieve single table
     # With URI filter
-    foo_mapping = dag.extract_lookup(location_names=["sqlite"])
+    uri_filter_resolved = dag.resolve(location_names=["sqlite"])
 
-    assert_frame_equal(
-        pl.from_arrow(foo_mapping),
-        expected_foo_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
+    assert len(uri_filter_resolved.sources) == 1
+    assert uri_filter_resolved.sources[0].name == "foo"
 
     # With source filter
-    foo_mapping = dag.extract_lookup(source_filter="foo")
+    source_filter_resolved = dag.resolve(source_filter="foo")
 
-    assert_frame_equal(
-        pl.from_arrow(foo_mapping),
-        expected_foo_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
+    assert len(source_filter_resolved.sources) == 1
+    assert source_filter_resolved.sources[0].name == "foo"
 
-    # With both filters
-    foo_mapping = dag.extract_lookup(source_filter="foo", location_names="sqlite")
+    # Select intermediate model
+    intermediate_res = dag.resolve(node=foo_bar.name)
+    assert len(intermediate_res.sources) == 2
+    assert set([s.name for s in intermediate_res.sources]) == {foo.name, bar.name}
 
-    assert_frame_equal(
-        pl.from_arrow(foo_mapping),
-        expected_foo_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
-
-    # Case 2: Retrieve multiple tables
     # With no filter
-    foo_bar_mapping = dag.extract_lookup()
+    full_resolved = dag.resolve()
+    assert len(full_resolved.sources) == 3
+    assert len(full_resolved.query_results) == 3
+    source_names = [
+        full_resolved.sources[0].name,
+        full_resolved.sources[1].name,
+        full_resolved.sources[2].name,
+    ]
+    foo_index = source_names.index("foo")
+    bar_index = source_names.index("bar")
+    baz_index = source_names.index("baz")
 
-    assert_frame_equal(
-        pl.from_arrow(foo_bar_mapping),
-        expected_foo_bar_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
+    assert_frame_equal(full_resolved.query_results[foo_index], pl.from_arrow(foo_data))
+    assert_frame_equal(full_resolved.query_results[bar_index], pl.from_arrow(bar_data))
+    assert_frame_equal(full_resolved.query_results[baz_index], pl.from_arrow(baz_data))
 
-    # With source filter
-    foo_bar_mapping = dag.extract_lookup(source_filter=["foo", "bar"])
+    # Retrieve from reconstituted DAG
+    loaded_res = DAG("companies").load_default().resolve()
+    assert len(loaded_res.sources) == 3
+    assert len(loaded_res.query_results) == 3
+    source_names = [
+        loaded_res.sources[0].name,
+        loaded_res.sources[1].name,
+        loaded_res.sources[2].name,
+    ]
+    foo_index = source_names.index("foo")
+    bar_index = source_names.index("bar")
+    baz_index = source_names.index("baz")
 
-    assert_frame_equal(
-        pl.from_arrow(foo_bar_mapping),
-        expected_foo_bar_mapping,
-        check_row_order=False,
-        check_column_order=False,
-    )
-
-    # Case 3: Retrieve from reconstituted DAG
-    reconstituted_dag = DAG("companies").load_default()
-    assert reconstituted_dag.extract_lookup() == foo_bar_mapping
+    assert_frame_equal(loaded_res.query_results[foo_index], pl.from_arrow(foo_data))
+    assert_frame_equal(loaded_res.query_results[bar_index], pl.from_arrow(bar_data))
+    assert_frame_equal(loaded_res.query_results[baz_index], pl.from_arrow(baz_data))
 
 
 def test_lookup_key_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:

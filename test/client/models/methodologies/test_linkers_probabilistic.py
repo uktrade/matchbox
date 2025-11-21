@@ -17,7 +17,7 @@ from matchbox.client.models.linkers.weighteddeterministic import (
     WeightedDeterministicSettings,
 )
 from matchbox.client.queries import Query
-from matchbox.client.results import Results
+from matchbox.client.results import ModelResults
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -252,7 +252,7 @@ def test_probabilistic_scores_generation(
         right_query=Query(right_source, dag=linked.dag),
     )
 
-    results: Results = linker.run()
+    results: ModelResults = linker.run()
 
     # Validate results against ground truth
     identical, report = linked.diff_results(

@@ -183,19 +183,15 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
 
     # We now run, but test that upload failure is handled
     testkit.fake_run()
-    # Before and after upload, server accepts data - the second time reporting error
+    # If stage is not PROCESSING, job will fail
     matchbox_api.get(
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}/data/status"
     ).mock(
-        side_effect=[
-            Response(200, json=UploadInfo(stage=UploadStage.READY).model_dump()),
-            Response(
-                200,
-                json=UploadInfo(stage=UploadStage.READY, error="error").model_dump(),
-            ),
-        ]
+        return_value=Response(
+            200, json=UploadInfo(stage=UploadStage.READY).model_dump()
+        )
     )
-    with pytest.raises(MatchboxServerFileError, match="error"):
+    with pytest.raises(MatchboxServerFileError, match="problem"):
         testkit.model.sync()
 
     # -- FIRST TIME INSERTION --
@@ -204,10 +200,9 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     matchbox_api.get(
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}/data/status"
     ).mock(
-        side_effect=[
-            Response(200, json=UploadInfo(stage=UploadStage.READY).model_dump()),
-            Response(200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()),
-        ]
+        return_value=Response(
+            200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()
+        )
     )
 
     # Sync the source, successfully
@@ -255,17 +250,22 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     # -- HARD UPDATE --
 
     insert_results_route.reset()
+    # Mock endpoint now returns existing resolution
+    matchbox_api.get(
+        f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}"
+    ).mock(return_value=Response(200, json=testkit.model.to_resolution().model_dump()))
+
     # Changing data requires deletion and re-insertion
     testkit.probabilities = testkit.probabilities.slice(1, 3)
     testkit.fake_run()
+
     # Resolution data is first ready to upload, and then uploaded
     matchbox_api.get(
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}/data/status"
     ).mock(
-        side_effect=[
-            Response(200, json=UploadInfo(stage=UploadStage.READY).model_dump()),
-            Response(200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()),
-        ]
+        return_value=Response(
+            200, json=UploadInfo(stage=UploadStage.COMPLETE).model_dump()
+        )
     )
 
     testkit.model.sync()

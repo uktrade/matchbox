@@ -1,21 +1,22 @@
 """Objects representing the results of running a model client-side."""
 
 from collections.abc import Hashable
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, Self, TypeVar
 
 import polars as pl
 from pydantic import ConfigDict
 
+from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.hash import IntMap
-from matchbox.common.transform import to_clusters
+from matchbox.common.transform import DisjointSet, to_clusters
 
 T = TypeVar("T", bound=Hashable)
 P = ParamSpec("P")
 R = TypeVar("R")
 
 
-class Results:
+class ModelResults:
     """Results of a model run.
 
     Contains:
@@ -134,3 +135,160 @@ class Results:
         )
 
         return pl.concat([root_leaf_res, unmerged_ids_rows])
+
+
+class ResolvedMatches:
+    """Matches according to resolution."""
+
+    def __init__(
+        self, sources: list[Source], query_results: list[pl.DataFrame]
+    ) -> None:
+        """Initialise resolved data.
+
+        Args:
+            sources: List of Source objects
+            query_results: List of tables with SCHEMA_QUERY_WITH_LEAVES
+        """
+        self.sources = sources
+        self.query_results = query_results
+
+        if not len(sources):
+            raise ValueError("At least 1 source must be resolved.")
+
+        if len(sources) != len(query_results):
+            raise ValueError("Mismatched length of sources and query results.")
+
+    def as_lookup(self) -> pl.DataFrame:
+        """Return lookup across matchbox ID and source keys."""
+        lookup = (
+            self.query_results[0]
+            .rename({"key": self.sources[0].config.qualified_key(self.sources[0].name)})
+            .drop("leaf_id")
+        )
+
+        if len(self.sources) > 1:
+            for source, source_results in zip(
+                self.sources[1:], self.query_results[1:], strict=True
+            ):
+                lookup = (
+                    lookup.join(source_results, on="id", how="full")
+                    .with_columns(pl.coalesce(["id", "id_right"]).alias("id"))
+                    .drop(["id_right"])
+                )
+
+                lookup = lookup.rename(
+                    {"key": source.config.qualified_key(source.name)}
+                ).drop("leaf_id")
+
+        return lookup
+
+    def as_cluster_key_map(self) -> pl.DataFrame:
+        """Return mapping across root, leaf, source and keys."""
+        concat_dfs = []
+        for source, query_res in zip(self.sources, self.query_results, strict=True):
+            source_col = pl.lit(source.name).alias("source")
+            df_with_source = query_res.with_columns([source_col])
+            concat_dfs.append(df_with_source)
+        return pl.DataFrame(pl.concat(concat_dfs))
+
+    def as_leaf_sets(self) -> list[list[int]]:
+        """Return grouping of lead IDs."""
+        cluster_key_map = self.as_cluster_key_map()
+        groups = cluster_key_map.group_by("id").agg("leaf_id")["leaf_id"].to_list()
+        return [sorted(set(g)) for g in groups]
+
+    def view_cluster(self, cluster_id: int, merge_fields: bool = False) -> pl.DataFrame:
+        """Return source data for all records in cluster.
+
+        Args:
+            cluster_id: ID of root cluster to view
+            merge_fields: whether to remove source qualifier when concatenating rows.
+                Only applies to index fields - key fields are not affected.
+        """
+        cluster_rows = []
+        for source, query_res in zip(self.sources, self.query_results, strict=True):
+            # For each source, get rows for selected cluster
+            source_keys = query_res.filter(pl.col("id") == cluster_id)["key"].to_list()
+
+            # Determine column names of output dataframe
+            rename_keys = {source.key_field.name: source.qualified_key}
+            if not merge_fields:
+                rename_index_fields = {
+                    field.name: source.qualify_field(field.name)
+                    for field in source.index_fields
+                }
+                rename_dict = {**rename_keys, **rename_index_fields}
+            else:
+                rename_dict = rename_keys
+
+            # Fetch data for this source
+            source_data = pl.concat(
+                source.fetch(keys=source_keys, qualify_names=False)
+            ).rename(rename_dict)
+
+            cluster_rows.append(source_data)
+
+        # Coerce fields to their common super-type
+        source_concat = pl.concat(cluster_rows, how="diagonal_relaxed")
+        # Re-order columns to have keys at the beginning
+        key_cols = [source.qualified_key for source in self.sources]
+        remaining_cols = [col for col in source_concat.columns if col not in key_cols]
+
+        return source_concat.select(*key_cols, *remaining_cols)
+
+    def merge(self, other: Self) -> Self:
+        """Combine two instances of resolved matches by merging clusters.
+
+        All cluster IDs will be replaced with negative integers and lose their
+        association with cluster IDs on the backend.
+        """
+        if other.sources != self.sources:
+            raise ValueError("Cannot merge resolved matches for different sources")
+
+        djs = DisjointSet[int]()
+
+        # Use disjoint sets to find new clusters
+        for resolved_instance in [self, other]:
+            unioned_root_leaf = pl.concat(
+                [
+                    result.select(["id", "leaf_id"])
+                    for result in resolved_instance.query_results
+                ]
+            )
+            components = (
+                unioned_root_leaf.group_by("id")
+                .agg(pl.col("leaf_id"))["leaf_id"]
+                .to_list()
+            )
+            # Create component by connecting one leaf to all others within component
+            for leaf_set in components:
+                djs.add(leaf_set[0])
+                for other_leaf in leaf_set[1:]:
+                    djs.union(leaf_set[0], other_leaf)
+
+        # Turn new clusters into dataframe
+        new_components = []
+        for i, component in enumerate(djs.get_components(), start=1):
+            cluster_id = -i
+            for leaf_id in component:
+                new_components.append({"id": cluster_id, "leaf_id": leaf_id})
+
+        new_components_df = pl.DataFrame(new_components)
+
+        # Generate new combined query_results based on new clusters
+        new_query_results = []
+        for self_result, other_result in zip(
+            self.query_results, other.query_results, strict=True
+        ):
+            unioned_leaf_key = pl.concat(
+                [
+                    self_result.select("leaf_id", "key"),
+                    other_result.select("leaf_id", "key"),
+                ]
+            ).unique()
+            source_query_results = unioned_leaf_key.join(
+                new_components_df, on="leaf_id"
+            )
+            new_query_results.append(source_query_results)
+
+        return ResolvedMatches(sources=self.sources, query_results=new_query_results)

@@ -20,7 +20,6 @@ from tenacity import (
 )
 
 from matchbox.client._settings import ClientSettings, settings
-from matchbox.client.authorisation import generate_json_web_token
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
     SCHEMA_JUDGEMENTS,
@@ -31,6 +30,7 @@ from matchbox.common.arrow import (
     table_to_buffer,
 )
 from matchbox.common.dtos import (
+    AuthStatusResponse,
     BackendCountableType,
     BackendParameterType,
     BackendResourceType,
@@ -170,8 +170,6 @@ def create_headers(settings: ClientSettings) -> dict[str, str]:
     headers = {"X-Matchbox-Client-Version": version("matchbox_db")}
     if settings.jwt:
         headers["Authorization"] = settings.jwt
-    elif settings.user and settings.private_key:
-        headers["Authorization"] = generate_json_web_token(sub=settings.user)
     return headers
 
 
@@ -184,14 +182,25 @@ def healthcheck() -> OKMessage:
     return OKMessage.model_validate(CLIENT.get("/health").json())
 
 
+# Authentication
+
+
 @http_retry
 def login(user_name: str) -> int:
     """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
     response = CLIENT.post(
-        "/login", json=LoginAttempt(user_name=user_name).model_dump()
+        "/auth/login", json=LoginAttempt(user_name=user_name).model_dump()
     )
     return LoginResult.model_validate(response.json()).user_id
+
+
+@http_retry
+def auth_status() -> AuthStatusResponse:
+    """Check authentication status and return user details."""
+    logger.debug("Checking authentication status")
+    response = CLIENT.get("/auth/status")
+    return AuthStatusResponse.model_validate(response.json())
 
 
 # Retrieval

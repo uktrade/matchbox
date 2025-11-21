@@ -12,6 +12,53 @@ from matchbox.common.factories.sources import source_from_tuple
 class TestModelResults:
     """Test ModelResult objects."""
 
+    def test_duplicate_removal(self) -> None:
+        """Removes redundant pairs, keeping lowest probability."""
+        simple_duplicate = pl.DataFrame(
+            [
+                {"left_id": 4, "right_id": 5, "probability": 100},
+                {"left_id": 4, "right_id": 5, "probability": 50},
+            ]
+        )
+
+        assert_frame_equal(
+            ModelResults(probabilities=simple_duplicate).probabilities,
+            simple_duplicate.tail(1),
+            check_row_order=False,
+            check_column_order=False,
+            check_dtypes=False,
+        )
+
+        symmetric_duplicate = pl.DataFrame(
+            [
+                {"left_id": 4, "right_id": 5, "probability": 100},
+                {"left_id": 5, "right_id": 4, "probability": 50},
+            ]
+        )
+
+        assert_frame_equal(
+            ModelResults(probabilities=symmetric_duplicate).probabilities,
+            symmetric_duplicate.tail(1),
+            check_row_order=False,
+            check_column_order=False,
+            check_dtypes=False,
+        )
+
+        no_duplicates = pl.DataFrame(
+            [
+                {"left_id": 4, "right_id": 5, "probability": 100},
+                {"left_id": 4, "right_id": 6, "probability": 50},
+            ]
+        )
+
+        assert_frame_equal(
+            ModelResults(probabilities=no_duplicates).probabilities,
+            no_duplicates,
+            check_row_order=False,
+            check_column_order=False,
+            check_dtypes=False,
+        )
+
     def test_clusters_and_root_leaf(self) -> None:
         """From a results object, we can derive clusters at various levels."""
         # Prepare dummy data and model

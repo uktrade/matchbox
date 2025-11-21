@@ -3,10 +3,11 @@ import pytest
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
+from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults, ResolvedMatches
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES
-from matchbox.common.factories.sources import source_from_tuple
+from matchbox.common.factories.sources import source_factory, source_from_tuple
 
 
 class TestModelResults:
@@ -211,6 +212,42 @@ class TestResolvedMatches:
         )
 
         return foo, bar, foo_query_data, bar_query_data
+
+    def test_from_cluster_key_map(
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
+    ) -> None:
+        """Can initialise ResolvedMatches from concatenated dataframe representation."""
+        foo, bar, foo_query_data, bar_query_data = dummy_data
+        # These won't be the same sources as above, but we only need them them
+        # to have the same name
+        dag = DAG("companies")
+        dag.source(**source_factory(name="foo").into_dag())
+        dag.source(**source_factory(name="bar").into_dag())
+
+        original = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        )
+
+        new = ResolvedMatches.from_cluster_key_map(
+            cluster_key_map=original.as_cluster_key_map(), dag=dag
+        )
+
+        assert new.sources[0] == dag.get_source("foo")
+        assert new.sources[1] == dag.get_source("bar")
+
+        assert_frame_equal(
+            foo_query_data,
+            new.query_results[0],
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+        assert_frame_equal(
+            bar_query_data,
+            new.query_results[1],
+            check_row_order=False,
+            check_column_order=False,
+        )
 
     def test_as_lookup(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]

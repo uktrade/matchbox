@@ -96,6 +96,11 @@ class DAG:
 
         self.nodes[step.name] = step
 
+    @classmethod
+    def list_all(cls) -> list[CollectionName]:
+        """List available DAG names on the server."""
+        return _handler.list_collections()
+
     @property
     def run(self) -> RunID:
         """Return run ID if available, else error."""

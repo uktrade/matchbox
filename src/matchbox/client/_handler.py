@@ -285,6 +285,15 @@ def match(
 
 
 @http_retry
+def list_collections() -> list[CollectionName]:
+    """Get all existing collection names."""
+    logger.debug("Retrieving all collections")
+
+    res = CLIENT.get("/collections")
+    return [CollectionName(name) for name in res.json()]
+
+
+@http_retry
 def get_collection(name: CollectionName) -> Collection:
     """Get all runs and resolutions in a collection."""
     log_prefix = f"Collection {name}"

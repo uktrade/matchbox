@@ -194,7 +194,7 @@ class TestE2EModelEvaluation:
 
             # Submit one judgement to verify data flow
             item = app.queue.items[0]
-            for i in range(len(item.display_columns)):
+            for i in range(len(item.item.get_unique_record_groups())):
                 item.assignments[i] = "a"  # Assign all to same cluster
 
             initial_judgements, _ = _handler.download_eval_data()

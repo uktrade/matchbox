@@ -141,7 +141,7 @@ testpaths = ["test"]
 pythonpath = ["."]
 addopts = "--cov=matchbox test/"
 norecursedirs = "src"
-log_cli = false  # Set to true to enable logs and individual tests
+log_cli = true  # Set to true to enable logs and individual tests
 log_cli_level = "DEBUG"  # Set to "INFO" to see less detailed logging
 log_cli_format = "%(asctime)s [%(levelname)s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%X"

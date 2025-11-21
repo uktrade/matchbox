@@ -219,6 +219,8 @@ class TestE2EPipelineBuilder:
         logging.info("Running DAG for the first time")
         dag.run_and_sync()
 
+        assert DAG.list_all() == [dag.name]
+
         # Update metadata of one node, will check later
         link_a_b.description = "Updated description"
         link_a_b.sync()

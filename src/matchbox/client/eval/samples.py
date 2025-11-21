@@ -110,6 +110,7 @@ def get_samples(
     dag: DAG,
     user_id: int,
     resolution: ModelResolutionName | None = None,
+    sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.
 
@@ -119,6 +120,8 @@ def get_samples(
         user_id: ID of the user requesting the samples
         resolution: The optional resolution from which to sample. If not provided,
             the final step in the DAG is used
+        sample_file: path to parquet file output by ResolvedMatches. If specified,
+            won't sample from server, ignoring the user_id and resolution arguments
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster
@@ -127,17 +130,26 @@ def get_samples(
         MatchboxSourceTableError: If a source cannot be queried from a location using
             provided or default clients.
     """
-    if resolution:
-        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    if sample_file:
+        resolved_matches_dump = pl.read_parquet(sample_file)
+        samples = resolved_matches_dump.rename(
+            {"id": "root", "leaf_id": "leaf"}
+        ).sample(n, shuffle=True)
     else:
-        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-
-    samples: pl.DataFrame = cast(
-        pl.DataFrame,
-        pl.from_arrow(
-            _handler.sample_for_eval(n=n, resolution=resolution_path, user_id=user_id)
-        ),
-    )
+        if resolution:
+            resolution_path: ModelResolutionPath = dag.get_model(
+                resolution
+            ).resolution_path
+        else:
+            resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+        samples: pl.DataFrame = cast(
+            pl.DataFrame,
+            pl.from_arrow(
+                _handler.sample_for_eval(
+                    n=n, resolution=resolution_path, user_id=user_id
+                )
+            ),
+        )
 
     if not len(samples):
         return {}

@@ -114,6 +114,7 @@ class EntityResolutionApp(App):
         num_samples: int = 5,
         dag: DAG | None = None,
         show_help: bool = False,
+        sample_file: str | None = None,
     ) -> None:
         """Initialise the entity resolution app.
 
@@ -123,6 +124,8 @@ class EntityResolutionApp(App):
             user: Username for authentication (overrides settings)
             dag: Pre-loaded DAG with warehouse location attached
             show_help: Whether to show help on start
+            sample_file: Path to pre-compiled sample file.
+                If set, ignores resolutions.
         """
         super().__init__()
 
@@ -135,6 +138,7 @@ class EntityResolutionApp(App):
         self.current_page_by_tab = {}
         self.rows_per_page = 20
         self.cols_per_page = 10
+        self.sample_file = sample_file
 
     # Lifecycle methods
     def compose(self) -> ComposeResult:
@@ -505,6 +509,7 @@ class EntityResolutionApp(App):
                 resolution=self.resolution.name,
                 user_id=self.user_id,
                 dag=self.dag,
+                sample_file=self.sample_file,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to fetch samples: {type(e).__name__}: {e}")

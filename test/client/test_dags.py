@@ -41,6 +41,13 @@ from matchbox.common.factories.sources import (
 )
 
 
+def test_dag_list(matchbox_api: MockRouter) -> None:
+    """Can retrieve list of DAG names."""
+    dummy_names = ["companies", "contacts"]
+    matchbox_api.get("/collections").mock(return_value=Response(200, json=dummy_names))
+    assert DAG.list_all() == ["companies", "contacts"]
+
+
 @patch.object(Source, "run")
 @patch.object(Model, "run")
 @patch.object(Source, "sync")

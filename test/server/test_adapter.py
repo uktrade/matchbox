@@ -1376,14 +1376,15 @@ class TestMatchboxBackend:
             res = dag_testkit.models["naive_test_crn"].resolution_path
             self.backend.delete_resolution(res, certain=True)
 
-            # check clusters in scenario
-            clusters = self.backend.all_clusters.count()
-            assert clusters == 85
+            # check clusters and merges in scenario
+            assert self.backend.all_clusters.count() == 85
+            assert self.backend.merges.count() == 145
 
             # delete orphans
+            # deleting clusters should delete merges too
             orphans = self.backend.delete_orphans()
             assert orphans == 30
 
-            # check clusters again
-            clusters = self.backend.all_clusters.count()
-            assert clusters == 55
+            # check clusters and merges again
+            assert self.backend.all_clusters.count() == 55
+            assert self.backend.merges.count() == 0

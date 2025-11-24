@@ -1366,3 +1366,22 @@ class TestMatchboxBackend:
                 n=99, path=model_testkit.resolution_path, user_id=user_id
             )
             assert len(samples_all_done) == 0
+
+    def test_delete_orphans(self) -> None:
+        """Can delete orphaned clusters."""
+        with self.scenario(self.backend, "link") as dag_testkit:
+            # check clusters in scenario
+            clusters = self.backend.data.count() + self.backend.clusters.count()
+            assert clusters == 85
+
+            # delete resolution to create orphans
+            res = dag_testkit.models["naive_test_crn"].resolution_path
+            self.backend.delete_resolution(res, certain=True)
+
+            # delete orphans
+            orphans = self.backend.delete_orphans()
+            assert orphans == 30
+
+            # check clusters again
+            clusters = self.backend.data.count() + self.backend.clusters.count()
+            assert clusters == 55

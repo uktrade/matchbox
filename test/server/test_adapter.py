@@ -76,6 +76,7 @@ class TestMatchboxBackend:
             assert isinstance(self.backend.models.count(), int)
             assert isinstance(self.backend.data_clusters.count(), int)
             assert isinstance(self.backend.model_clusters.count(), int)
+            assert isinstance(self.backend.all_clusters.count(), int)
             assert isinstance(self.backend.creates.count(), int)
             assert isinstance(self.backend.merges.count(), int)
             assert isinstance(self.backend.proposes.count(), int)
@@ -1025,6 +1026,7 @@ class TestMatchboxBackend:
                 self.backend.models.count,
                 self.backend.data_clusters.count,
                 self.backend.model_clusters.count,
+                self.backend.all_clusters.count,
                 self.backend.merges.count,
                 self.backend.creates.count,
                 self.backend.proposes.count,
@@ -1371,9 +1373,7 @@ class TestMatchboxBackend:
         """Can delete orphaned clusters."""
         with self.scenario(self.backend, "link") as dag_testkit:
             # check clusters in scenario
-            clusters = (
-                self.backend.data_clusters.count() + self.backend.model_clusters.count()
-            )
+            clusters = self.backend.all_clusters.count()
             assert clusters == 85
 
             # delete resolution to create orphans
@@ -1385,7 +1385,5 @@ class TestMatchboxBackend:
             assert orphans == 30
 
             # check clusters again
-            clusters = (
-                self.backend.data_clusters.count() + self.backend.model_clusters.count()
-            )
+            clusters = self.backend.all_clusters.count()
             assert clusters == 55

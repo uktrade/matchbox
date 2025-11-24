@@ -114,8 +114,12 @@ def jwt(
             help="Token expiry in hours",
         ),
     ] = EXPIRY_AFTER_X_HOURS,
+    private_key: Annotated[
+        typer.FileText | None,
+        typer.Option("--key", "-k", help="Private key file (or use stdin)"),
+    ] = None,
 ) -> None:
-    """Generate JWT from stdin private key.
+    """Generate JWT from private key.
     
     Use with keygen like:
 
@@ -127,8 +131,22 @@ def jwt(
         --sub user@example.com \
         --api-root http://api.example.com/ \
         --expiry 2
+    
+    Or with a key file:
+    
+    uv run test/scripts/authorisation.py jwt \
+        --key private_key.pem \
+        --sub user@example.com
     """
-    private_key_pem = sys.stdin.read()
+    if private_key:
+        private_key_pem = private_key.read()
+    elif not sys.stdin.isatty():
+        private_key_pem = sys.stdin.read()
+    else:
+        typer.echo(
+            "Error: No input piped. Provide a private key via stdin or --key.", err=True
+        )
+        raise typer.Exit(code=1)
 
     token = generate_json_web_token(
         private_key_bytes=private_key_pem.encode(),

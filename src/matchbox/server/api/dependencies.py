@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import (
     Depends,
@@ -176,13 +175,7 @@ def validate_jwt(
 
     except HTTPException:
         raise  # Re-raise HTTPExceptions as-is
-    except (
-        ValueError,
-        KeyError,
-        json.JSONDecodeError,
-        InvalidSignature,
-        Exception,
-    ) as e:
+    except Exception as e:
         logger.exception(f"Invalid JWT. Token: {client_token}")
         # Anything else is an invalid token -> 401
         raise HTTPException(

@@ -151,6 +151,14 @@ class LoginResult(BaseModel):
     user_id: int
 
 
+class AuthStatusResponse(BaseModel):
+    """Response model for authentication status."""
+
+    authenticated: bool
+    username: str | None = None
+    token: str | None = None
+
+
 class BackendCountableType(StrEnum):
     """Enumeration of supported backend countable types."""
 

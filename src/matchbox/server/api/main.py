@@ -30,8 +30,6 @@ from matchbox.common.dtos import (
     CollectionName,
     CountResult,
     CRUDOperation,
-    LoginAttempt,
-    LoginResult,
     Match,
     ModelResolutionName,
     NotFoundError,
@@ -54,7 +52,7 @@ from matchbox.server.api.dependencies import (
     authorisation_dependencies,
     lifespan,
 )
-from matchbox.server.api.routers import collection, eval
+from matchbox.server.api.routers import auth, collection, eval
 
 app = FastAPI(
     title="matchbox API",
@@ -65,6 +63,7 @@ app = FastAPI(
 )
 app.include_router(collection.router)
 app.include_router(eval.router)
+app.include_router(auth.router)
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -171,17 +170,6 @@ async def add_security_headers(
 async def healthcheck() -> OKMessage:
     """Perform a health check and return the status."""
     return OKMessage()
-
-
-@app.post(
-    "/login",
-)
-def login(
-    backend: BackendDependency,
-    credentials: LoginAttempt,
-) -> LoginResult:
-    """Receives a user name and returns a user ID."""
-    return LoginResult(user_id=backend.login(credentials.user_name))
 
 
 # Retrieval

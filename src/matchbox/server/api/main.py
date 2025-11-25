@@ -284,6 +284,35 @@ def count_backend_items(
 
 
 @app.delete(
+    "/database/orphans",
+    responses={
+        500: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+    },
+    dependencies=[Depends(authorisation_dependencies)],
+)
+def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
+    """Delete orphans."""
+    try:
+        backend.delete_orphans()
+        return ResourceOperationStatus(
+            success=True, target="Database", operation=CRUDOperation.DELETE
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ResourceOperationStatus(
+                success=False,
+                target="Database",
+                operation=CRUDOperation.DELETE,
+                details=str(e),
+            ),
+        ) from e
+
+
+@app.delete(
     "/database",
     responses={
         409: {

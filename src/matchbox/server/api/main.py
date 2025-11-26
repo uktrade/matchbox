@@ -296,9 +296,12 @@ def count_backend_items(
 def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
     """Delete orphans."""
     try:
-        backend.delete_orphans()
+        orphans = backend.delete_orphans()
         return ResourceOperationStatus(
-            success=True, target="Database", operation=CRUDOperation.DELETE
+            success=True,
+            target="Database",
+            operation=CRUDOperation.DELETE,
+            details=f"Deleted {orphans} orphans",
         )
     except Exception as e:
         raise HTTPException(

@@ -607,7 +607,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             batch_size=self.settings.batch_size,
         )
 
-    def delete_orphans(self) -> None:  # noqa: D102
+    def delete_orphans(self) -> int:  # noqa: D102
         with MBDB.get_session() as session:
             # Get all cluster ids in related tables
             union_all_cte = union_all(

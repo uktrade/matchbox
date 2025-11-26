@@ -301,7 +301,7 @@ def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
             success=True,
             target="Database",
             operation=CRUDOperation.DELETE,
-            details=f"Deleted {orphans} orphans",
+            details=f"Deleted {orphans} orphans.",
         )
     except Exception as e:
         raise HTTPException(

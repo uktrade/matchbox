@@ -215,11 +215,12 @@ def test_count_all_backend_items(
     entity_counts = {
         "sources": 1,
         "models": 2,
-        "data": 3,
-        "clusters": 4,
-        "creates": 5,
-        "merges": 6,
-        "proposes": 7,
+        "data_clusters": 3,
+        "model_clusters": 4,
+        "all_clusters": 5,
+        "creates": 6,
+        "merges": 7,
+        "proposes": 8,
     }
     for e, c in entity_counts.items():
         mock_e = Mock()

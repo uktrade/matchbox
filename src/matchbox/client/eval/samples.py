@@ -132,9 +132,10 @@ def get_samples(
     """
     if sample_file:
         resolved_matches_dump = pl.read_parquet(sample_file)
+        sample_n = min(n, len(resolved_matches_dump))
         samples = resolved_matches_dump.rename(
             {"id": "root", "leaf_id": "leaf"}
-        ).sample(n, shuffle=True)
+        ).sample(sample_n, shuffle=True)
     else:
         if resolution:
             resolution_path: ModelResolutionPath = dag.get_model(

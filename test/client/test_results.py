@@ -385,12 +385,13 @@ class TestResolvedMatches:
             check_column_order=False,
         )
 
-        # View cluster with multiple keys per leaf
+        # View cluster with multiple keys per leaf, but only one source
         cluster_convergent = ResolvedMatches(
-            sources=[foo], query_results=[foo_query_data]
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
         ).view_cluster(2)
         expected_cluster_convergent = pl.DataFrame(
             [
+                # No columns from "bar"
                 {"foo_key": "2", "foo_field_a": 20},
                 {"foo_key": "2b", "foo_field_a": 20},
             ]

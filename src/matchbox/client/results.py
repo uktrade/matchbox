@@ -246,10 +246,14 @@ class ResolvedMatches:
                 Only applies to index fields - key fields are not affected.
         """
         cluster_rows = []
+        key_cols = []
         for source, query_res in zip(self.sources, self.query_results, strict=True):
             # For each source, get rows for selected cluster
             source_keys = query_res.filter(pl.col("id") == cluster_id)["key"].to_list()
+            if not source_keys:
+                continue
 
+            key_cols.append(source.qualified_key)
             # Determine column names of output dataframe
             rename_keys = {source.key_field.name: source.qualified_key}
             if not merge_fields:
@@ -269,9 +273,10 @@ class ResolvedMatches:
             cluster_rows.append(source_data)
 
         # Coerce fields to their common super-type
+        if not cluster_rows:
+            raise KeyError(f"Cluster {cluster_id} not available")
         source_concat = pl.concat(cluster_rows, how="diagonal_relaxed")
         # Re-order columns to have keys at the beginning
-        key_cols = [source.qualified_key for source in self.sources]
         remaining_cols = [col for col in source_concat.columns if col not in key_cols]
 
         return source_concat.select(*key_cols, *remaining_cols)

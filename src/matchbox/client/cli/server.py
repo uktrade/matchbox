@@ -13,3 +13,10 @@ def health() -> None:
     """Checks the health of the Matchbox server."""
     response = _handler.healthcheck()
     print(response)
+
+
+@app.command()
+def delete_orphans() -> None:
+    """Deletes orphans from Matchbox database."""
+    response = _handler.delete_orphans()
+    print(response)

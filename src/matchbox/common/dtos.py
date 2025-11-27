@@ -164,8 +164,9 @@ class BackendCountableType(StrEnum):
 
     SOURCES = "sources"
     MODELS = "models"
-    DATA = "data"
-    CLUSTERS = "clusters"
+    DATA_CLUSTERS = "data_clusters"
+    MODEL_CLUSTERS = "model_clusters"
+    CLUSTERS = "all_clusters"
     CREATES = "creates"
     MERGES = "merges"
     PROPOSES = "proposes"

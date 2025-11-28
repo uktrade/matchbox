@@ -171,12 +171,12 @@ def test_empty_dag_properties() -> None:
     assert len(dag_testkit.models) == 0
     assert len(dag_testkit.linked) == 0
 
-    # get_linked_testkit should return None for anything
+    # Get_linked_testkit should return None for anything
     assert "anything" not in dag_testkit.source_to_linked
 
     # DAG should be empty but valid
     assert len(dag_testkit.dag.nodes) == 0
 
-    # final_step should raise on empty DAG
+    # Final_step should raise on empty DAG
     with pytest.raises(ValueError):
         _ = dag_testkit.dag.final_step

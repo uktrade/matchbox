@@ -217,7 +217,7 @@ def test_count_all_backend_items(
         "models": 2,
         "source_clusters": 3,
         "model_clusters": 4,
-        "all_clusters": 5,
+        "all_clusters": 7,
         "creates": 6,
         "merges": 7,
         "proposes": 8,

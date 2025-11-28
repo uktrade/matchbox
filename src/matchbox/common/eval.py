@@ -109,7 +109,7 @@ def precision_recall(
             if (
                 a in shared_leaves
                 and b in shared_leaves
-                # remove neutrally-judged pairs from the model
+                # Remove neutrally-judged pairs from the model
                 and validation_net_count[(a, b)] != 0
             )
         }
@@ -119,7 +119,7 @@ def precision_recall(
         for a, b in validation_pairs
         if a in shared_leaves
         and b in shared_leaves
-        # remove all neutrally or negatively judged pairs
+        # Remove all neutrally or negatively judged pairs
         and validation_net_count[(a, b)] > 0
     }
 
@@ -179,7 +179,7 @@ def process_judgements(
             expansion, left_on="endorsed", right_on="root", how="left"
         )  # left join as singleton leaves won't be expanded
         .rename({"leaves": "endorsed_leaves"})
-        # if missing expansion, assume we're dealing with singleton leaves
+        # If missing expansion, assume we're dealing with singleton leaves
         .with_columns(
             pl.when(pl.col("endorsed_leaves").is_null())
             .then(

@@ -804,7 +804,7 @@ def test_clean_multi_source_data() -> None:
 
     result = _clean(test_data, cleaning_dict)
 
-    # id is always included, plus the cleaned column
+    # Id is always included, plus the cleaned column
     assert set(result.columns) == {"id", "combined"}
     assert result["combined"].to_list() == [
         "Alice: 10",

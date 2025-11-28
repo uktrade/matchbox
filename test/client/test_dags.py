@@ -1012,7 +1012,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     dh_testkit = linked_testkit.sources["dh"].fake_run()
     cdms_testkit = linked_testkit.sources["cdms"].fake_run()
 
-    # model_inner depends on 2 sources (count=2)
+    # Model_inner depends on 2 sources (count=2)
     model_inner_testkit = model_factory(
         name="model_inner",
         left_testkit=crn_testkit,
@@ -1021,7 +1021,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
         dag=test_dag,
     ).fake_run()
 
-    # model_outer ALSO depends on 2 things: model_inner + a source (count=2)
+    # Model_outer ALSO depends on 2 things: model_inner + a source (count=2)
     # Same count as model_inner, but MUST be loaded AFTER model_inner
     model_outer_testkit = model_factory(
         name="model_outer",

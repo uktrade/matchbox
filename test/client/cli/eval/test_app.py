@@ -44,7 +44,7 @@ class TestEvaluationQueue:
         queue = EvaluationQueue()
         items = [Mock(item=Mock(cluster_id=1)), Mock(item=Mock(cluster_id=2))]
 
-        added = queue.add_items(items)
+        added = queue.add_sessions(items)
 
         assert added == 2
         assert queue.total_count == 2
@@ -56,8 +56,8 @@ class TestEvaluationQueue:
         item1 = Mock(item=Mock(cluster_id=1))
         item2 = Mock(item=Mock(cluster_id=1))  # Duplicate
 
-        queue.add_items([item1])
-        added = queue.add_items([item2])
+        queue.add_sessions([item1])
+        added = queue.add_sessions([item2])
 
         assert added == 0
         assert queue.total_count == 1
@@ -66,7 +66,7 @@ class TestEvaluationQueue:
         """Test that adding empty list returns 0."""
         queue = EvaluationQueue()
 
-        added = queue.add_items([])
+        added = queue.add_sessions([])
 
         assert added == 0
         assert queue.total_count == 0
@@ -76,18 +76,18 @@ class TestEvaluationQueue:
         queue = EvaluationQueue()
         item1 = Mock(item=Mock(cluster_id=1))
         item2 = Mock(item=Mock(cluster_id=2))
-        queue.items.extend([item1, item2])
+        queue.sessions.extend([item1, item2])
 
         queue.skip_current()
 
         assert queue.current is item2
-        assert queue.items[1] is item1
+        assert queue.sessions[1] is item1
 
     def test_skip_with_single_item_does_nothing(self) -> None:
         """Test that skip with one item doesn't rotate."""
         queue = EvaluationQueue()
         item1 = Mock(item=Mock(cluster_id=1))
-        queue.items.append(item1)
+        queue.sessions.append(item1)
 
         queue.skip_current()
 
@@ -99,7 +99,7 @@ class TestEvaluationQueue:
         queue = EvaluationQueue()
         item1 = Mock(item=Mock(cluster_id=1))
         item2 = Mock(item=Mock(cluster_id=2))
-        queue.items.extend([item1, item2])
+        queue.sessions.extend([item1, item2])
 
         removed = queue.remove_current()
 
@@ -235,7 +235,7 @@ class TestScenarioIntegration:
                 await pilot.press("shift+right")
                 await pilot.pause()
                 assert app.queue.current is not first_item
-                assert app.queue.items[-1] is first_item
+                assert app.queue.sessions[-1] is first_item
 
                 # 7. Test submitting incomplete assignment shows warning
                 initial_count = app.queue.total_count

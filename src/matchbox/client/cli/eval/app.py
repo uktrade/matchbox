@@ -38,47 +38,49 @@ class CLIEvaluationSession(BaseModel):
 
 
 class EvaluationQueue:
-    """Deque-based queue with current item always at front."""
+    """Deque-based queue with current session always at front."""
 
     def __init__(self) -> None:
         """Initialise the queue."""
-        self.items: deque[CLIEvaluationSession] = deque()
+        self.sessions: deque[CLIEvaluationSession] = deque()
 
     @property
     def current(self) -> CLIEvaluationSession | None:
-        """Get the current item (always at index 0)."""
-        return self.items[0] if self.items else None
+        """Get the current session (always at index 0)."""
+        return self.sessions[0] if self.sessions else None
 
     @property
     def total_count(self) -> int:
-        """Total number of items in queue."""
-        return len(self.items)
+        """Total number of sessions in queue."""
+        return len(self.sessions)
 
     def skip_current(self) -> None:
         """Move current to back of queue."""
-        if len(self.items) > 1:
-            self.items.rotate(-1)
+        if len(self.sessions) > 1:
+            self.sessions.rotate(-1)
 
     def remove_current(self) -> CLIEvaluationSession | None:
-        """Remove and return current item."""
-        return self.items.popleft() if self.items else None
+        """Remove and return current session."""
+        return self.sessions.popleft() if self.sessions else None
 
-    def add_items(self, items: list[CLIEvaluationSession]) -> int:
-        """Add new items to queue, preventing duplicates.
+    def add_sessions(self, sessions: list[CLIEvaluationSession]) -> int:
+        """Add new sessions to queue, preventing duplicates.
 
         Returns:
-            Number of unique items added.
+            Number of unique sessions added.
         """
-        if not items:
+        if not sessions:
             return 0
 
-        existing_ids = {item.item.cluster_id for item in self.items}
+        existing_ids = {session.item.cluster_id for session in self.sessions}
         unique_items = [
-            item for item in items if item.item.cluster_id not in existing_ids
+            session
+            for session in sessions
+            if session.item.cluster_id not in existing_ids
         ]
 
         if unique_items:
-            self.items.extend(unique_items)
+            self.sessions.extend(unique_items)
 
         return len(unique_items)
 
@@ -335,7 +337,7 @@ class EntityResolutionApp(App):
             sessions = [
                 CLIEvaluationSession(item=item) for item in new_samples_dict.values()
             ]
-            self.queue.add_items(sessions)
+            self.queue.add_sessions(sessions)
 
         if self.queue.total_count == 0:
             await self._handle_no_samples()

@@ -22,7 +22,28 @@ class EvaluationFieldMetadata(BaseModel):
 
 
 class EvaluationItem(BaseModel):
-    """A cluster ready for evaluation."""
+    """A cluster ready for evaluation.
+
+    The records dataframe contains the leaf IDs and the qualified index fields
+    associated with it. For example:
+
+    | leaf_id | src_a_first | src_a_last | src_b_first | src_b_last |
+    |---------|-------------|------------|-------------|------------|
+    | 1       | Thomas      | Bayes      |             |            |
+    | 2       | Tommy       | B          |             |            |
+    | 12      |             |            | Tom         | Bayes      |
+
+    The fields attribute allows any evaluation system to map between a display
+    version of the source columns, and the actual columns contained in the
+    records dataframe. For example:
+
+    ```text
+    {
+        "display_name": "first",
+        "source_columns": "src_a_first", "src_b_first"
+    }
+    ```
+    """
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -88,7 +109,7 @@ def create_evaluation_item(
     for source_id, config in source_configs:
         for field in config.index_fields:
             # Build qualified column name for this source+field
-            column_name = f"{source_id}_{field.name}"
+            column_name = config.qualify_field(source_id, field.name)
 
             # Only add if this column exists in DataFrame
             if column_name in data_cols:

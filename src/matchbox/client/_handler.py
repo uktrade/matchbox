@@ -51,7 +51,7 @@ from matchbox.common.dtos import (
     UploadInfo,
     UploadStage,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxDataNotFound,
@@ -531,16 +531,6 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Ta
     )
 
     return read_table(BytesIO(res.content))
-
-
-@http_retry
-def compare_models(
-    resolutions: list[ModelResolutionPath],
-) -> ModelComparison:
-    """Get a model comparison for a set of model resolutions."""
-    res = CLIENT.post("/eval/compare", json=[r.model_dump() for r in resolutions])
-    scores = {resolution: tuple(pr) for resolution, pr in res.json().items()}
-    return scores
 
 
 @http_retry

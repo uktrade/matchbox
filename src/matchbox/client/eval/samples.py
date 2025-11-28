@@ -10,7 +10,7 @@ from matchbox.client import _handler
 from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults
 from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
-from matchbox.common.eval import Judgement, ModelComparison, precision_recall
+from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
 
@@ -220,8 +220,3 @@ class EvalData:
         root_leaf = results.root_leaf().rename({"root_id": "root", "leaf_id": "leaf"})
         values = precision_recall([root_leaf], self.judgements, self.expansion)[0]
         return values[0], values[1]
-
-
-def compare_models(resolutions: list[ModelResolutionPath]) -> ModelComparison:
-    """Compare metrics of models based on cached evaluation data."""
-    return _handler.compare_models(resolutions)

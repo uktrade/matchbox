@@ -16,10 +16,9 @@ from matchbox.common.dtos import (
     NotFoundError,
     RunID,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxNoJudgements,
     MatchboxResolutionNotFoundError,
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
@@ -81,28 +80,6 @@ def get_judgements(backend: BackendDependency) -> ParquetResponse:
     zip_buffer.seek(0)
 
     return ZipResponse(zip_buffer.getvalue())
-
-
-@router.post(
-    "/compare",
-    responses={404: {"model": NotFoundError}},
-)
-def compare_models(
-    backend: BackendDependency,
-    resolutions: list[ModelResolutionPath],
-) -> ModelComparison:
-    """Return comparison of selected models."""
-    try:
-        return backend.compare_models(resolutions)
-    except MatchboxResolutionNotFoundError:
-        raise
-    except MatchboxNoJudgements as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.JUDGEMENT
-            ).model_dump(),
-        ) from e
 
 
 @router.get(

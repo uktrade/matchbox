@@ -182,7 +182,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
         self.sources = SourceConfigs
         self.models = FilteredResolutions(sources=False, models=True)
-        self.data_clusters = FilteredClusters(has_source=True)
+        self.source_clusters = FilteredClusters(has_source=True)
         self.model_clusters = FilteredClusters(has_source=False)
         self.all_clusters = FilteredClusters()
         self.creates = FilteredProbabilities(over_truth=True)

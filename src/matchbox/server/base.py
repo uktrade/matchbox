@@ -236,7 +236,7 @@ class MatchboxDBAdapter(ABC):
 
     sources: ListableAndCountable
     models: Countable
-    data_clusters: Countable
+    source_clusters: Countable
     model_clusters: Countable
     all_clusters: Countable
     creates: Countable

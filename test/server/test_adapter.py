@@ -74,7 +74,7 @@ class TestMatchboxBackend:
             assert isinstance(self.backend.sources.list_all(), list)
             assert isinstance(self.backend.sources.count(), int)
             assert isinstance(self.backend.models.count(), int)
-            assert isinstance(self.backend.data_clusters.count(), int)
+            assert isinstance(self.backend.source_clusters.count(), int)
             assert isinstance(self.backend.model_clusters.count(), int)
             assert isinstance(self.backend.all_clusters.count(), int)
             assert isinstance(self.backend.creates.count(), int)
@@ -613,9 +613,9 @@ class TestMatchboxBackend:
             )
 
             assert crn_testkit.source_config == crn_retrieved.config
-            assert self.backend.data_clusters.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
 
-            assert self.backend.data_clusters.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
             assert self.backend.source_resolutions.count() == 1
 
             # We can update the resolution metadata, including changes in fields
@@ -717,7 +717,7 @@ class TestMatchboxBackend:
             self.backend.insert_source_data(
                 dh_testkit.source.resolution_path, crn_testkit.data_hashes
             )
-            assert self.backend.data_clusters.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
             assert self.backend.source_resolutions.count() == 2
 
     def test_insert_model(self) -> None:
@@ -998,7 +998,7 @@ class TestMatchboxBackend:
         """Test deleting all rows in the database."""
         with self.scenario(self.backend, "dedupe"):
             assert self.backend.sources.count() > 0
-            assert self.backend.data_clusters.count() > 0
+            assert self.backend.source_clusters.count() > 0
             assert self.backend.models.count() > 0
             assert self.backend.model_clusters.count() > 0
             assert self.backend.creates.count() > 0
@@ -1008,7 +1008,7 @@ class TestMatchboxBackend:
             self.backend.clear(certain=True)
 
             assert self.backend.sources.count() == 0
-            assert self.backend.data_clusters.count() == 0
+            assert self.backend.source_clusters.count() == 0
             assert self.backend.models.count() == 0
             assert self.backend.model_clusters.count() == 0
             assert self.backend.creates.count() == 0
@@ -1024,7 +1024,7 @@ class TestMatchboxBackend:
             count_funcs = [
                 self.backend.sources.count,
                 self.backend.models.count,
-                self.backend.data_clusters.count,
+                self.backend.source_clusters.count,
                 self.backend.model_clusters.count,
                 self.backend.all_clusters.count,
                 self.backend.merges.count,

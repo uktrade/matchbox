@@ -215,7 +215,7 @@ def test_count_all_backend_items(
     entity_counts = {
         "sources": 1,
         "models": 2,
-        "data_clusters": 3,
+        "source_clusters": 3,
         "model_clusters": 4,
         "all_clusters": 5,
         "creates": 6,

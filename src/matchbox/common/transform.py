@@ -304,17 +304,17 @@ class Cluster:
         )
 
 
-def truth_float_to_int(truth: float) -> int:
+def threshold_float_to_int(threshold: float) -> int:
     """Convert user input float truth values to int."""
-    if isinstance(truth, float) and 0.0 <= truth <= 1.0:
-        return round(truth * 100)
+    if isinstance(threshold, float) and 0.0 <= threshold <= 1.0:
+        return round(threshold * 100)
     else:
-        raise ValueError(f"Truth value {truth} not a valid probability")
+        raise ValueError(f"Truth value {threshold} not a valid probability")
 
 
-def truth_int_to_float(truth: int) -> float:
+def threshold_int_to_float(threshold: int) -> float:
     """Convert backend int truth values to float."""
-    if isinstance(truth, int) and 0 <= truth <= 100:
-        return float(truth / 100)
+    if isinstance(threshold, int) and 0 <= threshold <= 100:
+        return float(threshold / 100)
     else:
-        raise ValueError(f"Truth value {truth} not valid")
+        raise ValueError(f"Truth value {threshold} not valid")

@@ -17,7 +17,7 @@ from matchbox.common.dtos import (
     QueryCombineType,
     QueryConfig,
 )
-from matchbox.common.transform import truth_float_to_int, truth_int_to_float
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -93,7 +93,9 @@ class Query:
             source_resolutions=[source.name for source in self.sources],
             model_resolution=self.model.name if self.model else None,
             combine_type=self.combine_type,
-            threshold=truth_float_to_int(self.threshold) if self.threshold else None,
+            threshold=threshold_float_to_int(self.threshold)
+            if self.threshold
+            else None,
             cleaning=self.cleaning,
         )
 
@@ -119,7 +121,9 @@ class Query:
         )
 
         # Convert threshold back to float
-        threshold = truth_int_to_float(config.threshold) if config.threshold else None
+        threshold = (
+            threshold_int_to_float(config.threshold) if config.threshold else None
+        )
 
         return cls(
             *sources,

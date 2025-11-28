@@ -1372,19 +1372,36 @@ class TestMatchboxBackend:
     def test_delete_orphans(self) -> None:
         """Can delete orphaned clusters."""
         with self.scenario(self.backend, "link") as dag_testkit:
-            # Delete resolution to create orphans
-            res = dag_testkit.models["naive_test_crn"].resolution_path
-            self.backend.delete_resolution(res, certain=True)
+            crn_testkit = dag_testkit.sources.get("crn")
+            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
 
-            # Check clusters and merges in scenario
-            assert self.backend.all_clusters.count() == 85
-            assert self.backend.merges.count() == 145
+            # Get number of clusters
+            initial_all_clusters = self.backend.all_clusters.count()
 
-            # Delete orphans
-            # Deleting clusters should delete merges too
+            # Delete orphans, none should be deleted yet
             orphans = self.backend.delete_orphans()
-            assert orphans == 30
+            assert orphans == 0
+            assert initial_all_clusters == self.backend.all_clusters.count()
 
-            # Check clusters and merges again
-            assert self.backend.all_clusters.count() == 55
-            assert self.backend.merges.count() == 0
+            # TODO: insert judgement for cluster, check that it is not deleted when
+            # deleting model resolution. Then deleting the judgement should cause
+            # exactly 1 orphan.
+
+            model_res = naive_crn_testkit.resolution_path
+            self.backend.delete_resolution(model_res, certain=True)
+
+            # Delete orphans, some should be deleted and total clusters should reduce
+            orphans = self.backend.delete_orphans()
+            assert orphans > 0
+            all_clusters_2 = self.backend.all_clusters.count()
+            assert initial_all_clusters > all_clusters_2
+
+            # Delete source resolution crn
+            source_res = crn_testkit.resolution_path
+            self.backend.delete_resolution(source_res, certain=True)
+
+            # Delete orphans again and check number of clusters has reduced
+            orphans = self.backend.delete_orphans()
+            assert orphans > 0
+            all_clusters_3 = self.backend.all_clusters.count()
+            assert all_clusters_2 > all_clusters_3

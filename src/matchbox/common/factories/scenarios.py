@@ -639,7 +639,8 @@ def create_mega_scenario(
 
     product_name = FeatureConfig(
         name="product_name",
-        base_generator="catch_phrase",
+        base_generator="text",
+        parameters=(("max_nb_chars", 20),),
     ).add_variations(
         SuffixRule(suffix=" Pro"),
     )

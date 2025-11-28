@@ -40,17 +40,11 @@ matchbox auth status
 ## Database maintenance commands
 
 ### Delete orphans
-When resolutions are modified or deleted, it is possible that the `Clusters` table in the database ends up having clusters which are not related to any table containing sources, models or evaluations (see database structure [here](../api/server/backends/postgresql.md)). These clusters are considered orphaned, and they should be deleted regularly to reduce bloat.
+When resolutions are modified or deleted, it is possible that the database ends up having clusters which are not related to any table containing sources, models or evaluations. These clusters are considered orphaned, and they should be deleted regularly to reduce bloat.
 
 To do this, run:
 ```bash
 matchbox server delete-orphans
 ```
 
-This command will delete clusters from the `Clusters` table whose id does not appear referenced in the following tables:
-- `ClusterSourceKey`
-- `EvalJudgements`
-- `Results`
-- `Probabilities`
-
-This deletion will cascade to the `Contains` table.
+This command will print the number of orphaned clusters deleted.

@@ -132,10 +132,10 @@ def get_samples(
     """
     if sample_file:
         resolved_matches_dump = pl.read_parquet(sample_file)
-        sample_n = min(n, len(resolved_matches_dump))
-        samples = resolved_matches_dump.rename(
-            {"id": "root", "leaf_id": "leaf"}
-        ).sample(sample_n, shuffle=True)
+        clusters = resolved_matches_dump["id"].unique()
+        select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
+        select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
+        samples = select_rows.rename({"id": "root", "leaf_id": "leaf"})
     else:
         if resolution:
             resolution_path: ModelResolutionPath = dag.get_model(

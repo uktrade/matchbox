@@ -1,19 +1,13 @@
-"""PostgreSQL adapter for Matchbox server."""
+"""Collections PostgreSQL mixin for Matchbox server."""
 
-from itertools import chain
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
-
-import polars as pl
 from psycopg.errors import LockNotAvailable
 from pyarrow import Table
-from pydantic import BaseModel
-from sqlalchemy import and_, bindparam, delete, func, or_, select, union_all, update
+from sqlalchemy import delete, select, update
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
-    Match,
     ModelResolutionPath,
     Resolution,
     ResolutionPath,
@@ -24,205 +18,31 @@ from matchbox.common.dtos import (
     UploadStage,
 )
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
-from matchbox.common.dtos import (
-    SourceConfig as CommonSourceConfig,
-)
-from matchbox.common.eval import Judgement as CommonJudgement
-from matchbox.common.eval import ModelComparison
+from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
-    MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxLockError,
-    MatchboxNoJudgements,
     MatchboxResolutionUpdateError,
     MatchboxRunNotWriteable,
 )
 from matchbox.common.logging import logger
-from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
-from matchbox.server.postgresql.db import (
-    MBDB,
-    MatchboxBackends,
-    MatchboxPostgresSettings,
-)
+from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
-    Clusters,
-    ClusterSourceKey,
     Collections,
-    Contains,
-    EvalJudgements,
     ModelConfigs,
-    PKSpace,
-    Probabilities,
     Resolutions,
     Results,
     Runs,
     SourceConfigs,
     SourceFields,
-    Users,
 )
-from matchbox.server.postgresql.utils import evaluation
-from matchbox.server.postgresql.utils.db import (
-    compile_sql,
-    dump,
-    restore,
-)
-from matchbox.server.postgresql.utils.insert import (
-    insert_hashes,
-    insert_results,
-)
-from matchbox.server.postgresql.utils.query import match, query
-
-T = TypeVar("T")
-P = ParamSpec("P")
-
-if TYPE_CHECKING:
-    from pyarrow import Table as ArrowTable
-else:
-    ArrowTable = Any
+from matchbox.server.postgresql.utils.db import compile_sql
+from matchbox.server.postgresql.utils.insert import insert_hashes, insert_results
 
 
-class FilteredClusters(BaseModel):
-    """Wrapper class for filtered cluster queries."""
-
-    has_source: bool | None = None
-
-    def count(self) -> int:
-        """Counts the number of clusters in the database."""
-        with MBDB.get_session() as session:
-            query = session.query(
-                func.count(func.distinct(Clusters.cluster_id))
-            ).select_from(Clusters)
-
-            if self.has_source is not None:
-                if self.has_source:
-                    query = query.join(
-                        ClusterSourceKey,
-                        ClusterSourceKey.cluster_id == Clusters.cluster_id,
-                    )
-                else:
-                    query = (
-                        query.join(
-                            Probabilities,
-                            Probabilities.cluster_id == Clusters.cluster_id,
-                            isouter=True,
-                        )
-                        .join(
-                            EvalJudgements,
-                            EvalJudgements.endorsed_cluster_id == Clusters.cluster_id,
-                            isouter=True,
-                        )
-                        .filter(
-                            or_(
-                                EvalJudgements.endorsed_cluster_id.is_not(None),
-                                Probabilities.cluster_id.is_not(None),
-                            )
-                        )
-                    )
-
-            return query.scalar()
-
-
-class FilteredProbabilities(BaseModel):
-    """Wrapper class for filtered probability queries."""
-
-    over_truth: bool = False
-
-    def count(self) -> int:
-        """Counts the number of probabilities in the database."""
-        with MBDB.get_session() as session:
-            query = session.query(func.count()).select_from(Probabilities)
-
-            if self.over_truth:
-                query = query.join(
-                    Resolutions,
-                    Probabilities.resolution_id == Resolutions.resolution_id,
-                ).filter(
-                    and_(
-                        Resolutions.truth.isnot(None),
-                        Probabilities.probability >= Resolutions.truth,
-                    )
-                )
-            return query.scalar()
-
-
-class FilteredResolutions(BaseModel):
-    """Wrapper class for filtered resolution queries."""
-
-    sources: bool = False
-    models: bool = False
-
-    def count(self) -> int:
-        """Counts the number of resolutions in the database."""
-        with MBDB.get_session() as session:
-            query = session.query(func.count()).select_from(Resolutions)
-
-            filter_list = []
-            if self.sources:
-                filter_list.append(Resolutions.type == ResolutionType.SOURCE)
-            if self.models:
-                filter_list.append(Resolutions.type == ResolutionType.MODEL)
-
-            if filter_list:
-                query = query.filter(or_(*filter_list))
-
-            return query.scalar()
-
-
-class MatchboxPostgres(MatchboxDBAdapter):
-    """A PostgreSQL adapter for Matchbox."""
-
-    def __init__(self, settings: MatchboxPostgresSettings) -> None:
-        """Initialise the PostgreSQL adapter."""
-        self.settings = settings
-        MBDB.settings = settings
-        MBDB.run_migrations()
-
-        PKSpace.initialise()
-
-        self.sources = SourceConfigs
-        self.models = FilteredResolutions(sources=False, models=True)
-        self.source_clusters = FilteredClusters(has_source=True)
-        self.model_clusters = FilteredClusters(has_source=False)
-        self.all_clusters = FilteredClusters()
-        self.creates = FilteredProbabilities(over_truth=True)
-        self.merges = Contains
-        self.proposes = FilteredProbabilities()
-        self.source_resolutions = FilteredResolutions(sources=True, models=False)
-
-    # Retrieval
-
-    def query(  # noqa: D102
-        self,
-        source: SourceResolutionPath,
-        point_of_truth: ResolutionPath | None = None,
-        threshold: int | None = None,
-        return_leaf_id: bool = False,
-        limit: int | None = None,
-    ) -> ArrowTable:
-        return query(
-            source=source,
-            point_of_truth=point_of_truth,
-            threshold=threshold,
-            return_leaf_id=return_leaf_id,
-            limit=limit,
-        )
-
-    def match(  # noqa: D102
-        self,
-        key: str,
-        source: SourceResolutionPath,
-        targets: list[SourceResolutionPath],
-        point_of_truth: ResolutionPath,
-        threshold: int | None = None,
-    ) -> list[Match]:
-        return match(
-            key=key,
-            source=source,
-            targets=targets,
-            point_of_truth=point_of_truth,
-            threshold=threshold,
-        )
+class MatchboxPostgresCollectionsMixin:
+    """Collections mixin for the PostgreSQL adapter for Matchbox."""
 
     # Collection management
 
@@ -538,141 +358,3 @@ class MatchboxPostgres(MatchboxDBAdapter):
             return sql_to_df(
                 stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
             )
-
-    # Data management
-
-    def validate_ids(self, ids: list[int]) -> bool:  # noqa: D102
-        with MBDB.get_session() as session:
-            data_inner_join = (
-                session.query(Clusters)
-                .filter(
-                    Clusters.cluster_id.in_(
-                        bindparam(
-                            "ins_ids",
-                            ids,
-                            expanding=True,
-                        )
-                    )
-                )
-                .all()
-            )
-
-        existing_ids = {item.cluster_id for item in data_inner_join}
-        missing_ids = set(ids) - existing_ids
-
-        if missing_ids:
-            raise MatchboxDataNotFound(
-                message="Some items don't exist in Clusters table.",
-                table=Clusters.__tablename__,
-                data=missing_ids,
-            )
-
-        return True
-
-    def dump(self) -> MatchboxSnapshot:  # noqa: D102
-        return dump()
-
-    def drop(self, certain: bool) -> None:  # noqa: D102
-        if certain:
-            MBDB.drop_database()
-            PKSpace.initialise()
-        else:
-            raise MatchboxDeletionNotConfirmed(
-                "This operation will drop the entire database and recreate it."
-                "It's not expected to be used as part normal operations."
-                "If you're sure you want to continue, rerun with certain=True"
-            )
-
-    def clear(self, certain: bool) -> None:  # noqa: D102
-        if certain:
-            MBDB.clear_database()
-            PKSpace.initialise()
-        else:
-            raise MatchboxDeletionNotConfirmed(
-                "This operation will drop all rows in the database but not the "
-                "tables themselves. It's primarily used to reset following tests."
-                "If you're sure you want to continue, rerun with certain=True"
-            )
-
-    def restore(self, snapshot: MatchboxSnapshot) -> None:  # noqa: D102
-        if snapshot.backend_type != MatchboxBackends.POSTGRES:
-            raise TypeError(
-                f"Cannot restore {snapshot.backend_type} snapshot to PostgreSQL backend"
-            )
-
-        MBDB.clear_database()
-
-        restore(
-            snapshot=snapshot,
-            batch_size=self.settings.batch_size,
-        )
-
-    def delete_orphans(self) -> int:  # noqa: D102
-        with MBDB.get_session() as session:
-            # Get all cluster ids in related tables
-            union_all_cte = union_all(
-                select(EvalJudgements.endorsed_cluster_id.label("cluster_id")),
-                select(EvalJudgements.shown_cluster_id.label("cluster_id")),
-                select(ClusterSourceKey.cluster_id),
-                select(Probabilities.cluster_id),
-                select(Results.left_id.label("cluster_id")),
-                select(Results.right_id.label("cluster_id")),
-            ).cte("union_all_cte")
-
-            # Deduplicate only once
-            not_orphans = (
-                select(union_all_cte.c.cluster_id).distinct().cte("not_orphans")
-            )
-
-            # Return clusters not in related tables
-            stmt = delete(Clusters).where(
-                ~select(not_orphans.c.cluster_id)
-                .where(not_orphans.c.cluster_id == Clusters.cluster_id)
-                .exists()
-            )
-            # Delete orphans
-            deletion = session.execute(stmt)
-
-            session.commit()
-
-            logger.info(f"Deleted {deletion.rowcount} orphans", prefix="Delete orphans")
-            return deletion.rowcount
-
-    # User management
-
-    def login(self, user_name: str) -> int:  # noqa: D102
-        with MBDB.get_session() as session:
-            if user_id := session.scalar(
-                select(Users.user_id).where(Users.name == user_name)
-            ):
-                return user_id
-
-            user = Users(name=user_name)
-            session.add(user)
-            session.commit()
-
-            return user.user_id
-
-    # Evaluation management
-
-    def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
-        # Check that all referenced cluster IDs exist
-        ids = list(chain(*judgement.endorsed)) + [judgement.shown]
-        self.validate_ids(ids)
-        evaluation.insert_judgement(judgement)
-
-    def get_judgements(self) -> tuple[Table, Table]:  # noqa: D102
-        return evaluation.get_judgements()
-
-    def compare_models(self, paths: list[ModelResolutionPath]) -> ModelComparison:  # noqa: D102
-        judgements, expansion = self.get_judgements()
-        if not len(judgements):
-            raise MatchboxNoJudgements()
-        return evaluation.compare_models(
-            paths, pl.from_arrow(judgements), pl.from_arrow(expansion)
-        )
-
-    def sample_for_eval(  # noqa: D102
-        self, n: int, path: ModelResolutionPath, user_id: int
-    ) -> ArrowTable:
-        return evaluation.sample(n, path, user_id)

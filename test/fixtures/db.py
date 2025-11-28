@@ -13,7 +13,7 @@ from moto import mock_aws
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine, create_engine
 
-from matchbox.server.base import MatchboxDatastoreSettings
+from matchbox.server.base import MatchboxDatastoreSettings, MatchboxDBAdapter
 from matchbox.server.postgresql import MatchboxPostgres, MatchboxPostgresSettings
 from matchbox.server.uploads import InMemoryUploadTracker, RedisUploadTracker
 
@@ -229,3 +229,18 @@ def upload_tracker_redis(
     empty_tracker()
     yield tracker
     empty_tracker()
+
+
+# Backends
+
+BACKENDS = [
+    pytest.param("matchbox_postgres", id="postgres"),
+]
+
+
+@pytest.fixture(scope="function")
+def backend_instance(request: pytest.FixtureRequest, backend: str) -> MatchboxDBAdapter:
+    """Create a fresh backend instance for each test."""
+    backend_obj = request.getfixturevalue(backend)
+    backend_obj.clear(certain=True)
+    return backend_obj

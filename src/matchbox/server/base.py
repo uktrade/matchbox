@@ -236,8 +236,9 @@ class MatchboxDBAdapter(ABC):
 
     sources: ListableAndCountable
     models: Countable
-    data: Countable
-    clusters: Countable
+    source_clusters: Countable
+    model_clusters: Countable
+    all_clusters: Countable
     creates: Countable
     merges: Countable
     proposes: Countable
@@ -575,6 +576,14 @@ class MatchboxDBAdapter(ABC):
             TypeError: If the snapshot is not compatible with PostgreSQL
         """
         ...
+
+    @abstractmethod
+    def delete_orphans(self) -> int:
+        """Deletes orphan clusters.
+
+        Orphan clusters are clusters recorded in the Clusters table but that are
+        not referenced in other tables.
+        """
 
     # User management
 

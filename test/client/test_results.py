@@ -89,9 +89,9 @@ class TestModelResults:
 
         probabilities = pl.DataFrame(
             [
-                # simple left-right merge
+                # Simple left-right merge
                 {"left_id": 4, "right_id": 5, "probability": 100},
-                # dedupe through linking
+                # Dedupe through linking
                 {"left_id": 10, "right_id": 6, "probability": 100},
                 {"left_id": 10, "right_id": 7, "probability": 100},
             ]

@@ -1,14 +1,23 @@
 """Admin PostgreSQL mixin for Matchbox server."""
 
-from sqlalchemy import bindparam, select
+from sqlalchemy import bindparam, delete, select, union_all
 
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
 )
+from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxSnapshot
 from matchbox.server.postgresql.db import MBDB, MatchboxBackends
-from matchbox.server.postgresql.orm import Clusters, PKSpace, Users
+from matchbox.server.postgresql.orm import (
+    Clusters,
+    ClusterSourceKey,
+    EvalJudgements,
+    PKSpace,
+    Probabilities,
+    Results,
+    Users,
+)
 from matchbox.server.postgresql.utils.db import dump, restore
 
 
@@ -97,3 +106,34 @@ class MatchboxPostgresAdminMixin:
             snapshot=snapshot,
             batch_size=self.settings.batch_size,
         )
+
+    def delete_orphans(self) -> int:  # noqa: D102
+        with MBDB.get_session() as session:
+            # Get all cluster ids in related tables
+            union_all_cte = union_all(
+                select(EvalJudgements.endorsed_cluster_id.label("cluster_id")),
+                select(EvalJudgements.shown_cluster_id.label("cluster_id")),
+                select(ClusterSourceKey.cluster_id),
+                select(Probabilities.cluster_id),
+                select(Results.left_id.label("cluster_id")),
+                select(Results.right_id.label("cluster_id")),
+            ).cte("union_all_cte")
+
+            # Deduplicate only once
+            not_orphans = (
+                select(union_all_cte.c.cluster_id).distinct().cte("not_orphans")
+            )
+
+            # Return clusters not in related tables
+            stmt = delete(Clusters).where(
+                ~select(not_orphans.c.cluster_id)
+                .where(not_orphans.c.cluster_id == Clusters.cluster_id)
+                .exists()
+            )
+            # Delete orphans
+            deletion = session.execute(stmt)
+
+            session.commit()
+
+            logger.info(f"Deleted {deletion.rowcount} orphans", prefix="Delete orphans")
+            return deletion.rowcount

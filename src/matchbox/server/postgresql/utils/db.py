@@ -140,7 +140,7 @@ def sqa_profiled() -> Generator[None, None, None]:
     s = io.StringIO()
     ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
     ps.print_stats()
-    # uncomment this to see who's calling what
+    # Uncomment this to see who's calling what
     # ps.print_callers()
     print(s.getvalue())
 

@@ -65,7 +65,7 @@ class TestMatchboxEvaluationBackend:
 
             alice_id = self.backend.login("alice")
 
-            original_cluster_num = self.backend.clusters.count()
+            original_cluster_num = self.backend.model_clusters.count()
 
             # Can endorse the same cluster that is shown
             clust1_leaves = get_leaf_ids(unique_ids[0])
@@ -84,7 +84,7 @@ class TestMatchboxEvaluationBackend:
                     endorsed=[clust1_leaves],
                 ),
             )
-            assert self.backend.clusters.count() == original_cluster_num
+            assert self.backend.model_clusters.count() == original_cluster_num
 
             # Now split a cluster
             clust2_leaves = get_leaf_ids(unique_ids[1])
@@ -96,7 +96,7 @@ class TestMatchboxEvaluationBackend:
                 ),
             )
             # Now, two new clusters should have been created
-            assert self.backend.clusters.count() == original_cluster_num + 2
+            assert self.backend.model_clusters.count() == original_cluster_num + 2
 
             # Let's check failures
             # First, confirm that the following leaves don't exist

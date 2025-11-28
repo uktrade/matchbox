@@ -18,6 +18,7 @@ from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
+    MatchboxUnhandledServerResponse,
 )
 
 # General
@@ -214,11 +215,12 @@ def test_count_all_backend_items(
     entity_counts = {
         "sources": 1,
         "models": 2,
-        "data": 3,
-        "clusters": 4,
-        "creates": 5,
-        "merges": 6,
-        "proposes": 7,
+        "source_clusters": 3,
+        "model_clusters": 4,
+        "all_clusters": 7,
+        "creates": 6,
+        "merges": 7,
+        "proposes": 8,
     }
     for e, c in entity_counts.items():
         mock_e = Mock()
@@ -259,5 +261,27 @@ def test_clear_backend_errors(
 
     response = test_client.delete("/database")
     assert response.status_code == 409
+    # We send some explanatory message
+    assert response.content
+
+
+def test_delete_orphans_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_orphans = Mock(return_value=42)
+
+    response = test_client.delete("/database/orphans")
+    assert response.status_code == 200
+    OKMessage.model_validate(response.json())
+    assert response.json()["details"] == "Deleted 42 orphans."
+
+
+def test_delete_orphans_errors(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_orphans = Mock(side_effect=MatchboxUnhandledServerResponse)
+
+    response = test_client.delete("/database/orphans")
+    assert response.status_code == 500
     # We send some explanatory message
     assert response.content

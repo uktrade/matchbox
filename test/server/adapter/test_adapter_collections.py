@@ -202,7 +202,7 @@ class TestMatchboxCollectionsBackend:
             source_configs_pre_delete = self.backend.sources.count()
             sources_pre_delete = self.backend.source_resolutions.count()
             models_pre_delete = self.backend.models.count()
-            cluster_count_pre_delete = self.backend.clusters.count()
+            cluster_count_pre_delete = self.backend.model_clusters.count()
             cluster_assoc_count_pre_delete = self.backend.creates.count()
             proposed_merge_probs_pre_delete = self.backend.proposes.count()
 
@@ -218,7 +218,7 @@ class TestMatchboxCollectionsBackend:
             source_configs_post_delete = self.backend.sources.count()
             sources_post_delete = self.backend.source_resolutions.count()
             models_post_delete = self.backend.models.count()
-            cluster_count_post_delete = self.backend.clusters.count()
+            cluster_count_post_delete = self.backend.model_clusters.count()
             cluster_assoc_count_post_delete = self.backend.creates.count()
             proposed_merge_probs_post_delete = self.backend.proposes.count()
 
@@ -239,7 +239,7 @@ class TestMatchboxCollectionsBackend:
         with self.scenario(self.backend, "bare") as dag_testkit:
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
 
-            assert self.backend.clusters.count() == 0
+            assert self.backend.model_clusters.count() == 0
 
             self.backend.create_resolution(
                 crn_testkit.source.to_resolution(),
@@ -276,9 +276,9 @@ class TestMatchboxCollectionsBackend:
             )
 
             assert crn_testkit.source_config == crn_retrieved.config
-            assert self.backend.data.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
 
-            assert self.backend.data.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
             assert self.backend.source_resolutions.count() == 1
 
             # We can update the resolution metadata, including changes in fields
@@ -380,7 +380,7 @@ class TestMatchboxCollectionsBackend:
             self.backend.insert_source_data(
                 dh_testkit.source.resolution_path, crn_testkit.data_hashes
             )
-            assert self.backend.data.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
             assert self.backend.source_resolutions.count() == 2
 
     def test_insert_model(self) -> None:

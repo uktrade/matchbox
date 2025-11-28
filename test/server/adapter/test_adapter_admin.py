@@ -54,9 +54,9 @@ class TestMatchboxAdminBackend:
         """Test deleting all rows in the database."""
         with self.scenario(self.backend, "dedupe"):
             assert self.backend.sources.count() > 0
-            assert self.backend.data.count() > 0
+            assert self.backend.source_clusters.count() > 0
             assert self.backend.models.count() > 0
-            assert self.backend.clusters.count() > 0
+            assert self.backend.model_clusters.count() > 0
             assert self.backend.creates.count() > 0
             assert self.backend.merges.count() > 0
             assert self.backend.proposes.count() > 0
@@ -64,9 +64,9 @@ class TestMatchboxAdminBackend:
             self.backend.clear(certain=True)
 
             assert self.backend.sources.count() == 0
-            assert self.backend.data.count() == 0
+            assert self.backend.source_clusters.count() == 0
             assert self.backend.models.count() == 0
-            assert self.backend.clusters.count() == 0
+            assert self.backend.model_clusters.count() == 0
             assert self.backend.creates.count() == 0
             assert self.backend.merges.count() == 0
             assert self.backend.proposes.count() == 0
@@ -80,8 +80,9 @@ class TestMatchboxAdminBackend:
             count_funcs = [
                 self.backend.sources.count,
                 self.backend.models.count,
-                self.backend.data.count,
-                self.backend.clusters.count,
+                self.backend.source_clusters.count,
+                self.backend.model_clusters.count,
+                self.backend.all_clusters.count,
                 self.backend.merges.count,
                 self.backend.creates.count,
                 self.backend.proposes.count,
@@ -129,3 +130,40 @@ class TestMatchboxAdminBackend:
 
             # Verify counts still match
             assert get_counts() == pre_dump_counts
+
+    def test_delete_orphans(self) -> None:
+        """Can delete orphaned clusters."""
+        with self.scenario(self.backend, "link") as dag_testkit:
+            crn_testkit = dag_testkit.sources.get("crn")
+            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+
+            # Get number of clusters
+            initial_all_clusters = self.backend.all_clusters.count()
+
+            # Delete orphans, none should be deleted yet
+            orphans = self.backend.delete_orphans()
+            assert orphans == 0
+            assert initial_all_clusters == self.backend.all_clusters.count()
+
+            # TODO: insert judgement for cluster, check that it is not deleted when
+            # deleting model resolution. Then deleting the judgement should cause
+            # exactly 1 orphan.
+
+            model_res = naive_crn_testkit.resolution_path
+            self.backend.delete_resolution(model_res, certain=True)
+
+            # Delete orphans, some should be deleted and total clusters should reduce
+            orphans = self.backend.delete_orphans()
+            assert orphans > 0
+            all_clusters_2 = self.backend.all_clusters.count()
+            assert initial_all_clusters > all_clusters_2
+
+            # Delete source resolution crn
+            source_res = crn_testkit.resolution_path
+            self.backend.delete_resolution(source_res, certain=True)
+
+            # Delete orphans again and check number of clusters has reduced
+            orphans = self.backend.delete_orphans()
+            assert orphans > 0
+            all_clusters_3 = self.backend.all_clusters.count()
+            assert all_clusters_2 > all_clusters_3

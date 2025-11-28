@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 from sqlalchemy import (
     BIGINT,
     BOOLEAN,
+    FLOAT,
     INTEGER,
     SMALLINT,
     CheckConstraint,
@@ -937,6 +938,40 @@ class Users(CountMixin, MBDB.MatchboxBase):
     __table_args__ = (UniqueConstraint("name", name="user_name_unique"),)
 
 
+class EvalSample(CountMixin, MBDB.MatchboxBase):
+    """Table attaching clusters to sample sets."""
+
+    __tablename__ = "eval_sample"
+
+    sample_set_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("eval_sample_set.sample_set_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    cluster_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("clusters.cluster_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    weight: Mapped[float] = mapped_column(FLOAT, default=1.0)
+
+
+class EvalSampleSet(CountMixin, MBDB.MatchboxBase):
+    """Table of groups of samples."""
+
+    __tablename__ = "eval_sample_set"
+
+    # Columns
+    sample_set_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    description: Mapped[str] = mapped_column(TEXT)
+    collection_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("collections.collection_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+
 class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     """Table of evaluation judgements produced by human validators."""
 
@@ -946,6 +981,11 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     judgement_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    sample_set_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("eval_sample_set.sample_set_id", ondelete="CASCADE"),
+        nullable=False,
     )
     endorsed_cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False

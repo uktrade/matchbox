@@ -74,8 +74,9 @@ class TestMatchboxBackend:
             assert isinstance(self.backend.sources.list_all(), list)
             assert isinstance(self.backend.sources.count(), int)
             assert isinstance(self.backend.models.count(), int)
-            assert isinstance(self.backend.data.count(), int)
-            assert isinstance(self.backend.clusters.count(), int)
+            assert isinstance(self.backend.source_clusters.count(), int)
+            assert isinstance(self.backend.model_clusters.count(), int)
+            assert isinstance(self.backend.all_clusters.count(), int)
             assert isinstance(self.backend.creates.count(), int)
             assert isinstance(self.backend.merges.count(), int)
             assert isinstance(self.backend.proposes.count(), int)
@@ -538,7 +539,7 @@ class TestMatchboxBackend:
             source_configs_pre_delete = self.backend.sources.count()
             sources_pre_delete = self.backend.source_resolutions.count()
             models_pre_delete = self.backend.models.count()
-            cluster_count_pre_delete = self.backend.clusters.count()
+            cluster_count_pre_delete = self.backend.model_clusters.count()
             cluster_assoc_count_pre_delete = self.backend.creates.count()
             proposed_merge_probs_pre_delete = self.backend.proposes.count()
 
@@ -554,7 +555,7 @@ class TestMatchboxBackend:
             source_configs_post_delete = self.backend.sources.count()
             sources_post_delete = self.backend.source_resolutions.count()
             models_post_delete = self.backend.models.count()
-            cluster_count_post_delete = self.backend.clusters.count()
+            cluster_count_post_delete = self.backend.model_clusters.count()
             cluster_assoc_count_post_delete = self.backend.creates.count()
             proposed_merge_probs_post_delete = self.backend.proposes.count()
 
@@ -575,7 +576,7 @@ class TestMatchboxBackend:
         with self.scenario(self.backend, "bare") as dag_testkit:
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
 
-            assert self.backend.clusters.count() == 0
+            assert self.backend.model_clusters.count() == 0
 
             self.backend.create_resolution(
                 crn_testkit.source.to_resolution(),
@@ -612,9 +613,9 @@ class TestMatchboxBackend:
             )
 
             assert crn_testkit.source_config == crn_retrieved.config
-            assert self.backend.data.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
 
-            assert self.backend.data.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
             assert self.backend.source_resolutions.count() == 1
 
             # We can update the resolution metadata, including changes in fields
@@ -716,7 +717,7 @@ class TestMatchboxBackend:
             self.backend.insert_source_data(
                 dh_testkit.source.resolution_path, crn_testkit.data_hashes
             )
-            assert self.backend.data.count() == len(crn_testkit.data_hashes)
+            assert self.backend.source_clusters.count() == len(crn_testkit.data_hashes)
             assert self.backend.source_resolutions.count() == 2
 
     def test_insert_model(self) -> None:
@@ -997,9 +998,9 @@ class TestMatchboxBackend:
         """Test deleting all rows in the database."""
         with self.scenario(self.backend, "dedupe"):
             assert self.backend.sources.count() > 0
-            assert self.backend.data.count() > 0
+            assert self.backend.source_clusters.count() > 0
             assert self.backend.models.count() > 0
-            assert self.backend.clusters.count() > 0
+            assert self.backend.model_clusters.count() > 0
             assert self.backend.creates.count() > 0
             assert self.backend.merges.count() > 0
             assert self.backend.proposes.count() > 0
@@ -1007,9 +1008,9 @@ class TestMatchboxBackend:
             self.backend.clear(certain=True)
 
             assert self.backend.sources.count() == 0
-            assert self.backend.data.count() == 0
+            assert self.backend.source_clusters.count() == 0
             assert self.backend.models.count() == 0
-            assert self.backend.clusters.count() == 0
+            assert self.backend.model_clusters.count() == 0
             assert self.backend.creates.count() == 0
             assert self.backend.merges.count() == 0
             assert self.backend.proposes.count() == 0
@@ -1023,8 +1024,9 @@ class TestMatchboxBackend:
             count_funcs = [
                 self.backend.sources.count,
                 self.backend.models.count,
-                self.backend.data.count,
-                self.backend.clusters.count,
+                self.backend.source_clusters.count,
+                self.backend.model_clusters.count,
+                self.backend.all_clusters.count,
                 self.backend.merges.count,
                 self.backend.creates.count,
                 self.backend.proposes.count,
@@ -1115,7 +1117,7 @@ class TestMatchboxBackend:
 
             alice_id = self.backend.login("alice")
 
-            original_cluster_num = self.backend.clusters.count()
+            original_cluster_num = self.backend.model_clusters.count()
 
             # Can endorse the same cluster that is shown
             clust1_leaves = get_leaf_ids(unique_ids[0])
@@ -1134,7 +1136,7 @@ class TestMatchboxBackend:
                     endorsed=[clust1_leaves],
                 ),
             )
-            assert self.backend.clusters.count() == original_cluster_num
+            assert self.backend.model_clusters.count() == original_cluster_num
 
             # Now split a cluster
             clust2_leaves = get_leaf_ids(unique_ids[1])
@@ -1146,7 +1148,7 @@ class TestMatchboxBackend:
                 ),
             )
             # Now, two new clusters should have been created
-            assert self.backend.clusters.count() == original_cluster_num + 2
+            assert self.backend.model_clusters.count() == original_cluster_num + 2
 
             # Let's check failures
             # First, confirm that the following leaves don't exist
@@ -1366,3 +1368,40 @@ class TestMatchboxBackend:
                 n=99, path=model_testkit.resolution_path, user_id=user_id
             )
             assert len(samples_all_done) == 0
+
+    def test_delete_orphans(self) -> None:
+        """Can delete orphaned clusters."""
+        with self.scenario(self.backend, "link") as dag_testkit:
+            crn_testkit = dag_testkit.sources.get("crn")
+            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+
+            # Get number of clusters
+            initial_all_clusters = self.backend.all_clusters.count()
+
+            # Delete orphans, none should be deleted yet
+            orphans = self.backend.delete_orphans()
+            assert orphans == 0
+            assert initial_all_clusters == self.backend.all_clusters.count()
+
+            # TODO: insert judgement for cluster, check that it is not deleted when
+            # deleting model resolution. Then deleting the judgement should cause
+            # exactly 1 orphan.
+
+            model_res = naive_crn_testkit.resolution_path
+            self.backend.delete_resolution(model_res, certain=True)
+
+            # Delete orphans, some should be deleted and total clusters should reduce
+            orphans = self.backend.delete_orphans()
+            assert orphans > 0
+            all_clusters_2 = self.backend.all_clusters.count()
+            assert initial_all_clusters > all_clusters_2
+
+            # Delete source resolution crn
+            source_res = crn_testkit.resolution_path
+            self.backend.delete_resolution(source_res, certain=True)
+
+            # Delete orphans again and check number of clusters has reduced
+            orphans = self.backend.delete_orphans()
+            assert orphans > 0
+            all_clusters_3 = self.backend.all_clusters.count()
+            assert all_clusters_2 > all_clusters_3

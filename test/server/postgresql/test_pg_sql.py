@@ -1702,7 +1702,7 @@ class TestMatchFunction:
         self, populated_postgres_db: MatchboxPostgres
     ) -> None:
         """Should handle dedupe-only resolution with no cross-source linking."""
-        # dedupe_a only processes source_a, so no source_b matches expected
+        # Dedupe_a only processes source_a, so no source_b matches expected
         matches = match(
             key="src_a_key1",
             source=_resolution_path("source_a"),

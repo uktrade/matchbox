@@ -599,3 +599,12 @@ def count_backend_items(
     logger.debug(f"Counts: {counts}", prefix=log_prefix)
 
     return counts
+
+
+@http_retry
+def delete_orphans() -> int:
+    """Delete orphaned clusters."""
+    logger.debug("Deleting orphans")
+
+    res = CLIENT.delete("/database/orphans")
+    return ResourceOperationStatus.model_validate(res.json())

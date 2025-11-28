@@ -7,7 +7,7 @@ import polars as pl
 from psycopg.errors import LockNotAvailable
 from pyarrow import Table
 from pydantic import BaseModel
-from sqlalchemy import and_, bindparam, delete, func, or_, select, update
+from sqlalchemy import and_, bindparam, delete, func, or_, select, union_all, update
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -182,8 +182,9 @@ class MatchboxPostgres(MatchboxDBAdapter):
 
         self.sources = SourceConfigs
         self.models = FilteredResolutions(sources=False, models=True)
-        self.data = FilteredClusters(has_source=True)
-        self.clusters = FilteredClusters(has_source=False)
+        self.source_clusters = FilteredClusters(has_source=True)
+        self.model_clusters = FilteredClusters(has_source=False)
+        self.all_clusters = FilteredClusters()
         self.creates = FilteredProbabilities(over_truth=True)
         self.merges = Contains
         self.proposes = FilteredProbabilities()
@@ -605,6 +606,37 @@ class MatchboxPostgres(MatchboxDBAdapter):
             snapshot=snapshot,
             batch_size=self.settings.batch_size,
         )
+
+    def delete_orphans(self) -> int:  # noqa: D102
+        with MBDB.get_session() as session:
+            # Get all cluster ids in related tables
+            union_all_cte = union_all(
+                select(EvalJudgements.endorsed_cluster_id.label("cluster_id")),
+                select(EvalJudgements.shown_cluster_id.label("cluster_id")),
+                select(ClusterSourceKey.cluster_id),
+                select(Probabilities.cluster_id),
+                select(Results.left_id.label("cluster_id")),
+                select(Results.right_id.label("cluster_id")),
+            ).cte("union_all_cte")
+
+            # Deduplicate only once
+            not_orphans = (
+                select(union_all_cte.c.cluster_id).distinct().cte("not_orphans")
+            )
+
+            # Return clusters not in related tables
+            stmt = delete(Clusters).where(
+                ~select(not_orphans.c.cluster_id)
+                .where(not_orphans.c.cluster_id == Clusters.cluster_id)
+                .exists()
+            )
+            # Delete orphans
+            deletion = session.execute(stmt)
+
+            session.commit()
+
+            logger.info(f"Deleted {deletion.rowcount} orphans", prefix="Delete orphans")
+            return deletion.rowcount
 
     # User management
 

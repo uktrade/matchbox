@@ -108,7 +108,7 @@ class ModelResults:
                 unique_probabilities.get_column_index("probability"), probability_uint8
             )
 
-        # need schema in format recognised by polars
+        # Need schema in format recognised by polars
         self.probabilities = unique_probabilities.cast(pl.Schema(SCHEMA_RESULTS))
 
     @property

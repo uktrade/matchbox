@@ -310,7 +310,7 @@ def test_source_run_null_identifier(
     mock_df = pl.DataFrame({"key": ["1", None], "name": ["a", "b"]})
     mock_fetch.return_value = (x for x in [mock_df])
 
-    # hashing data should raise ValueErrors for null keys
+    # Hashing data should raise ValueErrors for null keys
     with pytest.raises(ValueError, match="keys column contains null values"):
         source.run()
 

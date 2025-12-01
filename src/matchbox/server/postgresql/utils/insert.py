@@ -38,6 +38,13 @@ from matchbox.server.postgresql.utils.db import (
 )
 from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leaves
 
+MODEL_CLUSTERS_SCHEMA = {
+    "cluster_id": pl.Int64,
+    "cluster_hash": pl.Binary,
+    "leaves": pl.List(pl.Int64),
+    "probability": pl.Int8,
+}
+
 
 def insert_hashes(
     path: SourceResolutionPath,
@@ -269,7 +276,7 @@ def _results_to_cluster_pairs(
 
 def _build_cluster_hierarchy(
     cluster_lookup: dict[int, Cluster], probabilities: pa.Table
-) -> dict[bytes, Cluster]:
+) -> list[Cluster]:
     """Build cluster hierarchy using disjoint sets and probability thresholding.
 
     Args:
@@ -277,7 +284,7 @@ def _build_cluster_hierarchy(
         probabilities: Arrow table containing probability data
 
     Returns:
-        Dictionary mapping cluster hashes to Cluster objects
+        List of Cluster objects
     """
     logger.debug("Computing hierarchies")
 
@@ -313,86 +320,94 @@ def _build_cluster_hierarchy(
     # Process any remaining components
     _process_components(probability)
 
-    return all_clusters
+    return list(all_clusters.values())
 
 
-def _create_clusters_dataframe(all_clusters: dict[bytes, Cluster]) -> pl.DataFrame:
-    """Create a DataFrame with cluster data and existing/new cluster information.
+def create_clusters_dataframe(all_clusters: list[Cluster]) -> pl.DataFrame:
+    """Create a DataFrame with cluster data.
 
     Args:
         all_clusters: Dictionary mapping cluster hashes to Cluster objects
 
     Returns:
-        Polars DataFrame with columns: cluster_id, cluster_hash, cluster_struct, new
+        Polars DataFrame with CLUSTERS_SCHEMA
     """
-    # Convert all clusters to a DataFrame, converting Clusters to Polars structs
     cluster_data = []
-    for cluster_hash, cluster in all_clusters.items():
-        cluster_struct = {
-            "id": cluster.id,
-            "probability": cluster.probability,
-            "leaves": [leaf.id for leaf in cluster.leaves] if cluster.leaves else [],
-        }
+    for cluster in all_clusters:
         cluster_data.append(
-            {"cluster_hash": cluster_hash, "cluster_struct": cluster_struct}
+            {
+                "cluster_hash": cluster.hash,
+                "cluster_id": cluster.id,
+                "probability": cluster.probability,
+                "leaves": [leaf.id for leaf in cluster.leaves]
+                if cluster.leaves
+                else [],
+            }
         )
 
-    all_clusters_df = pl.DataFrame(
-        cluster_data,
-        schema={
-            "cluster_hash": pl.Binary,
-            "cluster_struct": pl.Struct(
-                {"id": pl.Int64, "probability": pl.Int8, "leaves": pl.List(pl.Int64)}
-            ),
-        },
-    )
+    clusters_df = pl.DataFrame(cluster_data, schema=MODEL_CLUSTERS_SCHEMA)
 
-    # Look up existing clusters in the database
+    # Find existing hashes in DB
     with ingest_to_temporary_table(
         table_name="hashes",
         schema_name="mb",
         column_types={"cluster_hash": BYTEA},
-        data=all_clusters_df.select("cluster_hash").to_arrow(),
+        data=clusters_df.select("cluster_hash").to_arrow(),
     ) as temp_table:
         existing_cluster_stmt = select(Clusters.cluster_id, Clusters.cluster_hash).join(
             temp_table, temp_table.c.cluster_hash == Clusters.cluster_hash
         )
 
         with MBDB.get_adbc_connection() as conn:
-            existing_cluster_df: pl.DataFrame = sql_to_df(
+            existing_clusters: pl.DataFrame = sql_to_df(
                 stmt=compile_sql(existing_cluster_stmt),
                 connection=conn.dbapi_connection,
                 return_type="polars",
+            ).with_columns(pl.lit(False).alias("new"))
+
+        # Where available, use existing IDs
+        clusters_df = (
+            clusters_df.join(existing_clusters, on="cluster_hash", how="left")
+            .with_columns(
+                pl.coalesce(["cluster_id_right", "cluster_id"]).alias("cluster_id")
+            )
+            .drop("cluster_id_right")
+        )
+
+        # Where not available, reserve new IDs
+        new_hashes = clusters_df.filter(pl.col("cluster_id") < 0)
+        if len(new_hashes):
+            next_id = PKSpace.reserve_block("clusters", len(new_hashes))
+
+            new_id_mapping = new_hashes.select("cluster_hash").with_columns(
+                pl.arange(next_id, next_id + len(new_hashes)).alias("new_cluster_id"),
+                pl.lit(True).alias("new"),
             )
 
-    # Use anti_join to find hashes that don't exist in the lookup
-    new_clusters_df = all_clusters_df.join(
-        existing_cluster_df, on="cluster_hash", how="anti"
+            clusters_df = (
+                clusters_df.join(new_id_mapping, on="cluster_hash", how="left")
+                .with_columns(
+                    pl.coalesce(["new_cluster_id", "cluster_id"]).alias("cluster_id"),
+                    pl.coalesce(["new", "new_right"]).alias("new"),
+                )
+                .drop("new_cluster_id", "new_right")
+            )
+
+        return clusters_df
+
+
+def make_model_cluster_tables(clusters: pl.DataFrame) -> tuple[pa.Table, pa.Table]:
+    """Get Clusters and Contains to insert from dataframe with CLUSTERS_SCHEMA."""
+    new_clusters = clusters.filter(pl.col("new")).select("cluster_id", "cluster_hash")
+
+    new_contains = (
+        clusters.filter(pl.col("new"))
+        .rename({"cluster_id": "root", "leaves": "leaf"})
+        .explode("leaf")
+        .select("root", "leaf")
     )
 
-    # Assign new cluster IDs if needed
-    next_cluster_id: int = 0
-    if not new_clusters_df.is_empty():
-        next_cluster_id = PKSpace.reserve_block("clusters", new_clusters_df.shape[0])
-
-    new_clusters_df = new_clusters_df.with_columns(
-        [
-            (
-                pl.arange(0, new_clusters_df.shape[0], dtype=pl.Int64) + next_cluster_id
-            ).alias("cluster_id"),
-            pl.lit(True).alias("new"),
-        ]
-    )
-
-    # Add cluster data to existing and add new flag
-    existing_with_data = all_clusters_df.join(
-        existing_cluster_df, on="cluster_hash", how="inner"
-    ).with_columns(pl.lit(False).alias("new"))
-
-    # Concatenate existing and new clusters
-    return pl.concat([existing_with_data, new_clusters_df]).select(
-        "cluster_id", "cluster_hash", "cluster_struct", "new"
-    )
+    return new_clusters, new_contains
 
 
 def _results_to_insert_tables(
@@ -441,42 +456,23 @@ def _results_to_insert_tables(
     cluster_lookup: dict[int, Cluster] = _build_cluster_objects(nested_data, im)
 
     logger.debug("Computing hierarchies", prefix=log_prefix)
-    all_clusters: dict[bytes, Cluster] = _build_cluster_hierarchy(
+    all_clusters: list[Cluster] = _build_cluster_hierarchy(
         cluster_lookup=cluster_lookup, probabilities=probabilities
     )
     del cluster_lookup
 
     logger.debug("Reconciling clusters against database", prefix=log_prefix)
-    all_clusters_df = _create_clusters_dataframe(all_clusters)
+    all_clusters_df = create_clusters_dataframe(all_clusters)
     del all_clusters
 
-    # Filter to new clusters for Clusters table
-    new_clusters_df = all_clusters_df.filter(pl.col("new")).select(
-        "cluster_id", "cluster_hash"
-    )
-
-    # Filter to new clusters and explode leaves for Contains table
-    new_contains_df = (
-        all_clusters_df.filter(pl.col("new"))
-        .select("cluster_id", "cluster_struct")
-        .rename({"cluster_id": "root"})
-        .with_columns(pl.col("cluster_struct").struct.field("leaves").alias("leaf"))
-        .drop("cluster_struct")
-        .explode("leaf")
-        .select("root", "leaf")
-    )
+    new_clusters_df, new_contains_df = make_model_cluster_tables(all_clusters_df)
 
     # Use all clusters and unnest probabilities for Probabilities table
     new_probabilities_df = (
-        all_clusters_df.select("cluster_id", "cluster_struct")
-        .with_columns(
-            pl.col("cluster_struct").struct.field("probability").alias("probability")
-        )
-        .drop("cluster_struct")
+        all_clusters_df.select("cluster_id", "probability")
         .with_columns(
             pl.lit(resolution.resolution_id, dtype=pl.Int64).alias("resolution_id")
         )
-        .select("resolution_id", "cluster_id", "probability")
         .sort(["cluster_id", "probability"])
     )
 

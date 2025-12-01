@@ -6,7 +6,6 @@ from typing import Any, Literal, Optional
 from sqlalchemy import (
     BIGINT,
     BOOLEAN,
-    FLOAT,
     INTEGER,
     SMALLINT,
     CheckConstraint,
@@ -938,14 +937,14 @@ class Users(CountMixin, MBDB.MatchboxBase):
     __table_args__ = (UniqueConstraint("name", name="user_name_unique"),)
 
 
-class EvalSample(CountMixin, MBDB.MatchboxBase):
+class EvalSamples(CountMixin, MBDB.MatchboxBase):
     """Table attaching clusters to sample sets."""
 
-    __tablename__ = "eval_sample"
+    __tablename__ = "eval_samples"
 
     sample_set_id: Mapped[int] = mapped_column(
         BIGINT,
-        ForeignKey("eval_sample_set.sample_set_id", ondelete="CASCADE"),
+        ForeignKey("eval_sample_sets.sample_set_id", ondelete="CASCADE"),
         primary_key=True,
     )
     cluster_id: Mapped[int] = mapped_column(
@@ -953,18 +952,18 @@ class EvalSample(CountMixin, MBDB.MatchboxBase):
         ForeignKey("clusters.cluster_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    weight: Mapped[float] = mapped_column(FLOAT, default=1.0)
+    weight: Mapped[int] = mapped_column(SMALLINT, default=1)
 
 
-class EvalSampleSet(CountMixin, MBDB.MatchboxBase):
+class EvalSampleSets(CountMixin, MBDB.MatchboxBase):
     """Table of groups of samples."""
 
-    __tablename__ = "eval_sample_set"
+    __tablename__ = "eval_sample_sets"
 
     # Columns
     sample_set_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
-    description: Mapped[str] = mapped_column(TEXT)
+    description: Mapped[str] = mapped_column(TEXT, nullable=True)
     collection_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("collections.collection_id", ondelete="CASCADE"),
@@ -984,7 +983,7 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     )
     sample_set_id: Mapped[int] = mapped_column(
         BIGINT,
-        ForeignKey("eval_sample_set.sample_set_id", ondelete="CASCADE"),
+        ForeignKey("eval_sample_sets.sample_set_id", ondelete="CASCADE"),
         nullable=False,
     )
     endorsed_cluster_id: Mapped[int] = mapped_column(

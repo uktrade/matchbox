@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
-    SCHEMA_EVAL_SAMPLES,
+    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     SCHEMA_JUDGEMENTS,
     JudgementsZipFilenames,
 )
@@ -107,7 +107,7 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
             {"root": 10, "leaf": 1, "key": "1", "source": "source_a"},
             {"root": 10, "leaf": 1, "key": "2", "source": "source_a"},
         ],
-        schema=SCHEMA_EVAL_SAMPLES,
+        schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     )
     # There will be nulls in case of a schema mismatch
     assert len(sample.drop_null()) == len(sample)

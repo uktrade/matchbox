@@ -14,7 +14,7 @@ from matchbox.client.eval import get_samples
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.results import ResolvedMatches
 from matchbox.common.arrow import (
-    SCHEMA_EVAL_SAMPLES,
+    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     SCHEMA_QUERY_WITH_LEAVES,
     table_to_buffer,
 )
@@ -196,7 +196,7 @@ def test_get_samples(
             # Source baz
             {"root": 10, "leaf": 1, "key": "x", "source": "baz"},
         ],
-        schema=SCHEMA_EVAL_SAMPLES,
+        schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     )
     # There will be nulls in case of a schema mismatch
     assert len(samples.drop_null()) == len(samples)
@@ -238,7 +238,7 @@ def test_get_samples(
             {"root": 11, "leaf": 7, "key": "c", "source": "bar"},
             {"root": 11, "leaf": 8, "key": "d", "source": "bar"},
         ],
-        schema=SCHEMA_EVAL_SAMPLES,
+        schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     )
     matchbox_api.get("/eval/samples").mock(
         return_value=Response(200, content=table_to_buffer(samples_no_baz).read())
@@ -292,7 +292,7 @@ def test_get_samples(
         return_value=Response(
             200,
             content=table_to_buffer(
-                Table.from_pylist([], schema=SCHEMA_EVAL_SAMPLES)
+                Table.from_pylist([], schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD)
             ).read(),
         )
     )

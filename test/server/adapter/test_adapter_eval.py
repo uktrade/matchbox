@@ -5,12 +5,14 @@ from functools import partial
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
+from pyarrow import Table
 from sqlalchemy import Engine
 from test.fixtures.db import BACKENDS
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
-    SCHEMA_EVAL_SAMPLES,
+    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
+    SCHEMA_EVAL_SAMPLES_UPLOAD,
     SCHEMA_JUDGEMENTS,
 )
 from matchbox.common.dtos import ResolutionPath
@@ -33,9 +35,30 @@ class TestMatchboxEvaluationBackend:
         self.backend: MatchboxDBAdapter = backend_instance
         self.scenario = partial(setup_scenario, warehouse=sqlite_warehouse)
 
+    def test_insert_samples(self) -> None:
+        """Can insert sample sets for evaluation."""
+        with self.scenario(self.backend, "bare") as dag_testkit:
+            samples = Table.from_pylist(
+                [
+                    {"root": -1, "leaf": 1, "weight": 1},
+                    {"root": -1, "leaf": 2, "weight": 1},
+                ],
+                schema=SCHEMA_EVAL_SAMPLES_UPLOAD,
+            )
+            self.backend.insert_samples(
+                samples=samples, name="sampleset", collection=dag_testkit.dag.name
+            )
+
     def test_insert_and_get_judgement(self) -> None:
         """Can insert and retrieve judgements."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
+            samples = Table.from_pylist(
+                [{"root": -1, "leaf": 1}, {"root": -1, "leaf": 2}],
+                schema=SCHEMA_EVAL_SAMPLES_UPLOAD,
+            )
+            self.backend.insert_samples(
+                samples=samples, name="sampleset", collection=dag_testkit.dag.name
+            )
             crn_testkit = dag_testkit.sources.get("crn")
             naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
 
@@ -71,6 +94,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_id=alice_id,
+                    sample_set=1,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -79,6 +103,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_id=alice_id,
+                    sample_set=1,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -90,6 +115,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_id=alice_id,
+                    sample_set=1,
                     shown=unique_ids[1],
                     endorsed=[clust2_leaves[:1], clust2_leaves[1:]],
                 ),
@@ -193,7 +219,7 @@ class TestMatchboxEvaluationBackend:
                 n=99, path=model_testkit.resolution_path, user_id=user_id
             )
 
-            assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES)
+            assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES_DOWNLOAD)
 
             # We can reconstruct the expected sample from resolution and source queries
             expected_sample = (

@@ -51,15 +51,19 @@ SCHEMA_CLUSTER_EXPANSION: Final[pa.Schema] = pa.schema(
 )
 """Data transfer schema for mapping from a cluster ID to all its source cluster IDs."""
 
-SCHEMA_EVAL_SAMPLES: Final[pa.Schema] = pa.schema(
+SCHEMA_EVAL_SAMPLES_UPLOAD: Final[pa.Schema] = pa.schema(
     [
         ("root", pa.uint64()),
         ("leaf", pa.uint64()),
-        ("key", pa.large_string()),
-        ("source", pa.large_string()),
+        ("weight", pa.uint16()),
     ]
 )
-"""Data transfer schema for evaluation samples."""
+"""Data upload schema for evaluation samples."""
+
+SCHEMA_EVAL_SAMPLES_DOWNLOAD = SCHEMA_QUERY.append(
+    pa.field("key", pa.large_string())
+).append(pa.field("source", pa.large_string()))
+"""Data download schema for evaluation samples."""
 
 
 class JudgementsZipFilenames(StrEnum):

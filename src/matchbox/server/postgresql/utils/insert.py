@@ -351,9 +351,7 @@ def _create_clusters_dataframe(all_clusters: dict[bytes, Cluster]) -> pl.DataFra
     with ingest_to_temporary_table(
         table_name="hashes",
         schema_name="mb",
-        column_types={
-            "cluster_hash": BYTEA,
-        },
+        column_types={"cluster_hash": BYTEA},
         data=all_clusters_df.select("cluster_hash").to_arrow(),
     ) as temp_table:
         existing_cluster_stmt = select(Clusters.cluster_id, Clusters.cluster_hash).join(

@@ -594,6 +594,25 @@ class MatchboxDBAdapter(ABC):
     # Evaluation management
 
     @abstractmethod
+    def insert_samples(
+        self,
+        samples: Table,
+        name: str,
+        collection: str,
+        description: str | None = None,
+    ) -> None:
+        """Adds a sample set to the database.
+
+        Args:
+            samples: PyArrow table with SCHEMA_EVAL_SAMPLES_UPLOAD.
+                It is expected that the root cluster IDs will be placeholder values for
+                grouping leaves.
+            name: name of the sample set
+            description: description of the sample set
+            collection: name of collection against which to register sample set
+        """
+
+    @abstractmethod
     def insert_judgement(self, judgement: Judgement) -> None:
         """Adds an evaluation judgement to the database.
 

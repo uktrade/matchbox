@@ -190,12 +190,12 @@ class TestE2EModelEvaluation:
 
             # Verify app authenticated and loaded samples from real warehouse data
             assert app.user_id is not None
-            assert len(app.queue.items) > 0, "Should load samples from warehouse"
+            assert len(app.queue.sessions) > 0, "Should load samples from warehouse"
 
             # Submit one judgement to verify data flow
-            item = app.queue.items[0]
-            for i in range(len(item.display_columns)):
-                item.assignments[i] = "a"  # Assign all to same cluster
+            session = app.queue.sessions[0]
+            for i in range(len(session.item.get_unique_record_groups())):
+                session.assignments[i] = "a"  # Assign all to same cluster
 
             initial_judgements, _ = _handler.download_eval_data()
             initial_count = len(initial_judgements)

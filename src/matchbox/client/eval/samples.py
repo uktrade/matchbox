@@ -14,33 +14,82 @@ from matchbox.common.eval import Judgement, ModelComparison, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
 
+class EvaluationFieldMetadata(BaseModel):
+    """Metadata for a field in evaluation."""
+
+    display_name: str
+    source_columns: list[str]
+
+
 class EvaluationItem(BaseModel):
-    """A cluster awaiting evaluation, with pre-computed display data."""
+    """A cluster ready for evaluation.
+
+    The records dataframe contains the leaf IDs and the qualified index fields
+    associated with it. For example:
+
+    | leaf_id | src_a_first | src_a_last | src_b_first | src_b_last |
+    |---------|-------------|------------|-------------|------------|
+    | 1       | Thomas      | Bayes      |             |            |
+    | 2       | Tommy       | B          |             |            |
+    | 12      |             |            | Tom         | Bayes      |
+
+    The fields attribute allows any evaluation system to map between a display
+    version of the source columns, and the actual columns contained in the
+    records dataframe. For example:
+
+    ```text
+    {
+        "display_name": "first",
+        "source_columns": "src_a_first", "src_b_first"
+    }
+    ```
+    """
 
     model_config = {"arbitrary_types_allowed": True}
 
     cluster_id: int
-    dataframe: pl.DataFrame  # Original raw data (needed for judgement leaf IDs)
-    display_data: dict[str, list[str]]  # field_name -> [val1, val2, val3]
-    duplicate_groups: list[list[int]]  # Groups of leaf_ids with identical data
-    display_columns: list[int]  # Representative leaf_id for each displayed column
-    assignments: dict[int, str] = {}  # display_column_index -> group_letter
+    records: pl.DataFrame
+    fields: list[EvaluationFieldMetadata]
+
+    def get_unique_record_groups(self) -> list[list[int]]:
+        """Group identical records by leaf ID.
+
+        Returns:
+            List of groups, where each group is a list of leaf IDs
+            that have identical values across all data fields.
+            Example: [[1, 3], [2], [4, 5, 6]] means records 1 & 3 are identical.
+        """
+        # Get all data column names (not "leaf")
+        # Flatten the source_columns lists from all fields
+        data_cols = [col for field in self.fields for col in field.source_columns]
+
+        # Group by all data columns to find duplicates
+        grouped = self.records.group_by(data_cols, maintain_order=True).agg(
+            pl.col("leaf")
+        )
+
+        # Extract list of leaf ID lists
+        return [group for group in grouped["leaf"]]
 
 
-def create_judgement(item: EvaluationItem, user_id: int) -> Judgement:
+def create_judgement(
+    item: EvaluationItem, assignments: dict[int, str], user_id: int
+) -> Judgement:
     """Convert item assignments to Judgement - no default group assignment.
 
     Args:
-        item: Evaluation item with assignments
+        item: Evaluation item
+        assignments: Column assignments (group_idx -> group_letter)
         user_id: User ID for the judgement
 
     Returns:
         Judgement with endorsed groups based on assignments
     """
     groups: dict[str, list[int]] = {}
+    unique_record_groups = item.get_unique_record_groups()
 
-    for col_idx, group in item.assignments.items():
-        leaf_ids = item.duplicate_groups[col_idx]
+    for col_idx, group in assignments.items():
+        leaf_ids = unique_record_groups[col_idx]
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
@@ -50,59 +99,38 @@ def create_judgement(item: EvaluationItem, user_id: int) -> Judgement:
 def create_evaluation_item(
     df: pl.DataFrame, source_configs: list[tuple[str, SourceConfig]], cluster_id: int
 ) -> EvaluationItem:
-    """Create EvaluationItem with pre-computed display data."""
+    """Create EvaluationItem with structured metadata."""
     # Get all data columns (exclude metadata columns)
     data_cols = [c for c in df.columns if c not in ["root", "leaf", "key"]]
 
-    # Extract field names from source configs
-    field_names = []
-    for _, config in source_configs:
-        for field in config.index_fields:
-            if field.name not in field_names:
-                field_names.append(field.name)
+    # Build mapping of field_name -> list of qualified column names
+    field_to_columns: dict[str, list[str]] = {}
 
-    if not data_cols:
-        # No data columns found - return empty item
-        return EvaluationItem(
-            cluster_id=cluster_id,
-            dataframe=df,
-            display_data={},
-            duplicate_groups=[],
-            display_columns=[],
-            assignments={},
+    for source_id, config in source_configs:
+        for field in config.index_fields:
+            # Build qualified column name for this source+field
+            column_name = config.qualify_field(source_id, field.name)
+
+            # Only add if this column exists in DataFrame
+            if column_name in data_cols:
+                # Add to list for this field name
+                if field.name not in field_to_columns:
+                    field_to_columns[field.name] = []
+                field_to_columns[field.name].append(column_name)
+
+    # Create EvaluationFieldMetadata objects (one per unique field name)
+    fields: list[EvaluationFieldMetadata] = []
+    for field_name, source_columns in field_to_columns.items():
+        fields.append(
+            EvaluationFieldMetadata(
+                display_name=field_name, source_columns=source_columns
+            )
         )
 
-    # Deduplicate using polars group_by
-    df_dedup = df.select(["leaf"] + data_cols)
-    grouped = df_dedup.group_by(data_cols, maintain_order=True).agg(pl.col("leaf"))
+    # Keep ALL data columns in records
+    records = df.select(["leaf"] + data_cols)
 
-    duplicate_groups = [group for group in grouped["leaf"]]
-    display_columns = [group[0] for group in duplicate_groups]
-
-    # Build display data
-    display_data = {}
-    for field_name in field_names:
-        qualified_cols = [c for c in data_cols if c.endswith(f"_{field_name}")]
-
-        values = []
-        for leaf_id in display_columns:
-            row = df.filter(pl.col("leaf") == leaf_id).row(0, named=True)
-            val = next(
-                (str(row.get(c, "")).strip() for c in qualified_cols if row.get(c)), ""
-            )
-            values.append(val)
-
-        if any(values):  # Only include fields with data
-            display_data[field_name] = values
-
-    return EvaluationItem(
-        cluster_id=cluster_id,
-        dataframe=df,
-        display_data=display_data,
-        duplicate_groups=duplicate_groups,
-        display_columns=display_columns,
-        assignments={},
-    )
+    return EvaluationItem(cluster_id=cluster_id, records=records, fields=fields)
 
 
 def get_samples(

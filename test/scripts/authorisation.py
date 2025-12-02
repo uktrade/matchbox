@@ -46,6 +46,7 @@ def generate_json_web_token(
     sub: str,
     api_root: str = "https://api.example.com",
     expiry_hours: int = EXPIRY_AFTER_X_HOURS,
+    email: str | None = None,
 ) -> str:
     """Generate JWT with private key bytes."""
     private_key = load_pem_private_key(private_key_bytes, password=None)
@@ -60,6 +61,9 @@ def generate_json_web_token(
         "exp": int(time.time() + 60 * 60 * expiry_hours),
         "authorised_hosts": api_root,
     }
+
+    if email is not None:
+        payload["email"] = email
 
     to_sign = (
         b64encode_nopadding(json.dumps(header).encode("utf-8"))
@@ -95,9 +99,17 @@ def jwt(
         typer.Option(
             "--sub",
             "-s",
-            help="Subject claim for the JWT",
+            help="Subject claim for the JWT (should be a UUID string)",
         ),
     ],
+    email: Annotated[
+        str | None,
+        typer.Option(
+            "--email",
+            "-m",
+            help="Optional email address to include in the JWT",
+        ),
+    ] = None,
     api_root: Annotated[
         str,
         typer.Option(
@@ -116,7 +128,11 @@ def jwt(
     ] = EXPIRY_AFTER_X_HOURS,
     private_key: Annotated[
         typer.FileText | None,
-        typer.Option("--key", "-k", help="Private key file (or use stdin)"),
+        typer.Option(
+            "--key",
+            "-k",
+            help="Private key file (or use stdin)",
+        ),
     ] = None,
 ) -> None:
     """Generate JWT from private key.
@@ -128,7 +144,8 @@ def jwt(
     cat keys.json | \
     jq -r .private_key | \
     uv run test/scripts/authorisation.py jwt \
-        --sub user@example.com \
+        --sub a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+        --email user@example.com \
         --api-root http://api.example.com/ \
         --expiry 2
     
@@ -136,8 +153,10 @@ def jwt(
     
     uv run test/scripts/authorisation.py jwt \
         --key private_key.pem \
-        --sub user@example.com
+        --sub f9e8d7c6-b5a4-3210-9876-543210fedcba \
+        --email user@example.com
     """
+
     if private_key:
         private_key_pem = private_key.read()
     elif not sys.stdin.isatty():
@@ -153,6 +172,7 @@ def jwt(
         sub=sub,
         api_root=api_root,
         expiry_hours=expiry_hours,
+        email=email,
     )
 
     print(token)

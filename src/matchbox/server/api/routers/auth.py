@@ -47,7 +47,7 @@ def login(
     backend: BackendDependency,
     credentials: User,
 ) -> User:
-    """Receive a user name and return a user ID."""
+    """Receive a User with a username and returns it with a user ID."""
     return User(
         user_id=backend.login(credentials.user_name), user_name=credentials.user_name
     )

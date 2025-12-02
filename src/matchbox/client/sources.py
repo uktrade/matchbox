@@ -223,7 +223,7 @@ class Source:
             return False
         return self.config == other.config
 
-    @profile()
+    @profile(attr="name")
     def fetch(
         self,
         qualify_names: bool = False,
@@ -270,7 +270,7 @@ class Source:
                 return_type=return_type,
             )
 
-    @profile()
+    @profile(attr="name")
     def run(self, batch_size: int | None = None) -> ArrowTable:
         """Hash a dataset from its warehouse, ready to be inserted, and cache hashes.
 
@@ -375,7 +375,7 @@ class Source:
         return self.config.f(self.name, fields)
 
     @post_run
-    @profile()
+    @profile(attr="name")
     def sync(self) -> None:
         """Send the source config and hashes to the server.
 

@@ -119,6 +119,7 @@ def profile(
     logger: PrefixedLoggerAdapter = logger,
     level: int = logging.INFO,
     prefix: str | None = "Profiling",
+    attr: str | None = None,
     kwarg: str | None = None,
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Decorator to profile functions and methods using logger.
@@ -127,16 +128,24 @@ def profile(
         logger: The logger to use.
         level: The level to use to log the profiling information. It defaults to INFO.
         prefix: Prefix to pass to the logged message.
+        attr: Attribute name to extract from instantiated class.
         kwarg: Argument name to extract from function call.
+
+    `attr` should be used when we want to include some class atribute in the log, e.g.
+    node name in Source.
+    `kwarg` should be used when we want to include the value passed to some function
+    argument, e.g. path in `set_data`. This will only work if the argument is passed
+    to the function as a kwarg, and not a positional argument.
     """
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @functools.wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            # If class, first argument will be self
-            self = args[0] if args else None
-            # If class has attribute "name", it's the node name
-            node = self.name if self and hasattr(self, "name") else None
+            # If attr, will try to get its value from class instance
+            if attr is not None:
+                # If class, first argument will be self
+                self = args[0] if args else None
+                node = getattr(self, attr) if self and hasattr(self, attr) else None
             # If kwarg, will try to get value passed to function
             if kwarg is not None:
                 value = kwargs.get(kwarg)
@@ -147,7 +156,7 @@ def profile(
             finally:
                 duration = time.perf_counter() - start
 
-                if node:
+                if attr:
                     msg = f"`{func.__name__}` in node `{node}` took {duration:.3f}s"
                 elif kwarg:
                     msg = (

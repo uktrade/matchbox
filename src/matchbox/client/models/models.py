@@ -234,7 +234,7 @@ class Model:
         result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
         return result.success
 
-    @profile()
+    @profile(attr="name")
     def run(
         self, for_validation: bool = False, cache_queries: bool = False
     ) -> ModelResults:
@@ -284,7 +284,7 @@ class Model:
         return self.results
 
     @post_run
-    @profile()
+    @profile(attr="name")
     def sync(self) -> None:
         """Send the model config and results to the server.
 

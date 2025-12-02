@@ -1164,3 +1164,33 @@ def test_dag_set_default_unreachable_nodes(sqlite_warehouse: Engine) -> None:
 
     with pytest.raises(ValueError, match="unreachable"):
         dag.set_default()
+
+
+def test_upload_samples(matchbox_api: MockRouter) -> None:
+    """If schema is correct, can upload samples."""
+    dag = DAG("companies")
+    sample_set_name = "sample_set"
+
+    wrong_columns = pl.DataFrame([{"id": 10, "leaf_id": 1, "weight": 1}])
+    wrong_types = pl.DataFrame([{"root": 10, "leaf": "hello", "weight": 1}])
+    missing_column = pl.DataFrame([{"root": 10, "leaf": 1}])
+    extra_columns = pl.DataFrame([{"root": 10, "leaf": 1, "weight": 1, "extra": ""}])
+
+    for samples in [wrong_columns, wrong_types, missing_column, extra_columns]:
+        with pytest.raises(ValueError, match="schema"):
+            dag.upload_samples("sample_set", samples=samples)
+
+    right_data = pl.DataFrame([{"root": 10, "leaf": 1, "weight": 1}])
+
+    matchbox_api.post(f"/collections/{dag.name}/samples/{sample_set_name}").mock(
+        return_value=Response(
+            200,
+            json=ResourceOperationStatus(
+                success=True,
+                target=f"Sample set {sample_set_name}",
+                operation=CRUDOperation.CREATE,
+            ).model_dump(),
+        )
+    )
+
+    dag.upload_samples("sample_set", samples=right_data)

@@ -292,14 +292,14 @@ def process_samples_upload(
 
 @celery.task(ignore_result=True, bind=True, max_retries=3)
 def process_resolution_upload_celery(
-    self: Task, resolution_path_json: str, upload_id: str, bucket: str, filename: str
+    self: Task, resolution_path_json: str, bucket: str, filename: str
 ) -> None:
     """Celery task to process resolution file, with only serialisable arguments."""
     initialise_celery_worker()
     resolution_path = ResolutionPath.model_validate_json(resolution_path_json)
 
     celery_logger.info(
-        "Uploading data for resolution %s, ID %s", str(resolution_path), upload_id
+        "Uploading data for resolution %s, ID %s", str(resolution_path), filename
     )
 
     upload_function = partial(
@@ -317,15 +317,15 @@ def process_resolution_upload_celery(
         celery_logger.error(
             "Upload failed for resolution %s, ID %s. Retrying...",
             str(resolution_path),
-            upload_id,
+            filename,
         )
         try:
             raise self.retry(exc=exc) from None
         except MaxRetriesExceededError:
-            CELERY_TRACKER.set(upload_id, f"Max retries exceeded: {exc}")
+            CELERY_TRACKER.set(filename, f"Max retries exceeded: {exc}")
             raise
 
-    celery_logger.info("Upload complete for %s, ID %s", str(resolution_path), upload_id)
+    celery_logger.info("Upload complete for %s, ID %s", str(resolution_path), filename)
 
 
 @celery.task(ignore_result=True, bind=True, max_retries=3)

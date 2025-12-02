@@ -12,6 +12,7 @@ from matchbox.client.models import Model
 from matchbox.client.queries import Query
 from matchbox.client.results import ResolvedMatches
 from matchbox.client.sources import Source
+from matchbox.common.arrow import SCHEMA_EVAL_SAMPLES_UPLOAD
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
@@ -628,3 +629,26 @@ class DAG:
             )
 
         return ResolvedMatches(sources=resolved_sources, query_results=query_results)
+
+    def upload_samples(self, sample_set_name: str, samples: pl.DataFrame) -> None:
+        """Upload samples to use later for evauation.
+
+        sample_set_name: descriptive name for sample set
+        samples: data compatible with SCHEMA_EVAL_SAMPLES_UPLOAD
+        """
+        schema_error = ValueError("Samples could not be coerced to expected schema.")
+        try:
+            samples = samples.cast(pl.Schema(SCHEMA_EVAL_SAMPLES_UPLOAD))
+            if len(samples.columns) != len(pl.Schema(SCHEMA_EVAL_SAMPLES_UPLOAD)):
+                raise schema_error
+        except (
+            pl.exceptions.ColumnNotFoundError,
+            pl.exceptions.InvalidOperationError,
+        ) as e:
+            raise schema_error from e
+
+        _handler.insert_samples(
+            sample_set_name=sample_set_name,
+            collection_name=self.name,
+            data=samples,
+        )

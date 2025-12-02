@@ -1,5 +1,6 @@
 from collections.abc import Generator
 
+import polars as pl
 import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
@@ -175,6 +176,16 @@ class TestE2EModelEvaluation:
         dag: DAG = (
             DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
         )
+
+        samples = (
+            dag.resolve()
+            .as_cluster_key_map()
+            .select("id", "leaf_id")
+            .rename({"id": "root", "leaf_id": "leaf"})
+            .with_columns(pl.lit(1).alias("weight"))
+        )
+
+        dag.upload_samples("sample_set", samples=samples)
 
         # Create app and verify it can load samples from real data
         app = EntityResolutionApp(

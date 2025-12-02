@@ -11,7 +11,11 @@ from celery import Celery, Task
 from fastapi import UploadFile
 from pyarrow import parquet as pq
 
-from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
+from matchbox.common.arrow import (
+    SCHEMA_EVAL_SAMPLES_UPLOAD,
+    SCHEMA_INDEX,
+    SCHEMA_RESULTS,
+)
 from matchbox.common.dtos import (
     ResolutionPath,
     ResolutionType,
@@ -178,16 +182,15 @@ def initialise_celery_worker() -> None:
         CELERY_TRACKER = settings_to_upload_tracker(CELERY_SETTINGS)
 
 
-def process_upload(
+def process_resolution_upload(
     backend: MatchboxDBAdapter,
     tracker: UploadTracker,
     s3_client: S3Client,
     resolution_path: ResolutionPath,
-    upload_id: str,
     bucket: str,
     filename: str,
 ) -> None:
-    """Generic task to process uploaded file, usable by FastAPI BackgroundTasks."""
+    """Task to process resolution file, usable by FastAPI BackgroundTasks."""
     try:
         resolution = backend.get_resolution(path=resolution_path)
 
@@ -215,7 +218,6 @@ def process_upload(
         backend.unlock_resolution_data(path=resolution_path)
 
         error_context = {
-            "upload_id": upload_id,
             "resolution_path": str(resolution_path),
             "bucket": bucket,
             "key": filename,
@@ -225,7 +227,56 @@ def process_upload(
         )
 
         # Attach error to upload ID to inform clients
-        tracker.set(upload_id=upload_id, message=str(e))
+        tracker.set(upload_id=filename, message=str(e))
+
+        raise MatchboxServerFileError(
+            message=f"Error: {e}. Context: {error_context}"
+        ) from e
+    finally:
+        try:
+            s3_client.delete_object(Bucket=bucket, Key=filename)
+        except Exception as delete_error:  # noqa: BLE001
+            logger.error(
+                f"Failed to delete S3 file {bucket}/{filename}: {delete_error}"
+            )
+
+
+def process_samples_upload(
+    backend: MatchboxDBAdapter,
+    tracker: UploadTracker,
+    s3_client: S3Client,
+    collection_name: str,
+    sample_set_name: str,
+    bucket: str,
+    filename: str,
+) -> None:
+    """Task to process samples file, usable by FastAPI BackgroundTasks."""
+    try:
+        batches = [
+            batch.cast(SCHEMA_EVAL_SAMPLES_UPLOAD)
+            for batch in s3_to_recordbatch(
+                client=s3_client, bucket=bucket, key=filename
+            )
+        ]
+
+        samples = pa.Table.from_batches(batches, schema=SCHEMA_EVAL_SAMPLES_UPLOAD)
+        backend.insert_samples(
+            samples=samples, name=sample_set_name, collection=collection_name
+        )
+
+    except Exception as e:
+        error_context = {
+            "collection_name": collection_name,
+            "sample_set_name": sample_set_name,
+            "bucket": bucket,
+            "key": filename,
+        }
+        logger.error(
+            f"Upload processing failed with context: {error_context}", exc_info=True
+        )
+
+        # Attach error to upload ID to inform clients
+        tracker.set(upload_id=filename, message=str(e))
 
         raise MatchboxServerFileError(
             message=f"Error: {e}. Context: {error_context}"
@@ -240,10 +291,10 @@ def process_upload(
 
 
 @celery.task(ignore_result=True, bind=True, max_retries=3)
-def process_upload_celery(
+def process_resolution_upload_celery(
     self: Task, resolution_path_json: str, upload_id: str, bucket: str, filename: str
 ) -> None:
-    """Celery task to process uploaded file, with only serialisable arguments."""
+    """Celery task to process resolution file, with only serialisable arguments."""
     initialise_celery_worker()
     resolution_path = ResolutionPath.model_validate_json(resolution_path_json)
 
@@ -252,7 +303,7 @@ def process_upload_celery(
     )
 
     upload_function = partial(
-        process_upload,
+        process_resolution_upload,
         backend=CELERY_BACKEND,
         tracker=CELERY_TRACKER,
         s3_client=CELERY_BACKEND.settings.datastore.get_client(),
@@ -260,10 +311,7 @@ def process_upload_celery(
 
     try:
         upload_function(
-            resolution_path=resolution_path,
-            upload_id=upload_id,
-            bucket=bucket,
-            filename=filename,
+            resolution_path=resolution_path, bucket=bucket, filename=filename
         )
     except Exception as exc:  # noqa: BLE001
         celery_logger.error(
@@ -278,3 +326,52 @@ def process_upload_celery(
             raise
 
     celery_logger.info("Upload complete for %s, ID %s", str(resolution_path), upload_id)
+
+
+@celery.task(ignore_result=True, bind=True, max_retries=3)
+def process_sample_upload_celery(
+    self: Task, collection_name: str, sample_set_name: str, bucket: str, filename: str
+) -> None:
+    """Celery task to process sample file, with only serialisable arguments."""
+    initialise_celery_worker()
+
+    celery_logger.info(
+        "Uploading sample set %s in collection %s, ID %s",
+        sample_set_name,
+        collection_name,
+        filename,
+    )
+
+    upload_function = partial(
+        process_samples_upload,
+        backend=CELERY_BACKEND,
+        tracker=CELERY_TRACKER,
+        s3_client=CELERY_BACKEND.settings.datastore.get_client(),
+    )
+
+    try:
+        upload_function(
+            collection_name=collection_name,
+            sample_set_name=sample_set_name,
+            bucket=bucket,
+            filename=filename,
+        )
+    except Exception as exc:  # noqa: BLE001
+        celery_logger.error(
+            "Upload failed for sample set %s in collection %s, ID %s. Retrying...",
+            sample_set_name,
+            collection_name,
+            filename,
+        )
+        try:
+            raise self.retry(exc=exc) from None
+        except MaxRetriesExceededError:
+            CELERY_TRACKER.set(filename, f"Max retries exceeded: {exc}")
+            raise
+
+    celery_logger.info(
+        "Upload complete for sample set %s in collection %s, ID %s",
+        sample_set_name,
+        collection_name,
+        filename,
+    )

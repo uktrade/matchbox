@@ -1,7 +1,7 @@
 """Collection and resolution API routes for the Matchbox server."""
 
 import uuid
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -13,14 +13,20 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pyarrow import ArrowInvalid
+from pyarrow import ArrowInvalid, Schema
 from pyarrow import parquet as pq
 
-from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS, table_to_buffer
+from matchbox.common.arrow import (
+    SCHEMA_EVAL_SAMPLES_UPLOAD,
+    SCHEMA_INDEX,
+    SCHEMA_RESULTS,
+    table_to_buffer,
+)
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
     CRUDOperation,
+    MatchboxName,
     ModelResolutionName,
     NotFoundError,
     Resolution,
@@ -49,9 +55,80 @@ from matchbox.server.api.dependencies import (
     UploadTrackerDependency,
     authorisation_dependencies,
 )
-from matchbox.server.uploads import file_to_s3, process_upload, process_upload_celery
+from matchbox.server.uploads import (
+    file_to_s3,
+    process_resolution_upload,
+    process_resolution_upload_celery,
+    process_sample_upload_celery,
+    process_samples_upload,
+)
+
+if TYPE_CHECKING:
+    from mypy_boto3_s3.client import S3Client
+else:
+    S3Client = Any
 
 router = APIRouter(prefix="/collections", tags=["collection"])
+
+
+def _process_file(
+    file: UploadFile,
+    resource_description: str,
+    s3_client: S3Client,
+    bucket: str,
+    schema: Schema,
+) -> str:
+    if ".parquet" not in file.filename:
+        extension = file.filename.split(".")[-1]
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=resource_description,
+                operation=CRUDOperation.CREATE,
+                details=f"Expected .parquet file, got {extension}",
+            ),
+        )
+
+    # pyarrow validates Parquet magic numbers when loading file
+    try:
+        pq.ParquetFile(file.file)
+    except ArrowInvalid as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=resource_description,
+                operation=CRUDOperation.CREATE,
+                details=f"Invalid Parquet file: {str(e)}",
+            ),
+        ) from e
+
+    # Generate unique upload id
+    upload_id = str(uuid.uuid4())
+    filename = f"{upload_id}.parquet"
+
+    # Upload to S3
+    table = pq.read_table(file.file)
+    if not table.schema.equals(schema):
+        raise MatchboxServerFileError(
+            message=(f"Schema mismatch. Expected:\n{schema}\nGot:\n{table.schema}")
+        )
+
+    try:
+        file_to_s3(client=s3_client, bucket=bucket, key=filename, file=file)
+    except MatchboxServerFileError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=resource_description,
+                operation=CRUDOperation.CREATE,
+                details=f"Could not upload file to object storage: {str(e)}",
+            ),
+        ) from e
+
+    return filename
 
 
 # Collection management endpoints
@@ -605,89 +682,40 @@ def set_data(
 
     # Try-except to ensure we release the lock
     try:
-        # Validate file
-        if ".parquet" not in file.filename:
-            extension = file.filename.split(".")[-1]
-            raise HTTPException(
-                status_code=400,
-                detail=ResourceOperationStatus(
-                    success=False,
-                    target=f"Resolution data {resolution_path}",
-                    operation=CRUDOperation.CREATE,
-                    details=f"Expected .parquet file, got {extension}",
-                ),
-            )
+        resource_description = f"Resolution data {resolution_path}"
 
-        # pyarrow validates Parquet magic numbers when loading file
-        try:
-            pq.ParquetFile(file.file)
-        except ArrowInvalid as e:
-            raise HTTPException(
-                status_code=400,
-                detail=ResourceOperationStatus(
-                    success=False,
-                    target=f"Resolution data {resolution_path}",
-                    operation=CRUDOperation.CREATE,
-                    details=f"Invalid Parquet file: {str(e)}",
-                ),
-            ) from e
-
-        # Get resolution
         resolution = backend.get_resolution(path=resolution_path)
-
-        # Generate unique upload id
-        upload_id = str(uuid.uuid4())
-
-        # Upload to S3
-        client = backend.settings.datastore.get_client()
-        bucket = backend.settings.datastore.cache_bucket_name
-        key = f"{upload_id}.parquet"
-
         if resolution.resolution_type == ResolutionType.SOURCE:
             expected_schema = SCHEMA_INDEX
         else:
             expected_schema = SCHEMA_RESULTS
 
-        table = pq.read_table(file.file)
-        if not table.schema.equals(expected_schema):
-            raise MatchboxServerFileError(
-                message=(
-                    "Schema mismatch. "
-                    f"Expected:\n{expected_schema}\nGot:\n{table.schema}"
-                )
-            )
-
-        try:
-            file_to_s3(client=client, bucket=bucket, key=key, file=file)
-        except MatchboxServerFileError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=ResourceOperationStatus(
-                    success=False,
-                    target=f"Resolution data {resolution_path}",
-                    operation=CRUDOperation.CREATE,
-                    details=f"Could not upload file to object storage: {str(e)}",
-                ),
-            ) from e
+        s3_client = backend.settings.datastore.get_client()
+        bucket = backend.settings.datastore.cache_bucket_name
+        filename = _process_file(
+            file=file,
+            resource_description=resource_description,
+            s3_client=s3_client,
+            bucket=bucket,
+            schema=expected_schema,
+        )
 
         match settings.task_runner:
             case "api":
                 background_tasks.add_task(
-                    process_upload,
+                    process_resolution_upload,
                     backend=backend,
                     tracker=upload_tracker,
-                    s3_client=client,
+                    s3_client=s3_client,
                     resolution_path=resolution_path,
-                    upload_id=upload_id,
                     bucket=bucket,
-                    filename=key,
+                    filename=filename,
                 )
             case "celery":
-                process_upload_celery.delay(
+                process_resolution_upload_celery.delay(
                     resolution_path_json=resolution_path.model_dump_json(),
-                    upload_id=upload_id,
                     bucket=bucket,
-                    filename=key,
+                    filename=filename,
                 )
             case _:
                 raise RuntimeError("Unsupported task runner.")
@@ -696,7 +724,7 @@ def set_data(
             success=True,
             target=f"Resolution data {resolution_path}",
             operation=CRUDOperation.CREATE,
-            details=upload_id,
+            details=filename,
         )
     except:
         backend.unlock_resolution_data(path=resolution_path)
@@ -750,3 +778,67 @@ def get_results(
 
     buffer = table_to_buffer(res)
     return ParquetResponse(buffer.getvalue())
+
+
+@router.post(
+    "/{collection}/samples/{sample_set_name}",
+    responses={
+        404: {"model": NotFoundError},
+        400: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+    },
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(authorisation_dependencies)],
+    summary="Upload evaluation samples for collection",
+)
+def insert_samples(
+    backend: BackendDependency,
+    upload_tracker: UploadTrackerDependency,
+    settings: SettingsDependency,
+    background_tasks: BackgroundTasks,
+    collection: CollectionName,
+    sample_set_name: MatchboxName,
+    file: UploadFile,
+) -> ResourceOperationStatus:
+    """Create an upload task for source hashes or model results."""
+    resource_description = f"Sample set {sample_set_name}"
+    s3_client = backend.settings.datastore.get_client()
+    bucket = backend.settings.datastore.cache_bucket_name
+    filename = _process_file(
+        file=file,
+        resource_description=resource_description,
+        s3_client=s3_client,
+        bucket=bucket,
+        schema=SCHEMA_EVAL_SAMPLES_UPLOAD,
+    )
+
+    match settings.task_runner:
+        case "api":
+            background_tasks.add_task(
+                process_samples_upload,
+                backend=backend,
+                tracker=upload_tracker,
+                s3_client=s3_client,
+                collection_name=collection,
+                sample_set_name=sample_set_name,
+                bucket=bucket,
+                filename=filename,
+            )
+        case "celery":
+            process_sample_upload_celery.delay(
+                collection_name=collection,
+                sample_set_name=sample_set_name,
+                bucket=bucket,
+                filename=filename,
+            )
+        case _:
+            raise RuntimeError("Unsupported task runner.")
+
+    return ResourceOperationStatus(
+        success=True,
+        target=resource_description,
+        operation=CRUDOperation.CREATE,
+        details=filename,
+    )

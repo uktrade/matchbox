@@ -963,7 +963,6 @@ class EvalSampleSets(CountMixin, MBDB.MatchboxBase):
     # Columns
     sample_set_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
-    description: Mapped[str] = mapped_column(TEXT, nullable=True)
     collection_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("collections.collection_id", ondelete="CASCADE"),

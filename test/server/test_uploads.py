@@ -19,7 +19,8 @@ from matchbox.server.uploads import (
     InMemoryUploadTracker,
     UploadTracker,
     file_to_s3,
-    process_upload,
+    process_resolution_upload,
+    process_samples_upload,
     s3_to_recordbatch,
 )
 
@@ -114,8 +115,10 @@ class TestUploadTracker:
         pytest.param(ResolutionType.MODEL, id="model"),
     ],
 )
-def test_process_upload_success(s3: S3Client, resolution_type: ResolutionType) -> None:
-    """Test that upload process hands data to backend."""
+def test_process_resolution_upload_success(
+    s3: S3Client, resolution_type: ResolutionType
+) -> None:
+    """Test that resolution upload process hands data to backend."""
     # Prepare data
     if resolution_type == ResolutionType.SOURCE:
         testkit = source_factory().fake_run()
@@ -145,11 +148,10 @@ def test_process_upload_success(s3: S3Client, resolution_type: ResolutionType) -
 
     assert s3.head_object(Bucket=bucket, Key=test_key)
 
-    process_upload(
+    process_resolution_upload(
         backend=mock_backend,
         tracker=InMemoryUploadTracker(),
         s3_client=s3,
-        upload_id="upload_id",
         bucket=bucket,
         filename=test_key,
         resolution_path=ResolutionPath(
@@ -171,8 +173,8 @@ def test_process_upload_success(s3: S3Client, resolution_type: ResolutionType) -
         assert mock_backend.insert_model_data.called
 
 
-def test_process_upload_empty_table(s3: S3Client) -> None:
-    """Test that files representing empty table can be handled."""
+def test_process_resolution_upload_empty_table(s3: S3Client) -> None:
+    """Test that files representing empty resolution data can be handled."""
     # Setup mock backend
     mock_backend = Mock()
     mock_backend.settings.datastore.get_client.return_value = s3
@@ -192,11 +194,10 @@ def test_process_upload_empty_table(s3: S3Client) -> None:
     assert s3.head_object(Bucket=bucket, Key=test_key)
 
     # Trigger upload processing
-    process_upload(
+    process_resolution_upload(
         backend=mock_backend,
         tracker=InMemoryUploadTracker(),
         s3_client=s3,
-        upload_id="upload_id",
         bucket=bucket,
         filename=test_key,
         resolution_path=ResolutionPath(
@@ -212,12 +213,8 @@ def test_process_upload_empty_table(s3: S3Client) -> None:
     )
 
 
-def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:
-    """Test that files are deleted from S3 even when processing fails.
-
-    Other behaviours of this task are captured in the API integration tests for adding a
-    source or a model.
-    """
+def test_process_resolution_upload_deletes_on_failure(s3: S3Client) -> None:
+    """Test that files are deleted from S3 even when resolution processing fails."""
     # Prepare data
     source_testkit = source_factory().fake_run()
 
@@ -249,11 +246,10 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:
 
     # Run the process, expecting it to fail
     with pytest.raises(MatchboxServerFileError) as excinfo:
-        process_upload(
+        process_resolution_upload(
             backend=mock_backend,
             tracker=tracker,
             s3_client=s3,
-            upload_id="upload_id",
             bucket=bucket,
             filename=test_key,
             resolution_path=ResolutionPath(
@@ -264,7 +260,7 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:
     assert "Simulated processing failure" in str(excinfo.value)
 
     # Check that the error was added to tracker
-    error = tracker.get("upload_id")
+    error = tracker.get(test_key)
     assert "Simulated processing failure" in error
 
     # Verify file was deleted despite the failure
@@ -276,3 +272,136 @@ def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:
 
     # Ensure resolution is marked as ready again
     assert mock_backend.unlock_resolution_data.called
+
+
+def test_process_sample_upload_success(s3: S3Client) -> None:
+    """Test that sample upload process hands data to backend."""
+    # Prepare data
+    sample_data = pa.Table.from_pylist([{"root": -1, "leaf": 1, "weight": 1}])
+
+    # Setup mock backend and tracker
+    mock_backend = Mock()
+    mock_backend.settings.datastore.get_client.return_value = s3
+
+    # Create bucket
+    bucket = "test-bucket"
+    test_key = "test-upload-id.parquet"
+
+    s3.create_bucket(
+        Bucket=bucket, CreateBucketConfiguration={"LocationConstraint": "eu-west-2"}
+    )
+
+    # Add parquet to S3 and verify
+    buffer = table_to_buffer(sample_data)
+    s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
+
+    assert s3.head_object(Bucket=bucket, Key=test_key)
+
+    process_samples_upload(
+        backend=mock_backend,
+        tracker=InMemoryUploadTracker(),
+        s3_client=s3,
+        bucket=bucket,
+        filename=test_key,
+        collection_name="collection",
+        sample_set_name="sample_set",
+    )
+
+    # Verify file was deleted
+    with pytest.raises(ClientError) as excinfo:
+        s3.head_object(Bucket=bucket, Key=test_key)
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
+        f"File was not deleted: {str(excinfo.value)}"
+    )
+
+    assert mock_backend.insert_samples.called
+
+
+def test_process_sample_upload_empty_table(s3: S3Client) -> None:
+    """Test that files representing empty sample data can be handled."""
+    # Setup mock backend
+    mock_backend = Mock()
+    mock_backend.settings.datastore.get_client.return_value = s3
+
+    # Create bucket
+    bucket = "test-bucket"
+    test_key = "test-upload-id.parquet"
+    s3.create_bucket(
+        Bucket=bucket,
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
+    )
+
+    # Add empty parquet to S3 and verify
+    buffer = table_to_buffer(pa.Table.from_arrays([]))
+    s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
+
+    assert s3.head_object(Bucket=bucket, Key=test_key)
+
+    # Trigger upload processing
+    process_samples_upload(
+        backend=mock_backend,
+        tracker=InMemoryUploadTracker(),
+        s3_client=s3,
+        bucket=bucket,
+        filename=test_key,
+        collection_name="collection",
+        sample_set_name="sample_set",
+    )
+
+    # Verify file was deleted
+    with pytest.raises(ClientError) as excinfo:
+        s3.head_object(Bucket=bucket, Key=test_key)
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
+        f"File was not deleted: {str(excinfo.value)}"
+    )
+
+
+def test_process_sample_upload_deletes_on_failure(s3: S3Client) -> None:
+    """Test that files are deleted from S3 even when sample processing fails."""
+    # Prepare data
+    sample_data = pa.Table.from_pylist([{"root": -1, "leaf": 1, "weight": 1}])
+
+    # Setup mock backend and tracker
+    tracker = InMemoryUploadTracker()
+    mock_backend = Mock()
+    mock_backend.settings.datastore.get_client.return_value = s3
+    mock_backend.insert_samples = Mock(
+        side_effect=ValueError("Simulated processing failure")
+    )
+
+    # Create bucket
+    bucket = "test-bucket"
+    test_key = "test-upload-id.parquet"
+
+    s3.create_bucket(
+        Bucket=bucket,
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-2"},
+    )
+
+    # Add parquet to S3 and verify
+    buffer = table_to_buffer(sample_data)
+    s3.put_object(Bucket=bucket, Key=test_key, Body=buffer)
+    assert s3.head_object(Bucket=bucket, Key=test_key)
+
+    # Run the process, expecting it to fail
+    with pytest.raises(MatchboxServerFileError) as excinfo:
+        process_samples_upload(
+            backend=mock_backend,
+            tracker=tracker,
+            s3_client=s3,
+            bucket=bucket,
+            filename=test_key,
+            collection_name="collection",
+            sample_set_name="sample_set",
+        )
+
+    assert "Simulated processing failure" in str(excinfo.value)
+
+    # Check that the error was added to tracker
+    error = tracker.get(test_key)
+    assert "Simulated processing failure" in error
+
+    # Verify file was deleted despite the failure
+    with pytest.raises(ClientError) as excinfo:
+        s3.head_object(Bucket=bucket, Key=test_key)
+    assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value)

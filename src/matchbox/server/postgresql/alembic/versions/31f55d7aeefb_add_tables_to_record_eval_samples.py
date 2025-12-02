@@ -25,7 +25,6 @@ def upgrade() -> None:
         "eval_sample_sets",
         sa.Column("sample_set_id", sa.BIGINT(), nullable=False),
         sa.Column("name", sa.TEXT(), nullable=False),
-        sa.Column("description", sa.TEXT(), nullable=True),
         sa.Column("collection_id", sa.BIGINT(), nullable=False),
         sa.ForeignKeyConstraint(
             ["collection_id"], ["mb.collections.collection_id"], ondelete="CASCADE"

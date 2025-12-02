@@ -64,7 +64,6 @@ class MatchboxPostgresEvaluationMixin:
         samples: Table,
         name: str,
         collection: str,
-        description: str | None = None,
     ) -> None:
         log_prefix = f"Sample set {name}"
 
@@ -75,9 +74,7 @@ class MatchboxPostgresEvaluationMixin:
         with MBDB.get_session() as session:
             # Generate new sample set ORM object
             collection_id = Collections.from_name(collection, session).collection_id
-            sample_set = EvalSampleSets(
-                name=name, description=description, collection_id=collection_id
-            )
+            sample_set = EvalSampleSets(name=name, collection_id=collection_id)
 
             # Find all leaf IDs referenced
             samples_pl = pl.from_arrow(samples)

@@ -36,8 +36,6 @@ from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
     CollectionName,
-    LoginAttempt,
-    LoginResult,
     Match,
     ModelResolutionPath,
     NotFoundError,
@@ -50,6 +48,7 @@ from matchbox.common.dtos import (
     SourceResolutionPath,
     UploadInfo,
     UploadStage,
+    User,
 )
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.exceptions import (
@@ -189,10 +188,8 @@ def healthcheck() -> OKMessage:
 def login(user_name: str) -> int:
     """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
-    response = CLIENT.post(
-        "/auth/login", json=LoginAttempt(user_name=user_name).model_dump()
-    )
-    return LoginResult.model_validate(response.json()).user_id
+    response = CLIENT.post("/auth/login", json=User(user_name=user_name).model_dump())
+    return User.model_validate(response.json()).user_id
 
 
 @http_retry

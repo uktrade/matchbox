@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Security
 from fastapi.exceptions import HTTPException
 
-from matchbox.common.dtos import AuthStatusResponse, LoginAttempt, LoginResult
+from matchbox.common.dtos import AuthStatusResponse, User
 from matchbox.server.api.dependencies import (
     JWT_HEADER,
     BackendDependency,
@@ -45,10 +45,12 @@ def get_username_from_token(token: str | None) -> str | None:
 @router.post("/login")
 def login(
     backend: BackendDependency,
-    credentials: LoginAttempt,
-) -> LoginResult:
+    credentials: User,
+) -> User:
     """Receive a user name and return a user ID."""
-    return LoginResult(user_id=backend.login(credentials.user_name))
+    return User(
+        user_id=backend.login(credentials.user_name), user_name=credentials.user_name
+    )
 
 
 @router.get("/status")

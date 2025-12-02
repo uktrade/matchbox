@@ -13,6 +13,7 @@ import polars as pl
 from pydantic import (
     BaseModel,
     ConfigDict,
+    EmailStr,
     Field,
     GetCoreSchemaHandler,
     GetJsonSchemaHandler,
@@ -139,26 +140,6 @@ class OKMessage(BaseModel):
     version: str = Field(default_factory=lambda: version("matchbox-db"))
 
 
-class LoginAttempt(BaseModel):
-    """Request for log in process."""
-
-    user_name: str
-
-
-class LoginResult(BaseModel):
-    """Response from log in process."""
-
-    user_id: int
-
-
-class AuthStatusResponse(BaseModel):
-    """Response model for authentication status."""
-
-    authenticated: bool
-    username: str | None = None
-    token: str | None = None
-
-
 class BackendCountableType(StrEnum):
     """Enumeration of supported backend countable types."""
 
@@ -209,6 +190,48 @@ class LocationType(StrEnum):
     """Enumeration of location types."""
 
     RDBMS = "rdbms"
+
+
+class PermissionType(StrEnum):
+    """Permission levels for resource access."""
+
+    READ = "read"
+    WRITE = "write"
+    ADMIN = "admin"
+
+
+class User(BaseModel):
+    """User identity."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int | None = None
+    user_name: str = Field(alias="sub")
+    email: EmailStr | None = None
+
+
+class Group(BaseModel):
+    """Group definition."""
+
+    name: str
+    description: str | None = None
+    is_system: bool = False
+    members: list[User] = []
+
+
+class PermissionGrant(BaseModel):
+    """A permission on a resource. Resource context comes from URL."""
+
+    group_name: str
+    permission: PermissionType
+
+
+class AuthStatusResponse(BaseModel):
+    """Response model for authentication status."""
+
+    authenticated: bool
+    username: str | None = None
+    token: str | None = None
 
 
 class MatchboxName(str):

@@ -13,53 +13,69 @@ There are two graph-like trees in place here.
 erDiagram
     Collections {
         bigint collection_id PK
-        string name
+        text name
     }
     Runs {
         bigint run_id PK
         bigint collection_id FK
-        bool is_mutable
-        bool is_default
+        boolean is_mutable
+        boolean is_default
+    }
+    Resolutions {
+        bigint resolution_id PK
+        bigint run_id FK
+        text name
+        text description
+        text type
+        bytea fingerprint
+        smallint truth
+        enum upload_stage
+    }
+    ResolutionFrom {
+        bigint parent PK,FK
+        bigint child PK,FK
+        integer level
+        smallint truth_cache
     }
     SourceConfigs {
         bigint source_config_id PK
         bigint resolution_id FK
-        string location_type
-        string location_name
-        string extract_transform
+        text location_type
+        text location_name
+        text extract_transform
     }
     SourceFields {
         bigint field_id PK
         bigint source_config_id FK
-        int index
-        string name
-        string type
-        bool is_key
+        integer index
+        text name
+        text type
+        boolean is_key
     }
     ModelConfigs {
         bigint model_config_id PK
         bigint resolution_id FK
-        string model_class
+        text model_class
         jsonb model_settings
         jsonb left_query
         jsonb right_query
     }
     Clusters {
         bigint cluster_id PK
-        bytes cluster_hash
+        bytea cluster_hash
     }
     ClusterSourceKey {
         bigint key_id PK
         bigint cluster_id FK
         bigint source_config_id FK
-        string key
+        text key
     }
     Contains {
         bigint root PK,FK
         bigint leaf PK,FK
     }
     PKSpace {
-        bigint id
+        bigint id PK
         bigint next_cluster_id
         bigint next_cluster_keys_id
     }
@@ -75,24 +91,27 @@ erDiagram
         bigint right_id FK
         smallint probability
     }
-    Resolutions {
-        bigint resolution_id PK
-        bigint run_id FK
-        string name
-        string description
-        string type
-        bytes hash
-        smallint truth
-    }
-    ResolutionFrom {
-        bigint parent PK,FK
-        bigint child PK,FK
-        int level
-        smallint truth_cache
-    }
     Users {
         bigint user_id PK
-        string name
+        text name
+        text email
+    }
+    Groups {
+        bigint group_id PK
+        text name
+        text description
+        boolean is_system
+    }
+    UserGroups {
+        bigint user_id PK,FK
+        bigint group_id PK,FK
+    }
+    Permissions {
+        bigint permission_id PK
+        text permission
+        bigint group_id FK
+        bigint collection_id FK
+        boolean is_system
     }
     EvalJudgements {
         bigint judgement_id PK
@@ -103,24 +122,28 @@ erDiagram
     }
 
     Collections ||--o{ Runs : ""
+    Collections ||--o{ Permissions : ""
     Runs ||--o{ Resolutions : ""
-    SourceConfigs |o--|| Resolutions : ""
-    ModelConfigs |o--|| Resolutions : ""
+    Resolutions ||--o{ ResolutionFrom : "parent"
+    ResolutionFrom }o--|| Resolutions : "child"
+    Resolutions |o--|| SourceConfigs : ""
+    Resolutions |o--|| ModelConfigs : ""
+    Resolutions ||--o{ Probabilities : ""
+    Resolutions ||--o{ Results : ""
     SourceConfigs ||--o{ SourceFields : ""
     SourceConfigs ||--o{ ClusterSourceKey : ""
     Clusters ||--o{ ClusterSourceKey : ""
+    Clusters ||--o{ Contains : "root"
+    Contains }o--|| Clusters : "leaf"
     Clusters ||--o{ Probabilities : ""
     Clusters ||--o{ Results : "left_id"
     Clusters ||--o{ Results : "right_id"
     Clusters ||--o{ EvalJudgements : "endorsed_cluster_id"
-    Clusters ||--o{ EvalJudgements : "shown_cluster_id" 
-    Clusters ||--o{ Contains : "root"
-    Contains }o--|| Clusters : "leaf"
-    Resolutions ||--o{ Probabilities : ""
-    Resolutions ||--o{ Results : ""
-    Resolutions ||--o{ ResolutionFrom : "parent"
-    ResolutionFrom }o--|| Resolutions : "child"
+    Clusters ||--o{ EvalJudgements : "shown_cluster_id"
+    Users ||--o{ UserGroups : ""
     Users ||--o{ EvalJudgements : ""
+    Groups ||--o{ UserGroups : ""
+    Groups ||--o{ Permissions : ""
 ```
 
 

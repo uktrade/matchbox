@@ -36,7 +36,9 @@ def test_retry_decorator_applied(matchbox_api: MockRouter) -> None:
         side_effect=[
             httpx.ConnectError("Connection failed"),  # First call fails
             httpx.ConnectError("Connection failed"),  # Second call fails
-            Response(200, json={"user_id": 123}),  # Third call succeeds
+            Response(
+                200, json={"user_id": 123, "user_name": "test_user"}
+            ),  # Third call succeeds
         ]
     )
 

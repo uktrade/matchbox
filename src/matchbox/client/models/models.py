@@ -24,7 +24,7 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_model_results
-from matchbox.common.logging import logger
+from matchbox.common.logging import logger, profile
 from matchbox.common.transform import truth_float_to_int, truth_int_to_float
 
 if TYPE_CHECKING:
@@ -234,6 +234,7 @@ class Model:
         result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
         return result.success
 
+    @profile()
     def run(
         self, for_validation: bool = False, cache_queries: bool = False
     ) -> ModelResults:
@@ -283,6 +284,7 @@ class Model:
         return self.results
 
     @post_run
+    @profile()
     def sync(self) -> None:
         """Send the model config and results to the server.
 

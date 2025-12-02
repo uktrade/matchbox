@@ -9,6 +9,7 @@ import polars as pl
 import pyarrow as pa
 from pyarrow import Table
 from sqlalchemy import BIGINT, func, select
+from sqlalchemy.exc import IntegrityError
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
@@ -22,13 +23,17 @@ from matchbox.common.exceptions import (
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
 )
-from matchbox.common.transform import hash_cluster_leaves
+from matchbox.common.logging import logger
+from matchbox.common.transform import Cluster, IntMap, hash_cluster_leaves
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
+    Collections,
     Contains,
     EvalJudgements,
+    EvalSamples,
+    EvalSampleSets,
     PKSpace,
     Probabilities,
     Resolutions,
@@ -38,6 +43,11 @@ from matchbox.server.postgresql.orm import (
 from matchbox.server.postgresql.utils.db import (
     compile_sql,
     ingest_to_temporary_table,
+    large_append,
+)
+from matchbox.server.postgresql.utils.insert import (
+    create_clusters_dataframe,
+    make_model_cluster_tables,
 )
 
 if TYPE_CHECKING:
@@ -46,104 +56,156 @@ else:
     ArrowTable = Any
 
 
-# Once I generate list of Cluster (A)
-# - def find_cluster_ids(clusters: list[Cluster]) -> list[Cluster]
-# - def reserve_cluster_ids(clusters: list[Cluster]) -> list[Cluster]
-# - def make_cluster_tables(list[Cluster]) -> tuple[Table, Table]
-# Then, I can write two tables directly, and reuse list of clusters where all have IDs
-# to attach probabilities
-
-
 class MatchboxPostgresEvaluationMixin:
     """Evaluation mixin for the PostgreSQL adapter for Matchbox."""
 
-    # def insert_samples(  # noqa: D102
-    #     self,
-    #     samples: Table,
-    #     name: str,
-    #     collection: str,
-    #     description: str | None = None,
-    # ) -> None:
-    #     if not samples.num_rows:
-    #         logger.info("No samples to add.")
-    #         return
+    def insert_samples(  # noqa: D102
+        self,
+        samples: Table,
+        name: str,
+        collection: str,
+        description: str | None = None,
+    ) -> None:
+        log_prefix = f"Sample set {name}"
 
-    #     with (
-    #         MBDB.get_session() as session,
-    #         MBDB.get_adbc_connection() as adbc_connection,
-    #     ):
-    #         collection_id = Collections.from_name(collection, session).collection_id
-    #         sample_set = EvalSampleSets(
-    #             name=name, description=description, collection_id=collection_id
-    #         )
+        if not samples.num_rows:
+            logger.info("No samples to add.", prefix=log_prefix)
+            return
 
-    #         # -- Generate hashes for all sample clusters --
-    #         im = IntMap()
-    #         root_hashes: list[bytes] = []
-    #         root_leaf_sets: list[list[int]] = []
-    #         samples_pl = pl.from_arrow(samples)
-    #         for cluster_partition in samples_pl.partition_by(by="root"):
-    #             leaf_clusters: list[Cluster] = []
-    #             for leaf_row in cluster_partition.iter_rows(named=True):
-    #                 leaf_clusters.append(
-    #                     Cluster(
-    #                         intmap=im,
-    #                         leaves=[leaf_row["leaf"]],
-    #                         hash=leaf_row["leaf_hash"],
-    #                     )
-    #                 )
-    #             root_cluster = Cluster.combine(leaf_clusters)
-    #             root_hashes.append(root_cluster.hash)
-    #             root_leaf_sets.append(root_cluster.leaves)
+        with MBDB.get_session() as session:
+            # Generate new sample set ORM object
+            collection_id = Collections.from_name(collection, session).collection_id
+            sample_set = EvalSampleSets(
+                name=name, description=description, collection_id=collection_id
+            )
 
-    #         all_clusters_df = pl.DataFrame(
-    #             {"cluster_hash": root_hashes, "leaves": root_leaf_sets},
-    #             schema={"cluster_hash": pl.Binary, "leaves": pl.List(pl.Int64)},
-    #         )
+            # Find all leaf IDs referenced
+            samples_pl = pl.from_arrow(samples)
+            leaf_ids = samples_pl["leaf"].unique().to_list()
 
-    #         # -- Find existing hashes in DB --
-    #         with ingest_to_temporary_table(
-    #             table_name="hashes",
-    #             schema_name="mb",
-    #             column_types={"cluster_hash": BYTEA},
-    #             data=all_clusters_df.select("cluster_hash").to_arrow(),
-    #         ) as temp_table:
-    #             existing_cluster_stmt = select(
-    #                 Clusters.cluster_id, Clusters.cluster_hash
-    #             ).join(temp_table, temp_table.c.cluster_hash == Clusters.cluster_hash)
+            # Find cluster hashes for all leaf IDs
+            with ingest_to_temporary_table(
+                table_name="leaves",
+                schema_name="mb",
+                column_types={"cluster_id": BIGINT},
+                data=pl.DataFrame({"cluster_id": leaf_ids}).to_arrow(),
+            ) as temp_table:
+                leaf_id_hash_stmt = select(
+                    Clusters.cluster_id, Clusters.cluster_hash
+                ).join(temp_table, temp_table.c.cluster_id == Clusters.cluster_id)
 
-    #             with MBDB.get_adbc_connection() as conn:
-    #                 existing_cluster_df: pl.DataFrame = sql_to_df(
-    #                     stmt=compile_sql(existing_cluster_stmt),
-    #                     connection=conn.dbapi_connection,
-    #                     return_type="polars",
-    #                 )
+                with MBDB.get_adbc_connection() as conn:
+                    leaf_id_hash: pl.DataFrame = sql_to_df(
+                        stmt=compile_sql(leaf_id_hash_stmt),
+                        connection=conn.dbapi_connection,
+                        return_type="polars",
+                    )
 
-    #         # -- Keep only new hashes --
-    #         new_clusters = all_clusters_df.join(
-    #             existing_cluster_df, on="cluster_hash", how="anti"
-    #         )
+            # Create cluster objects for the leaves
+            all_leaf_clusters: dict[int, Cluster] = {}
+            im = IntMap()
+            for leaf in leaf_id_hash.iter_rows(named=True):
+                all_leaf_clusters[leaf["cluster_id"]] = Cluster(
+                    intmap=im, id=leaf["cluster_id"], hash=leaf["cluster_hash"]
+                )
 
-    #         # new_hashes.
+            # Create cluster objects for the roots
+            new_clusters = []
+            root_id_to_hash = []
+            for cluster_partition in samples_pl.partition_by(by="root"):
+                leaf_clusters = [
+                    all_leaf_clusters[row["leaf"]]
+                    for row in cluster_partition.iter_rows(named=True)
+                ]
+                new_cluster = Cluster.combine(leaf_clusters)
+                new_clusters.append(new_cluster)
+                root_id_to_hash.append(
+                    {
+                        "cluster_hash": new_cluster.hash,
+                        "root": cluster_partition["root"][0],
+                    }
+                )
 
-    #         session.add(sample_set)
-    #         session.commit()
+            # Generate tables to insert to define new clusters
+            new_clusters_df = create_clusters_dataframe(new_clusters)
+            clusters_table, contains_table = make_model_cluster_tables(new_clusters_df)
+            del new_clusters
 
-    #         try:
-    #             large_append(
-    #                 data=samples,
-    #                 table_class=EvalSampleSets,
-    #                 adbc_connection=adbc_connection,
-    #                 max_chunksize=self.settings.batch_size,
-    #             )
-    #         except:
-    #             session.delete(sample_set)
-    #             session.commit()
-    #             logger.error(
-    #                 "Deleting sample set, as adding samples generated an error"
-    #             )
-    #             raise
-    #         logger.info(f"Added sample set with {len(samples):,} clusters")
+            # Find mapping between placeholder (negative) cluster IDs and real IDs
+            root_id_to_hash_df = pl.DataFrame(root_id_to_hash)
+            root_to_cluster_id = root_id_to_hash_df.join(
+                new_clusters_df, on="cluster_hash", how="left"
+            ).select("cluster_id", "root")
+
+            try:
+                # Tentatively add sample set to DB
+                session.add(sample_set)
+                session.commit()
+            except IntegrityError as e:
+                raise ValueError(
+                    "Sample with this name already exists in collection"
+                ) from e
+            logger.info("Created sample set", prefix=log_prefix)
+
+            # Prepare samples table for insertion
+            samples_table = (
+                samples_pl.select("root", "weight")
+                .unique()
+                .join(root_to_cluster_id, on="root")
+                .select("cluster_id", "weight")
+                .with_columns(pl.lit(sample_set.sample_set_id).alias("sample_set_id"))
+                .cast({"weight": pl.UInt8, "sample_set_id": pl.Int64})
+            )
+
+            # Insert dataframes
+            with MBDB.get_adbc_connection() as adbc_connection:
+                try:
+                    large_append(
+                        data=clusters_table.to_arrow(),
+                        table_class=Clusters,
+                        adbc_connection=adbc_connection,
+                        max_chunksize=self.settings.batch_size,
+                    )
+
+                    logger.info(
+                        f"Added {len(clusters_table):,} rows to Clusters table",
+                        prefix=log_prefix,
+                    )
+
+                    large_append(
+                        data=contains_table.to_arrow(),
+                        table_class=Contains,
+                        adbc_connection=adbc_connection,
+                        max_chunksize=self.settings.batch_size,
+                    )
+
+                    logger.info(
+                        f"Added {len(contains_table):,} rows to Contains table",
+                        prefix=log_prefix,
+                    )
+
+                    large_append(
+                        data=samples_table.to_arrow(),
+                        table_class=EvalSamples,
+                        adbc_connection=adbc_connection,
+                        max_chunksize=self.settings.batch_size,
+                    )
+
+                    logger.info(
+                        f"Added {len(samples_table):,} rows to EvalSamples table",
+                        prefix=log_prefix,
+                    )
+                    adbc_connection.commit()
+                except:
+                    adbc_connection.rollback()
+                    session.delete(sample_set)
+                    session.commit()
+                    logger.error(
+                        "Deleting sample set, as adding samples generated an error"
+                    )
+                    raise
+
+            logger.info("Insertion complete", prefix=log_prefix)
 
     def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
         # Check that all referenced cluster IDs exist

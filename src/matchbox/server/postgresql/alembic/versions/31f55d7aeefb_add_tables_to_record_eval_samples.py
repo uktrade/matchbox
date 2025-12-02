@@ -31,6 +31,9 @@ def upgrade() -> None:
             ["collection_id"], ["mb.collections.collection_id"], ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("sample_set_id"),
+        sa.UniqueConstraint(
+            "name", "collection_id", name="unique_collection_sampleset_name"
+        ),
         schema="mb",
     )
     op.create_table(

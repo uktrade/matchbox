@@ -970,6 +970,13 @@ class EvalSampleSets(CountMixin, MBDB.MatchboxBase):
         nullable=False,
     )
 
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_id", "name", name="unique_collection_sampleset_name"
+        ),
+    )
+
 
 class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     """Table of evaluation judgements produced by human validators."""

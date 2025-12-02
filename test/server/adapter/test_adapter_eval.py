@@ -37,16 +37,54 @@ class TestMatchboxEvaluationBackend:
 
     def test_insert_samples(self) -> None:
         """Can insert sample sets for evaluation."""
-        with self.scenario(self.backend, "bare") as dag_testkit:
-            samples = Table.from_pylist(
-                [
-                    {"root": -1, "leaf": 1, "weight": 1},
-                    {"root": -1, "leaf": 2, "weight": 1},
-                ],
-                schema=SCHEMA_EVAL_SAMPLES_UPLOAD,
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            # Find three existing model clusters
+            crn_path = dag_testkit.sources["crn"].source.resolution_path
+            crn_query = pl.from_arrow(self.backend.query(crn_path))
+            crn_query_dict = {
+                row["key"]: row["id"] for row in crn_query.iter_rows(named=True)
+            }
+            true_entities = dag_testkit.source_to_linked["crn"].true_entity_subset(
+                "crn"
             )
+            cluster1, cluster2, cluster3 = [
+                list(true_entities[i].keys["crn"]) for i in range(3)
+            ]
+
+            # Sample existing cluster
+            leaves1 = [crn_query_dict[leaf] for leaf in cluster1]
+            samples_data = []
+            for leaf in leaves1:
+                samples_data.append({"root": -1, "leaf": leaf, "weight": 1})
+
+            # Sample new cluster (merge of two other clusters)
+            leaves2 = [crn_query_dict[leaf] for leaf in cluster2]
+            leaves3 = [crn_query_dict[leaf] for leaf in cluster3]
+            leaves23 = leaves2 + leaves3
+            for leaf in leaves23:
+                samples_data.append({"root": -2, "leaf": leaf, "weight": 1})
+
+            # Can accept empty sample (without consequences)
+            no_samples = Table.from_pylist([], schema=SCHEMA_EVAL_SAMPLES_UPLOAD)
+            self.backend.insert_samples(
+                samples=no_samples, name="sampleset", collection=dag_testkit.dag.name
+            )
+
+            # Insert sample data
+            samples = Table.from_pylist(samples_data, schema=SCHEMA_EVAL_SAMPLES_UPLOAD)
             self.backend.insert_samples(
                 samples=samples, name="sampleset", collection=dag_testkit.dag.name
+            )
+
+            # Cannot insert with the same name
+            with pytest.raises(ValueError, match="name"):
+                self.backend.insert_samples(
+                    samples=samples, name="sampleset", collection=dag_testkit.dag.name
+                )
+
+            # But we can re-insert with a different name
+            self.backend.insert_samples(
+                samples=samples, name="sampleset2", collection=dag_testkit.dag.name
             )
 
     def test_insert_and_get_judgement(self) -> None:

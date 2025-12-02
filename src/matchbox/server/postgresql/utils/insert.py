@@ -396,7 +396,9 @@ def create_clusters_dataframe(all_clusters: list[Cluster]) -> pl.DataFrame:
         return clusters_df
 
 
-def make_model_cluster_tables(clusters: pl.DataFrame) -> tuple[pa.Table, pa.Table]:
+def make_model_cluster_tables(
+    clusters: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Get Clusters and Contains to insert from dataframe with CLUSTERS_SCHEMA."""
     new_clusters = clusters.filter(pl.col("new")).select("cluster_id", "cluster_hash")
 

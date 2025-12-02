@@ -53,7 +53,7 @@ SCHEMA_CLUSTER_EXPANSION: Final[pa.Schema] = pa.schema(
 
 SCHEMA_EVAL_SAMPLES_UPLOAD: Final[pa.Schema] = pa.schema(
     [
-        ("root", pa.uint64()),
+        ("root", pa.int64()),
         ("leaf", pa.uint64()),
         ("weight", pa.uint16()),
     ]

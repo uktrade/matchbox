@@ -4,9 +4,11 @@ import functools
 import importlib.metadata
 import logging
 import time
+import tracemalloc
 from collections.abc import Callable
 from typing import Any, Final, Literal, ParamSpec, TypeVar
 
+import psutil
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -115,14 +117,14 @@ T = TypeVar("T")
 P = ParamSpec("P")
 
 
-def profile(
+def profile_time(
     logger: PrefixedLoggerAdapter = logger,
     level: int = logging.INFO,
     prefix: str | None = "Profiling",
     attr: str | None = None,
     kwarg: str | None = None,
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
-    """Decorator to profile functions and methods using logger.
+    """Decorator to profile running time of functions and methods using logger.
 
     Args:
         logger: The logger to use.
@@ -164,6 +166,48 @@ def profile(
                     )
                 else:
                     msg = f"`{func.__name__}` took {duration:.3f}s"
+
+                logger.log(level, msg, prefix=prefix)
+
+        return wrapper
+
+    return decorator
+
+
+def profile_mem(
+    logger: PrefixedLoggerAdapter = logger,
+    level: int = logging.DEBUG,
+    prefix: str | None = "Memory",
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Decorator to profile memory use of functions and methods using logger.
+
+    Args:
+        logger: The logger to use.
+        level: The level to use to log the profiling information. It defaults to INFO.
+        prefix: Prefix to pass to the logged message.
+    """
+
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
+        @functools.wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            tracemalloc.start()
+
+            try:
+                return func(*args, **kwargs)
+            finally:
+                # Final and peak mem use of decorated function
+                curr, peak = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                # OS memory availability after function run
+                mem = psutil.virtual_memory()
+
+                msg = (
+                    f"Memory usage of {func.__name__}: "
+                    f"current {round(curr / 10**6, 2)} MB, "
+                    f"peak {round(peak / 10**6, 2)} MB. "
+                    f"Total memory: {round(mem[0] / 10**6, 2)} MB, "
+                    f"available memory: {round(mem[1] / 10**6, 2)} MB."
+                )
 
                 logger.log(level, msg, prefix=prefix)
 

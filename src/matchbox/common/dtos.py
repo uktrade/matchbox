@@ -30,6 +30,54 @@ from matchbox.common.exceptions import MatchboxNameError
 from matchbox.common.hash import base64_to_hash, hash_to_base64
 
 
+class MatchboxName(str):
+    """Sub-class of string which validates names for the Matchbox DB."""
+
+    PATTERN = r"^[a-zA-Z0-9_.-]+$"
+
+    def __new__(cls, value: str) -> Self:
+        """Creates new instance of validated name."""
+        if not isinstance(value, str):
+            raise MatchboxNameError("Name must be a string")
+        if not re.match(cls.PATTERN, value):
+            raise MatchboxNameError(
+                f"Name '{value}' is invalid. It can only include "
+                "alphanumeric characters, underscores, dots or hyphens."
+            )
+
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,  # noqa: ANN401
+        handler: GetCoreSchemaHandler,
+    ) -> core_schema.CoreSchema:
+        """Generate core schema for Pydantic compatibility."""
+        return core_schema.no_info_plain_validator_function(
+            cls,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: x, return_schema=core_schema.str_schema()
+            ),
+        )
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls,
+        schema: core_schema.CoreSchema,
+        handler: GetJsonSchemaHandler,
+    ) -> JsonSchemaValue:
+        """Generate JSON schema for OpenAPI documentation."""
+        json_schema = handler(core_schema.str_schema())
+        json_schema.update(
+            {
+                "type": "string",
+                "pattern": cls.PATTERN,
+            }
+        )
+        return json_schema
+
+
 class DataTypes(StrEnum):
     """Enumeration of supported data types.
 
@@ -169,6 +217,7 @@ class BackendResourceType(StrEnum):
     CLUSTER = "cluster"
     USER = "user"
     JUDGEMENT = "judgement"
+    SYSTEM = "system"
 
 
 class BackendParameterType(StrEnum):
@@ -210,19 +259,26 @@ class User(BaseModel):
     email: EmailStr | None = None
 
 
+GroupName: TypeAlias = MatchboxName
+"""Type alias for group names."""
+
+
 class Group(BaseModel):
     """Group definition."""
 
-    name: str
+    name: GroupName
     description: str | None = None
     is_system: bool = False
     members: list[User] = []
 
 
 class PermissionGrant(BaseModel):
-    """A permission on a resource. Resource context comes from URL."""
+    """A permission on a resource.
 
-    group_name: str
+    Resource context should always be supplied.
+    """
+
+    group_name: GroupName
     permission: PermissionType
 
 
@@ -232,54 +288,6 @@ class AuthStatusResponse(BaseModel):
     authenticated: bool
     username: str | None = None
     token: str | None = None
-
-
-class MatchboxName(str):
-    """Sub-class of string which validates names for the Matchbox DB."""
-
-    PATTERN = r"^[a-zA-Z0-9_.-]+$"
-
-    def __new__(cls, value: str) -> Self:
-        """Creates new instance of validated name."""
-        if not isinstance(value, str):
-            raise MatchboxNameError("Name must be a string")
-        if not re.match(cls.PATTERN, value):
-            raise MatchboxNameError(
-                f"Name '{value}' is invalid. It can only include "
-                "alphanumeric characters, underscores, dots or hyphens."
-            )
-
-        return super().__new__(cls, value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        source_type: Any,  # noqa: ANN401
-        handler: GetCoreSchemaHandler,
-    ) -> core_schema.CoreSchema:
-        """Generate core schema for Pydantic compatibility."""
-        return core_schema.no_info_plain_validator_function(
-            cls,
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda x: x, return_schema=core_schema.str_schema()
-            ),
-        )
-
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls,
-        schema: core_schema.CoreSchema,
-        handler: GetJsonSchemaHandler,
-    ) -> JsonSchemaValue:
-        """Generate JSON schema for OpenAPI documentation."""
-        json_schema = handler(core_schema.str_schema())
-        json_schema.update(
-            {
-                "type": "string",
-                "pattern": cls.PATTERN,
-            }
-        )
-        return json_schema
 
 
 CollectionName: TypeAlias = MatchboxName

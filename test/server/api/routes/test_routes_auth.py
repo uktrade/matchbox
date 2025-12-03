@@ -18,7 +18,7 @@ from test.scripts.authorisation import generate_json_web_token
 def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test the login endpoint at /auth/login."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.login = Mock(return_value=42)
+    mock_backend.login = Mock(return_value=User(user_name="alice", user_id=42))
 
     response = test_client.post(
         "/auth/login", json=User(user_name="alice").model_dump()

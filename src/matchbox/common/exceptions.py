@@ -260,6 +260,10 @@ class MatchboxConnectionError(MatchboxException):
     """Connection to Matchbox's backend database failed."""
 
 
+class MatchboxPermissionDeniedError(MatchboxException):
+    """Raised when a user lacks permission for an action."""
+
+
 class MatchboxDeletionNotConfirmed(MatchboxException):
     """Deletion must be confirmed: if certain, rerun with certain=True."""
 
@@ -317,6 +321,18 @@ class MatchboxRunNotWriteable(MatchboxException):
 
 class MatchboxTooManySamplesRequested(MatchboxException):
     """Too many samples have been requested from the server."""
+
+
+class MatchboxGroupNotFoundError(MatchboxException):
+    """Raised when a group is not found."""
+
+
+class MatchboxGroupAlreadyExistsError(MatchboxException):
+    """Raised when attempting to create a group that already exists."""
+
+
+class MatchboxSystemGroupError(MatchboxException):
+    """Raised when attempting to modify or delete a system group."""
 
 
 # -- Adapter DB exceptions --

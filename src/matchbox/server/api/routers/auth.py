@@ -48,9 +48,7 @@ def login(
     credentials: User,
 ) -> User:
     """Receive a User with a username and returns it with a user ID."""
-    return User(
-        user_id=backend.login(credentials.user_name), user_name=credentials.user_name
-    )
+    return backend.login(credentials)
 
 
 @router.get("/status")

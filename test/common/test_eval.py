@@ -8,13 +8,13 @@ from matchbox.common.eval import Judgement, precision_recall, process_judgements
 def test_judgement_validation() -> None:
     """Judgement validates source cluster IDs."""
     with pytest.raises(ValueError):
-        Judgement(user_id=1, shown=10, endorsed=[[1, 2, 3], [3, 4, 5]])
+        Judgement(user_name="alice", shown=10, endorsed=[[1, 2, 3], [3, 4, 5]])
 
     with pytest.raises(ValueError):
-        Judgement(user_id=1, shown=10, endorsed=[[1, 2, 3, 1]])
+        Judgement(user_name="alice", shown=10, endorsed=[[1, 2, 3, 1]])
 
     # Something sensible does work
-    Judgement(user_id=1, shown=10, endorsed=[[1, 2, 3], [4, 5]])
+    Judgement(user_name="alice", shown=10, endorsed=[[1, 2, 3], [4, 5]])
 
 
 def test_precision_recall_fails() -> None:

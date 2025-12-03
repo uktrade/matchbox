@@ -174,15 +174,17 @@ class MatchboxServerFileError(MatchboxException):
 class MatchboxUserNotFoundError(MatchboxException):
     """User not found."""
 
-    def __init__(self, message: str | None = None, user_id: str | None = None) -> None:
+    def __init__(
+        self, message: str | None = None, user_name: str | None = None
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "User not found."
-            if user_id is not None:
-                message = f"User {user_id} not found."
+            if user_name is not None:
+                message = f"User {user_name} not found."
 
         super().__init__(message)
-        self.user_id = user_id
+        self.user_name = user_name
 
 
 class MatchboxResolutionNotFoundError(MatchboxException):

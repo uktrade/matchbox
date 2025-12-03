@@ -172,7 +172,6 @@ class TestScenarioIntegration:
                 # 1. Verify app initialisation and sample loading
                 assert app.is_running
                 assert app.user_name == "test_user"
-                assert app.user_id is not None
                 assert pilot.app.query("Footer")
                 assert app.queue.total_count > 0
                 assert app.queue.current is not None

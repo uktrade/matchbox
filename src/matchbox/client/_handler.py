@@ -189,7 +189,7 @@ def login(user_name: str) -> int:
     """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
     response = CLIENT.post("/auth/login", json=User(user_name=user_name).model_dump())
-    return User.model_validate(response.json()).user_id
+    return User.model_validate(response.json()).user_name
 
 
 @http_retry
@@ -515,7 +515,7 @@ def delete_resolution(
 
 
 @http_retry
-def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Table:
+def sample_for_eval(n: int, resolution: ModelResolutionPath, user_name: str) -> Table:
     """Sample model results for evaluation."""
     res = CLIENT.get(
         "/eval/samples",
@@ -525,7 +525,7 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Ta
                 "collection": resolution.collection,
                 "run_id": resolution.run,
                 "resolution": resolution.name,
-                "user_id": user_id,
+                "user_name": user_name,
             }
         ),
     )
@@ -548,7 +548,7 @@ def send_eval_judgement(judgement: Judgement) -> None:
     """Send judgements to the server."""
     logger.debug(
         f"Submitting judgement {judgement.shown}:{judgement.endorsed} "
-        f"for {judgement.user_id}"
+        f"for {judgement.user_name}"
     )
     CLIENT.post("/eval/judgements", json=judgement.model_dump())
 

@@ -39,6 +39,6 @@ class MatchboxPostgresEvaluationMixin:
         )
 
     def sample_for_eval(  # noqa: D102
-        self, n: int, path: ModelResolutionPath, user_id: int
+        self, n: int, path: ModelResolutionPath, user_name: str
     ) -> ArrowTable:
-        return evaluation.sample(n, path, user_id)
+        return evaluation.sample(n=n, resolution_path=path, user_name=user_name)

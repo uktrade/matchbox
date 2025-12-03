@@ -108,7 +108,6 @@ class EntityResolutionApp(App):
 
     sample_limit: int
     resolution: ModelResolutionPath
-    user_id: int
     user_name: str
     dag: DAG
     show_help: bool
@@ -304,8 +303,7 @@ class EntityResolutionApp(App):
         if not user_name:
             raise MatchboxClientSettingsException("User name is unset.")
 
-        self.user_name = user_name
-        self.user_id = _handler.login(user_name=user_name)
+        self.user_name = _handler.login(user_name=user_name)
 
     async def load_samples(self) -> None:
         """Load evaluation samples from the server."""
@@ -326,7 +324,7 @@ class EntityResolutionApp(App):
             new_samples_dict = get_samples(
                 n=needed,
                 resolution=self.resolution.name,
-                user_id=self.user_id,
+                user_name=self.user_name,
                 dag=self.dag,
             )
         except Exception as e:  # noqa: BLE001
@@ -370,10 +368,10 @@ class EntityResolutionApp(App):
             return
 
         try:
-            if self.user_id is None:
-                raise RuntimeError("User ID is not set")
+            if self.user_name is None:
+                raise RuntimeError("User name is not set")
             judgement = create_judgement(
-                current.item, current.assignments, self.user_id
+                current.item, current.assignments, self.user_name
             )
             _handler.send_eval_judgement(judgement)
         except Exception as exc:

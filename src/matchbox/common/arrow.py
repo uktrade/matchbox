@@ -36,7 +36,7 @@ SCHEMA_RESULTS: Final[pa.Schema] = pa.schema(
 
 SCHEMA_JUDGEMENTS: Final[pa.Schema] = pa.schema(
     [
-        ("user_id", pa.uint64()),
+        ("user_name", pa.large_string()),
         ("endorsed", pa.uint64()),
         ("shown", pa.uint64()),
     ]

@@ -1,9 +1,8 @@
 """Add tables to record eval samples.
 
 Revision ID: 31f55d7aeefb
-Revises: c774fd4b69f8
+Revises: 13095b44ff09
 Create Date: 2025-11-28 17:14:13.727281
-
 """
 
 from collections.abc import Sequence
@@ -14,7 +13,7 @@ from sqlalchemy import table
 
 # revision identifiers, used by Alembic.
 revision: str = "31f55d7aeefb"
-down_revision: str | None = "c774fd4b69f8"
+down_revision: str | None = "13095b44ff09"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

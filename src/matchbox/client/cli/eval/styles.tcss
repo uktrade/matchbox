@@ -62,66 +62,28 @@ Screen {
 #status-bar {
     height: 3;
     background: #1B2E46;
-    padding: 1;
+    padding: 0;
     width: 100%;
 }
 
-#status-left {
+#current-group-label {
+    width: auto;
+    height: auto;
+    padding: 0 1;
+    border: solid #E4A242;
+    text-align: center;
+}
+
+#assignment-bar {
     width: 1fr;
     text-align: left;
+    padding: 1 1;
 }
 
 #status-right {
     width: auto;
     text-align: right;
-}
-
-/* Content container and tabs */
-#content-container {
-    height: 1fr;
-    width: 100%;
-}
-
-TabbedContent {
-    height: 1fr;
-    width: 100%;
-    border-top: tall #E4A242;
-    padding: 0;
-    margin: 0;
-}
-
-Tabs {
-    padding: 0;
-    margin: 0;
-}
-
-#tabs-scroll {
-    padding: 0;
-    margin: 0;
-}
-
-#tabs-list-bar {
-    padding: 0;
-    margin: 0;
-}
-
-#tabs-list {
-    padding: 0;
-    margin: 0;
-}
-
-Tabs .underline--bar {
-    color: #E4A242;
-}
-
-ContentSwitcher {
-    padding: 0;
-    margin: 0;
-}
-
-TabPane {
-    padding: 0;
-    margin: 0;
+    padding: 1 1;
 }
 
 /* Table */
@@ -131,12 +93,54 @@ TabPane {
     background: $surface;
 }
 
-/* Rich table styling through the widget */
+/* DataTable styling */
 ComparisonDisplayTable {
     height: 1fr;
     width: 100%;
-    padding: 0;
-    margin: 0;
+
+    /* Scrollbar styling */
+    scrollbar-color: #342c20;
+    scrollbar-color-hover: #E4A242;
+    scrollbar-color-active: #E4A242;
+    scrollbar-background: #0d1318;
+    scrollbar-background-hover: #10161d;
+    scrollbar-background-active: #10161d;
+    scrollbar-corner-color: #0d1318;
+}
+
+/* Disable default focus tint on table background */
+ComparisonDisplayTable:focus {
+    background-tint: transparent 0%;
+}
+
+/* Header styling - matches fixed column */
+ComparisonDisplayTable > .datatable--header {
+    text-style: bold;
+    background: #18283C;
+}
+
+/* Prevent header color changes on focus/hover/cursor */
+ComparisonDisplayTable:focus > .datatable--header,
+ComparisonDisplayTable > .datatable--header-cursor,
+ComparisonDisplayTable > .datatable--header-hover {
+    background: #18283C;
+    background-tint: transparent 0%;
+}
+
+/* Fixed column (row header) styling - matches header */
+ComparisonDisplayTable > .datatable--fixed,
+ComparisonDisplayTable:focus > .datatable--fixed {
+    text-style: bold;
+    background: #18283C;
+}
+
+/* Zebra striping with subtle grey-blue tones */
+ComparisonDisplayTable > .datatable--odd-row {
+    background: #0d1318;
+}
+
+ComparisonDisplayTable > .datatable--even-row {
+    background: #10161d;
 }
 
 /* Footer */

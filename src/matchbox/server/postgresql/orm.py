@@ -60,6 +60,10 @@ class Collections(CountMixin, MBDB.MatchboxBase):
 
     # Relationships
     runs: Mapped[list["Runs"]] = relationship(back_populates="collection")
+    permissions: Mapped[list["Permissions"]] = relationship(
+        back_populates="collection",
+        passive_deletes=True,
+    )
 
     # Constraints
     __table_args__ = (UniqueConstraint("name", name="collections_name_key"),)
@@ -923,17 +927,42 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
     __table_args__ = (UniqueConstraint("cluster_hash", name="clusters_hash_key"),)
 
 
+class UserGroups(MBDB.MatchboxBase):
+    """Association table for user-group membership."""
+
+    __tablename__ = "user_groups"
+
+    # Columns
+    user_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    group_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("groups.group_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
 class Users(CountMixin, MBDB.MatchboxBase):
-    """Table of identities of human validators."""
+    """Table of user identities."""
 
     __tablename__ = "users"
 
     # Columns
     user_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    email: Mapped[str] = mapped_column(TEXT, nullable=True)
 
+    # Relationships
     judgements: Mapped[list["EvalJudgements"]] = relationship(back_populates="user")
+    groups: Mapped[list["Groups"]] = relationship(
+        secondary=UserGroups.__table__,
+        back_populates="members",
+    )
 
+    # Constraints and indices
     __table_args__ = (UniqueConstraint("name", name="user_name_unique"),)
 
 
@@ -973,6 +1002,88 @@ class EvalSampleSets(CountMixin, MBDB.MatchboxBase):
     __table_args__ = (
         UniqueConstraint(
             "collection_id", "name", name="unique_collection_sampleset_name"
+        ),
+    )
+
+
+class Groups(CountMixin, MBDB.MatchboxBase):
+    """Groups for permission management."""
+
+    __tablename__ = "groups"
+
+    # Columns
+    group_id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    description: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    is_system: Mapped[bool] = mapped_column(BOOLEAN, default=False, nullable=False)
+
+    # Relationships
+    members: Mapped[list["Users"]] = relationship(
+        secondary=UserGroups.__table__,
+        back_populates="groups",
+    )
+    permissions: Mapped[list["Permissions"]] = relationship(
+        back_populates="group",
+        passive_deletes=True,
+    )
+
+    # Constraints and indices
+    __table_args__ = (UniqueConstraint("name", name="groups_name_key"),)
+
+
+class Permissions(CountMixin, MBDB.MatchboxBase):
+    """Permissions granted to groups on resources.
+
+    Each resource type should have one column. This creates lots of nulls,
+    which are cheap in PostgreSQL and are on an ultimately small table,
+    and avoids a polymorphic association.
+    """
+
+    __tablename__ = "permissions"
+
+    # Columns
+    permission_id: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True
+    )
+    permission: Mapped[str] = mapped_column(TEXT, nullable=False)
+    group_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("groups.group_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_id: Mapped[int | None] = mapped_column(
+        BIGINT,
+        ForeignKey("collections.collection_id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    is_system: Mapped[bool | None] = mapped_column(
+        BOOLEAN,
+        nullable=True,
+    )
+
+    # Relationships
+    group: Mapped["Groups"] = relationship(back_populates="permissions")
+    collection: Mapped["Collections | None"] = relationship(
+        back_populates="permissions"
+    )
+
+    # Constraints and indices
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('read', 'write', 'admin')",
+            name="valid_permission",
+        ),
+        CheckConstraint(
+            "(collection_id IS NOT NULL AND is_system IS NULL) OR "
+            "(collection_id IS NULL AND is_system = true)",
+            name="exactly_one_resource",
+        ),
+        UniqueConstraint(
+            "permission",
+            "group_id",
+            "collection_id",
+            "is_system",
+            name="unique_permission_grant",
         ),
     )
 

@@ -29,7 +29,7 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.logging import logger
+from matchbox.common.logging import logger, profile
 from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 
@@ -566,6 +566,7 @@ class DAG:
         # If no matches, _handler will raise
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
+    @profile(kwarg="node")
     def resolve(
         self,
         node: ResolutionName | None = None,

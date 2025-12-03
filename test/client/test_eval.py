@@ -256,7 +256,6 @@ def test_get_samples(
     expected_sample_10 = pl.DataFrame(
         {
             "leaf": [1, 1, 2, 5, 6],
-            "key": ["1", "1bis", "2", "a", "b"],
             "foo_col": [1, 1, 2, None, None],
             "bar_col": [None, None, None, 1, 2],
         }
@@ -265,22 +264,21 @@ def test_get_samples(
     expected_sample_11 = pl.DataFrame(
         {
             "leaf": [3, 4, 7, 8],
-            "key": ["3", "4", "c", "d"],
             "foo_col": [3, 4, None, None],
             "bar_col": [None, None, 3, 4],
         }
     )
 
-    # EvaluationItems.dataframe contains the data
+    # EvaluationItems.records contains the data with qualified column names
     assert_frame_equal(
-        samples[10].dataframe,
+        samples[10].records,
         expected_sample_10,
         check_column_order=False,
         check_row_order=False,
         check_dtypes=False,
     )
     assert_frame_equal(
-        samples[11].dataframe,
+        samples[11].records,
         expected_sample_11,
         check_column_order=False,
         check_row_order=False,

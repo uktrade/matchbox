@@ -16,6 +16,7 @@ from matchbox.common.dtos import (
     User,
 )
 from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxGroupAlreadyExistsError,
@@ -45,7 +46,6 @@ class TestMatchboxAdminBackend:
             user = User(user_name="alice", email="alice@example.com")
             result = self.backend.login(user)
 
-            assert result.user_id is not None
             assert result.user_name == "alice"
             assert result.email == "alice@example.com"
 
@@ -58,19 +58,17 @@ class TestMatchboxAdminBackend:
             user2 = User(user_name="alice", email="alice@example.com")
             result2 = self.backend.login(user2)
 
-            assert result1.user_id == result2.user_id
             assert result1.user_name == result2.user_name
 
     def test_login_updates_email(self) -> None:
         """Login updates email if it changes."""
         with self.scenario(self.backend, "bare") as _:
             user1 = User(user_name="alice", email="alice@example.com")
-            result1 = self.backend.login(user1)
+            _ = self.backend.login(user1)
 
             user2 = User(user_name="alice", email="alice@newdomain.com")
             result2 = self.backend.login(user2)
 
-            assert result1.user_id == result2.user_id
             assert result2.email == "alice@newdomain.com"
 
     def test_login_different_users(self) -> None:
@@ -82,7 +80,7 @@ class TestMatchboxAdminBackend:
             alice_result = self.backend.login(alice)
             bob_result = self.backend.login(bob)
 
-            assert alice_result.user_id != bob_result.user_id
+            assert alice_result.user_name != bob_result.user_name
 
     # Group management
 
@@ -543,7 +541,7 @@ class TestMatchboxAdminBackend:
             assert has_permission is False
 
     def test_check_collection_permission_nonexistent_collection(self) -> None:
-        """Check permission returns False for non-existent collection."""
+        """Check permission errors for non-existent collection."""
         with self.scenario(self.backend, "bare") as _:
             user = User(user_name="alice", email="alice@example.com")
             self.backend.login(user)
@@ -552,10 +550,10 @@ class TestMatchboxAdminBackend:
             self.backend.create_group(group)
             self.backend.add_user_to_group("alice", GroupName("readers"))
 
-            has_permission = self.backend.check_permission(
-                "alice", PermissionType.READ, "nonexistent"
-            )
-            assert has_permission is False
+            with pytest.raises(MatchboxCollectionNotFoundError):
+                _ = self.backend.check_permission(
+                    "alice", PermissionType.READ, "nonexistent"
+                )
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),

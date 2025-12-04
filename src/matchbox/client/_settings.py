@@ -42,7 +42,7 @@ class ClientSettings(BaseSettings):
             # Decode header and payload
             header = json.loads(base64.urlsafe_b64decode(parts[0] + "=="))
             payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=="))
-        except Exception as e:  # noqa: BLE0001
+        except Exception as e:  # noqa: BLE001
             raise ValueError("Invalid JWT.") from e
 
         # Basic header checks

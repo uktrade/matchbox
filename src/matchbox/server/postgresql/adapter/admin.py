@@ -5,6 +5,7 @@ from typing import Literal
 from sqlalchemy import and_, bindparam, delete, select, union_all
 
 from matchbox.common.dtos import (
+    PERMISSION_GRANTS,
     BackendResourceType,
     CollectionName,
     Group,
@@ -14,6 +15,7 @@ from matchbox.common.dtos import (
     User,
 )
 from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
     MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxGroupAlreadyExistsError,
@@ -59,7 +61,6 @@ class MatchboxPostgresAdminMixin:
                     session.commit()
 
                 return User(
-                    user_id=existing_user.user_id,
                     user_name=existing_user.name,
                     email=existing_user.email,
                 )
@@ -70,7 +71,6 @@ class MatchboxPostgresAdminMixin:
             session.commit()
 
             return User(
-                user_id=new_user.user_id,
                 user_name=new_user.name,
                 email=new_user.email,
             )
@@ -206,12 +206,17 @@ class MatchboxPostgresAdminMixin:
                 )
                 session.add(membership)
 
-            session.commit()
+                session.commit()
 
-            logger.info(
-                f"Added user '{user_name}' to group '{group_name}'",
-                prefix="Add user to group",
-            )
+                logger.info(
+                    f"Added user '{user_name}' to group '{group_name}'",
+                    prefix="Add user to group",
+                )
+            else:
+                logger.info(
+                    f"User '{user_name}' already belongs to '{group_name}'",
+                    prefix="Add user to group",
+                )
 
     def remove_user_from_group(self, user_name: str, group_name: GroupName) -> None:  # noqa: D102
         with MBDB.get_session() as session:
@@ -242,6 +247,11 @@ class MatchboxPostgresAdminMixin:
                     f"Removed user '{user_name}' from group '{group_name}'",
                     prefix="Remove user from group",
                 )
+            else:
+                logger.info(
+                    f"User '{user_name}' not present in group '{group_name}'",
+                    prefix="Remove user from group",
+                )
 
     # Permissions management
 
@@ -265,17 +275,8 @@ class MatchboxPostgresAdminMixin:
             if not user_group_ids:
                 return False
 
-            # Define permission hierarchy - check for requested permission or higher
-            if permission == PermissionType.READ:
-                required_permissions = [
-                    PermissionType.READ,
-                    PermissionType.WRITE,
-                    PermissionType.ADMIN,
-                ]
-            elif permission == PermissionType.WRITE:
-                required_permissions = [PermissionType.WRITE, PermissionType.ADMIN]
-            else:  # PermissionType.ADMIN
-                required_permissions = [PermissionType.ADMIN]
+            # Get permissions that would satisfy this check
+            sufficient_permissions = PERMISSION_GRANTS[permission]
 
             # Check permissions based on resource type
             if resource == BackendResourceType.SYSTEM:
@@ -285,7 +286,7 @@ class MatchboxPostgresAdminMixin:
                         and_(
                             Permissions.is_system == True,  # noqa: E712
                             Permissions.group_id.in_(user_group_ids),
-                            Permissions.permission.in_(required_permissions),
+                            Permissions.permission.in_(sufficient_permissions),
                         )
                     )
                 )
@@ -295,14 +296,14 @@ class MatchboxPostgresAdminMixin:
                     select(Collections).where(Collections.name == resource)
                 )
                 if not collection:
-                    return False
+                    raise MatchboxCollectionNotFoundError(name=resource)
 
                 grant = session.scalar(
                     select(Permissions).where(
                         and_(
                             Permissions.collection_id == collection.collection_id,
                             Permissions.group_id.in_(user_group_ids),
-                            Permissions.permission.in_(required_permissions),
+                            Permissions.permission.in_(sufficient_permissions),
                         )
                     )
                 )
@@ -327,7 +328,7 @@ class MatchboxPostgresAdminMixin:
                     select(Collections).where(Collections.name == resource)
                 )
                 if not collection:
-                    return []
+                    raise MatchboxCollectionNotFoundError(name=resource)
 
                 permissions_query = (
                     select(Permissions)
@@ -385,11 +386,7 @@ class MatchboxPostgresAdminMixin:
                     select(Collections).where(Collections.name == resource)
                 )
                 if not collection:
-                    raise MatchboxDataNotFound(
-                        message=f"Collection '{resource}' not found",
-                        table=Collections.__tablename__,
-                        data=resource,
-                    )
+                    raise MatchboxCollectionNotFoundError(name=resource)
 
                 # Check if already exists
                 existing = session.scalar(
@@ -447,11 +444,7 @@ class MatchboxPostgresAdminMixin:
                     select(Collections).where(Collections.name == resource)
                 )
                 if not collection:
-                    raise MatchboxDataNotFound(
-                        message=f"Collection '{resource}' not found",
-                        table=Collections.__tablename__,
-                        data=resource,
-                    )
+                    raise MatchboxCollectionNotFoundError(name=resource)
 
                 result = session.execute(
                     delete(Permissions).where(
@@ -469,6 +462,12 @@ class MatchboxPostgresAdminMixin:
                 logger.info(
                     f"Revoked {permission} permission on '{resource}' "
                     f"from group '{group_name}'",
+                    prefix="Revoke permission",
+                )
+            else:
+                logger.info(
+                    f"Permission {permission} on '{resource}' "
+                    f"not present for group '{group_name}'",
                     prefix="Revoke permission",
                 )
 

@@ -5,7 +5,6 @@ from typing import Literal
 from sqlalchemy import and_, bindparam, delete, select, union_all
 
 from matchbox.common.dtos import (
-    PERMISSION_GRANTS,
     BackendResourceType,
     CollectionName,
     Group,
@@ -24,7 +23,7 @@ from matchbox.common.exceptions import (
     MatchboxUserNotFoundError,
 )
 from matchbox.common.logging import logger
-from matchbox.server.base import MatchboxSnapshot
+from matchbox.server.base import PERMISSION_GRANTS, MatchboxSnapshot
 from matchbox.server.postgresql.db import MBDB, MatchboxBackends
 from matchbox.server.postgresql.orm import (
     Clusters,

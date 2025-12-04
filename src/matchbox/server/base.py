@@ -38,6 +38,25 @@ else:
     S3Client = Any
 
 
+PERMISSION_GRANTS: dict[PermissionType, list[PermissionType]] = {
+    PermissionType.READ: [
+        PermissionType.READ,
+        PermissionType.WRITE,
+        PermissionType.ADMIN,
+    ],
+    PermissionType.WRITE: [PermissionType.WRITE, PermissionType.ADMIN],
+    PermissionType.ADMIN: [PermissionType.ADMIN],
+}
+"""A global variable that defines the permission hierarchy.
+
+Keys are the permission, values are a list of permissions that would
+grant the permission.
+
+For example, only `PermissionType.ADMIN` can grant `PermissionType.ADMIN`,
+but any permission implies `PermissionType.READ`.
+"""
+
+
 class MatchboxBackends(StrEnum):
     """The available backends for Matchbox."""
 

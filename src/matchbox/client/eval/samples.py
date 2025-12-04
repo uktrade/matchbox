@@ -73,14 +73,14 @@ class EvaluationItem(BaseModel):
 
 
 def create_judgement(
-    item: EvaluationItem, assignments: dict[int, str], user_id: int
+    item: EvaluationItem, assignments: dict[int, str], user_name: str
 ) -> Judgement:
     """Convert item assignments to Judgement - no default group assignment.
 
     Args:
         item: Evaluation item
         assignments: Column assignments (group_idx -> group_letter)
-        user_id: User ID for the judgement
+        user_name: User name for the judgement
 
     Returns:
         Judgement with endorsed groups based on assignments
@@ -93,7 +93,7 @@ def create_judgement(
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
-    return Judgement(user_id=user_id, shown=item.cluster_id, endorsed=endorsed)
+    return Judgement(user_name=user_name, shown=item.cluster_id, endorsed=endorsed)
 
 
 def create_evaluation_item(
@@ -136,7 +136,7 @@ def create_evaluation_item(
 def get_samples(
     n: int,
     dag: DAG,
-    user_id: int,
+    user_name: str,
     resolution: ModelResolutionName | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.
@@ -144,7 +144,7 @@ def get_samples(
     Args:
         n: Number of clusters to sample
         dag: DAG for which to retrieve samples
-        user_id: ID of the user requesting the samples
+        user_name: Name of the user requesting the samples
         resolution: The optional resolution from which to sample. If not provided,
             the final step in the DAG is used
 
@@ -163,7 +163,9 @@ def get_samples(
     samples: pl.DataFrame = cast(
         pl.DataFrame,
         pl.from_arrow(
-            _handler.sample_for_eval(n=n, resolution=resolution_path, user_id=user_id)
+            _handler.sample_for_eval(
+                n=n, resolution=resolution_path, user_name=user_name
+            )
         ),
     )
 

@@ -12,16 +12,22 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.dtos import (
+    BackendResourceType,
     Collection,
     CollectionName,
+    Group,
+    GroupName,
     Match,
     ModelResolutionPath,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionPath,
     Run,
     RunID,
     SourceResolutionPath,
     UploadStage,
+    User,
 )
 from matchbox.common.eval import Judgement, ModelComparison
 from matchbox.common.logging import LogLevelType
@@ -30,6 +36,25 @@ if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
 else:
     S3Client = Any
+
+
+PERMISSION_GRANTS: dict[PermissionType, list[PermissionType]] = {
+    PermissionType.READ: [
+        PermissionType.READ,
+        PermissionType.WRITE,
+        PermissionType.ADMIN,
+    ],
+    PermissionType.WRITE: [PermissionType.WRITE, PermissionType.ADMIN],
+    PermissionType.ADMIN: [PermissionType.ADMIN],
+}
+"""A global variable that defines the permission hierarchy.
+
+Keys are the permission, values are a list of permissions that would
+grant the permission.
+
+For example, only `PermissionType.ADMIN` can grant `PermissionType.ADMIN`,
+but any permission implies `PermissionType.READ`.
+"""
 
 
 class MatchboxBackends(StrEnum):
@@ -584,12 +609,153 @@ class MatchboxDBAdapter(ABC):
         Orphan clusters are clusters recorded in the Clusters table but that are
         not referenced in other tables.
         """
+        ...
 
-    # User management
+    # User, group and permissions management
 
     @abstractmethod
-    def login(self, user_name: str) -> int:
-        """Receives a user name and returns user ID."""
+    def login(self, user: User) -> User:
+        """Upserts the user to the database.
+
+        Args:
+            user: A User with a username and optionally an email
+        """
+        ...
+
+    @abstractmethod
+    def get_user_groups(self, user_name: str) -> list[GroupName]:
+        """Get names of all groups a user belongs to.
+
+        Args:
+            user_name: The username to get the groups of
+        """
+        ...
+
+    @abstractmethod
+    def list_groups(self) -> list[Group]:
+        """List all groups."""
+        ...
+
+    @abstractmethod
+    def get_group(self, name: GroupName) -> Group:
+        """Get group details including members.
+
+        Args:
+            name: The name of the group to fetch.
+
+        Raises:
+            MatchboxGroupNotFoundError: If group doesn't exist.
+        """
+        ...
+
+    @abstractmethod
+    def create_group(self, group: Group) -> None:
+        """Create a new group.
+
+        Arg:
+            group: The group to create
+
+        Raises:
+            MatchboxGroupAlreadyExistsError: If group name taken.
+        """
+        ...
+
+    @abstractmethod
+    def delete_group(self, name: GroupName, certain: bool = False) -> None:
+        """Delete a group.
+
+        Args:
+            name: The name of the group to delete
+            certain: Whether to delete the group without confirmation.
+
+        Raises:
+            MatchboxGroupNotFoundError: If group doesn't exist.
+            MatchboxSystemGroupError: If attempting to delete a system group.
+            MatchboxDeletionNotConfirmed: If certain=False.
+        """
+        ...
+
+    @abstractmethod
+    def add_user_to_group(self, user_name: str, group_name: GroupName) -> None:
+        """Add a user to a group. Creates user if they don't exist.
+
+        Raises:
+            MatchboxGroupNotFoundError: If group doesn't exist.
+        """
+        ...
+
+    @abstractmethod
+    def remove_user_from_group(self, user_name: str, group_name: GroupName) -> None:
+        """Remove a user from a group.
+
+        Raises:
+            MatchboxGroupNotFoundError: If group doesn't exist.
+            MatchboxUserNotFoundError: If user doesn't exist.
+        """
+        ...
+
+    @abstractmethod
+    def check_permission(
+        self,
+        user_name: str,
+        permission: PermissionType,
+        resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
+    ) -> bool:
+        """Check user permission against a resource.
+
+        Args:
+            user_name: The username to check.
+            permission: The permission type to check
+            resource: The resource to check. One of "system" or a collection name
+        """
+        ...
+
+    @abstractmethod
+    def get_permissions(
+        self,
+        resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
+    ) -> list[PermissionGrant]:
+        """Get all granted permissions against a resource.
+
+        Args:
+            resource: The resource to get permissions for. One of "system" or a
+                collection name
+        """
+        ...
+
+    @abstractmethod
+    def grant_permission(
+        self,
+        group_name: GroupName,
+        permission: PermissionType,
+        resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
+    ) -> None:
+        """Grants a permission on a resource.
+
+        Args:
+            group_name: The name of the group to grant permission to
+            permission: The permission to grant
+            resource: The resource to grant permission on. One of "system" or a
+                collection name
+        """
+        ...
+
+    @abstractmethod
+    def revoke_permission(
+        self,
+        group_name: GroupName,
+        permission: PermissionType,
+        resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
+    ) -> None:
+        """Revoke permission on a resource.
+
+        Args:
+            group_name: The name of the group to revoke permission of
+            permission: The permission to revoke
+            resource: The resource to revoke permission from. One of "system" or a
+                collection name
+        """
+        ...
 
     # Evaluation management
 
@@ -625,13 +791,15 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def sample_for_eval(self, n: int, path: ModelResolutionPath, user_id: int) -> Table:
+    def sample_for_eval(
+        self, n: int, path: ModelResolutionPath, user_name: str
+    ) -> Table:
         """Sample a cluster to validate.
 
         Args:
             n: Number of clusters to sample
             path: Path of resolution from which to sample
-            user_id: ID of user requesting the sample
+            user_name: Name of user requesting the sample
 
         Returns:
             An Arrow table with the same schema as returned by `query()`

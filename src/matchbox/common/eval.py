@@ -18,7 +18,7 @@ ModelComparison: TypeAlias = dict[ModelResolutionPath, PrecisionRecall]
 class Judgement(BaseModel):
     """User determination on how to group source clusters from a model cluster."""
 
-    user_id: int
+    user_name: str
     shown: int = Field(description="ID of the model cluster shown to the user")
     endorsed: list[list[int]] = Field(
         description="""Groups of source cluster IDs that user thinks belong together"""

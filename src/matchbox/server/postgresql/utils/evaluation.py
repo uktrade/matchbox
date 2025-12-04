@@ -47,10 +47,9 @@ def insert_judgement(judgement: Judgement) -> None:
 
     # Check that the user exists
     with MBDB.get_session() as session:
-        if not session.scalar(
-            select(Users.name).where(Users.user_id == judgement.user_id)
-        ):
-            raise MatchboxUserNotFoundError(user_id=judgement.user_id)
+        user = session.scalar(select(Users).where(Users.name == judgement.user_name))
+        if not user:
+            raise MatchboxUserNotFoundError(f"User '{judgement.user_name}' not found")
 
     for leaves in judgement.endorsed:
         with MBDB.get_session() as session:
@@ -87,7 +86,7 @@ def insert_judgement(judgement: Judgement) -> None:
 
             session.add(
                 EvalJudgements(
-                    user_id=judgement.user_id,
+                    user_id=user.user_id,
                     shown_cluster_id=judgement.shown,
                     endorsed_cluster_id=endorsed_cluster_id,
                     timestamp=datetime.now(UTC),
@@ -113,10 +112,10 @@ def get_judgements() -> tuple[pa.Table, pa.Table]:
         )
 
     judgements_stmt = select(
-        EvalJudgements.user_id,
+        Users.name.label("user_name"),
         EvalJudgements.endorsed_cluster_id.label("endorsed"),
         EvalJudgements.shown_cluster_id.label("shown"),
-    )
+    ).join(Users)
 
     with MBDB.get_adbc_connection() as conn:
         judgements = sql_to_df(
@@ -160,15 +159,20 @@ def get_judgements() -> tuple[pa.Table, pa.Table]:
     return _cast_tables(judgements, cluster_expansion)
 
 
-def sample(n: int, resolution_path: ModelResolutionPath, user_id: int) -> Table:
+def sample(n: int, resolution_path: ModelResolutionPath, user_name: str) -> Table:
     """Sample some clusters from a resolution."""
-    # Not currently checking validity of the user_id
+    # Not currently checking validity of the user_name
     # If the user ID does not exist, the exclusion by previous judgements breaks
     if n > 100:
         # This reasonable assumption means simple "IS IN" function later is fine
         raise MatchboxTooManySamplesRequested("Can only sample 100 entries at a time.")
 
     with MBDB.get_session() as session:
+        # Get user
+        user = session.scalar(select(Users).where(Users.name == user_name))
+        if not user:
+            raise MatchboxUserNotFoundError(f"User '{user_name}' not found")
+
         # Use ORM to get resolution metadata
         resolution_orm = Resolutions.from_path(path=resolution_path, session=session)
         resolution_id = resolution_orm.resolution_id
@@ -176,7 +180,7 @@ def sample(n: int, resolution_path: ModelResolutionPath, user_id: int) -> Table:
 
     # Get a list of cluster IDs and features for this resolution and user
     user_judgements = (
-        select(EvalJudgements).where(EvalJudgements.user_id == user_id).subquery()
+        select(EvalJudgements).where(EvalJudgements.user_id == user.user_id).subquery()
     )
     cluster_features_stmt = (
         select(

@@ -115,7 +115,7 @@ def sample(
     run_id: RunID,
     resolution: ModelResolutionName,
     n: int,
-    user_id: int,
+    user_name: str,
 ) -> ParquetResponse:
     """Sample n cluster to validate."""
     try:
@@ -124,7 +124,7 @@ def sample(
                 collection=collection, run=run_id, name=resolution
             ),
             n=n,
-            user_id=user_id,
+            user_name=user_name,
         )
         buffer = table_to_buffer(sample)
         return ParquetResponse(buffer.getvalue())

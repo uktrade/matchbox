@@ -966,6 +966,46 @@ class Users(CountMixin, MBDB.MatchboxBase):
     __table_args__ = (UniqueConstraint("name", name="user_name_unique"),)
 
 
+class EvalSamples(CountMixin, MBDB.MatchboxBase):
+    """Table attaching clusters to sample sets."""
+
+    __tablename__ = "eval_samples"
+
+    sample_set_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("eval_sample_sets.sample_set_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    cluster_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("clusters.cluster_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    weight: Mapped[int] = mapped_column(SMALLINT, default=1)
+
+
+class EvalSampleSets(CountMixin, MBDB.MatchboxBase):
+    """Table of groups of samples."""
+
+    __tablename__ = "eval_sample_sets"
+
+    # Columns
+    sample_set_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    collection_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("collections.collection_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_id", "name", name="unique_collection_sampleset_name"
+        ),
+    )
+
+
 class Groups(CountMixin, MBDB.MatchboxBase):
     """Groups for permission management."""
 
@@ -1057,6 +1097,11 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     judgement_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    sample_set_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("eval_sample_sets.sample_set_id", ondelete="CASCADE"),
+        nullable=False,
     )
     endorsed_cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False

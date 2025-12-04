@@ -23,7 +23,7 @@ from matchbox.common.dtos import (
     SourceResolutionPath,
     UploadStage,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.logging import LogLevelType
 
 if TYPE_CHECKING:
@@ -594,6 +594,23 @@ class MatchboxDBAdapter(ABC):
     # Evaluation management
 
     @abstractmethod
+    def insert_samples(
+        self,
+        samples: Table,
+        name: str,
+        collection: str,
+    ) -> None:
+        """Adds a sample set to the database.
+
+        Args:
+            samples: PyArrow table with SCHEMA_EVAL_SAMPLES_UPLOAD.
+                It is expected that the root cluster IDs will be placeholder values for
+                grouping leaves.
+            name: name of the sample set
+            collection: name of collection against which to register sample set
+        """
+
+    @abstractmethod
     def insert_judgement(self, judgement: Judgement) -> None:
         """Adds an evaluation judgement to the database.
 
@@ -609,18 +626,6 @@ class MatchboxDBAdapter(ABC):
         Returns:
             Two PyArrow tables with the judgments and their expansion.
             See `matchbox.common.arrow` for information on the schema.
-        """
-        ...
-
-    @abstractmethod
-    def compare_models(self, paths: list[ModelResolutionPath]) -> ModelComparison:
-        """Compare metrics of models based on evaluation data.
-
-        Args:
-            paths: List of paths of model resolutions to be compared.
-
-        Returns:
-            A model comparison object, listing metrics for each model.
         """
         ...
 

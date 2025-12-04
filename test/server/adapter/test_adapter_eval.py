@@ -5,19 +5,20 @@ from functools import partial
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
+from pyarrow import Table
 from sqlalchemy import Engine
 from test.fixtures.db import BACKENDS
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
-    SCHEMA_EVAL_SAMPLES,
+    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
+    SCHEMA_EVAL_SAMPLES_UPLOAD,
     SCHEMA_JUDGEMENTS,
 )
 from matchbox.common.dtos import ResolutionPath
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxNoJudgements,
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.factories.scenarios import setup_scenario
@@ -34,9 +35,68 @@ class TestMatchboxEvaluationBackend:
         self.backend: MatchboxDBAdapter = backend_instance
         self.scenario = partial(setup_scenario, warehouse=sqlite_warehouse)
 
+    def test_insert_samples(self) -> None:
+        """Can insert sample sets for evaluation."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            # Find three existing model clusters
+            crn_path = dag_testkit.sources["crn"].source.resolution_path
+            crn_query = pl.from_arrow(self.backend.query(crn_path))
+            crn_query_dict = {
+                row["key"]: row["id"] for row in crn_query.iter_rows(named=True)
+            }
+            true_entities = dag_testkit.source_to_linked["crn"].true_entity_subset(
+                "crn"
+            )
+            cluster1, cluster2, cluster3 = [
+                list(true_entities[i].keys["crn"]) for i in range(3)
+            ]
+
+            # Sample existing cluster
+            leaves1 = [crn_query_dict[leaf] for leaf in cluster1]
+            samples_data = []
+            for leaf in leaves1:
+                samples_data.append({"root": -1, "leaf": leaf, "weight": 1})
+
+            # Sample new cluster (merge of two other clusters)
+            leaves2 = [crn_query_dict[leaf] for leaf in cluster2]
+            leaves3 = [crn_query_dict[leaf] for leaf in cluster3]
+            leaves23 = leaves2 + leaves3
+            for leaf in leaves23:
+                samples_data.append({"root": -2, "leaf": leaf, "weight": 1})
+
+            # Can accept empty sample (without consequences)
+            no_samples = Table.from_pylist([], schema=SCHEMA_EVAL_SAMPLES_UPLOAD)
+            self.backend.insert_samples(
+                samples=no_samples, name="sampleset", collection=dag_testkit.dag.name
+            )
+
+            # Insert sample data
+            samples = Table.from_pylist(samples_data, schema=SCHEMA_EVAL_SAMPLES_UPLOAD)
+            self.backend.insert_samples(
+                samples=samples, name="sampleset", collection=dag_testkit.dag.name
+            )
+
+            # Cannot insert with the same name
+            with pytest.raises(ValueError, match="name"):
+                self.backend.insert_samples(
+                    samples=samples, name="sampleset", collection=dag_testkit.dag.name
+                )
+
+            # But we can re-insert with a different name
+            self.backend.insert_samples(
+                samples=samples, name="sampleset2", collection=dag_testkit.dag.name
+            )
+
     def test_insert_and_get_judgement(self) -> None:
         """Can insert and retrieve judgements."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
+            samples = Table.from_pylist(
+                [{"root": -1, "leaf": 1}, {"root": -1, "leaf": 2}],
+                schema=SCHEMA_EVAL_SAMPLES_UPLOAD,
+            )
+            self.backend.insert_samples(
+                samples=samples, name="sampleset", collection=dag_testkit.dag.name
+            )
             crn_testkit = dag_testkit.sources.get("crn")
             naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
 
@@ -72,6 +132,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_id=alice_id,
+                    sample_set=1,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -80,6 +141,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_id=alice_id,
+                    sample_set=1,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -91,6 +153,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_id=alice_id,
+                    sample_set=1,
                     shown=unique_ids[1],
                     endorsed=[clust2_leaves[:1], clust2_leaves[1:]],
                 ),
@@ -143,51 +206,6 @@ class TestMatchboxEvaluationBackend:
                 map(frozenset, [clust1_leaves, clust2_leaves[:1], clust2_leaves[1:]])
             )
 
-    def test_compare_models_fails(self) -> None:
-        """Model comparison errors with no judgement data."""
-        with (
-            self.scenario(self.backend, "bare"),
-            pytest.raises(MatchboxNoJudgements),
-        ):
-            self.backend.compare_models([])
-
-    def test_compare_models(self) -> None:
-        """Can compute precision and recall for list of models."""
-        with self.scenario(self.backend, "alt_dedupe") as dag_testkit:
-            user_id = self.backend.login("alice")
-
-            model_names = [
-                model.resolution_path for model in dag_testkit.models.values()
-            ]
-
-            root_leaves = (
-                pl.from_arrow(
-                    self.backend.sample_for_eval(
-                        n=10,
-                        path=model_names[0],
-                        user_id=user_id,
-                    )
-                )
-                .select(["root", "leaf"])
-                .unique()
-                .group_by("root")
-                .agg("leaf")
-            )
-            for row in root_leaves.rows(named=True):
-                self.backend.insert_judgement(
-                    judgement=Judgement(
-                        user_id=user_id, shown=row["root"], endorsed=[row["leaf"]]
-                    )
-                )
-
-            pr = self.backend.compare_models(model_names)
-            # Precision must be 1 for both as the second model is like the first
-            # but more conservative
-            assert pr[model_names[0]][0] == pr[model_names[1]][0] == 1
-            # Recall must be 1 for the first model and lower for the second
-            assert pr[model_names[0]][1] == 1
-            assert pr[model_names[1]][1] < 1
-
     def test_sample_for_eval(self) -> None:
         """Can extract samples for a user and a resolution."""
 
@@ -239,7 +257,7 @@ class TestMatchboxEvaluationBackend:
                 n=99, path=model_testkit.resolution_path, user_id=user_id
             )
 
-            assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES)
+            assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES_DOWNLOAD)
 
             # We can reconstruct the expected sample from resolution and source queries
             expected_sample = (

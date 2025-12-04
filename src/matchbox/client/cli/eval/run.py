@@ -51,6 +51,13 @@ def evaluate(
             help="Log file path to redirect all logging output (keeps UI clean)",
         ),
     ] = None,
+    sample_file: Annotated[
+        str | None,
+        typer.Option(
+            "--sample_file",
+            help="Pre-compiled sample file. If set, ignores resolutions parameters.",
+        ),
+    ] = None,
 ) -> None:
     """Start the interactive entity resolution evaluation tool.
 
@@ -92,6 +99,7 @@ def evaluate(
             user=user,
             dag=dag,
             show_help=True,
+            sample_file=sample_file,
         )
         app.run()
     except KeyboardInterrupt:

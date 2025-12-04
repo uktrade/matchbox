@@ -50,7 +50,7 @@ from matchbox.common.dtos import (
     UploadStage,
     User,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxDataNotFound,
@@ -515,6 +515,26 @@ def delete_resolution(
 
 
 @http_retry
+def insert_samples(
+    collection_name: str, sample_set_name: str, data: pl.DataFrame
+) -> None:
+    """Upload source samples to server."""
+    log_prefix = f"Sample set {sample_set_name} in collection {collection_name}"
+    logger.debug("Uploading samples", prefix=log_prefix)
+
+    buffer = table_to_buffer(table=data.to_arrow())
+
+    # Start upload
+    logger.debug("Uploading data", prefix=log_prefix)
+    CLIENT.post(
+        f"/collections/{collection_name}/samples/{sample_set_name}",
+        files={"file": ("data.parquet", buffer, "application/octet-stream")},
+    )
+
+    logger.debug("Data sent to the serve.", prefix=log_prefix)
+
+
+@http_retry
 def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Table:
     """Sample model results for evaluation."""
     res = CLIENT.get(
@@ -531,16 +551,6 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Ta
     )
 
     return read_table(BytesIO(res.content))
-
-
-@http_retry
-def compare_models(
-    resolutions: list[ModelResolutionPath],
-) -> ModelComparison:
-    """Get a model comparison for a set of model resolutions."""
-    res = CLIENT.post("/eval/compare", json=[r.model_dump() for r in resolutions])
-    scores = {resolution: tuple(pr) for resolution, pr in res.json().items()}
-    return scores
 
 
 @http_retry

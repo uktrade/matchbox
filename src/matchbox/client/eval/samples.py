@@ -10,7 +10,7 @@ from matchbox.client import _handler
 from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults
 from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
-from matchbox.common.eval import Judgement, ModelComparison, precision_recall
+from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
 
@@ -138,6 +138,7 @@ def get_samples(
     dag: DAG,
     user_id: int,
     resolution: ModelResolutionName | None = None,
+    sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.
 
@@ -147,6 +148,8 @@ def get_samples(
         user_id: ID of the user requesting the samples
         resolution: The optional resolution from which to sample. If not provided,
             the final step in the DAG is used
+        sample_file: path to parquet file output by ResolvedMatches. If specified,
+            won't sample from server, ignoring the user_id and resolution arguments
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster
@@ -155,17 +158,27 @@ def get_samples(
         MatchboxSourceTableError: If a source cannot be queried from a location using
             provided or default clients.
     """
-    if resolution:
-        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    if sample_file:
+        resolved_matches_dump = pl.read_parquet(sample_file)
+        clusters = resolved_matches_dump["id"].unique()
+        select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
+        select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
+        samples = select_rows.rename({"id": "root", "leaf_id": "leaf"})
     else:
-        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-
-    samples: pl.DataFrame = cast(
-        pl.DataFrame,
-        pl.from_arrow(
-            _handler.sample_for_eval(n=n, resolution=resolution_path, user_id=user_id)
-        ),
-    )
+        if resolution:
+            resolution_path: ModelResolutionPath = dag.get_model(
+                resolution
+            ).resolution_path
+        else:
+            resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+        samples: pl.DataFrame = cast(
+            pl.DataFrame,
+            pl.from_arrow(
+                _handler.sample_for_eval(
+                    n=n, resolution=resolution_path, user_id=user_id
+                )
+            ),
+        )
 
     if not len(samples):
         return {}
@@ -235,8 +248,3 @@ class EvalData:
         root_leaf = results.root_leaf().rename({"root_id": "root", "leaf_id": "leaf"})
         values = precision_recall([root_leaf], self.judgements, self.expansion)[0]
         return values[0], values[1]
-
-
-def compare_models(resolutions: list[ModelResolutionPath]) -> ModelComparison:
-    """Compare metrics of models based on cached evaluation data."""
-    return _handler.compare_models(resolutions)

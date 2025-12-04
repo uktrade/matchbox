@@ -1,5 +1,6 @@
 from collections.abc import Generator
 
+import polars as pl
 import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
@@ -7,7 +8,6 @@ from sqlalchemy import Engine, text
 from matchbox.client import _handler
 from matchbox.client.cli.eval import EntityResolutionApp
 from matchbox.client.dags import DAG
-from matchbox.client.eval import compare_models
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.common.factories.sources import (
@@ -177,6 +177,16 @@ class TestE2EModelEvaluation:
             DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
         )
 
+        samples = (
+            dag.resolve()
+            .as_cluster_key_map()
+            .select("id", "leaf_id")
+            .rename({"id": "root", "leaf_id": "leaf"})
+            .with_columns(pl.lit(1).alias("weight"))
+        )
+
+        dag.upload_samples("sample_set", samples=samples)
+
         # Create app and verify it can load samples from real data
         app = EntityResolutionApp(
             resolution=dag.final_step.resolution_path.name,
@@ -206,20 +216,3 @@ class TestE2EModelEvaluation:
             assert len(final_judgements) == initial_count + 1, (
                 "Judgement should flow through to backend"
             )
-
-        # Test model comparison functionality with both DAGs
-        comparison = compare_models(
-            [
-                dag.final_step.resolution_path,
-                self.dag2.final_step.resolution_path,
-            ]
-        )
-        expected_keys = {
-            str(dag.final_step.resolution_path),
-            str(self.dag2.final_step.resolution_path),
-        }
-        assert expected_keys.issubset(comparison.keys()), (
-            "Comparison should include both models"
-        )
-        for key in expected_keys:
-            assert len(comparison[key]) == 2, "Each model should have precision/recall"

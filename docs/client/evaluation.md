@@ -93,16 +93,6 @@ Check precision and recall at a specific threshold:
 precision, recall = eval_data.precision_recall(results, threshold=0.5)
 ```
 
-Compare multiple model resolutions:
-
-```python
-from matchbox.client.eval import compare_models, ModelResolutionPath
-
-comparison = compare_models([
-    ModelResolutionPath(collection="companies", run=1, name="deduper"),
-    ModelResolutionPath(collection="companies", run=2, name="deduper"),
-])
-```
 
 !!! tip "Deterministic models"
     Some types of model (like the `NaiveDeduper` used in the example) only output 1s for the matches they make, hence **threshold truth tuning doesn't apply**:

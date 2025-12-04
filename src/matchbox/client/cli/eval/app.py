@@ -123,6 +123,7 @@ class EntityResolutionApp(App):
         num_samples: int = 5,
         dag: DAG | None = None,
         show_help: bool = False,
+        sample_file: str | None = None,
         scroll_debounce_delay: float | None = 0.3,
     ) -> None:
         """Initialise the entity resolution app.
@@ -133,6 +134,8 @@ class EntityResolutionApp(App):
             user: Username for authentication (overrides settings)
             dag: Pre-loaded DAG with warehouse location attached
             show_help: Whether to show help on start
+            sample_file: Path to pre-compiled sample file.
+                If set, ignores resolutions.
             scroll_debounce_delay: Delay before updating column headers after scroll.
                 Set to None to disable debouncing (useful for tests).
         """
@@ -145,6 +148,7 @@ class EntityResolutionApp(App):
         self.resolution = dag.get_model(resolution).resolution_path
         self.show_help = show_help
         self._scroll_debounce_delay = scroll_debounce_delay
+        self.sample_file = sample_file
 
     # Lifecycle methods
     def compose(self) -> ComposeResult:
@@ -328,6 +332,7 @@ class EntityResolutionApp(App):
                 resolution=self.resolution.name,
                 user_id=self.user_id,
                 dag=self.dag,
+                sample_file=self.sample_file,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to fetch samples: {type(e).__name__}: {e}")

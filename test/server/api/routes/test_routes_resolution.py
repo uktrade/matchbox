@@ -1,9 +1,10 @@
 from unittest.mock import Mock, patch
 
+import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 
-from matchbox.common.arrow import table_to_buffer
+from matchbox.common.arrow import SCHEMA_EVAL_SAMPLES_UPLOAD, table_to_buffer
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
@@ -149,7 +150,7 @@ def test_update_resolution(
 # ensures the API runs the task (not Celery)
 @patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
 @patch("matchbox.server.api.routers.collection.file_to_s3")
-def test_complete_upload_process(
+def test_complete_resolution_upload_process(
     mock_add_task: Mock,
     mock_s3_upload: Mock,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
@@ -426,3 +427,43 @@ def test_delete_resolution_404(
     assert response.status_code == 404
     error = NotFoundError.model_validate(response.json())
     assert error.entity == BackendResourceType.RESOLUTION
+
+
+# We can patch BackgroundTasks, since the api_client_and_mocks fixture
+# ensures the API runs the task (not Celery)
+@patch("matchbox.server.api.routers.collection.BackgroundTasks.add_task")
+@patch("matchbox.server.api.routers.collection.file_to_s3")
+def test_complete_upload_process(
+    mock_add_task: Mock,
+    mock_s3_upload: Mock,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test the complete resolution data upload from creation through processing."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    # Create test data
+    sample_data = pa.Table.from_pylist(
+        [{"root": -1, "leaf": 1, "weight": 1}], schema=SCHEMA_EVAL_SAMPLES_UPLOAD
+    )
+    collection = "collection_name"
+    sample_set_name = "sample_set"
+
+    # Mock insertion of data
+    mock_backend.insert_model_data = Mock(return_value=None)
+
+    # Upload data file
+    response = test_client.post(
+        f"/collections/{collection}/samples/{sample_set_name}",
+        files={
+            "file": (
+                "samples.parquet",
+                table_to_buffer(sample_data),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert response.status_code == 202
+    data_post_info = ResourceOperationStatus.model_validate(response.json())
+    assert data_post_info.details
+    assert mock_s3_upload.called
+    assert mock_add_task.called

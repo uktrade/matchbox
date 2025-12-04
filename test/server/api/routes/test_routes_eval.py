@@ -9,19 +9,17 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
-    SCHEMA_EVAL_SAMPLES,
+    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     SCHEMA_JUDGEMENTS,
     JudgementsZipFilenames,
 )
 from matchbox.common.dtos import (
     BackendParameterType,
     BackendResourceType,
-    ModelResolutionPath,
 )
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxNoJudgements,
     MatchboxResolutionNotFoundError,
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
@@ -102,50 +100,6 @@ def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> 
     assert downloaded_expansion.equals(expansion)
 
 
-def test_compare_models_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
-    test_client, mock_backend, _ = api_client_and_mocks
-    model_a_path = ModelResolutionPath(name="a", collection="default", run=1)
-    model_b_path = ModelResolutionPath(name="b", collection="default", run=1)
-    mock_pr = {model_a_path: (1, 0.5), model_b_path: (0.5, 1)}
-    mock_backend.compare_models.return_value = mock_pr
-
-    response = test_client.post(
-        "/eval/compare",
-        json=[m.model_dump() for m in [model_a_path, model_b_path]],
-    )
-
-    assert response.status_code == 200
-    result = response.json()
-    assert sorted(result.keys()) == ["default/1/a", "default/1/b"]
-    assert tuple(result["default/1/a"]) == mock_pr[model_a_path]
-    assert tuple(result["default/1/b"]) == mock_pr[model_b_path]
-
-
-def test_compare_models_404(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, mock_backend, _ = api_client_and_mocks
-    model_a_path = ModelResolutionPath(name="a", collection="default", run=1)
-    model_b_path = ModelResolutionPath(name="b", collection="default", run=1)
-    model_c_path = ModelResolutionPath(name="c", collection="default", run=1)
-
-    mock_backend.compare_models.side_effect = MatchboxResolutionNotFoundError
-    response = test_client.post(
-        "/eval/compare",
-        json=[m.model_dump() for m in [model_a_path, model_b_path, model_c_path]],
-    )
-    assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RESOLUTION
-
-    mock_backend.compare_models.side_effect = MatchboxNoJudgements
-    response = test_client.post(
-        "/eval/compare",
-        json=[m.model_dump() for m in [model_a_path, model_b_path, model_c_path]],
-    )
-    assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.JUDGEMENT
-
-
 def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test that samples can be requested."""
     sample = pa.Table.from_pylist(
@@ -153,7 +107,7 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
             {"root": 10, "leaf": 1, "key": "1", "source": "source_a"},
             {"root": 10, "leaf": 1, "key": "2", "source": "source_a"},
         ],
-        schema=SCHEMA_EVAL_SAMPLES,
+        schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     )
     # There will be nulls in case of a schema mismatch
     assert len(sample.drop_null()) == len(sample)

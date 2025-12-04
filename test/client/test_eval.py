@@ -1,3 +1,4 @@
+import tempfile
 from collections.abc import Callable
 
 import polars as pl
@@ -11,11 +12,86 @@ from sqlalchemy import Engine
 from matchbox.client.dags import DAG
 from matchbox.client.eval import get_samples
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.common.arrow import SCHEMA_EVAL_SAMPLES, table_to_buffer
+from matchbox.client.results import ResolvedMatches
+from matchbox.common.arrow import (
+    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
+    SCHEMA_QUERY_WITH_LEAVES,
+    table_to_buffer,
+)
 from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
+
+
+def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
+    """."""
+    dag = DAG("ciao")
+    foo = dag.source(
+        **source_from_tuple(
+            name="foo",
+            engine=sqlite_in_memory_warehouse,
+            data_keys=["1", "2", "2b", "3"],
+            data_tuple=(
+                {"field_a": 10},
+                {"field_a": 20},
+                {"field_a": 20},
+                {"field_a": 30},
+            ),
+        )
+        .write_to_location()
+        .into_dag()
+    )
+    bar = dag.source(
+        **source_from_tuple(
+            name="bar",
+            engine=sqlite_in_memory_warehouse,
+            data_keys=["a", "b", "c", "d"],
+            data_tuple=(
+                {"field_a": "1x", "field_b": "1y"},
+                {"field_a": "2x", "field_b": "2y"},
+                {"field_a": "3x", "field_b": "3y"},
+                {"field_a": "4x", "field_b": "4y"},
+            ),
+        )
+        .write_to_location()
+        .into_dag()
+    )
+
+    # Both foo and bar have a record that's not linked
+    # Foo has two keys for one leaf ID
+    # Foo and bar have links across; bar also has link within
+    foo_query_data = pl.DataFrame(
+        [
+            {"id": 14, "leaf_id": 1, "key": "1"},
+            {"id": 2, "leaf_id": 2, "key": "2"},
+            {"id": 2, "leaf_id": 2, "key": "2b"},
+            {"id": 356, "leaf_id": 3, "key": "3"},
+        ],
+        schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
+    )
+
+    bar_query_data = pl.DataFrame(
+        [
+            {"id": 14, "leaf_id": 4, "key": "a"},
+            {"id": 356, "leaf_id": 5, "key": "b"},
+            {"id": 356, "leaf_id": 6, "key": "c"},
+            {"id": 7, "leaf_id": 7, "key": "d"},
+        ],
+        schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
+    )
+
+    rm = ResolvedMatches(
+        sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+    )
+
+    # Create a temporary file with .pq suffix
+    with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
+        # Write the parquet data to the temporary file
+        rm.as_cluster_key_map().write_parquet(tmp_file.name)
+
+        # Use the temporary file in get_samples
+        get_samples(n=2, dag=dag, user_id=10, sample_file=tmp_file.name)
 
 
 def test_get_samples(
@@ -120,7 +196,7 @@ def test_get_samples(
             # Source baz
             {"root": 10, "leaf": 1, "key": "x", "source": "baz"},
         ],
-        schema=SCHEMA_EVAL_SAMPLES,
+        schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     )
     # There will be nulls in case of a schema mismatch
     assert len(samples.drop_null()) == len(samples)
@@ -162,7 +238,7 @@ def test_get_samples(
             {"root": 11, "leaf": 7, "key": "c", "source": "bar"},
             {"root": 11, "leaf": 8, "key": "d", "source": "bar"},
         ],
-        schema=SCHEMA_EVAL_SAMPLES,
+        schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     )
     matchbox_api.get("/eval/samples").mock(
         return_value=Response(200, content=table_to_buffer(samples_no_baz).read())
@@ -214,7 +290,7 @@ def test_get_samples(
         return_value=Response(
             200,
             content=table_to_buffer(
-                Table.from_pylist([], schema=SCHEMA_EVAL_SAMPLES)
+                Table.from_pylist([], schema=SCHEMA_EVAL_SAMPLES_DOWNLOAD)
             ).read(),
         )
     )

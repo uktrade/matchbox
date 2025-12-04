@@ -653,3 +653,13 @@ class DAG:
             collection_name=self.name,
             data=samples,
         )
+
+    def list_sample_sets(self) -> list[str]:
+        """Return list of names of sample sets available for this DAG namespace."""
+        return _handler.list_sample_sets(self.name)
+
+    def delete_sample_set(self, name: str, certain: bool = False) -> None:
+        """Return list of names of sample sets available for this DAG namespace."""
+        _handler.delete_sample_set(
+            collection=self.name, sample_set_name=name, certain=certain
+        )

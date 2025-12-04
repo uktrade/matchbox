@@ -30,6 +30,7 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
+    MatchboxDeletionNotConfirmed,
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
 )
@@ -1194,3 +1195,47 @@ def test_upload_samples(matchbox_api: MockRouter) -> None:
     )
 
     dag.upload_samples("sample_set", samples=right_data)
+
+
+def test_list_sample_sets(matchbox_api: MockRouter) -> None:
+    """Can retrieve list of sample set names within a collection."""
+    dag = DAG("companies")
+    dummy_names = ["sample1", "sample2"]
+    matchbox_api.get("/collections/companies/samples").mock(
+        return_value=Response(200, json=dummy_names)
+    )
+
+    assert dag.list_sample_sets() == ["sample1", "sample2"]
+
+
+def test_delete_sample_set(matchbox_api: MockRouter) -> None:
+    """Can delete a sample set with confirmation."""
+    dag = DAG("companies")
+    response_payload = {
+        "success": True,
+        "operation": "delete",
+        "target": "Sample set test_sample_set",
+    }
+
+    matchbox_api.delete(
+        "/collections/companies/samples/test_sample_set", params={"certain": True}
+    ).mock(return_value=Response(200, json=response_payload))
+
+    dag.delete_sample_set("test_sample_set", certain=True)
+
+
+def test_delete_sample_set_needs_confirmation(matchbox_api: MockRouter) -> None:
+    """Deletion fails when confirmation is missing."""
+    dag = DAG("companies")
+    response_payload = {
+        "success": False,
+        "operation": "delete",
+        "details": "Deletion not confirmed",
+    }
+
+    matchbox_api.delete("/collections/companies/samples/test_sample_set").mock(
+        return_value=Response(409, json=response_payload)
+    )
+
+    with pytest.raises(MatchboxDeletionNotConfirmed):
+        dag.delete_sample_set("test_sample_set")

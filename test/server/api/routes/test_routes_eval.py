@@ -19,11 +19,96 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
     MatchboxDataNotFound,
+    MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
 )
+
+
+def test_list_sample_sets(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
+    """Test listing sample sets within a collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.list_sample_sets = Mock(return_value=["sample1", "sample2"])
+
+    response = test_client.get("/collections/test_collection/samples")
+
+    assert response.status_code == 200
+    assert response.json() == ["sample1", "sample2"]
+    mock_backend.list_sample_sets.assert_called_once_with(collection="test_collection")
+
+
+def test_delete_sample_set(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
+    """Test deleting a sample set with confirmation."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_sample_set = Mock()
+
+    response = test_client.delete(
+        "/collections/test_collection/samples/test_sample_set", params={"certain": True}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["operation"] == "delete"
+    mock_backend.delete_sample_set.assert_called_once_with(
+        collection="test_collection", sample_set_name="test_sample_set", certain=True
+    )
+
+
+def test_delete_sample_set_needs_confirmation(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test deleting a sample set that requires confirmation."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_sample_set = Mock(
+        side_effect=MatchboxDeletionNotConfirmed(children=["child1", "child2"])
+    )
+
+    response = test_client.delete(
+        "/collections/test_collection/samples/test_sample_set"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["success"] is False
+    assert response.json()["operation"] == "delete"
+    assert "child1" in response.json()["details"]
+    assert "child2" in response.json()["details"]
+
+
+def test_delete_sample_set_collection_not_found(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test deleting a sample set when collection does not exist."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_sample_set = Mock(
+        side_effect=MatchboxCollectionNotFoundError("Collection not found")
+    )
+
+    response = test_client.delete(
+        "/collections/nonexistent_collection/samples/test_sample_set",
+        params={"certain": True},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_sample_set_unexpected_error(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test deleting a sample set when an unexpected error occurs."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_sample_set = Mock(side_effect=Exception("Unexpected error"))
+
+    response = test_client.delete(
+        "/collections/test_collection/samples/test_sample_set", params={"certain": True}
+    )
+
+    assert response.status_code == 500
+    assert response.json()["success"] is False
+    assert response.json()["operation"] == "delete"
+    assert "Unexpected error" in response.json()["details"]
 
 
 def test_insert_judgement_ok(

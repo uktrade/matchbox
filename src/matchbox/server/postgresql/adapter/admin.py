@@ -13,6 +13,7 @@ from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
     EvalJudgements,
+    EvalSamples,
     PKSpace,
     Probabilities,
     Results,
@@ -113,6 +114,7 @@ class MatchboxPostgresAdminMixin:
             union_all_cte = union_all(
                 select(EvalJudgements.endorsed_cluster_id.label("cluster_id")),
                 select(EvalJudgements.shown_cluster_id.label("cluster_id")),
+                select(EvalSamples.cluster_id),
                 select(ClusterSourceKey.cluster_id),
                 select(Probabilities.cluster_id),
                 select(Results.left_id.label("cluster_id")),

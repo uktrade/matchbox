@@ -19,6 +19,7 @@ from matchbox.common.dtos import ResolutionPath
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
+    MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.factories.scenarios import setup_scenario
@@ -35,8 +36,8 @@ class TestMatchboxEvaluationBackend:
         self.backend: MatchboxDBAdapter = backend_instance
         self.scenario = partial(setup_scenario, warehouse=sqlite_warehouse)
 
-    def test_insert_samples(self) -> None:
-        """Can insert sample sets for evaluation."""
+    def test_insert_and_get_samples(self) -> None:
+        """Can insert sample sets for evaluation, and then retrieve them."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             # Find three existing model clusters
             crn_path = dag_testkit.sources["crn"].source.resolution_path
@@ -86,6 +87,41 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_samples(
                 samples=samples, name="sampleset2", collection=dag_testkit.dag.name
             )
+
+            assert set(self.backend.list_sample_sets(dag_testkit.dag.name)) == {
+                "sampleset",
+                "sampleset2",
+            }
+
+    def test_delete_sample_set(self) -> None:
+        """Can delete sample sets after inserting."""
+        with self.scenario(self.backend, "index") as dag_testkit:
+            crn_path = dag_testkit.sources["crn"].source.resolution_path
+            crn_query = pl.from_arrow(self.backend.query(crn_path))["id"].to_list()
+            samples = pl.DataFrame(
+                [
+                    {"root": -1, "leaf": crn_query[0], "weight": 1},
+                    {"root": -1, "leaf": crn_query[1], "weight": 1},
+                ]
+            ).to_arrow()
+            self.backend.insert_samples(
+                samples=samples, name="sampleset", collection=dag_testkit.dag.name
+            )
+
+            assert self.backend.list_sample_sets(dag_testkit.dag.name) == ["sampleset"]
+
+            with pytest.raises(MatchboxDeletionNotConfirmed):
+                self.backend.delete_sample_set(
+                    collection=dag_testkit.dag.name, name="sampleset"
+                )
+
+            assert self.backend.list_sample_sets(dag_testkit.dag.name) == ["sampleset"]
+
+            self.backend.delete_sample_set(
+                collection=dag_testkit.dag.name, name="sampleset", certain=True
+            )
+
+            assert self.backend.list_sample_sets(dag_testkit.dag.name) == []
 
     def test_insert_and_get_judgement(self) -> None:
         """Can insert and retrieve judgements."""

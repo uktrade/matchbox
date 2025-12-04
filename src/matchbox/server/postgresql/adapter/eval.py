@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 from pyarrow import Table
-from sqlalchemy import BIGINT, func, select
+from sqlalchemy import BIGINT, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from matchbox.common.arrow import (
@@ -20,6 +20,7 @@ from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelResolutionPath
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.exceptions import (
+    MatchboxDeletionNotConfirmed,
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
 )
@@ -203,6 +204,29 @@ class MatchboxPostgresEvaluationMixin:
                     raise
 
             logger.info("Insertion complete", prefix=log_prefix)
+
+    def list_sample_sets(self, collection: str) -> list[str]:  # noqa: D102
+        with MBDB.get_session() as session:
+            collection_id = Collections.from_name(collection, session).collection_id
+            list_query = select(EvalSampleSets.name).where(
+                EvalSampleSets.collection_id == collection_id
+            )
+            return session.execute(list_query).scalars().all()
+
+    def delete_sample_set(  # noqa: D102
+        self, collection: str, name: str, certain: bool = False
+    ) -> None:
+        if not certain:
+            raise MatchboxDeletionNotConfirmed
+        with MBDB.get_session() as session:
+            collection_id = Collections.from_name(collection, session).collection_id
+            session.execute(
+                delete(EvalSampleSets).where(
+                    EvalSampleSets.collection_id == collection_id,
+                    EvalSampleSets.name == name,
+                )
+            )
+            session.commit()
 
     def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
         # Check that all referenced cluster IDs exist

@@ -186,6 +186,10 @@ class TestE2EModelEvaluation:
         )
 
         dag.upload_samples("sample_set", samples=samples)
+        dag.upload_samples("sample_set2", samples=samples)
+        dag.delete_sample_set("sample_set2", certain=True)
+
+        assert dag.list_sample_sets() == ["sample_set"]
 
         # Create app and verify it can load samples from real data
         app = EntityResolutionApp(

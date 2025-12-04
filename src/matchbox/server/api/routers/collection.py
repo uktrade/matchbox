@@ -842,3 +842,69 @@ def insert_samples(
         operation=CRUDOperation.CREATE,
         details=filename,
     )
+
+
+@router.get(
+    "/{collection}/samples",
+    responses={404: {"model": NotFoundError}},
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(authorisation_dependencies)],
+    summary="Get list of available sample sets within collection",
+)
+def list_sample_sets(
+    backend: BackendDependency, collection: CollectionName
+) -> list[MatchboxName]:
+    """List sample sets within a collection."""
+    return backend.list_sample_sets(collection=collection)
+
+
+@router.delete(
+    "/{collection}/samples/{sample_set_name}",
+    responses={
+        404: {"model": NotFoundError},
+        409: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+        500: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+    },
+    dependencies=[Depends(authorisation_dependencies)],
+    summary="Delete a sample set; requires confirmation.",
+)
+def delete_sample_set(
+    backend: BackendDependency,
+    collection: CollectionName,
+    sample_set_name: MatchboxName,
+    certain: Annotated[
+        bool, Query(description="Confirm deletion of the sample set")
+    ] = False,
+) -> ResourceOperationStatus:
+    """Delete a sample set within a collection."""
+    resource_description = f"Sample set {sample_set_name}"
+
+    try:
+        backend.delete_sample_set(
+            collection=collection, name=sample_set_name, certain=certain
+        )
+
+        return ResourceOperationStatus(
+            success=True, target=resource_description, operation=CRUDOperation.DELETE
+        )
+    except (
+        MatchboxCollectionNotFoundError,
+        MatchboxDeletionNotConfirmed,
+    ):
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ResourceOperationStatus(
+                success=False,
+                target=f"Collection {collection}",
+                operation=CRUDOperation.DELETE,
+                details=str(e),
+            ),
+        ) from e

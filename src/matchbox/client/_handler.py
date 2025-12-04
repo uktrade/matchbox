@@ -37,6 +37,7 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     Match,
+    MatchboxName,
     ModelResolutionPath,
     NotFoundError,
     OKMessage,
@@ -138,8 +139,7 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
                 raise RuntimeError(f"Unexpected 404 error: {error.details}")
 
     if res.status_code == 409:
-        error = ResourceOperationStatus.model_validate(res.json())
-        raise MatchboxDeletionNotConfirmed(message=error.details)
+        raise MatchboxDeletionNotConfirmed()
 
     if res.status_code == 422:
         match res.json().get("parameter"):
@@ -532,6 +532,30 @@ def insert_samples(
     )
 
     logger.debug("Data sent to the serve.", prefix=log_prefix)
+
+
+@http_retry
+def list_sample_sets(collection: CollectionName) -> list[MatchboxName]:
+    """Get list of available sample sets within a collection."""
+    logger.debug("Retrieving sample sets", prefix=f"Collection {collection}")
+
+    res = CLIENT.get(f"/collections/{collection}/samples")
+    return [MatchboxName(name) for name in res.json()]
+
+
+@http_retry
+def delete_sample_set(
+    collection: CollectionName, sample_set_name: MatchboxName, certain: bool = False
+) -> ResourceOperationStatus:
+    """Delete a sample set within a collection."""
+    log_prefix = f"Collection {collection}, sample set {sample_set_name}"
+    logger.debug("Deleting sample set", prefix=log_prefix)
+
+    res = CLIENT.delete(
+        f"/collections/{collection}/samples/{sample_set_name}",
+        params={"certain": certain},
+    )
+    return ResourceOperationStatus.model_validate(res.json())
 
 
 @http_retry

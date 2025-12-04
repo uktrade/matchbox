@@ -611,6 +611,28 @@ class MatchboxDBAdapter(ABC):
         """
 
     @abstractmethod
+    def list_sample_sets(self, collection: str) -> list[str]:
+        """Get list of sample set names attached to collection.
+
+        Args:
+            collection: name of collection
+        """
+        ...
+
+    @abstractmethod
+    def delete_sample_set(
+        self, collection: str, name: str, certain: bool = False
+    ) -> None:
+        """Delete sample set within collection.
+
+        Args:
+            collection: name of collection
+            name: name of sample set
+            certain: whether to confirm deletion
+        """
+        ...
+
+    @abstractmethod
     def insert_judgement(self, judgement: Judgement) -> None:
         """Adds an evaluation judgement to the database.
 

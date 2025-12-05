@@ -149,7 +149,7 @@ def get_samples(
         resolution: The optional resolution from which to sample. If not provided,
             the final step in the DAG is used
         sample_file: path to parquet file output by ResolvedMatches. If specified,
-            won't sample from server, ignoring the user_id and resolution arguments
+            won't sample from server, ignoring the user_name and resolution arguments
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster

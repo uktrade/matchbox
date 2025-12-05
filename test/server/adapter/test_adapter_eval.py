@@ -86,6 +86,16 @@ class TestMatchboxEvaluationBackend:
             )
             assert self.backend.model_clusters.count() == original_cluster_num
 
+            # Can tag judgement
+            self.backend.insert_judgement(
+                judgement=Judgement(
+                    user_name=alice.user_name,
+                    shown=unique_ids[0],
+                    endorsed=[clust1_leaves],
+                    tag="eval_session1",
+                ),
+            )
+
             # Now split a cluster
             clust2_leaves = get_leaf_ids(unique_ids[1])
             self.backend.insert_judgement(
@@ -120,10 +130,16 @@ class TestMatchboxEvaluationBackend:
             assert expansion.schema.equals(SCHEMA_CLUSTER_EXPANSION)
             # Only one user ID was used
             assert judgements["user_name"].unique().to_pylist() == [alice.user_name]
-            # The first shown cluster is repeated because we judged it twice
+            # The first shown cluster is repeated because we judged it three times
             # The second shown cluster is repeated because we split it (see above)
             assert sorted(judgements["shown"].to_pylist()) == sorted(
-                [unique_ids[0], unique_ids[0], unique_ids[1], unique_ids[1]]
+                [
+                    unique_ids[0],
+                    unique_ids[0],
+                    unique_ids[0],
+                    unique_ids[1],
+                    unique_ids[1],
+                ]
             )
             # On the other hand, the root-leaf mapping table has no duplicates
             assert len(expansion) == 4  # 2 shown clusters + 2 new endorsed clusters

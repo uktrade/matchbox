@@ -87,6 +87,7 @@ def insert_judgement(judgement: Judgement) -> None:
             session.add(
                 EvalJudgements(
                     user_id=user.user_id,
+                    tag=judgement.tag,
                     shown_cluster_id=judgement.shown,
                     endorsed_cluster_id=endorsed_cluster_id,
                     timestamp=datetime.now(UTC),

@@ -1064,6 +1064,7 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     shown_cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
+    tag: Mapped[str] = mapped_column(TEXT, nullable=True)
     timestamp: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Relationships

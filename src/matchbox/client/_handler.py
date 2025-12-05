@@ -554,10 +554,10 @@ def send_eval_judgement(judgement: Judgement) -> None:
 
 
 @http_retry
-def download_eval_data() -> tuple[Table, Table]:
+def download_eval_data(tag: str | None = None) -> tuple[Table, Table]:
     """Download all judgements from the server."""
     logger.debug("Retrieving all judgements.")
-    res = CLIENT.get("/eval/judgements")
+    res = CLIENT.get("/eval/judgements", params=url_params({"tag": tag}))
 
     zip_bytes = BytesIO(res.content)
     with zipfile.ZipFile(zip_bytes, "r") as zip_file:
@@ -592,8 +592,7 @@ def count_backend_items(
     log_prefix = "Backend count"
     logger.debug("Counting", prefix=log_prefix)
 
-    params = {"entity": entity} if entity else {}
-    res = CLIENT.get("/database/count", params=url_params(params))
+    res = CLIENT.get("/database/count", params=url_params({"entity": entity}))
 
     counts = res.json()
     logger.debug(f"Counts: {counts}", prefix=log_prefix)

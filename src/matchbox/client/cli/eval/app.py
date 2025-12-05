@@ -110,6 +110,8 @@ class EntityResolutionApp(App):
     resolution: ModelResolutionPath
     user_name: str
     dag: DAG
+    session_tag: str | None
+    sample_file: str | None
     show_help: bool
 
     queue: EvaluationQueue
@@ -121,8 +123,9 @@ class EntityResolutionApp(App):
         user: str,
         num_samples: int = 5,
         dag: DAG | None = None,
-        show_help: bool = False,
+        session_tag: str | None = None,
         sample_file: str | None = None,
+        show_help: bool = False,
         scroll_debounce_delay: float | None = 0.3,
     ) -> None:
         """Initialise the entity resolution app.
@@ -132,22 +135,26 @@ class EntityResolutionApp(App):
             num_samples: Number of clusters to sample for evaluation
             user: Username for authentication (overrides settings)
             dag: Pre-loaded DAG with warehouse location attached
-            show_help: Whether to show help on start
+            session_tag: String to use for tagging judgements
             sample_file: Path to pre-compiled sample file.
                 If set, ignores resolutions.
+            show_help: Whether to show help on start
             scroll_debounce_delay: Delay before updating column headers after scroll.
                 Set to None to disable debouncing (useful for tests).
         """
         super().__init__()
 
-        self.queue = EvaluationQueue()
-        self.sample_limit = num_samples
-        self.user_name = user
-        self.dag = dag
         self.resolution = dag.get_model(resolution).resolution_path
+        self.user_name = user
+        self.sample_limit = num_samples
+        self.dag = dag
+        self.session_tag = session_tag
+        self.sample_file = sample_file
+
         self.show_help = show_help
         self._scroll_debounce_delay = scroll_debounce_delay
-        self.sample_file = sample_file
+
+        self.queue = EvaluationQueue()
 
     # Lifecycle methods
     def compose(self) -> ComposeResult:
@@ -376,7 +383,10 @@ class EntityResolutionApp(App):
             if self.user_name is None:
                 raise RuntimeError("User name is not set")
             judgement = create_judgement(
-                current.item, current.assignments, self.user_name
+                item=current.item,
+                assignments=current.assignments,
+                user_name=self.user_name,
+                tag=self.session_tag,
             )
             _handler.send_eval_judgement(judgement)
         except Exception as exc:

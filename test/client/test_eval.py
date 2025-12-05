@@ -91,7 +91,7 @@ def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
         rm.as_cluster_key_map().write_parquet(tmp_file.name)
 
         # Use the temporary file in get_samples
-        get_samples(n=2, dag=dag, user_id=10, sample_file=tmp_file.name)
+        get_samples(n=2, dag=dag, user_name="alice", sample_file=tmp_file.name)
 
 
 def test_get_samples(

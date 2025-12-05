@@ -73,14 +73,18 @@ class EvaluationItem(BaseModel):
 
 
 def create_judgement(
-    item: EvaluationItem, assignments: dict[int, str], user_name: str
+    item: EvaluationItem,
+    assignments: dict[int, str],
+    user_name: str,
+    tag: str | None = None,
 ) -> Judgement:
     """Convert item assignments to Judgement - no default group assignment.
 
     Args:
-        item: Evaluation item
-        assignments: Column assignments (group_idx -> group_letter)
-        user_name: User name for the judgement
+        item: evaluation item
+        assignments: column assignments (group_idx -> group_letter)
+        user_name: user name for the judgement
+        tag: string by which to tag the judgement
 
     Returns:
         Judgement with endorsed groups based on assignments
@@ -93,7 +97,9 @@ def create_judgement(
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
-    return Judgement(user_name=user_name, shown=item.cluster_id, endorsed=endorsed)
+    return Judgement(
+        user_name=user_name, shown=item.cluster_id, endorsed=endorsed, tag=tag
+    )
 
 
 def create_evaluation_item(
@@ -233,9 +239,10 @@ def get_samples(
 class EvalData:
     """Object which caches evaluation data to measure model performance."""
 
-    def __init__(self) -> None:
+    def __init__(self, tag: str | None = None) -> None:
         """Download judgement and expansion data used to compute evaluation metrics."""
-        self.judgements, self.expansion = _handler.download_eval_data()
+        self.tag = tag
+        self.judgements, self.expansion = _handler.download_eval_data(tag)
 
     def precision_recall(
         self, results: ModelResults, threshold: float

@@ -4,10 +4,9 @@ import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
 
-from matchbox.client import _handler
 from matchbox.client.cli.eval import EntityResolutionApp
 from matchbox.client.dags import DAG
-from matchbox.client.eval import compare_models
+from matchbox.client.eval import EvalData, compare_models
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.common.factories.sources import (
@@ -181,6 +180,7 @@ class TestE2EModelEvaluation:
         app = EntityResolutionApp(
             resolution=dag.final_step.resolution_path.name,
             num_samples=2,
+            session_tag="eval_session1",
             user="alice",
             dag=dag,
         )
@@ -197,15 +197,19 @@ class TestE2EModelEvaluation:
             for i in range(len(session.item.get_unique_record_groups())):
                 session.assignments[i] = "a"  # Assign all to same cluster
 
-            initial_judgements, _ = _handler.download_eval_data()
+            initial_judgements = EvalData().judgements
             initial_count = len(initial_judgements)
 
             await app.action_submit()
 
-            final_judgements, _ = _handler.download_eval_data()
+            final_judgements = EvalData().judgements
             assert len(final_judgements) == initial_count + 1, (
                 "Judgement should flow through to backend"
             )
+
+        # Can filter judgements by tag
+        assert len(EvalData("eval_session1").judgements)
+        assert not len(EvalData("mispelled").judgements)
 
         # Test model comparison functionality with both DAGs
         comparison = compare_models(

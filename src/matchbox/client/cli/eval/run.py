@@ -55,7 +55,16 @@ def evaluate(
         str | None,
         typer.Option(
             "--sample_file",
+            "-s",
             help="Pre-compiled sample file. If set, ignores resolutions parameters.",
+        ),
+    ] = None,
+    session_tag: Annotated[
+        str | None,
+        typer.Option(
+            "--session_tag",
+            "-t",
+            help="String to use to tag judgements sent to the server.",
         ),
     ] = None,
 ) -> None:
@@ -98,8 +107,9 @@ def evaluate(
             resolution=model.resolution_path.name,
             user=user,
             dag=dag,
-            show_help=True,
+            session_tag=session_tag,
             sample_file=sample_file,
+            show_help=True,
         )
         app.run()
     except KeyboardInterrupt:

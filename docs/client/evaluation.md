@@ -80,11 +80,11 @@ model = source.query().deduper(
 results = model.run()
 ```
 
-Download validation data:
+Download validation data, filtering by tag:
 
 ```python
 from matchbox.client.eval import EvalData
-eval_data = EvalData()
+eval_data = EvalData(tag="companies__15_02_2025")
 ```
 
 Check precision and recall at a specific threshold:

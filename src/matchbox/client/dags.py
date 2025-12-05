@@ -54,6 +54,11 @@ class DAG:
         self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
 
+    @property
+    def source_names(self) -> list[SourceResolutionName]:
+        """Names of source nodes in the DAG."""
+        return [name for name, node in self.nodes.items() if isinstance(node, Source)]
+
     def _check_dag(self, dag: Self) -> None:
         """Check that the given DAG is the same as this one."""
         if self != dag:
@@ -661,5 +666,5 @@ class DAG:
     def delete_sample_set(self, name: str, certain: bool = False) -> None:
         """Return list of names of sample sets available for this DAG namespace."""
         _handler.delete_sample_set(
-            collection=self.name, sample_set_name=name, certain=certain
+            collection=self.name, sample_set=name, certain=certain
         )

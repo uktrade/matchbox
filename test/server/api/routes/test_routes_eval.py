@@ -46,14 +46,15 @@ def test_delete_sample_set(api_client_and_mocks: tuple[TestClient, Mock, Mock]) 
     mock_backend.delete_sample_set = Mock()
 
     response = test_client.delete(
-        "/collections/test_collection/samples/test_sample_set", params={"certain": True}
+        "/collections/test_collection/samplesets/test_sample_set",
+        params={"certain": True},
     )
 
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert response.json()["operation"] == "delete"
     mock_backend.delete_sample_set.assert_called_once_with(
-        collection="test_collection", sample_set_name="test_sample_set", certain=True
+        collection="test_collection", sample_set="test_sample_set", certain=True
     )
 
 
@@ -67,7 +68,7 @@ def test_delete_sample_set_needs_confirmation(
     )
 
     response = test_client.delete(
-        "/collections/test_collection/samples/test_sample_set"
+        "/collections/test_collection/samplesets/test_sample_set"
     )
 
     assert response.status_code == 409
@@ -87,7 +88,7 @@ def test_delete_sample_set_collection_not_found(
     )
 
     response = test_client.delete(
-        "/collections/nonexistent_collection/samples/test_sample_set",
+        "/collections/nonexistent_collection/samplesets/test_sample_set",
         params={"certain": True},
     )
 
@@ -102,7 +103,8 @@ def test_delete_sample_set_unexpected_error(
     mock_backend.delete_sample_set = Mock(side_effect=Exception("Unexpected error"))
 
     response = test_client.delete(
-        "/collections/test_collection/samples/test_sample_set", params={"certain": True}
+        "/collections/test_collection/samplesets/test_sample_set",
+        params={"certain": True},
     )
 
     assert response.status_code == 500
@@ -117,7 +119,9 @@ def test_insert_judgement_ok(
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
     judgement = Judgement(user_id=1, shown=10, endorsed=[[1]])
-    response = test_client.post("/eval/judgements", json=judgement.model_dump())
+    response = test_client.post(
+        "/collections/c/samplesets/s/judgements", json=judgement.model_dump()
+    )
     assert response.status_code == 201
     assert (
         mock_backend.insert_judgement.call_args_list[0].kwargs["judgement"] == judgement
@@ -132,12 +136,16 @@ def test_insert_judgement_error(
     fake_judgement = Judgement(user_id=1, shown=10, endorsed=[[1]]).model_dump()
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
-    response = test_client.post("/eval/judgements", json=fake_judgement)
+    response = test_client.post(
+        "/collections/c/samplesets/s/judgements", json=fake_judgement
+    )
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.CLUSTER
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxUserNotFoundError)
-    response = test_client.post("/eval/judgements", json=fake_judgement)
+    response = test_client.post(
+        "/collections/c/samplesets/s/judgements", json=fake_judgement
+    )
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.USER
 
@@ -169,7 +177,7 @@ def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> 
     mock_backend.get_judgements = Mock(return_value=(judgements, expansion))
 
     # Process response
-    response = test_client.get("/eval/judgements")
+    response = test_client.get("/collections/c/samplesets/s/judgements")
     zip_bytes = BytesIO(response.content)
 
     with zipfile.ZipFile(zip_bytes, "r") as zip_file:
@@ -202,14 +210,7 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
 
     # Process response
     response = test_client.get(
-        "/eval/samples",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "resolution": "a",
-            "n": 10,
-            "user_id": 12,
-        },
+        "/collections/c/samplesets/s/samples", params={"n": 10, "user_id": 12}
     )
     assert response.status_code == 200
 
@@ -243,14 +244,7 @@ def test_get_samples_404(
     mock_backend.sample_for_eval = Mock(side_effect=exception)
 
     response = test_client.get(
-        "/eval/samples",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "resolution": "a",
-            "n": 10,
-            "user_id": 12,
-        },
+        "/collections/c/samplesets/s/samples", params={"n": 10, "user_id": 12}
     )
 
     assert response.status_code == 404
@@ -263,14 +257,7 @@ def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]) ->
     mock_backend.sample_for_eval = Mock(side_effect=MatchboxTooManySamplesRequested)
 
     response = test_client.get(
-        "/eval/samples",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "resolution": "a",
-            "n": 10,
-            "user_id": 12,
-        },
+        "/collections/c/samplesets/s/samples", params={"n": 10, "user_id": 12}
     )
 
     assert response.status_code == 422

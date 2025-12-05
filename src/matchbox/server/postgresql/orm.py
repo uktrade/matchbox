@@ -26,6 +26,7 @@ from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import (
     CollectionName,
     LocationConfig,
+    MatchboxName,
     ModelType,
     ResolutionName,
     ResolutionPath,
@@ -43,6 +44,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
+    MatchboxSamplesetNotFoundError,
 )
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
@@ -1004,6 +1006,37 @@ class EvalSampleSets(CountMixin, MBDB.MatchboxBase):
             "collection_id", "name", name="unique_collection_sampleset_name"
         ),
     )
+
+    @classmethod
+    def from_name(
+        cls,
+        collection: CollectionName,
+        name: MatchboxName,
+        session: Session | None = None,
+    ) -> "EvalSampleSets":
+        """Resolve collection and name to an EvalSampleSets object.
+
+        Args:
+            collection: The name of the collection to resolve.
+            name: The name of the sample set to resolve.
+            session: Optional session to use for the query.
+
+        Raises:
+            MatchboxSamplesetNotFoundError: If the sample set doesn't exist.
+        """
+        collection_id = Collections.from_name(collection).collection_id
+        query = select(cls).where(cls.name == name, cls.collection_id == collection_id)
+
+        if session:
+            sample_set = session.execute(query).scalar_one_or_none()
+        else:
+            with MBDB.get_session() as session:
+                sample_set = session.execute(query).scalar_one_or_none()
+
+        if not sample_set:
+            raise MatchboxSamplesetNotFoundError(collection=collection, sample_set=name)
+
+        return sample_set
 
 
 class Groups(CountMixin, MBDB.MatchboxBase):

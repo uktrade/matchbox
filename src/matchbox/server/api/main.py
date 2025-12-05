@@ -52,7 +52,7 @@ from matchbox.server.api.dependencies import (
     authorisation_dependencies,
     lifespan,
 )
-from matchbox.server.api.routers import auth, collection, eval
+from matchbox.server.api.routers import auth, collection
 
 app = FastAPI(
     title="matchbox API",
@@ -62,7 +62,6 @@ app = FastAPI(
     redoc_url=None,
 )
 app.include_router(collection.router)
-app.include_router(eval.router)
 app.include_router(auth.router)
 
 static_dir = Path(__file__).parent / "static"

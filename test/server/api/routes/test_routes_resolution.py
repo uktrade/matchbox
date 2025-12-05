@@ -446,14 +446,14 @@ def test_complete_upload_process(
         [{"root": -1, "leaf": 1, "weight": 1}], schema=SCHEMA_EVAL_SAMPLES_UPLOAD
     )
     collection = "collection_name"
-    sample_set_name = "sample_set"
+    sample_set = "sample_set"
 
     # Mock insertion of data
     mock_backend.insert_model_data = Mock(return_value=None)
 
     # Upload data file
     response = test_client.post(
-        f"/collections/{collection}/samples/{sample_set_name}",
+        f"/collections/{collection}/samplesets/{sample_set}",
         files={
             "file": (
                 "samples.parquet",

@@ -60,9 +60,14 @@ SCHEMA_EVAL_SAMPLES_UPLOAD: Final[pa.Schema] = pa.schema(
 )
 """Data upload schema for evaluation samples."""
 
-SCHEMA_EVAL_SAMPLES_DOWNLOAD = SCHEMA_QUERY.append(
-    pa.field("key", pa.large_string())
-).append(pa.field("source", pa.large_string()))
+SCHEMA_EVAL_SAMPLES_DOWNLOAD: Final[pa.Schema] = pa.schema(
+    [
+        ("root", pa.int64()),
+        ("leaf", pa.uint64()),
+        ("key", pa.large_string()),
+        ("source", pa.large_string()),
+    ]
+)
 """Data download schema for evaluation samples."""
 
 

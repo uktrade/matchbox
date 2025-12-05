@@ -7,11 +7,13 @@ from pyarrow import Schema
 if TYPE_CHECKING:
     from matchbox.common.dtos import (
         CollectionName,
+        MatchboxName,
         ResolutionName,
         RunID,
     )
 else:
     CollectionName = Any
+    MatchboxName = Any
     ResolutionName = Any
     RunID = Any
 
@@ -229,6 +231,28 @@ class MatchboxRunNotFoundError(MatchboxException):
 
         super().__init__(message)
         self.run_id = run_id
+
+
+class MatchboxSamplesetNotFoundError(MatchboxException):
+    """Sample set not found."""
+
+    def __init__(
+        self,
+        message: str | None = None,
+        collection: CollectionName | None = None,
+        sample_set: MatchboxName | None = None,
+    ) -> None:
+        """Initialise the exception."""
+        if message is None:
+            message = "Sample set not found."
+            if collection is not None:
+                message += f"; collection {collection}"
+            if sample_set is not None:
+                message += f"; sample set {sample_set}"
+
+        super().__init__(message)
+        self.collection = collection
+        self.sample_set = sample_set
 
 
 class MatchboxDataNotFound(MatchboxException):

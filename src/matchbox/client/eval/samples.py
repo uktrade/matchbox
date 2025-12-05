@@ -9,7 +9,12 @@ from sqlalchemy.exc import OperationalError
 from matchbox.client import _handler
 from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults
-from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
+from matchbox.common.dtos import (
+    CollectionName,
+    MatchboxName,
+    SourceConfig,
+    SourceResolutionName,
+)
 from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
@@ -136,20 +141,19 @@ def create_evaluation_item(
 def get_samples(
     n: int,
     dag: DAG,
+    sources: list[SourceResolutionName],
+    sample_set: MatchboxName,
     user_id: int,
-    resolution: ModelResolutionName | None = None,
-    sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.
 
     Args:
         n: Number of clusters to sample
-        dag: DAG for which to retrieve samples
+        dag: DAG containing the sample set
+        sources: name of sources within DAG included in the samples
+        sample_set: Name of the sample set
         user_id: ID of the user requesting the samples
-        resolution: The optional resolution from which to sample. If not provided,
-            the final step in the DAG is used
-        sample_file: path to parquet file output by ResolvedMatches. If specified,
-            won't sample from server, ignoring the user_id and resolution arguments
+
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster
@@ -158,27 +162,14 @@ def get_samples(
         MatchboxSourceTableError: If a source cannot be queried from a location using
             provided or default clients.
     """
-    if sample_file:
-        resolved_matches_dump = pl.read_parquet(sample_file)
-        clusters = resolved_matches_dump["id"].unique()
-        select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
-        select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
-        samples = select_rows.rename({"id": "root", "leaf_id": "leaf"})
-    else:
-        if resolution:
-            resolution_path: ModelResolutionPath = dag.get_model(
-                resolution
-            ).resolution_path
-        else:
-            resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-        samples: pl.DataFrame = cast(
-            pl.DataFrame,
-            pl.from_arrow(
-                _handler.sample_for_eval(
-                    n=n, resolution=resolution_path, user_id=user_id
-                )
-            ),
-        )
+    samples_table = _handler.sample_for_eval(
+        n=n,
+        collection=dag.name,
+        sources=sources,
+        sample_set=sample_set,
+        user_id=user_id,
+    )
+    samples = cast(pl.DataFrame, pl.from_arrow(samples_table))
 
     if not len(samples):
         return {}
@@ -233,9 +224,11 @@ def get_samples(
 class EvalData:
     """Object which caches evaluation data to measure model performance."""
 
-    def __init__(self) -> None:
+    def __init__(self, collection: CollectionName, sample_set: MatchboxName) -> None:
         """Download judgement and expansion data used to compute evaluation metrics."""
-        self.judgements, self.expansion = _handler.download_eval_data()
+        self.judgements, self.expansion = _handler.download_eval_data(
+            collection=collection, sample_set=sample_set
+        )
 
     def precision_recall(
         self, results: ModelResults, threshold: float

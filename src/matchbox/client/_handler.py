@@ -46,6 +46,7 @@ from matchbox.common.dtos import (
     ResourceOperationStatus,
     Run,
     RunID,
+    SourceResolutionName,
     SourceResolutionPath,
     UploadInfo,
     UploadStage,
@@ -527,7 +528,7 @@ def insert_samples(
     # Start upload
     logger.debug("Uploading data", prefix=log_prefix)
     CLIENT.post(
-        f"/collections/{collection_name}/samples/{sample_set_name}",
+        f"/collections/{collection_name}/samplesets/{sample_set_name}",
         files={"file": ("data.parquet", buffer, "application/octet-stream")},
     )
 
@@ -545,53 +546,58 @@ def list_sample_sets(collection: CollectionName) -> list[MatchboxName]:
 
 @http_retry
 def delete_sample_set(
-    collection: CollectionName, sample_set_name: MatchboxName, certain: bool = False
+    collection: CollectionName, sample_set: MatchboxName, certain: bool = False
 ) -> ResourceOperationStatus:
     """Delete a sample set within a collection."""
-    log_prefix = f"Collection {collection}, sample set {sample_set_name}"
+    log_prefix = f"Collection {collection}, sample set {sample_set}"
     logger.debug("Deleting sample set", prefix=log_prefix)
 
     res = CLIENT.delete(
-        f"/collections/{collection}/samples/{sample_set_name}",
+        f"/collections/{collection}/samplesets/{sample_set}",
         params={"certain": certain},
     )
     return ResourceOperationStatus.model_validate(res.json())
 
 
 @http_retry
-def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Table:
+def sample_for_eval(
+    n: int,
+    collection: CollectionName,
+    sources: list[SourceResolutionName],
+    sample_set: MatchboxName,
+    user_id: int,
+) -> Table:
     """Sample model results for evaluation."""
     res = CLIENT.get(
-        "/eval/samples",
-        params=url_params(
-            {
-                "n": n,
-                "collection": resolution.collection,
-                "run_id": resolution.run,
-                "resolution": resolution.name,
-                "user_id": user_id,
-            }
-        ),
+        f"/collections/{collection}/samplesets/{sample_set}/samples",
+        params=url_params({"n": n, "user_id": user_id, "sources": sources}),
     )
 
     return read_table(BytesIO(res.content))
 
 
 @http_retry
-def send_eval_judgement(judgement: Judgement) -> None:
+def send_eval_judgement(
+    judgement: Judgement, collection: CollectionName, sample_set: MatchboxName
+) -> None:
     """Send judgements to the server."""
     logger.debug(
         f"Submitting judgement {judgement.shown}:{judgement.endorsed} "
         f"for {judgement.user_id}"
     )
-    CLIENT.post("/eval/judgements", json=judgement.model_dump())
+    CLIENT.post(
+        f"/collections{collection}/samplesets/{sample_set}/judgements",
+        json=judgement.model_dump(),
+    )
 
 
 @http_retry
-def download_eval_data() -> tuple[Table, Table]:
+def download_eval_data(
+    collection: CollectionName, sample_set: MatchboxName
+) -> tuple[Table, Table]:
     """Download all judgements from the server."""
     logger.debug("Retrieving all judgements.")
-    res = CLIENT.get("/eval/judgements")
+    res = CLIENT.get(f"/collections/{collection}/samplesets/{sample_set}/judgements")
 
     zip_bytes = BytesIO(res.content)
     with zipfile.ZipFile(zip_bytes, "r") as zip_file:

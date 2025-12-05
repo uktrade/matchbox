@@ -91,4 +91,4 @@ class TestMainCLI:
 
         assert "interactive entity resolution" in clean_output.lower()
         assert "--collection" in clean_output
-        assert "--resolution" in clean_output
+        assert "--sample_set" in clean_output

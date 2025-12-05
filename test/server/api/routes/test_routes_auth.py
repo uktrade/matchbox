@@ -77,14 +77,14 @@ PROTECTED_ROUTES = [
     pytest.param(
         "post", "/collections/default/runs/1/resolutions/name", id="post_resolution"
     ),
-    pytest.param("post", "/collections/default/samples/name", id="post_samples"),
+    pytest.param("post", "/collections/default/samplesets/name", id="post_samples"),
     pytest.param(
         "put", "/collections/default/runs/1/resolutions/name", id="put_resolution"
     ),
     pytest.param(
         "delete", "/collections/default/runs/1/resolutions/name", id="delete_resolution"
     ),
-    pytest.param("delete", "/collections/default/samples/name", id="delete_samples"),
+    pytest.param("delete", "/collections/default/samplesets/name", id="delete_samples"),
     pytest.param("delete", "/database", id="delete_database"),
 ]
 

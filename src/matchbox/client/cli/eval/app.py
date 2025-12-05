@@ -19,7 +19,7 @@ from matchbox.client.cli.eval.widgets.styling import get_group_style
 from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
 from matchbox.client.eval import EvaluationItem, create_judgement, get_samples
-from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath
+from matchbox.common.dtos import MatchboxName
 from matchbox.common.exceptions import MatchboxClientSettingsException
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,6 @@ class EntityResolutionApp(App):
     current_assignments: reactive[dict[int, str]] = reactive({}, init=False)
 
     sample_limit: int
-    resolution: ModelResolutionPath
     user_id: int
     user_name: str
     dag: DAG
@@ -118,24 +117,21 @@ class EntityResolutionApp(App):
 
     def __init__(
         self,
-        resolution: ModelResolutionName,
+        sample_set: MatchboxName,
         user: str,
         num_samples: int = 5,
         dag: DAG | None = None,
         show_help: bool = False,
-        sample_file: str | None = None,
         scroll_debounce_delay: float | None = 0.3,
     ) -> None:
         """Initialise the entity resolution app.
 
         Args:
-            resolution: The model resolution to evaluate
-            num_samples: Number of clusters to sample for evaluation
+            sample_set: Name of sample set within DAG to use
             user: Username for authentication (overrides settings)
+            num_samples: Number of clusters to sample for evaluation
             dag: Pre-loaded DAG with warehouse location attached
             show_help: Whether to show help on start
-            sample_file: Path to pre-compiled sample file.
-                If set, ignores resolutions.
             scroll_debounce_delay: Delay before updating column headers after scroll.
                 Set to None to disable debouncing (useful for tests).
         """
@@ -145,10 +141,9 @@ class EntityResolutionApp(App):
         self.sample_limit = num_samples
         self.user_name = user
         self.dag = dag
-        self.resolution = dag.get_model(resolution).resolution_path
         self.show_help = show_help
         self._scroll_debounce_delay = scroll_debounce_delay
-        self.sample_file = sample_file
+        self.sample_set = sample_set
 
     # Lifecycle methods
     def compose(self) -> ComposeResult:
@@ -275,7 +270,7 @@ class EntityResolutionApp(App):
     async def _handle_no_samples(self) -> None:
         """Handle empty queue state."""
         self._update_status("◯ No data", "yellow")
-        logger.warning(f"No samples available for resolution '{self.resolution}'.")
+        logger.warning(f"No samples available for sample set '{self.sample_set}'.")
         await self.action_show_no_samples()
 
     def _update_status(
@@ -329,10 +324,10 @@ class EntityResolutionApp(App):
         try:
             new_samples_dict = get_samples(
                 n=needed,
-                resolution=self.resolution.name,
+                sample_set=self.sample_set,
+                sources=self.sources,
                 user_id=self.user_id,
                 dag=self.dag,
-                sample_file=self.sample_file,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to fetch samples: {type(e).__name__}: {e}")

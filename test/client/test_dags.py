@@ -1170,7 +1170,7 @@ def test_dag_set_default_unreachable_nodes(sqlite_warehouse: Engine) -> None:
 def test_upload_samples(matchbox_api: MockRouter) -> None:
     """If schema is correct, can upload samples."""
     dag = DAG("companies")
-    sample_set_name = "sample_set"
+    sample_set = "sample_set"
 
     wrong_columns = pl.DataFrame([{"id": 10, "leaf_id": 1, "weight": 1}])
     wrong_types = pl.DataFrame([{"root": 10, "leaf": "hello", "weight": 1}])
@@ -1183,12 +1183,12 @@ def test_upload_samples(matchbox_api: MockRouter) -> None:
 
     right_data = pl.DataFrame([{"root": 10, "leaf": 1, "weight": 1}])
 
-    matchbox_api.post(f"/collections/{dag.name}/samples/{sample_set_name}").mock(
+    matchbox_api.post(f"/collections/{dag.name}/samplesets/{sample_set}").mock(
         return_value=Response(
             200,
             json=ResourceOperationStatus(
                 success=True,
-                target=f"Sample set {sample_set_name}",
+                target=f"Sample set {sample_set}",
                 operation=CRUDOperation.CREATE,
             ).model_dump(),
         )
@@ -1218,7 +1218,7 @@ def test_delete_sample_set(matchbox_api: MockRouter) -> None:
     }
 
     matchbox_api.delete(
-        "/collections/companies/samples/test_sample_set", params={"certain": True}
+        "/collections/companies/samplesets/test_sample_set", params={"certain": True}
     ).mock(return_value=Response(200, json=response_payload))
 
     dag.delete_sample_set("test_sample_set", certain=True)
@@ -1233,7 +1233,7 @@ def test_delete_sample_set_needs_confirmation(matchbox_api: MockRouter) -> None:
         "details": "Deletion not confirmed",
     }
 
-    matchbox_api.delete("/collections/companies/samples/test_sample_set").mock(
+    matchbox_api.delete("/collections/companies/samplesets/test_sample_set").mock(
         return_value=Response(409, json=response_payload)
     )
 

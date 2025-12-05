@@ -1,10 +1,9 @@
 """Evaluation PostgreSQL mixin for Matchbox server."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from itertools import chain
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import polars as pl
 import pyarrow as pa
 from pyarrow import Table
@@ -13,15 +12,13 @@ from sqlalchemy.exc import IntegrityError
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
-    SCHEMA_EVAL_SAMPLES_DOWNLOAD,
     SCHEMA_JUDGEMENTS,
 )
 from matchbox.common.db import sql_to_df
-from matchbox.common.dtos import ModelResolutionPath
+from matchbox.common.dtos import CollectionName, MatchboxName
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
-    MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
 )
 from matchbox.common.logging import logger
@@ -29,16 +26,12 @@ from matchbox.common.transform import Cluster, IntMap, hash_cluster_leaves
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
-    ClusterSourceKey,
     Collections,
     Contains,
     EvalJudgements,
     EvalSamples,
     EvalSampleSets,
     PKSpace,
-    Probabilities,
-    Resolutions,
-    SourceConfigs,
     Users,
 )
 from matchbox.server.postgresql.utils.db import (
@@ -72,10 +65,12 @@ class MatchboxPostgresEvaluationMixin:
             logger.info("No samples to add.", prefix=log_prefix)
             return
 
+        # tmp_set_name = f"__tmp_{name}"
+        tmp_set_name = name
         with MBDB.get_session() as session:
             # Generate new sample set ORM object
             collection_id = Collections.from_name(collection, session).collection_id
-            sample_set = EvalSampleSets(name=name, collection_id=collection_id)
+            sample_set = EvalSampleSets(name=tmp_set_name, collection_id=collection_id)
 
             # Find all leaf IDs referenced
             samples_pl = pl.from_arrow(samples)
@@ -228,7 +223,12 @@ class MatchboxPostgresEvaluationMixin:
             )
             session.commit()
 
-    def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
+    def insert_judgement(  # noqa: D102
+        self,
+        judgement: CommonJudgement,
+        collection: CollectionName,
+        sample_set: MatchboxName,
+    ) -> None:
         # Check that all referenced cluster IDs exist
         ids = list(chain(*judgement.endorsed)) + [judgement.shown]
         self.validate_ids(ids)
@@ -278,10 +278,13 @@ class MatchboxPostgresEvaluationMixin:
                     for leaf_id in leaves:
                         session.add(Contains(root=endorsed_cluster_id, leaf=leaf_id))
 
+                sample_set_orm = EvalSampleSets.from_name(
+                    collection=collection, name=sample_set
+                )
                 session.add(
                     EvalJudgements(
                         user_id=judgement.user_id,
-                        sample_set_id=judgement.sample_set,
+                        sample_set_id=sample_set_orm.sample_set_id,
                         shown_cluster_id=judgement.shown,
                         endorsed_cluster_id=endorsed_cluster_id,
                         timestamp=datetime.now(UTC),
@@ -290,7 +293,9 @@ class MatchboxPostgresEvaluationMixin:
 
                 session.commit()
 
-    def get_judgements(self) -> tuple[Table, Table]:  # noqa: D102
+    def get_judgements(  # noqa: D102
+        self, collection: CollectionName, sample_set: MatchboxName
+    ) -> tuple[Table, Table]:
         def _cast_tables(
             judgements: pl.DataFrame, cluster_expansion: pl.DataFrame
         ) -> tuple[pa.Table, pa.Table]:
@@ -305,11 +310,15 @@ class MatchboxPostgresEvaluationMixin:
                 cluster_expansion.to_arrow().cast(SCHEMA_CLUSTER_EXPANSION),
             )
 
+        sample_set_id = EvalSampleSets.from_name(
+            collection=collection, name=sample_set
+        ).sample_set_id
+
         judgements_stmt = select(
             EvalJudgements.user_id,
             EvalJudgements.endorsed_cluster_id.label("endorsed"),
             EvalJudgements.shown_cluster_id.label("shown"),
-        )
+        ).where(EvalSampleSets.sample_set_id == sample_set_id)
 
         with MBDB.get_adbc_connection() as conn:
             judgements = sql_to_df(
@@ -352,130 +361,91 @@ class MatchboxPostgresEvaluationMixin:
 
         return _cast_tables(judgements, cluster_expansion)
 
-    def sample_for_eval(  # noqa: D102
-        self, n: int, path: ModelResolutionPath, user_id: int
-    ) -> ArrowTable:
-        # Not currently checking validity of the user_id
-        # If the user ID does not exist, the exclusion by previous judgements breaks
-        if n > 100:
-            # This reasonable assumption means simple "IS IN" function later is fine
-            raise MatchboxTooManySamplesRequested(
-                "Can only sample 100 entries at a time."
-            )
+    # def sample_for_eval(  # noqa: D102
+    #   self, n: int, collection: CollectionName, sample_set: MatchboxName, user_id: int
+    # ) -> ArrowTable:
+    #     # Not currently checking validity of the user_id
+    #     # If the user ID does not exist, the exclusion by previous judgements breaks
+    #     if n > 100:
+    #         # This reasonable assumption means simple "IS IN" function later is fine
+    #         raise MatchboxTooManySamplesRequested(
+    #             "Can only sample 100 entries at a time."
+    #         )
 
-        with MBDB.get_session() as session:
-            # Use ORM to get resolution metadata
-            resolution_orm = Resolutions.from_path(path=path, session=session)
-            resolution_id = resolution_orm.resolution_id
-            truth = resolution_orm.truth
+    #     sample_set_orm = EvalSampleSets.from_name(
+    #         collection=collection, name=sample_set
+    #     )
 
-        # Get a list of cluster IDs and features for this resolution and user
-        user_judgements = (
-            select(EvalJudgements).where(EvalJudgements.user_id == user_id).subquery()
-        )
-        cluster_features_stmt = (
-            select(
-                Probabilities.cluster_id,
-                # We expect only one probability per cluster within one resolution
-                func.max(Probabilities.probability).label("probability"),
-                func.max(user_judgements.c.timestamp).label("latest_ts"),
-            )
-            .join(
-                user_judgements,
-                Probabilities.cluster_id == user_judgements.c.shown_cluster_id,
-                isouter=True,
-            )
-            .where(
-                Probabilities.resolution_id == resolution_id,
-            )
-            .group_by(Probabilities.cluster_id)
-        )
+    #     samples_sql = select(EvalSamples.cluster_id, EvalSamples.weight).where(
+    #         EvalSamples.sample_set_id == sample_set_orm.sample_set_id
+    #     )
 
-        with MBDB.get_adbc_connection() as conn:
-            cluster_features = sql_to_df(
-                stmt=compile_sql(cluster_features_stmt),
-                connection=conn.dbapi_connection,
-                return_type="polars",
-            )
+    #     with MBDB.get_adbc_connection() as conn:
+    #         clusters = sql_to_df(
+    #             stmt=compile_sql(samples_sql),
+    #             connection=conn.dbapi_connection,
+    #             return_type="polars",
+    #         )
 
-        # Exclude clusters recently judged by this user
-        to_sample = cluster_features.filter(
-            (pl.col("latest_ts") < datetime.now(UTC) - timedelta(days=365))
-            | (pl.col("latest_ts").is_null())
-        )
+    #     weights = clusters["weight"]
+    #     probs = weights / weights.sum()
 
-        # Return early if nothing to sample from
-        if not len(to_sample):
-            return pl.DataFrame(
-                schema=pl.Schema(SCHEMA_EVAL_SAMPLES_DOWNLOAD)
-            ).to_arrow()
+    #     # With fewer clusters than requested, return all
+    #     if len(clusters) <= n:
+    #         sampled_cluster_ids = clusters["cluster_id"].to_list()
+    #     else:
+    #         indices = np.random.choice(len(clusters), size=n, p=probs, replace=False)
+    #         sampled_cluster_ids = clusters[indices]["cluster_id"].to_list()
 
-        # Sample proportionally to distance from the truth, and get 1D array
-        distances = np.abs(to_sample.select("probability").to_numpy() - truth)[:, 0]
-        # Add small noise to avoid division by 0 if all distances are 0
-        unnormalised_probs = distances + 0.001
-        probs = unnormalised_probs / unnormalised_probs.sum()
+    #     # Get all info we need for the cluster IDs we've sampled, i.e.:
+    #     # source cluster IDs, keys and source resolutions
+    #     with MBDB.get_adbc_connection() as conn:
+    #         source_clusters = (
+    #             select(Contains.root, Contains.leaf)
+    #             .where(Contains.root.in_(sampled_cluster_ids))
+    #             .subquery()
+    #         )
 
-        # With fewer clusters than requested, return all
-        if to_sample.shape[0] <= n:
-            sampled_cluster_ids = to_sample.select("cluster_id").to_series().to_list()
-        else:
-            indices = np.random.choice(
-                to_sample.shape[0], size=n, p=probs, replace=False
-            )
-            sampled_cluster_ids = (
-                to_sample[indices].select("cluster_id").to_series().to_list()
-            )
+    #         # The same leaf can be reused to represent rows across different sources
+    #         # We only want to retrieve info for sources upstream of resolution
+    #         source_resolution_ids = [
+    #             res.resolution_id
+    #             for res in resolution_orm.ancestors
+    #             if res.type == "source"
+    #         ]
+    #         source_resolutions = (
+    #             select(Resolutions.name, Resolutions.resolution_id)
+    #             .where(Resolutions.resolution_id.in_(source_resolution_ids))
+    #             .subquery()
+    #         )
 
-        # Get all info we need for the cluster IDs we've sampled, i.e.:
-        # source cluster IDs, keys and source resolutions
-        with MBDB.get_adbc_connection() as conn:
-            source_clusters = (
-                select(Contains.root, Contains.leaf)
-                .where(Contains.root.in_(sampled_cluster_ids))
-                .subquery()
-            )
+    #         enrich_stmt = (
+    #             select(
+    #                 source_clusters.c.root,
+    #                 source_clusters.c.leaf,
+    #                 ClusterSourceKey.key,
+    #                 source_resolutions.c.name.label("source"),
+    #             )
+    #             .select_from(source_clusters)
+    #             .join(
+    #                 ClusterSourceKey,
+    #                 ClusterSourceKey.cluster_id == source_clusters.c.leaf,
+    #             )
+    #             .join(
+    #                 SourceConfigs,
+    #               SourceConfigs.source_config_id == ClusterSourceKey.source_config_id,
+    #             )
+    #             .join(
+    #                 source_resolutions,
+    #                 source_resolutions.c.resolution_id == SourceConfigs.resolution_id,
+    #             )
+    #         )
 
-            # The same leaf can be reused to represent rows across different sources
-            # We only want to retrieve info for sources upstream of resolution
-            source_resolution_ids = [
-                res.resolution_id
-                for res in resolution_orm.ancestors
-                if res.type == "source"
-            ]
-            source_resolutions = (
-                select(Resolutions.name, Resolutions.resolution_id)
-                .where(Resolutions.resolution_id.in_(source_resolution_ids))
-                .subquery()
-            )
-
-            enrich_stmt = (
-                select(
-                    source_clusters.c.root,
-                    source_clusters.c.leaf,
-                    ClusterSourceKey.key,
-                    source_resolutions.c.name.label("source"),
-                )
-                .select_from(source_clusters)
-                .join(
-                    ClusterSourceKey,
-                    ClusterSourceKey.cluster_id == source_clusters.c.leaf,
-                )
-                .join(
-                    SourceConfigs,
-                    SourceConfigs.source_config_id == ClusterSourceKey.source_config_id,
-                )
-                .join(
-                    source_resolutions,
-                    source_resolutions.c.resolution_id == SourceConfigs.resolution_id,
-                )
-            )
-
-            final_samples = sql_to_df(
-                stmt=compile_sql(enrich_stmt),
-                connection=conn.dbapi_connection,
-                return_type="polars",
-            )
-            return final_samples.cast(
-                pl.Schema(SCHEMA_EVAL_SAMPLES_DOWNLOAD)
-            ).to_arrow()
+    #         final_samples = sql_to_df(
+    #             stmt=compile_sql(enrich_stmt),
+    #             connection=conn.dbapi_connection,
+    #             return_type="polars",
+    #         )
+    #         return final_samples.cast(
+    #             pl.Schema(SCHEMA_EVAL_SAMPLES_DOWNLOAD)
+    #         ).to_arrow()

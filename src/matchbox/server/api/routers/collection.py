@@ -1,6 +1,8 @@
 """Collection and resolution API routes for the Matchbox server."""
 
 import uuid
+import zipfile
+from io import BytesIO
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import (
@@ -10,6 +12,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     UploadFile,
     status,
 )
@@ -20,12 +23,16 @@ from matchbox.common.arrow import (
     SCHEMA_EVAL_SAMPLES_UPLOAD,
     SCHEMA_INDEX,
     SCHEMA_RESULTS,
+    JudgementsZipFilenames,
     table_to_buffer,
 )
 from matchbox.common.dtos import (
+    BackendParameterType,
+    BackendResourceType,
     Collection,
     CollectionName,
     CRUDOperation,
+    InvalidParameterError,
     MatchboxName,
     ModelResolutionName,
     NotFoundError,
@@ -38,21 +45,26 @@ from matchbox.common.dtos import (
     RunID,
     UploadInfo,
 )
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
     MatchboxCollectionNotFoundError,
+    MatchboxDataNotFound,
     MatchboxDeletionNotConfirmed,
     MatchboxLockError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
     MatchboxServerFileError,
+    MatchboxTooManySamplesRequested,
+    MatchboxUserNotFoundError,
 )
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
     SettingsDependency,
     UploadTrackerDependency,
+    ZipResponse,
     authorisation_dependencies,
 )
 from matchbox.server.uploads import (
@@ -781,7 +793,7 @@ def get_results(
 
 
 @router.post(
-    "/{collection}/samples/{sample_set_name}",
+    "/{collection}/samplesets/{sample_set}",
     responses={
         404: {"model": NotFoundError},
         400: {
@@ -799,11 +811,11 @@ def insert_samples(
     settings: SettingsDependency,
     background_tasks: BackgroundTasks,
     collection: CollectionName,
-    sample_set_name: MatchboxName,
+    sample_set: MatchboxName,
     file: UploadFile,
 ) -> ResourceOperationStatus:
     """Create an upload task for source hashes or model results."""
-    resource_description = f"Sample set {sample_set_name}"
+    resource_description = f"Sample set {sample_set}"
     s3_client = backend.settings.datastore.get_client()
     bucket = backend.settings.datastore.cache_bucket_name
     filename = _process_file(
@@ -822,14 +834,14 @@ def insert_samples(
                 tracker=upload_tracker,
                 s3_client=s3_client,
                 collection_name=collection,
-                sample_set_name=sample_set_name,
+                sample_set_name=sample_set,
                 bucket=bucket,
                 filename=filename,
             )
         case "celery":
             process_sample_upload_celery.delay(
                 collection_name=collection,
-                sample_set_name=sample_set_name,
+                sample_set_name=sample_set,
                 bucket=bucket,
                 filename=filename,
             )
@@ -859,7 +871,7 @@ def list_sample_sets(
 
 
 @router.delete(
-    "/{collection}/samples/{sample_set_name}",
+    "/{collection}/samplesets/{sample_set}",
     responses={
         404: {"model": NotFoundError},
         409: {
@@ -877,17 +889,17 @@ def list_sample_sets(
 def delete_sample_set(
     backend: BackendDependency,
     collection: CollectionName,
-    sample_set_name: MatchboxName,
+    sample_set: MatchboxName,
     certain: Annotated[
         bool, Query(description="Confirm deletion of the sample set")
     ] = False,
 ) -> ResourceOperationStatus:
     """Delete a sample set within a collection."""
-    resource_description = f"Sample set {sample_set_name}"
+    resource_description = f"Sample set {sample_set}"
 
     try:
         backend.delete_sample_set(
-            collection=collection, name=sample_set_name, certain=certain
+            collection=collection, name=sample_set, certain=certain
         )
 
         return ResourceOperationStatus(
@@ -907,4 +919,100 @@ def delete_sample_set(
                 operation=CRUDOperation.DELETE,
                 details=str(e),
             ),
+        ) from e
+
+
+@router.get(
+    "/{collection}/samplesets/{sample_set}/judgements",
+)
+def get_judgements(
+    backend: BackendDependency,
+    collection: CollectionName,
+    sample_set: MatchboxName,
+) -> ParquetResponse:
+    """Retrieve all judgements from human evaluators."""
+    judgements, expansion = backend.get_judgements(
+        collection=collection, sample_set=sample_set
+    )
+    judgements_buffer, expansion_buffer = (
+        table_to_buffer(judgements),
+        table_to_buffer(expansion),
+    )
+
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        zip_file.writestr(JudgementsZipFilenames.JUDGEMENTS, judgements_buffer.read())
+        zip_file.writestr(JudgementsZipFilenames.EXPANSION, expansion_buffer.read())
+
+    zip_buffer.seek(0)
+
+    return ZipResponse(zip_buffer.getvalue())
+
+
+@router.post(
+    "/{collection}/samplesets/{sample_set}/judgements",
+    responses={404: {"model": NotFoundError}},
+    status_code=status.HTTP_201_CREATED,
+)
+def insert_judgement(
+    backend: BackendDependency,
+    judgement: Judgement,
+    collection: CollectionName,
+    sample_set: MatchboxName,
+) -> Response:
+    """Submit judgement from human evaluator."""
+    try:
+        backend.insert_judgement(
+            judgement=judgement, collection=collection, sample_set=sample_set
+        )
+        return Response(status_code=status.HTTP_201_CREATED)
+    except MatchboxDataNotFound as e:
+        raise HTTPException(
+            status_code=404,
+            detail=NotFoundError(
+                details=str(e), entity=BackendResourceType.CLUSTER
+            ).model_dump(),
+        ) from e
+    except MatchboxUserNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=NotFoundError(
+                details=str(e), entity=BackendResourceType.USER
+            ).model_dump(),
+        ) from e
+
+
+@router.get(
+    "/{collection}/samplesets/{sample_set}/samples",
+    responses={404: {"model": NotFoundError}, 422: {"model": InvalidParameterError}},
+)
+def sample(
+    backend: BackendDependency,
+    collection: CollectionName,
+    sample_set: MatchboxName,
+    n: int,
+    user_id: int,
+) -> ParquetResponse:
+    """Sample n clusters to validate."""
+    try:
+        sample = backend.sample_for_eval(
+            collection=collection, sample_set=sample_set, user_id=user_id, n=n
+        )
+        buffer = table_to_buffer(sample)
+        return ParquetResponse(buffer.getvalue())
+    except MatchboxResolutionNotFoundError:
+        raise
+    except MatchboxUserNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=NotFoundError(
+                details=str(e), entity=BackendResourceType.USER
+            ).model_dump(),
+        ) from e
+    except MatchboxTooManySamplesRequested as e:
+        raise HTTPException(
+            status_code=422,
+            detail=InvalidParameterError(
+                details=str(e), parameter=BackendParameterType.SAMPLE_SIZE
+            ).model_dump(),
         ) from e

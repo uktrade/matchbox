@@ -4,6 +4,7 @@ from collections.abc import Callable
 from functools import partial
 from unittest.mock import Mock
 
+import polars as pl
 import pytest
 from sqlalchemy import Engine
 from textual.widgets import Footer, Label
@@ -153,12 +154,23 @@ class TestScenarioIntegration:
         - Status updates and help modal
         """
         with self.scenario(self.backend, "mega") as dag:
-            model_name: str = "mega_product_linker"
-
             loaded_dag: DAG = dag.dag.load_pending().set_client(self.warehouse_engine)
 
+            sample_set = "sample_set"
+
+            samples = (
+                loaded_dag.resolve()
+                .as_cluster_key_map()
+                .select("id", "leaf_id")
+                .rename({"id": "root", "leaf_id": "leaf"})
+                .with_columns(pl.lit(1).alias("weight"))
+            ).to_arrow()
+
+            self.backend.insert_samples(
+                samples=samples, name=sample_set, collection=loaded_dag.name
+            )
             app = EntityResolutionApp(
-                resolution=model_name,
+                sample_set=sample_set,
                 num_samples=3,
                 user="test_user",
                 dag=loaded_dag,
@@ -249,7 +261,9 @@ class TestScenarioIntegration:
                 current = app.queue.current
                 assert current is not None
 
-                initial_judgements, _ = self.backend.get_judgements()
+                initial_judgements, _ = self.backend.get_judgements(
+                    collection=dag.dag.name, sample_set=sample_set
+                )
                 initial_judgement_count = len(initial_judgements)
 
                 unique_groups = current.item.get_unique_record_groups()
@@ -288,7 +302,9 @@ class TestScenarioIntegration:
                 await pilot.press("space")
                 await pilot.pause()
 
-                final_judgements, _ = self.backend.get_judgements()
+                final_judgements, _ = self.backend.get_judgements(
+                    collection=dag.dag.name, sample_set=sample_set
+                )
                 assert len(final_judgements) == initial_judgement_count + 1, (
                     "Judgement was not saved after complete assignment"
                 )

@@ -15,11 +15,13 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     Match,
+    MatchboxName,
     ModelResolutionPath,
     Resolution,
     ResolutionPath,
     Run,
     RunID,
+    SourceResolutionName,
     SourceResolutionPath,
     UploadStage,
 )
@@ -633,17 +635,30 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def insert_judgement(self, judgement: Judgement) -> None:
+    def insert_judgement(
+        self,
+        judgement: Judgement,
+        collection: CollectionName,
+        sample_set: MatchboxName,
+    ) -> None:
         """Adds an evaluation judgement to the database.
 
         Args:
-            judgement: representation of the proposed clusters.
+            judgement: representation of the proposed clusters
+            collection: name of the collection of the relevant sample set
+            sample_set: name of the relevant sample set
         """
         ...
 
     @abstractmethod
-    def get_judgements(self) -> tuple[Table, Table]:
-        """Retrieves all evaluation judgements.
+    def get_judgements(
+        self, collection: CollectionName, sample_set: MatchboxName
+    ) -> tuple[Table, Table]:
+        """Retrieves evaluation judgements.
+
+        Args:
+            collection: name of the collection owning relevant sample set
+            sample_set: name of the relevant sample set
 
         Returns:
             Two PyArrow tables with the judgments and their expansion.
@@ -652,15 +667,25 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def sample_for_eval(self, n: int, path: ModelResolutionPath, user_id: int) -> Table:
+    def sample_for_eval(
+        self,
+        n: int,
+        collection: CollectionName,
+        sources: list[SourceResolutionName],
+        sample_set: MatchboxName,
+        user_id: int,
+    ) -> Table:
         """Sample a cluster to validate.
 
         Args:
             n: Number of clusters to sample
-            path: Path of resolution from which to sample
+            collection: name of the collection owning the sample set
+            sources: resolution names for sources included in sample
+            sample_set: name of the relevant sample set
+
             user_id: ID of user requesting the sample
 
         Returns:
-            An Arrow table with the same schema as returned by `query()`
+            An Arrow table with SCHEMA_EVAL_SAMPLES_DOWNLOAD
         """
         ...

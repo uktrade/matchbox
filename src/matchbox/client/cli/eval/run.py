@@ -14,14 +14,6 @@ def evaluate(
     collection: Annotated[
         str, typer.Option("--collection", "-c", help="Collection name (required)")
     ],
-    resolution: Annotated[
-        str | None,
-        typer.Option(
-            "--resolution",
-            "-r",
-            help="Resolution name (defaults to collection's final_step)",
-        ),
-    ] = None,
     pending: Annotated[
         bool,
         typer.Option(
@@ -51,11 +43,12 @@ def evaluate(
             help="Log file path to redirect all logging output (keeps UI clean)",
         ),
     ] = None,
-    sample_file: Annotated[
+    sample_set: Annotated[
         str | None,
         typer.Option(
-            "--sample_file",
-            help="Pre-compiled sample file. If set, ignores resolutions parameters.",
+            "--sample_set",
+            "-s",
+            help="Name of sample set within DAG",
         ),
     ] = None,
 ) -> None:
@@ -89,17 +82,10 @@ def evaluate(
     # Attach warehouse to all objects
     dag: DAG = dag.set_client(warehouse_engine)
 
-    # Get resolution name from --resolution or DAG's final_step
-    model = dag.get_model(resolution) if resolution is not None else dag.final_step
-
     try:
         # Create app with loaded DAG (not warehouse string)
         app = EntityResolutionApp(
-            resolution=model.resolution_path.name,
-            user=user,
-            dag=dag,
-            show_help=True,
-            sample_file=sample_file,
+            sample_set=sample_set, user=user, dag=dag, show_help=True
         )
         app.run()
     except KeyboardInterrupt:

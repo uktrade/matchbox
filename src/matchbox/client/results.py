@@ -189,15 +189,6 @@ class ResolvedMatches:
         if len(sources) != len(query_results):
             raise ValueError("Mismatched length of sources and query results.")
 
-    @classmethod
-    def from_cluster_key_map(cls, cluster_key_map: pl.DataFrame, dag: DAG) -> Self:
-        """Initialise ResolvedMatches from concatenated dataframe representation."""
-        partitioned = cluster_key_map.partition_by("source")
-        sources = [dag.get_source(p["source"][0]) for p in partitioned]
-        query_results = [p.drop("source") for p in partitioned]
-
-        return ResolvedMatches(sources=sources, query_results=query_results)
-
     def as_lookup(self) -> pl.DataFrame:
         """Return lookup across matchbox ID and source keys."""
         lookup = (

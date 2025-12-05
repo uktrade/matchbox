@@ -137,7 +137,9 @@ class TestMatchboxEvaluationBackend:
             naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
 
             # To begin with, no judgements to retrieve
-            judgements, expansion = self.backend.get_judgements()
+            judgements, expansion = self.backend.get_judgements(
+                collection=dag_testkit.dag.name, sample_set="sampleset"
+            )
             assert len(judgements) == len(expansion) == 0
 
             # Do some queries to find real source cluster IDs
@@ -166,18 +168,18 @@ class TestMatchboxEvaluationBackend:
             # Can endorse the same cluster that is shown
             clust1_leaves = get_leaf_ids(unique_ids[0])
             self.backend.insert_judgement(
+                collection=dag_testkit.dag.name,
+                sample_set="sampleset",
                 judgement=Judgement(
-                    user_id=alice_id,
-                    sample_set=1,
-                    shown=unique_ids[0],
-                    endorsed=[clust1_leaves],
+                    user_id=alice_id, shown=unique_ids[0], endorsed=[clust1_leaves]
                 ),
             )
             # Can send redundant data
             self.backend.insert_judgement(
+                collection=dag_testkit.dag.name,
+                sample_set="sampleset",
                 judgement=Judgement(
                     user_id=alice_id,
-                    sample_set=1,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -187,9 +189,10 @@ class TestMatchboxEvaluationBackend:
             # Now split a cluster
             clust2_leaves = get_leaf_ids(unique_ids[1])
             self.backend.insert_judgement(
+                collection=dag_testkit.dag.name,
+                sample_set="sampleset",
                 judgement=Judgement(
                     user_id=alice_id,
-                    sample_set=1,
                     shown=unique_ids[1],
                     endorsed=[clust2_leaves[:1], clust2_leaves[1:]],
                 ),
@@ -205,6 +208,8 @@ class TestMatchboxEvaluationBackend:
             # Now, let's test an exception is raised
             with pytest.raises(MatchboxDataNotFound):
                 self.backend.insert_judgement(
+                    collection=dag_testkit.dag.name,
+                    sample_set="sampleset",
                     judgement=Judgement(
                         user_id=alice_id, shown=unique_ids[0], endorsed=[fake_leaves]
                     ),
@@ -212,7 +217,9 @@ class TestMatchboxEvaluationBackend:
 
             # Now, let's try to get the judgements back
             # Data gets back in the right shape
-            judgements, expansion = self.backend.get_judgements()
+            judgements, expansion = self.backend.get_judgements(
+                collection=dag_testkit.dag.name, sample_set="sampleset"
+            )
             assert judgements.schema.equals(SCHEMA_JUDGEMENTS)
             assert expansion.schema.equals(SCHEMA_CLUSTER_EXPANSION)
             # Only one user ID was used

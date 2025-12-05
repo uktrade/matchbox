@@ -884,6 +884,7 @@ def model_factory(
         if right_entities
         else None,
         probabilities=probabilities,
+        _threshold=model._truth,
     )
 
 
@@ -987,4 +988,5 @@ def query_to_model_factory(
         if right_clusters
         else None,
         probabilities=probabilities,
+        _threshold=model._truth,
     )

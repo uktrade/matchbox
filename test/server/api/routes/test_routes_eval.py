@@ -33,7 +33,7 @@ def test_insert_judgement_ok(
 ) -> None:
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
-    judgement = Judgement(user_id=1, shown=10, endorsed=[[1]])
+    judgement = Judgement(user_name="alice", shown=10, endorsed=[[1]])
     response = test_client.post("/eval/judgements", json=judgement.model_dump())
     assert response.status_code == 201
     assert (
@@ -46,7 +46,7 @@ def test_insert_judgement_error(
 ) -> None:
     """Test that judgement insertion bubbles up errors."""
     test_client, mock_backend, _ = api_client_and_mocks
-    fake_judgement = Judgement(user_id=1, shown=10, endorsed=[[1]]).model_dump()
+    fake_judgement = Judgement(user_name="alice", shown=10, endorsed=[[1]]).model_dump()
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
     response = test_client.post("/eval/judgements", json=fake_judgement)
@@ -63,8 +63,8 @@ def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> 
     """Test that all judgements can be retrieved."""
     judgements = pa.Table.from_pylist(
         [
-            {"user_id": 1, "shown": 10, "endorsed": 11},
-            {"user_id": 1, "shown": 10, "endorsed": 12},
+            {"user_name": "alice", "shown": 10, "endorsed": 11},
+            {"user_name": "alice", "shown": 10, "endorsed": 12},
         ],
         schema=SCHEMA_JUDGEMENTS,
     )
@@ -169,7 +169,7 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_id": 12,
+            "user_name": "alice",
         },
     )
     assert response.status_code == 200
@@ -210,7 +210,7 @@ def test_get_samples_404(
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_id": 12,
+            "user_name": "alice",
         },
     )
 
@@ -230,7 +230,7 @@ def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]) ->
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_id": 12,
+            "user_name": "alice",
         },
     )
 

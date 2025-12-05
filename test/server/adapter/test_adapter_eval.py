@@ -13,7 +13,7 @@ from matchbox.common.arrow import (
     SCHEMA_EVAL_SAMPLES,
     SCHEMA_JUDGEMENTS,
 )
-from matchbox.common.dtos import ResolutionPath
+from matchbox.common.dtos import ResolutionPath, User
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
@@ -63,7 +63,7 @@ class TestMatchboxEvaluationBackend:
                     .to_list()
                 )
 
-            alice_id = self.backend.login("alice")
+            alice: User = self.backend.login(User(sub="alice"))
 
             original_cluster_num = self.backend.model_clusters.count()
 
@@ -71,7 +71,7 @@ class TestMatchboxEvaluationBackend:
             clust1_leaves = get_leaf_ids(unique_ids[0])
             self.backend.insert_judgement(
                 judgement=Judgement(
-                    user_id=alice_id,
+                    user_name=alice.user_name,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -79,7 +79,7 @@ class TestMatchboxEvaluationBackend:
             # Can send redundant data
             self.backend.insert_judgement(
                 judgement=Judgement(
-                    user_id=alice_id,
+                    user_name=alice.user_name,
                     shown=unique_ids[0],
                     endorsed=[clust1_leaves],
                 ),
@@ -90,7 +90,7 @@ class TestMatchboxEvaluationBackend:
             clust2_leaves = get_leaf_ids(unique_ids[1])
             self.backend.insert_judgement(
                 judgement=Judgement(
-                    user_id=alice_id,
+                    user_name=alice.user_name,
                     shown=unique_ids[1],
                     endorsed=[clust2_leaves[:1], clust2_leaves[1:]],
                 ),
@@ -107,7 +107,9 @@ class TestMatchboxEvaluationBackend:
             with pytest.raises(MatchboxDataNotFound):
                 self.backend.insert_judgement(
                     judgement=Judgement(
-                        user_id=alice_id, shown=unique_ids[0], endorsed=[fake_leaves]
+                        user_name=alice.user_name,
+                        shown=unique_ids[0],
+                        endorsed=[fake_leaves],
                     ),
                 )
 
@@ -117,7 +119,7 @@ class TestMatchboxEvaluationBackend:
             assert judgements.schema.equals(SCHEMA_JUDGEMENTS)
             assert expansion.schema.equals(SCHEMA_CLUSTER_EXPANSION)
             # Only one user ID was used
-            assert judgements["user_id"].unique().to_pylist() == [alice_id]
+            assert judgements["user_name"].unique().to_pylist() == [alice.user_name]
             # The first shown cluster is repeated because we judged it twice
             # The second shown cluster is repeated because we split it (see above)
             assert sorted(judgements["shown"].to_pylist()) == sorted(
@@ -154,7 +156,7 @@ class TestMatchboxEvaluationBackend:
     def test_compare_models(self) -> None:
         """Can compute precision and recall for list of models."""
         with self.scenario(self.backend, "alt_dedupe") as dag_testkit:
-            user_id = self.backend.login("alice")
+            alice: User = self.backend.login(User(sub="alice"))
 
             model_names = [
                 model.resolution_path for model in dag_testkit.models.values()
@@ -165,7 +167,7 @@ class TestMatchboxEvaluationBackend:
                     self.backend.sample_for_eval(
                         n=10,
                         path=model_names[0],
-                        user_id=user_id,
+                        user_name=alice.user_name,
                     )
                 )
                 .select(["root", "leaf"])
@@ -176,7 +178,9 @@ class TestMatchboxEvaluationBackend:
             for row in root_leaves.rows(named=True):
                 self.backend.insert_judgement(
                     judgement=Judgement(
-                        user_id=user_id, shown=row["root"], endorsed=[row["leaf"]]
+                        user_name=alice.user_name,
+                        shown=row["root"],
+                        endorsed=[row["leaf"]],
                     )
                 )
 
@@ -196,13 +200,13 @@ class TestMatchboxEvaluationBackend:
             self.scenario(self.backend, "bare"),
             pytest.raises(MatchboxResolutionNotFoundError, match="naive_test_crn"),
         ):
-            user_id = self.backend.login("alice")
+            alice: User = self.backend.login(User(sub="alice"))
             self.backend.sample_for_eval(
                 n=10,
                 path=ResolutionPath(
                     collection="collection", run=1, name="naive_test_crn"
                 ),
-                user_id=user_id,
+                user_name=alice.user_name,
             )
 
         # Convergent scenario allows testing we don't accidentally return metadata
@@ -211,13 +215,12 @@ class TestMatchboxEvaluationBackend:
             source_testkit = dag_testkit.sources.get("foo_a")
             model_testkit = dag_testkit.models.get("naive_test_foo_a")
 
-            user_id = self.backend.login("alice")
+            alice: User = self.backend.login(User(sub="alice"))
 
             # Source clusters should not be returned
             # So if we sample from a source resolution, we get nothing
-            user_id = self.backend.login("alice")
             samples_source = self.backend.sample_for_eval(
-                n=10, path=source_testkit.resolution_path, user_id=user_id
+                n=10, path=source_testkit.resolution_path, user_name=alice.user_name
             )
             assert len(samples_source) == 0
 
@@ -236,7 +239,7 @@ class TestMatchboxEvaluationBackend:
             assert len(resolution_clusters["id"].unique()) < 99
 
             samples_99 = self.backend.sample_for_eval(
-                n=99, path=model_testkit.resolution_path, user_id=user_id
+                n=99, path=model_testkit.resolution_path, user_name=alice.user_name
             )
 
             assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES)
@@ -259,7 +262,7 @@ class TestMatchboxEvaluationBackend:
             # We can request less than available
             assert len(resolution_clusters["id"].unique()) > 5
             samples_5 = self.backend.sample_for_eval(
-                n=5, path=model_testkit.resolution_path, user_id=user_id
+                n=5, path=model_testkit.resolution_path, user_name=alice.user_name
             )
             assert len(samples_5["root"].unique()) == 5
 
@@ -276,14 +279,14 @@ class TestMatchboxEvaluationBackend:
 
             self.backend.insert_judgement(
                 judgement=Judgement(
-                    user_id=user_id,
+                    user_name=alice.user_name,
                     shown=first_cluster_id,
                     endorsed=[first_cluster_leaves],
                 ),
             )
 
             samples_without_cluster = self.backend.sample_for_eval(
-                n=99, path=model_testkit.resolution_path, user_id=user_id
+                n=99, path=model_testkit.resolution_path, user_name=alice.user_name
             )
             # Compared to the first query, we should have one fewer cluster
             assert len(samples_99["root"].unique()) - 1 == len(
@@ -306,13 +309,13 @@ class TestMatchboxEvaluationBackend:
 
                 self.backend.insert_judgement(
                     judgement=Judgement(
-                        user_id=user_id,
+                        user_name=alice.user_name,
                         shown=cluster_id,
                         endorsed=[cluster_leaves],
                     ),
                 )
 
             samples_all_done = self.backend.sample_for_eval(
-                n=99, path=model_testkit.resolution_path, user_id=user_id
+                n=99, path=model_testkit.resolution_path, user_name=alice.user_name
             )
             assert len(samples_all_done) == 0

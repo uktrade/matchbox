@@ -18,7 +18,7 @@ from matchbox.common.arrow import (
     SCHEMA_QUERY_WITH_LEAVES,
     table_to_buffer,
 )
-from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
+from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run, User
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
@@ -101,7 +101,7 @@ def test_get_samples(
     env_setter: Callable[[str, str], None],
 ) -> None:
     # Make dummmy data
-    user_id = 12
+    user = User(user_name="alice", email="alice@example.com")
 
     # Foo has two identical rows
     foo_testkit = source_from_tuple(
@@ -217,7 +217,7 @@ def test_get_samples(
     samples_all = get_samples(
         n=10,
         resolution=dag.final_step.resolution_path.name,
-        user_id=user_id,
+        user_name=user.user_name,
         dag=loaded_dag,
     )
 
@@ -247,7 +247,7 @@ def test_get_samples(
     samples = get_samples(
         n=10,
         resolution=dag.final_step.resolution_path.name,
-        user_id=user_id,
+        user_name=user.user_name,
         dag=loaded_dag,
     )
 
@@ -256,7 +256,6 @@ def test_get_samples(
     expected_sample_10 = pl.DataFrame(
         {
             "leaf": [1, 1, 2, 5, 6],
-            "key": ["1", "1bis", "2", "a", "b"],
             "foo_col": [1, 1, 2, None, None],
             "bar_col": [None, None, None, 1, 2],
         }
@@ -265,22 +264,21 @@ def test_get_samples(
     expected_sample_11 = pl.DataFrame(
         {
             "leaf": [3, 4, 7, 8],
-            "key": ["3", "4", "c", "d"],
             "foo_col": [3, 4, None, None],
             "bar_col": [None, None, 3, 4],
         }
     )
 
-    # EvaluationItems.dataframe contains the data
+    # EvaluationItems.records contains the data with qualified column names
     assert_frame_equal(
-        samples[10].dataframe,
+        samples[10].records,
         expected_sample_10,
         check_column_order=False,
         check_row_order=False,
         check_dtypes=False,
     )
     assert_frame_equal(
-        samples[11].dataframe,
+        samples[11].records,
         expected_sample_11,
         check_column_order=False,
         check_row_order=False,
@@ -300,7 +298,7 @@ def test_get_samples(
     no_samples = get_samples(
         n=10,
         resolution=dag.final_step.resolution_path.name,
-        user_id=user_id,
+        user_name=user.user_name,
         dag=loaded_dag,
     )
     assert no_samples == {}
@@ -319,6 +317,6 @@ def test_get_samples(
         get_samples(
             n=10,
             resolution=dag.final_step.resolution_path.name,
-            user_id=user_id,
+            user_name=user.user_name,
             dag=bad_dag,
         )

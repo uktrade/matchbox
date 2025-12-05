@@ -10,6 +10,7 @@ dependencies = [
     "click>=8.1.7",
     "cryptography>=44.0.2",
     "duckdb>=1.1.1",
+    "email-validator>=2.3.0",
     "faker>=36.1.1",
     "frozendict>=2.4.6",
     "httpx>=0.28.0",

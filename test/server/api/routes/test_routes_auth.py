@@ -10,8 +10,7 @@ from fastapi.testclient import TestClient
 from matchbox.client._settings import settings
 from matchbox.common.dtos import (
     AuthStatusResponse,
-    LoginAttempt,
-    LoginResult,
+    User,
 )
 from test.scripts.authorisation import generate_json_web_token
 
@@ -19,15 +18,14 @@ from test.scripts.authorisation import generate_json_web_token
 def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test the login endpoint at /auth/login."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.login = Mock(return_value=42)
+    mock_backend.login = Mock(return_value=User(user_name="alice"))
 
     response = test_client.post(
-        "/auth/login", json=LoginAttempt(user_name="alice").model_dump()
+        "/auth/login", json=User(user_name="alice").model_dump()
     )
 
     assert response.status_code == 200
-    result = LoginResult.model_validate(response.json())
-    assert result.user_id == 42
+    assert User.model_validate(response.json())
 
 
 @pytest.mark.parametrize(

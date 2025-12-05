@@ -65,7 +65,7 @@ from matchbox.common.exceptions import (
     MatchboxUserNotFoundError,
 )
 from matchbox.common.hash import hash_to_base64
-from matchbox.common.logging import logger, profile
+from matchbox.common.logging import logger, profile_time
 
 URLEncodeHandledType = str | int | float | bytes | StrEnum
 
@@ -422,7 +422,7 @@ def update_resolution(
     return ResourceOperationStatus.model_validate(res.json())
 
 
-@profile(kwarg="path")
+@profile_time(kwarg="path")
 @http_retry
 def get_resolution(path: ResolutionPath) -> Resolution | None:
     """Get a resolution from Matchbox."""
@@ -435,7 +435,7 @@ def get_resolution(path: ResolutionPath) -> Resolution | None:
     return Resolution.model_validate(res.json())
 
 
-@profile(kwarg="path")
+@profile_time(kwarg="path")
 @http_retry
 def set_data(path: ResolutionPath, data: pl.DataFrame | Table) -> None:
     """Upload source hashes or model results to server."""
@@ -482,7 +482,7 @@ def get_resolution_stage(path: ResolutionPath) -> UploadStage:
     return upload_info.stage
 
 
-@profile(kwarg="path")
+@profile_time(kwarg="path")
 @http_retry
 def get_results(path: ModelResolutionPath) -> Table:
     """Get model results from Matchbox."""

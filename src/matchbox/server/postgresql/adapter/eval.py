@@ -27,8 +27,8 @@ class MatchboxPostgresEvaluationMixin:
         self.validate_ids(ids)
         evaluation.insert_judgement(judgement)
 
-    def get_judgements(self) -> tuple[Table, Table]:  # noqa: D102
-        return evaluation.get_judgements()
+    def get_judgements(self, tag: str | None = None) -> tuple[Table, Table]:  # noqa: D102
+        return evaluation.get_judgements(tag)
 
     def compare_models(self, paths: list[ModelResolutionPath]) -> ModelComparison:  # noqa: D102
         judgements, expansion = self.get_judgements()

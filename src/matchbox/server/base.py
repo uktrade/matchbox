@@ -769,8 +769,11 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_judgements(self) -> tuple[Table, Table]:
+    def get_judgements(self, tag: str | None = None) -> tuple[Table, Table]:
         """Retrieves all evaluation judgements.
+
+        Args:
+            tag: optional string by which to filter judgements
 
         Returns:
             Two PyArrow tables with the judgments and their expansion.

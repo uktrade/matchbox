@@ -144,6 +144,11 @@ class TestMatchboxEvaluationBackend:
             # On the other hand, the root-leaf mapping table has no duplicates
             assert len(expansion) == 4  # 2 shown clusters + 2 new endorsed clusters
 
+            # We can use tag to filter judgements
+            judgements, expansion = self.backend.get_judgements("eval_session1")
+            assert judgements.num_rows == 1
+            assert expansion.num_rows == 1
+
             # Let's massage tables into a root-leaf dict for all endorsed clusters
             endorsed_dict = dict(
                 pl.from_arrow(judgements)

@@ -97,7 +97,7 @@ def insert_judgement(judgement: Judgement) -> None:
             session.commit()
 
 
-def get_judgements() -> tuple[pa.Table, pa.Table]:
+def get_judgements(tag: str | None = None) -> tuple[pa.Table, pa.Table]:
     """Get all judgements from server."""
 
     def _cast_tables(
@@ -117,6 +117,9 @@ def get_judgements() -> tuple[pa.Table, pa.Table]:
         EvalJudgements.endorsed_cluster_id.label("endorsed"),
         EvalJudgements.shown_cluster_id.label("shown"),
     ).join(Users)
+
+    if tag:
+        judgements_stmt = judgements_stmt.where(EvalJudgements.tag == tag)
 
     with MBDB.get_adbc_connection() as conn:
         judgements = sql_to_df(

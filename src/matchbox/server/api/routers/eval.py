@@ -2,8 +2,15 @@
 
 import zipfile
 from io import BytesIO
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 
 from matchbox.common.arrow import JudgementsZipFilenames, table_to_buffer
 from matchbox.common.dtos import (
@@ -65,9 +72,14 @@ def insert_judgement(
 @router.get(
     "/judgements",
 )
-def get_judgements(backend: BackendDependency) -> ParquetResponse:
+def get_judgements(
+    backend: BackendDependency,
+    tag: Annotated[
+        str | None, Query(description="Tag by which to filter judgements")
+    ] = None,
+) -> ParquetResponse:
     """Retrieve all judgements from human evaluators."""
-    judgements, expansion = backend.get_judgements()
+    judgements, expansion = backend.get_judgements(tag)
     judgements_buffer, expansion_buffer = (
         table_to_buffer(judgements),
         table_to_buffer(expansion),

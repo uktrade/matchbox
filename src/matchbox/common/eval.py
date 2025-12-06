@@ -6,19 +6,17 @@ from typing import TypeAlias
 import polars as pl
 from pydantic import BaseModel, Field, field_validator
 
-from matchbox.common.dtos import ModelResolutionPath
-
 Pair: TypeAlias = tuple[int, int]
 Pairs: TypeAlias = set[Pair]
 
 PrecisionRecall: TypeAlias = tuple[float, float]
-ModelComparison: TypeAlias = dict[ModelResolutionPath, PrecisionRecall]
 
 
 class Judgement(BaseModel):
     """User determination on how to group source clusters from a model cluster."""
 
     user_name: str
+    tag: str | None = None
     shown: int = Field(description="ID of the model cluster shown to the user")
     endorsed: list[list[int]] = Field(
         description="""Groups of source cluster IDs that user thinks belong together"""

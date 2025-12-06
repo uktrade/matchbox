@@ -158,7 +158,7 @@ class TestScenarioIntegration:
             loaded_dag: DAG = dag.dag.load_pending().set_client(self.warehouse_engine)
 
             app = EntityResolutionApp(
-                resolution=model_name,
+                resolution=loaded_dag.get_model(model_name),
                 num_samples=3,
                 user="test_user",
                 dag=loaded_dag,
@@ -301,7 +301,7 @@ class TestScenarioIntegration:
             loaded_dag: DAG = dag.dag.load_pending().set_client(self.warehouse_engine)
 
             app = EntityResolutionApp(
-                resolution=model_name,
+                resolution=loaded_dag.get_model(model_name),
                 num_samples=3,
                 user="test_user",
                 dag=loaded_dag,

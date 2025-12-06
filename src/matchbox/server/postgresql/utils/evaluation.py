@@ -15,7 +15,7 @@ from matchbox.common.arrow import (
 )
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import ModelResolutionPath
-from matchbox.common.eval import Judgement, ModelComparison, precision_recall
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
@@ -37,7 +37,6 @@ from matchbox.server.postgresql.utils.db import (
     compile_sql,
     ingest_to_temporary_table,
 )
-from matchbox.server.postgresql.utils.query import build_unified_query
 
 
 def insert_judgement(judgement: Judgement) -> None:
@@ -286,40 +285,3 @@ def sample(n: int, resolution_path: ModelResolutionPath, user_name: str) -> Tabl
             return_type="polars",
         )
         return final_samples.cast(pl.Schema(SCHEMA_EVAL_SAMPLES)).to_arrow()
-
-
-def compare_models(
-    resolutions: list[ModelResolutionPath],
-    judgements: pl.DataFrame,
-    expansion: pl.DataFrame,
-) -> ModelComparison:
-    """Compare models on the basis of precision and recall."""
-
-    def get_root_leaf(resolution_path: ModelResolutionPath) -> Table:
-        with MBDB.get_session() as session:
-            resolution = Resolutions.from_path(resolution_path, session=session)
-            # The session which fetched the resolution needs to be alive while
-            # the root-leaf query is built
-            root_leaf_query = build_unified_query(
-                resolution, threshold=resolution.truth
-            )
-
-        with MBDB.get_adbc_connection() as conn:
-            root_leaf_results = sql_to_df(
-                stmt=compile_sql(root_leaf_query),
-                connection=conn.dbapi_connection,
-                return_type="arrow",
-            )
-            return root_leaf_results.rename_columns(
-                {"root_id": "root", "leaf_id": "leaf"}
-            ).select(["root", "leaf"])
-
-    models_root_leaf = [pl.from_arrow(get_root_leaf(res)) for res in resolutions]
-
-    pr_values = precision_recall(
-        models_root_leaf=models_root_leaf,
-        judgements=judgements,
-        expansion=expansion,
-    )
-
-    return dict(zip(resolutions, pr_values, strict=True))

@@ -6,7 +6,7 @@ from sqlalchemy import Engine, text
 
 from matchbox.client.cli.eval import EntityResolutionApp
 from matchbox.client.dags import DAG
-from matchbox.client.eval import EvalData, compare_models
+from matchbox.client.eval import EvalData
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.common.factories.sources import (
@@ -210,20 +210,3 @@ class TestE2EModelEvaluation:
         # Can filter judgements by tag
         assert len(EvalData("eval_session1").judgements)
         assert not len(EvalData("mispelled").judgements)
-
-        # Test model comparison functionality with both DAGs
-        comparison = compare_models(
-            [
-                dag.final_step.resolution_path,
-                self.dag2.final_step.resolution_path,
-            ]
-        )
-        expected_keys = {
-            str(dag.final_step.resolution_path),
-            str(self.dag2.final_step.resolution_path),
-        }
-        assert expected_keys.issubset(comparison.keys()), (
-            "Comparison should include both models"
-        )
-        for key in expected_keys:
-            assert len(comparison[key]) == 2, "Each model should have precision/recall"

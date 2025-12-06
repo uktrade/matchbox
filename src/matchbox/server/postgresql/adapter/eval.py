@@ -3,13 +3,10 @@
 from itertools import chain
 from typing import TYPE_CHECKING, Any
 
-import polars as pl
 from pyarrow import Table
 
 from matchbox.common.dtos import ModelResolutionPath
 from matchbox.common.eval import Judgement as CommonJudgement
-from matchbox.common.eval import ModelComparison
-from matchbox.common.exceptions import MatchboxNoJudgements
 from matchbox.server.postgresql.utils import evaluation
 
 if TYPE_CHECKING:
@@ -29,14 +26,6 @@ class MatchboxPostgresEvaluationMixin:
 
     def get_judgements(self, tag: str | None = None) -> tuple[Table, Table]:  # noqa: D102
         return evaluation.get_judgements(tag)
-
-    def compare_models(self, paths: list[ModelResolutionPath]) -> ModelComparison:  # noqa: D102
-        judgements, expansion = self.get_judgements()
-        if not len(judgements):
-            raise MatchboxNoJudgements()
-        return evaluation.compare_models(
-            paths, pl.from_arrow(judgements), pl.from_arrow(expansion)
-        )
 
     def sample_for_eval(  # noqa: D102
         self, n: int, path: ModelResolutionPath, user_name: str

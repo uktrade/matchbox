@@ -4,7 +4,6 @@ from matchbox.client.eval.samples import (
     EvalData,
     EvaluationFieldMetadata,
     EvaluationItem,
-    ModelComparison,
     create_evaluation_item,
     create_judgement,
     get_samples,
@@ -18,6 +17,5 @@ __all__ = [
     "create_evaluation_item",
     "create_judgement",
     "get_samples",
-    "ModelComparison",
     "precision_recall",
 ]

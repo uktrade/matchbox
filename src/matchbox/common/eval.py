@@ -6,13 +6,10 @@ from typing import TypeAlias
 import polars as pl
 from pydantic import BaseModel, Field, field_validator
 
-from matchbox.common.dtos import ModelResolutionPath
-
 Pair: TypeAlias = tuple[int, int]
 Pairs: TypeAlias = set[Pair]
 
 PrecisionRecall: TypeAlias = tuple[float, float]
-ModelComparison: TypeAlias = dict[ModelResolutionPath, PrecisionRecall]
 
 
 class Judgement(BaseModel):

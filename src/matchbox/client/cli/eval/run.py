@@ -104,7 +104,7 @@ def evaluate(
     try:
         # Create app with loaded DAG (not warehouse string)
         app = EntityResolutionApp(
-            resolution=model.resolution_path.name,
+            resolution=model.resolution_path,
             user=user,
             dag=dag,
             session_tag=session_tag,

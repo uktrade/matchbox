@@ -19,7 +19,7 @@ from matchbox.client.cli.eval.widgets.styling import get_group_style
 from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
 from matchbox.client.eval import EvaluationItem, create_judgement, get_samples
-from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath
+from matchbox.common.dtos import ModelResolutionPath
 from matchbox.common.exceptions import MatchboxClientSettingsException
 
 logger = logging.getLogger(__name__)
@@ -119,9 +119,9 @@ class EntityResolutionApp(App):
 
     def __init__(
         self,
-        resolution: ModelResolutionName,
         user: str,
         num_samples: int = 5,
+        resolution: ModelResolutionPath | None = None,
         dag: DAG | None = None,
         session_tag: str | None = None,
         sample_file: str | None = None,
@@ -144,7 +144,10 @@ class EntityResolutionApp(App):
         """
         super().__init__()
 
-        self.resolution = dag.get_model(resolution).resolution_path
+        if not (resolution or sample_file):
+            raise ValueError("Either a resolution or a sample file must be set")
+
+        self.resolution = resolution
         self.user_name = user
         self.sample_limit = num_samples
         self.dag = dag
@@ -334,7 +337,7 @@ class EntityResolutionApp(App):
         try:
             new_samples_dict = get_samples(
                 n=needed,
-                resolution=self.resolution.name,
+                resolution=self.resolution.name if self.resolution else None,
                 user_name=self.user_name,
                 dag=self.dag,
                 sample_file=self.sample_file,

@@ -1,3 +1,4 @@
+import tempfile
 from collections.abc import Generator
 
 import pytest
@@ -163,28 +164,7 @@ class TestE2EModelEvaluation:
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 
-    @pytest.mark.asyncio
-    async def test_evaluation_workflow(self) -> None:
-        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
-
-        This test focuses on the full data flow through the system with real warehouse
-        data, multiple DAGs, and model comparison. UI interaction details are tested
-        separately in unit/integration tests.
-        """
-        # Load DAG from server with warehouse location
-        dag: DAG = (
-            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
-        )
-
-        # Create app and verify it can load samples from real data
-        app = EntityResolutionApp(
-            resolution=dag.final_step.resolution_path.name,
-            num_samples=2,
-            session_tag="eval_session1",
-            user="alice",
-            dag=dag,
-        )
-
+    async def in_app_evaluation(self, app: EntityResolutionApp) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
 
@@ -206,6 +186,67 @@ class TestE2EModelEvaluation:
             assert len(final_judgements) == initial_count + 1, (
                 "Judgement should flow through to backend"
             )
+
+    @pytest.mark.asyncio
+    async def test_evaluation_workflow_server(self) -> None:
+        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
+
+        Samples clusters from the server.
+
+        This test focuses on the full data flow through the system with real warehouse
+        data, multiple DAGs, and model comparison. UI interaction details are tested
+        separately in unit/integration tests.
+        """
+        # Load DAG from server with warehouse location
+        dag: DAG = (
+            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
+        )
+
+        # Create app and verify it can load samples from real data
+        app = EntityResolutionApp(
+            resolution=dag.final_step.resolution_path,
+            num_samples=2,
+            session_tag="eval_session1",
+            user="alice",
+            dag=dag,
+        )
+
+        await self.in_app_evaluation(app)
+
+        # Can filter judgements by tag
+        assert len(EvalData("eval_session1").judgements)
+        assert not len(EvalData("mispelled").judgements)
+
+    @pytest.mark.asyncio
+    async def test_evaluation_workflow_local(self) -> None:
+        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
+
+        Generates a local sample file.
+
+        This test focuses on the full data flow through the system with real warehouse
+        data, multiple DAGs, and model comparison. UI interaction details are tested
+        separately in unit/integration tests.
+        """
+        # Load DAG from server with warehouse location
+        dag: DAG = (
+            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
+        )
+        rm = dag.resolve()
+
+        with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
+            # Write the parquet data to the temporary file
+            rm.as_cluster_key_map().write_parquet(tmp_file.name)
+
+            # Create app and verify it can load samples
+            app = EntityResolutionApp(
+                num_samples=2,
+                session_tag="eval_session1",
+                user="alice",
+                dag=dag,
+                sample_file=tmp_file.name,
+            )
+
+            await self.in_app_evaluation(app)
 
         # Can filter judgements by tag
         assert len(EvalData("eval_session1").judgements)

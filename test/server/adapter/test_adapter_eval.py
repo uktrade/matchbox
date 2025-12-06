@@ -144,9 +144,9 @@ class TestMatchboxEvaluationBackend:
             assert len(expansion) == 4  # 2 shown clusters + 2 new endorsed clusters
 
             # We can use tag to filter judgements
-            judgements, expansion = self.backend.get_judgements("eval_session1")
-            assert judgements.num_rows == 1
-            assert expansion.num_rows == 1
+            judgements_tag, expansion_tag = self.backend.get_judgements("eval_session1")
+            assert judgements_tag.num_rows == 1
+            assert expansion_tag.num_rows == 1
 
             # Let's massage tables into a root-leaf dict for all endorsed clusters
             endorsed_dict = dict(

@@ -205,8 +205,8 @@ def profile_mem(
                     f"Memory usage of {func.__name__}: "
                     f"current {round(curr / 10**6, 2)} MB, "
                     f"peak {round(peak / 10**6, 2)} MB. "
-                    f"Total memory: {round(mem[0] / 10**6, 2)} MB, "
-                    f"available memory: {round(mem[1] / 10**6, 2)} MB."
+                    f"Total memory: {round(mem.total / 10**6, 2)} MB, "
+                    f"available memory: {round(mem.available / 10**6, 2)} MB."
                 )
 
                 logger.log(level, msg, prefix=prefix)

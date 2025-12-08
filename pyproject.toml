@@ -17,6 +17,7 @@ dependencies = [
     "pandas>=2.2.3",
     "polars-hash>=0.5.3",
     "polars>=1.32.3",
+    "psutil>=7.1.3",
     "psycopg[binary, pool]>=3.2.6",
     "pyarrow>=17.0.0",
     "pydantic-settings>=2.5.2",

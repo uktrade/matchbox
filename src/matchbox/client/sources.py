@@ -24,7 +24,7 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import HashMethod, hash_arrow_table, hash_rows
-from matchbox.common.logging import logger, profile
+from matchbox.common.logging import logger, profile_mem, profile_time
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -223,7 +223,7 @@ class Source:
             return False
         return self.config == other.config
 
-    @profile(attr="name")
+    @profile_time(attr="name")
     def fetch(
         self,
         qualify_names: bool = False,
@@ -270,7 +270,8 @@ class Source:
                 return_type=return_type,
             )
 
-    @profile(attr="name")
+    @profile_mem()
+    @profile_time(attr="name")
     def run(self, batch_size: int | None = None) -> ArrowTable:
         """Hash a dataset from its warehouse, ready to be inserted, and cache hashes.
 
@@ -375,7 +376,8 @@ class Source:
         return self.config.f(self.name, fields)
 
     @post_run
-    @profile(attr="name")
+    @profile_mem()
+    @profile_time(attr="name")
     def sync(self) -> None:
         """Send the source config and hashes to the server.
 

@@ -445,8 +445,15 @@ class DAG:
         self,
         start: str | None = None,
         finish: str | None = None,
+        low_memory: bool = False,
     ) -> None:
-        """Run entire DAG and send results to server."""
+        """Run entire DAG and send results to server.
+
+        Args:
+            start: name of first node to run
+            finish: name of last node to run
+            low_memory: whether to delete data for each node after it is run
+        """
         # Determine order of execution steps
         root_nodes = self.final_steps
 
@@ -499,6 +506,9 @@ class DAG:
                 logger.error(f"❌ {node.name} failed: {e}")
                 raise e
             status[step_name] = DAGNodeExecutionStatus.DONE
+
+            if low_memory:
+                node.clear_data()
         logger.info("\n" + self.draw(status=status))
 
     def set_default(self) -> None:

@@ -422,3 +422,7 @@ class Source:
     def query(self, **kwargs: Any) -> Query:
         """Generate a query for this source."""
         return Query(self, **kwargs, dag=self.dag)
+
+    def clear_data(self) -> None:
+        """Deletes data computed for node."""
+        self.hashes = None

@@ -338,3 +338,10 @@ class Model:
     def query(self, *sources: Source, **kwargs: Any) -> Query:
         """Generate a query for this model."""
         return Query(*sources, **kwargs, model=self, dag=self.dag)
+
+    def clear_data(self) -> None:
+        """Deletes data computed for node."""
+        self.results = None
+        self.left_query._set_cache(None, None)
+        if self.right_query:
+            self.right_query._set_cache(None, None)

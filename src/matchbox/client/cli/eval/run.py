@@ -54,15 +54,15 @@ def evaluate(
     sample_file: Annotated[
         str | None,
         typer.Option(
-            "--sample_file",
-            "-s",
+            "--file",
+            "-f",
             help="Pre-compiled sample file. If set, ignores resolutions parameters.",
         ),
     ] = None,
     session_tag: Annotated[
         str | None,
         typer.Option(
-            "--session_tag",
+            "--tag",
             "-t",
             help="String to use to tag judgements sent to the server.",
         ),

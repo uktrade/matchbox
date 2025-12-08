@@ -1,7 +1,5 @@
 """Client-side helpers for retrieving and preparing evaluation samples."""
 
-from typing import cast
-
 import polars as pl
 from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
@@ -139,6 +137,26 @@ def create_evaluation_item(
     return EvaluationItem(cluster_id=cluster_id, records=records, fields=fields)
 
 
+def _read_sample_file(sample_file: str, n: int) -> pl.DataFrame:
+    resolved_matches_dump = pl.read_parquet(sample_file)
+    clusters = resolved_matches_dump["id"].unique()
+    select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
+    select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
+    return select_rows.rename({"id": "root", "leaf_id": "leaf"})
+
+
+def _get_samples_from_server(
+    dag: DAG, user_name: str, n: int, resolution: ModelResolutionName | None = None
+) -> pl.DataFrame:
+    if resolution:
+        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    else:
+        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+    return pl.from_arrow(
+        _handler.sample_for_eval(n=n, resolution=resolution_path, user_name=user_name)
+    )
+
+
 def get_samples(
     n: int,
     dag: DAG,
@@ -165,25 +183,10 @@ def get_samples(
             provided or default clients.
     """
     if sample_file:
-        resolved_matches_dump = pl.read_parquet(sample_file)
-        clusters = resolved_matches_dump["id"].unique()
-        select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
-        select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
-        samples = select_rows.rename({"id": "root", "leaf_id": "leaf"})
+        samples = _read_sample_file(sample_file=sample_file, n=n)
     else:
-        if resolution:
-            resolution_path: ModelResolutionPath = dag.get_model(
-                resolution
-            ).resolution_path
-        else:
-            resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-        samples: pl.DataFrame = cast(
-            pl.DataFrame,
-            pl.from_arrow(
-                _handler.sample_for_eval(
-                    n=n, resolution=resolution_path, user_name=user_name
-                )
-            ),
+        samples = _get_samples_from_server(
+            dag=dag, user_name=user_name, n=n, resolution=resolution
         )
 
     if not len(samples):

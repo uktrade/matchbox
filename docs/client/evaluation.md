@@ -7,7 +7,7 @@ After running models to deduplicate and link your data, you’ll likely want to 
 
 To calculate these, we need a **ground truth** - a set of correct matches created by people. This is called **validation data**.
 
-## Creating sample set
+## Creating a sample set
 
 First, you need to create a local set of sample clusters that you want to evaluate. If you're evaluating a single model:
 
@@ -32,12 +32,9 @@ resolved_joint.as_cluster_key_map().write_parquet("samples.pq")
 
 Matchbox provides a terminal-based UI to help you create this validation data. Here's how it works:
 
-1. **Launch the evaluation tool** using `matchbox eval --collection <collection_name> --user <your_username> --sample_file <path_to_samples>`
+1. **Launch the evaluation tool** using `matchbox eval --collection <collection_name> --user <your_username> --file <path_to_samples>`
     - Define `MB__CLIENT__DEFAULT_WAREHOUSE` (or use `--warehouse <connection_string>`) so the CLI can reach your warehouse.
-
-
-    - Use `--session_tag <session_tag>` to tag your judgements so they can be filtered later
-
+    - Use `--tag <session_tag>` to tag your judgements so they can be filtered later
 2. Matchbox will **load clusters** from your warehouse, for you to review.  
 3. In the terminal interface, you will review each cluster.  
 

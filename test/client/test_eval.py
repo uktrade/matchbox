@@ -25,8 +25,8 @@ from matchbox.common.factories.sources import source_from_tuple
 
 
 def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
-    """."""
-    dag = DAG("ciao")
+    """We can sample from a parquet dump."""
+    dag = DAG("companies")
     foo = dag.source(
         **source_from_tuple(
             name="foo",
@@ -91,15 +91,21 @@ def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
         rm.as_cluster_key_map().write_parquet(tmp_file.name)
 
         # Use the temporary file in get_samples
-        get_samples(n=2, dag=dag, user_name="alice", sample_file=tmp_file.name)
+        samples = get_samples(
+            n=2, dag=dag, user_name="alice", sample_file=tmp_file.name
+        )
+        assert len(samples) == 2
+        possible_clusters = set(foo_query_data["id"]) | set(bar_query_data["id"])
+        assert set(samples.keys()) <= possible_clusters
 
 
-def test_get_samples(
+def test_get_samples_remote(
     matchbox_api: MockRouter,
     sqlite_warehouse: Engine,
     sqlite_in_memory_warehouse: Engine,
     env_setter: Callable[[str, str], None],
 ) -> None:
+    """We can sample from a resolution on the server."""
     # Make dummmy data
     user = User(user_name="alice", email="alice@example.com")
 

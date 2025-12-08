@@ -185,6 +185,10 @@ def profile_mem(
         logger: The logger to use.
         level: The level to use to log the profiling information. It defaults to INFO.
         prefix: Prefix to pass to the logged message.
+
+    Note that this will not work reliably if two functions are decorated where one is
+    nested within the other. This is because there can only be one `tracemalloc` session
+    active at a time.
     """
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:

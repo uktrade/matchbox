@@ -29,7 +29,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.logging import logger, profile_time
-from matchbox.common.transform import truth_int_to_float
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -197,7 +197,7 @@ class DAG:
                 right_query=Query.from_config(resolution.config.right_query, dag=self)
                 if resolution.config.right_query
                 else None,
-                truth=truth_int_to_float(resolution.truth),
+                truth=threshold_int_to_float(resolution.truth),
             )
         else:
             raise ValueError(f"Unknown resolution type {resolution.resolution_type}")
@@ -528,7 +528,7 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
-        threshold: int | None = None,
+        threshold: float | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
 
@@ -538,7 +538,7 @@ class DAG:
             key: The value to match from the source. Usually a primary key
             threshold (optional): The threshold to use for creating clusters.
                 If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
+                If a float, uses that threshold for the specified resolution, and the
                 resolution's cached thresholds for its ancestors
 
         Returns:
@@ -556,6 +556,10 @@ class DAG:
             )
             ```
         """
+        if threshold:
+            if not isinstance(threshold, float):
+                raise ValueError("If passed, threshold must be a float")
+            threshold = threshold_float_to_int(threshold)
         matches = _handler.match(
             targets=[
                 ResolutionPath(name=target, collection=self.name, run=self.run)
@@ -577,6 +581,7 @@ class DAG:
         node: ResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
+        threshold: float | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
@@ -585,7 +590,15 @@ class DAG:
                 If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
+            threshold (optional): The threshold to use for creating clusters.
+                If None, uses the resolutions' default threshold
+                If a float, uses that threshold for the specified resolution, and the
+                resolution's cached thresholds for its ancestors
         """
+        if threshold:
+            if not isinstance(threshold, float):
+                raise ValueError("If passed, threshold must be a float")
+            threshold = threshold_float_to_int(threshold)
         point_of_truth = self.nodes[node] if node else self.final_step
 
         available_sources = {
@@ -620,6 +633,7 @@ class DAG:
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
                         return_leaf_id=True,
+                        threshold=threshold,
                     )
                 )
             )

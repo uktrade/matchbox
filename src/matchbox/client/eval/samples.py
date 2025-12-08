@@ -1,7 +1,5 @@
 """Client-side helpers for retrieving and preparing evaluation samples."""
 
-from typing import cast
-
 import polars as pl
 from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
@@ -10,7 +8,7 @@ from matchbox.client import _handler
 from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults
 from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
-from matchbox.common.eval import Judgement, ModelComparison, precision_recall
+from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
 
@@ -73,14 +71,18 @@ class EvaluationItem(BaseModel):
 
 
 def create_judgement(
-    item: EvaluationItem, assignments: dict[int, str], user_name: str
+    item: EvaluationItem,
+    assignments: dict[int, str],
+    user_name: str,
+    tag: str | None = None,
 ) -> Judgement:
     """Convert item assignments to Judgement - no default group assignment.
 
     Args:
-        item: Evaluation item
-        assignments: Column assignments (group_idx -> group_letter)
-        user_name: User name for the judgement
+        item: evaluation item
+        assignments: column assignments (group_idx -> group_letter)
+        user_name: user name for the judgement
+        tag: string by which to tag the judgement
 
     Returns:
         Judgement with endorsed groups based on assignments
@@ -93,7 +95,9 @@ def create_judgement(
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
-    return Judgement(user_name=user_name, shown=item.cluster_id, endorsed=endorsed)
+    return Judgement(
+        user_name=user_name, shown=item.cluster_id, endorsed=endorsed, tag=tag
+    )
 
 
 def create_evaluation_item(
@@ -133,11 +137,32 @@ def create_evaluation_item(
     return EvaluationItem(cluster_id=cluster_id, records=records, fields=fields)
 
 
+def _read_sample_file(sample_file: str, n: int) -> pl.DataFrame:
+    resolved_matches_dump = pl.read_parquet(sample_file)
+    clusters = resolved_matches_dump["id"].unique()
+    select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
+    select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
+    return select_rows.rename({"id": "root", "leaf_id": "leaf"})
+
+
+def _get_samples_from_server(
+    dag: DAG, user_name: str, n: int, resolution: ModelResolutionName | None = None
+) -> pl.DataFrame:
+    if resolution:
+        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    else:
+        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+    return pl.from_arrow(
+        _handler.sample_for_eval(n=n, resolution=resolution_path, user_name=user_name)
+    )
+
+
 def get_samples(
     n: int,
     dag: DAG,
     user_name: str,
     resolution: ModelResolutionName | None = None,
+    sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.
 
@@ -145,8 +170,10 @@ def get_samples(
         n: Number of clusters to sample
         dag: DAG for which to retrieve samples
         user_name: Name of the user requesting the samples
-        resolution: The optional resolution from which to sample. If not provided,
-            the final step in the DAG is used
+        resolution: The optional resolution from which to sample. If not set, the final
+            step in the DAG is used. If sample_file is set, resolution is ignored
+        sample_file: path to parquet file output by ResolvedMatches. If specified,
+            won't sample from server, ignoring the user_name and resolution arguments
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster
@@ -155,19 +182,12 @@ def get_samples(
         MatchboxSourceTableError: If a source cannot be queried from a location using
             provided or default clients.
     """
-    if resolution:
-        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    if sample_file:
+        samples = _read_sample_file(sample_file=sample_file, n=n)
     else:
-        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-
-    samples: pl.DataFrame = cast(
-        pl.DataFrame,
-        pl.from_arrow(
-            _handler.sample_for_eval(
-                n=n, resolution=resolution_path, user_name=user_name
-            )
-        ),
-    )
+        samples = _get_samples_from_server(
+            dag=dag, user_name=user_name, n=n, resolution=resolution
+        )
 
     if not len(samples):
         return {}
@@ -222,9 +242,10 @@ def get_samples(
 class EvalData:
     """Object which caches evaluation data to measure model performance."""
 
-    def __init__(self) -> None:
+    def __init__(self, tag: str | None = None) -> None:
         """Download judgement and expansion data used to compute evaluation metrics."""
-        self.judgements, self.expansion = _handler.download_eval_data()
+        self.tag = tag
+        self.judgements, self.expansion = _handler.download_eval_data(tag)
 
     def precision_recall(
         self, results: ModelResults, threshold: float
@@ -237,8 +258,3 @@ class EvalData:
         root_leaf = results.root_leaf().rename({"root_id": "root", "leaf_id": "leaf"})
         values = precision_recall([root_leaf], self.judgements, self.expansion)[0]
         return values[0], values[1]
-
-
-def compare_models(resolutions: list[ModelResolutionPath]) -> ModelComparison:
-    """Compare metrics of models based on cached evaluation data."""
-    return _handler.compare_models(resolutions)

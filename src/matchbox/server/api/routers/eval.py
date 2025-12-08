@@ -2,8 +2,15 @@
 
 import zipfile
 from io import BytesIO
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 
 from matchbox.common.arrow import JudgementsZipFilenames, table_to_buffer
 from matchbox.common.dtos import (
@@ -16,10 +23,9 @@ from matchbox.common.dtos import (
     NotFoundError,
     RunID,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxNoJudgements,
     MatchboxResolutionNotFoundError,
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
@@ -65,9 +71,14 @@ def insert_judgement(
 @router.get(
     "/judgements",
 )
-def get_judgements(backend: BackendDependency) -> ParquetResponse:
+def get_judgements(
+    backend: BackendDependency,
+    tag: Annotated[
+        str | None, Query(description="Tag by which to filter judgements")
+    ] = None,
+) -> ParquetResponse:
     """Retrieve all judgements from human evaluators."""
-    judgements, expansion = backend.get_judgements()
+    judgements, expansion = backend.get_judgements(tag)
     judgements_buffer, expansion_buffer = (
         table_to_buffer(judgements),
         table_to_buffer(expansion),
@@ -81,28 +92,6 @@ def get_judgements(backend: BackendDependency) -> ParquetResponse:
     zip_buffer.seek(0)
 
     return ZipResponse(zip_buffer.getvalue())
-
-
-@router.post(
-    "/compare",
-    responses={404: {"model": NotFoundError}},
-)
-def compare_models(
-    backend: BackendDependency,
-    resolutions: list[ModelResolutionPath],
-) -> ModelComparison:
-    """Return comparison of selected models."""
-    try:
-        return backend.compare_models(resolutions)
-    except MatchboxResolutionNotFoundError:
-        raise
-    except MatchboxNoJudgements as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.JUDGEMENT
-            ).model_dump(),
-        ) from e
 
 
 @router.get(

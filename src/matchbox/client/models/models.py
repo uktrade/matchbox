@@ -25,7 +25,7 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_model_results
 from matchbox.common.logging import logger, profile_mem, profile_time
-from matchbox.common.transform import truth_float_to_int, truth_int_to_float
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -127,7 +127,7 @@ class Model:
         self.dag = dag
         self.name = name
         self.description = description
-        self._truth: int = truth_float_to_int(truth)
+        self._truth: int = threshold_float_to_int(truth)
         self.left_query = left_query
         self.right_query = right_query
         self.results: ModelResults | None = None
@@ -204,7 +204,7 @@ class Model:
             right_query=Query.from_config(resolution.config.right_query, dag=dag)
             if resolution.config.right_query
             else None,
-            truth=truth_int_to_float(resolution.truth),
+            truth=threshold_int_to_float(resolution.truth),
         )
 
     @property
@@ -220,13 +220,13 @@ class Model:
     def truth(self) -> float | None:
         """Returns the truth threshold for the model as a float."""
         if self._truth is not None:
-            return truth_int_to_float(self._truth)
+            return threshold_int_to_float(self._truth)
         return None
 
     @truth.setter
     def truth(self, truth: float) -> None:
         """Set the truth threshold for the model."""
-        self._truth = truth_float_to_int(truth)
+        self._truth = threshold_float_to_int(truth)
 
     def delete(self, certain: bool = False) -> bool:
         """Delete the model from the database."""

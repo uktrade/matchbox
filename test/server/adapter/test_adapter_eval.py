@@ -17,7 +17,6 @@ from matchbox.common.dtos import ResolutionPath, User
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxNoJudgements,
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.factories.scenarios import setup_scenario
@@ -86,6 +85,16 @@ class TestMatchboxEvaluationBackend:
             )
             assert self.backend.model_clusters.count() == original_cluster_num
 
+            # Can tag judgement
+            self.backend.insert_judgement(
+                judgement=Judgement(
+                    user_name=alice.user_name,
+                    shown=unique_ids[0],
+                    endorsed=[clust1_leaves],
+                    tag="eval_session1",
+                ),
+            )
+
             # Now split a cluster
             clust2_leaves = get_leaf_ids(unique_ids[1])
             self.backend.insert_judgement(
@@ -120,13 +129,24 @@ class TestMatchboxEvaluationBackend:
             assert expansion.schema.equals(SCHEMA_CLUSTER_EXPANSION)
             # Only one user ID was used
             assert judgements["user_name"].unique().to_pylist() == [alice.user_name]
-            # The first shown cluster is repeated because we judged it twice
+            # The first shown cluster is repeated because we judged it three times
             # The second shown cluster is repeated because we split it (see above)
             assert sorted(judgements["shown"].to_pylist()) == sorted(
-                [unique_ids[0], unique_ids[0], unique_ids[1], unique_ids[1]]
+                [
+                    unique_ids[0],
+                    unique_ids[0],
+                    unique_ids[0],
+                    unique_ids[1],
+                    unique_ids[1],
+                ]
             )
             # On the other hand, the root-leaf mapping table has no duplicates
             assert len(expansion) == 4  # 2 shown clusters + 2 new endorsed clusters
+
+            # We can use tag to filter judgements
+            judgements_tag, expansion_tag = self.backend.get_judgements("eval_session1")
+            assert judgements_tag.num_rows == 1
+            assert expansion_tag.num_rows == 1
 
             # Let's massage tables into a root-leaf dict for all endorsed clusters
             endorsed_dict = dict(
@@ -144,53 +164,6 @@ class TestMatchboxEvaluationBackend:
             assert set(map(frozenset, endorsed_dict.values())) == set(
                 map(frozenset, [clust1_leaves, clust2_leaves[:1], clust2_leaves[1:]])
             )
-
-    def test_compare_models_fails(self) -> None:
-        """Model comparison errors with no judgement data."""
-        with (
-            self.scenario(self.backend, "bare"),
-            pytest.raises(MatchboxNoJudgements),
-        ):
-            self.backend.compare_models([])
-
-    def test_compare_models(self) -> None:
-        """Can compute precision and recall for list of models."""
-        with self.scenario(self.backend, "alt_dedupe") as dag_testkit:
-            alice: User = self.backend.login(User(sub="alice"))
-
-            model_names = [
-                model.resolution_path for model in dag_testkit.models.values()
-            ]
-
-            root_leaves = (
-                pl.from_arrow(
-                    self.backend.sample_for_eval(
-                        n=10,
-                        path=model_names[0],
-                        user_name=alice.user_name,
-                    )
-                )
-                .select(["root", "leaf"])
-                .unique()
-                .group_by("root")
-                .agg("leaf")
-            )
-            for row in root_leaves.rows(named=True):
-                self.backend.insert_judgement(
-                    judgement=Judgement(
-                        user_name=alice.user_name,
-                        shown=row["root"],
-                        endorsed=[row["leaf"]],
-                    )
-                )
-
-            pr = self.backend.compare_models(model_names)
-            # Precision must be 1 for both as the second model is like the first
-            # but more conservative
-            assert pr[model_names[0]][0] == pr[model_names[1]][0] == 1
-            # Recall must be 1 for the first model and lower for the second
-            assert pr[model_names[0]][1] == 1
-            assert pr[model_names[1]][1] < 1
 
     def test_sample_for_eval(self) -> None:
         """Can extract samples for a user and a resolution."""

@@ -190,7 +190,7 @@ class ResolvedMatches:
             raise ValueError("Mismatched length of sources and query results.")
 
     @classmethod
-    def from_cluster_key_map(cls, cluster_key_map: pl.DataFrame, dag: DAG) -> Self:
+    def from_dump(cls, cluster_key_map: pl.DataFrame, dag: DAG) -> Self:
         """Initialise ResolvedMatches from concatenated dataframe representation."""
         partitioned = cluster_key_map.partition_by("source")
         sources = [dag.get_source(p["source"][0]) for p in partitioned]
@@ -222,7 +222,7 @@ class ResolvedMatches:
 
         return lookup
 
-    def as_cluster_key_map(self) -> pl.DataFrame:
+    def as_dump(self) -> pl.DataFrame:
         """Return mapping across root, leaf, source and keys."""
         concat_dfs = []
         for source, query_res in zip(self.sources, self.query_results, strict=True):
@@ -233,7 +233,7 @@ class ResolvedMatches:
 
     def as_leaf_sets(self) -> list[list[int]]:
         """Return grouping of lead IDs."""
-        cluster_key_map = self.as_cluster_key_map()
+        cluster_key_map = self.as_dump()
         groups = cluster_key_map.group_by("id").agg("leaf_id")["leaf_id"].to_list()
         return [sorted(set(g)) for g in groups]
 

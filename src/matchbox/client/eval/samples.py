@@ -170,8 +170,8 @@ def get_samples(
         n: Number of clusters to sample
         dag: DAG for which to retrieve samples
         user_name: Name of the user requesting the samples
-        resolution: The optional resolution from which to sample. If not provided,
-            the final step in the DAG is used
+        resolution: The optional resolution from which to sample. If not set, the final
+            step in the DAG is used. If sample_file is set, resolution is ignored
         sample_file: path to parquet file output by ResolvedMatches. If specified,
             won't sample from server, ignoring the user_name and resolution arguments
 

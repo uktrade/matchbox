@@ -88,7 +88,7 @@ def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
     # Create a temporary file with .pq suffix
     with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
         # Write the parquet data to the temporary file
-        rm.as_cluster_key_map().write_parquet(tmp_file.name)
+        rm.as_dump().write_parquet(tmp_file.name)
 
         # Use the temporary file in get_samples
         samples = get_samples(

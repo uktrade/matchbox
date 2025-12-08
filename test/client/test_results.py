@@ -213,7 +213,7 @@ class TestResolvedMatches:
 
         return foo, bar, foo_query_data, bar_query_data
 
-    def test_from_cluster_key_map(
+    def test_from_dump(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
         """Can initialise ResolvedMatches from concatenated dataframe representation."""
@@ -228,9 +228,7 @@ class TestResolvedMatches:
             sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
         )
 
-        new = ResolvedMatches.from_cluster_key_map(
-            cluster_key_map=original.as_cluster_key_map(), dag=dag
-        )
+        new = ResolvedMatches.from_dump(cluster_key_map=original.as_dump(), dag=dag)
 
         assert new.sources[0] == dag.get_source("foo")
         assert new.sources[1] == dag.get_source("bar")
@@ -301,7 +299,7 @@ class TestResolvedMatches:
             check_column_order=False,
         )
 
-    def test_as_cluster_key_map(
+    def test_as_dump(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
         """Mapping across root, leaf, source and key can be generated."""
@@ -309,7 +307,7 @@ class TestResolvedMatches:
 
         mapping = ResolvedMatches(
             sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
-        ).as_cluster_key_map()
+        ).as_dump()
 
         expected_mapping = pl.DataFrame(
             [
@@ -441,9 +439,7 @@ class TestResolvedMatches:
 
         # Merge the two
         merged_resolved = resolved_one.merge(resolved_two)
-        new_clusters = (
-            merged_resolved.as_cluster_key_map().group_by("id").agg("leaf_id")
-        )
+        new_clusters = merged_resolved.as_dump().group_by("id").agg("leaf_id")
         # The sources are unchanged
         assert merged_resolved.sources == [foo, bar]
         # All cluster IDs now have negative integers

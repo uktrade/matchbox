@@ -235,7 +235,7 @@ class TestE2EModelEvaluation:
 
         with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
             # Write the parquet data to the temporary file
-            rm.as_cluster_key_map().write_parquet(tmp_file.name)
+            rm.as_dump().write_parquet(tmp_file.name)
 
             # Create app and verify it can load samples
             app = EntityResolutionApp(

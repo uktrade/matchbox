@@ -13,7 +13,7 @@ First, you need to create a local set of sample clusters that you want to evalua
 
 ```python
 dag = ... # your DAG, defined elsewhere 
-dag.resolve().as_cluster_key_map().write_parquet("samples.pq")
+dag.resolve().as_dump().write_parquet("samples.pq")
 ```
 
 Or, if you're comparing two models:
@@ -25,7 +25,7 @@ resolved_model1 = dag.resolve("model1")
 resolved_model2 = dag.resolve("model2")
 # Forms clusters as the union of the clusters output by each model
 resolved_joint = resolved_model1.merge(resolved_model2)
-resolved_joint.as_cluster_key_map().write_parquet("samples.pq")
+resolved_joint.as_dump().write_parquet("samples.pq")
 ```
 
 ## Creating validation data

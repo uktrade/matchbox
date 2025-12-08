@@ -90,7 +90,8 @@ default-groups = ["dev", "typing"]
 package = true
 upgrade-package = ["ruff"]
 constraint-dependencies = [
-    "urllib3>=2.5.0",
+    "urllib3>=2.6.0",
+    "werkzeug>=3.1.4",
     "setuptools-scm>=9.2.0"
 ]
 

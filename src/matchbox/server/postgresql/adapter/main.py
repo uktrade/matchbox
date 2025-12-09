@@ -21,6 +21,7 @@ from matchbox.server.postgresql.orm import (
     Probabilities,
     Resolutions,
     SourceConfigs,
+    Users,
 )
 
 
@@ -137,3 +138,4 @@ class MatchboxPostgres(
         self.merges = Contains
         self.proposes = FilteredProbabilities()
         self.source_resolutions = FilteredResolutions(sources=True, models=False)
+        self.users = Users

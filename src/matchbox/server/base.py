@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 import boto3
 from botocore.exceptions import ClientError
 from pyarrow import Table
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretBytes,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.dtos import (
@@ -146,7 +153,7 @@ class MatchboxServerSettings(BaseSettings):
     redis_uri: str | None
     uploads_expiry_minutes: int | None
     authorisation: bool = True
-    public_key: SecretStr | None = Field(default=None)
+    public_key: SecretBytes | None = Field(default=None)
     log_level: LogLevelType = "INFO"
 
     @model_validator(mode="after")
@@ -268,6 +275,7 @@ class MatchboxDBAdapter(ABC):
     merges: Countable
     proposes: Countable
     source_resolutions: Countable
+    users: Countable
 
     # Retrieval
 

@@ -1,10 +1,16 @@
 """Simplified TestkitDAG that's just a registry of test data."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from matchbox.client.dags import DAG
 from matchbox.common.dtos import (
+    BackendResourceType,
+    CollectionName,
+    GroupName,
     ModelResolutionName,
+    PermissionType,
     SourceResolutionName,
 )
 from matchbox.common.factories.models import ModelTestkit
@@ -27,6 +33,14 @@ class TestkitDAG(BaseModel):
     dag: DAG = Field(default_factory=_default_dag)
 
     # Just registries of test data - no complex logic
+    users: list[
+        tuple[
+            str,  # username
+            GroupName,
+            PermissionType,
+            CollectionName | Literal[BackendResourceType.SYSTEM],
+        ],
+    ] = []
     sources: dict[SourceResolutionName, SourceTestkit] = {}
     models: dict[ModelResolutionName, ModelTestkit] = {}
     linked: dict[str, LinkedSourcesTestkit] = {}
@@ -50,3 +64,13 @@ class TestkitDAG(BaseModel):
         """Add model to the real DAG and register test data."""
         self.dag._add_step(testkit.model)
         self.models[testkit.name] = testkit
+
+    def add_user(
+        self,
+        user_name: str,
+        group_name: GroupName,
+        permission: PermissionType,
+        resource: CollectionName | Literal[BackendResourceType.SYSTEM],
+    ) -> None:
+        """Record a user added to the system."""
+        self.users.append((user_name, group_name, permission, resource))

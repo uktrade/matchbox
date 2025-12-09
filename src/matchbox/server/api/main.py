@@ -49,10 +49,10 @@ from matchbox.common.exceptions import (
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
-    authorisation_dependencies,
+    RequireSysAdmin,
     lifespan,
 )
-from matchbox.server.api.routers import auth, collection, eval
+from matchbox.server.api.routers import admin, auth, collection, eval
 
 app = FastAPI(
     title="matchbox API",
@@ -64,6 +64,7 @@ app = FastAPI(
 app.include_router(collection.router)
 app.include_router(eval.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -291,7 +292,7 @@ def count_backend_items(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireSysAdmin)],
 )
 def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
     """Delete orphans."""
@@ -327,7 +328,7 @@ def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireSysAdmin)],
 )
 def clear_database(
     backend: BackendDependency,

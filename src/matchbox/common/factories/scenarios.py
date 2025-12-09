@@ -9,6 +9,7 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
+from matchbox.common.dtos import BackendResourceType, Group, PermissionType, User
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -83,6 +84,17 @@ def create_bare_scenario(
 ) -> TestkitDAG:
     """Create a bare TestkitDAG scenario."""
     dag_testkit = TestkitDAG()
+
+    # Create admins group
+    backend.create_group(Group(name="admins", is_system=True))
+    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
+
+    # Create alice as admin and record in DAG
+    backend.login(User(sub="alice", email="alice@example.org"))
+    backend.add_user_to_group("alice", "admins")
+    dag_testkit.add_user(
+        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    )
 
     # Create collection and run
     backend.create_collection(name=dag_testkit.dag.name)
@@ -406,6 +418,17 @@ def create_alt_dedupe_scenario(
     """Create a TestkitDAG scenario with two alternative dedupers."""
     dag_testkit = TestkitDAG()
 
+    # Create admins group
+    backend.create_group(Group(name="admins", is_system=True))
+    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
+
+    # Create alice as admin and record in DAG
+    backend.login(User(sub="alice", email="alice@example.org"))
+    backend.add_user_to_group("alice", "admins")
+    dag_testkit.add_user(
+        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    )
+
     # Create collection and run
     backend.create_collection(name=dag_testkit.dag.name)
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
@@ -511,6 +534,17 @@ def create_convergent_partial_scenario(
     had their results inserted.
     """
     dag_testkit = TestkitDAG()
+
+    # Create admins group
+    backend.create_group(Group(name="admins", is_system=True))
+    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
+
+    # Create alice as admin and record in DAG
+    backend.login(User(sub="alice", email="alice@example.org"))
+    backend.add_user_to_group("alice", "admins")
+    dag_testkit.add_user(
+        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    )
 
     # Create collection and run
     backend.create_collection(name=dag_testkit.dag.name)
@@ -630,6 +664,17 @@ def create_mega_scenario(
         TestkitDAG with extensive product data and linking model
     """
     dag_testkit = TestkitDAG()
+
+    # Create admins group
+    backend.create_group(Group(name="admins", is_system=True))
+    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
+
+    # Create alice as admin and record in DAG
+    backend.login(User(sub="alice", email="alice@example.org"))
+    backend.add_user_to_group("alice", "admins")
+    dag_testkit.add_user(
+        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    )
 
     # Create collection and run
     backend.create_collection(name=dag_testkit.dag.name)
@@ -941,6 +986,9 @@ def setup_scenario(
         # Thus, in _testkitdag_to_location we need to overwrite all testkits with
         # our new warehouse object
         dag_testkit = dag_testkit.model_copy(deep=True)
+
+        # Clear backend to cover tests outside scenario system
+        backend.clear(certain=True)
 
         # Restore backend and write sources to warehouse
         backend.restore(snapshot=snapshot)

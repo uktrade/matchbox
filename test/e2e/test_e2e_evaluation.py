@@ -189,7 +189,7 @@ class TestE2EModelEvaluation:
             await pilot.pause()
 
             # Verify app authenticated and loaded samples from real warehouse data
-            assert app.user_name is not None
+            assert app.user_name == "alice"
             assert len(app.queue.sessions) > 0, "Should load samples from warehouse"
 
             # Submit one judgement to verify data flow

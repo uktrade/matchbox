@@ -6,11 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, Security
 from fastapi.exceptions import HTTPException
 
-from matchbox.common.dtos import AuthStatusResponse, User
+from matchbox.common.dtos import AuthStatusResponse, LoginResponse, User
 from matchbox.server.api.dependencies import (
     JWT_HEADER,
     BackendDependency,
     SettingsDependency,
+    SetupModeDependency,
     b64_decode,
     validate_jwt,
 )
@@ -44,11 +45,20 @@ def get_username_from_token(token: str | None) -> str | None:
 
 @router.post("/login")
 def login(
+    setup: SetupModeDependency,
     backend: BackendDependency,
     credentials: User,
-) -> User:
-    """Receive a User with a username and returns it with a user ID."""
-    return backend.login(credentials)
+) -> LoginResponse:
+    """Receive a User with a username and returns it with a user ID.
+
+    If in setup mode, will add the user to the admins group.
+    """
+    if not setup:
+        return LoginResponse(user=backend.login(credentials))
+    else:
+        user = backend.login(credentials)
+        backend.add_user_to_group(user.user_name, "admins")
+        return LoginResponse(user=user, setup_mode_admin=True)
 
 
 @router.get("/status")

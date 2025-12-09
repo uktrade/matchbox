@@ -87,45 +87,43 @@ class TestMatchboxAdminBackend:
     def test_create_group(self) -> None:
         """Can create a new group."""
         with self.scenario(self.backend, "bare") as _:
-            group = Group(name=GroupName("admins"), description="Administrator group")
+            group = Group(name=GroupName("g"), description="Test group")
             self.backend.create_group(group)
 
             # Verify it was created
-            retrieved = self.backend.get_group(GroupName("admins"))
-            assert retrieved.name == "admins"
-            assert retrieved.description == "Administrator group"
+            retrieved = self.backend.get_group(GroupName("g"))
+            assert retrieved.name == "g"
+            assert retrieved.description == "Test group"
             assert retrieved.is_system is False
             assert len(retrieved.members) == 0
 
     def test_create_group_duplicate_fails(self) -> None:
         """Cannot create a group with duplicate name."""
         with self.scenario(self.backend, "bare") as _:
-            group1 = Group(name=GroupName("admins"))
+            group1 = Group(name=GroupName("g"))
             self.backend.create_group(group1)
 
-            group2 = Group(name=GroupName("admins"))
+            group2 = Group(name=GroupName("g"))
             with pytest.raises(MatchboxGroupAlreadyExistsError):
                 self.backend.create_group(group2)
-
-    def test_list_groups_empty(self) -> None:
-        """List groups returns empty list when no groups exist."""
-        with self.scenario(self.backend, "bare") as _:
-            groups = self.backend.list_groups()
-            assert groups == []
 
     def test_list_groups(self) -> None:
         """List groups returns all groups."""
         with self.scenario(self.backend, "bare") as _:
-            group1 = Group(name=GroupName("admins"), description="Admins")
+            group1 = Group(name=GroupName("g"), description="Group")
             group2 = Group(name=GroupName("users"), description="Users")
 
             self.backend.create_group(group1)
             self.backend.create_group(group2)
 
             groups = self.backend.list_groups()
-            assert len(groups) == 2
-            group_names = {g.name for g in groups}
-            assert group_names == {"admins", "users"}
+            groups_minus_admin = [
+                g
+                for g in groups
+                if g.name != "admins"  # filter default
+            ]
+            assert len(groups_minus_admin) == 2
+            assert {g.name for g in groups_minus_admin} == {"g", "users"}
 
     def test_get_group_not_found(self) -> None:
         """Get group raises error if group doesn't exist."""
@@ -136,28 +134,28 @@ class TestMatchboxAdminBackend:
     def test_delete_group(self) -> None:
         """Can delete a group."""
         with self.scenario(self.backend, "bare") as _:
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             # Verify it exists
-            retrieved = self.backend.get_group(GroupName("admins"))
-            assert retrieved.name == "admins"
+            retrieved = self.backend.get_group(GroupName("g"))
+            assert retrieved.name == "g"
 
             # Delete it
-            self.backend.delete_group(GroupName("admins"), certain=True)
+            self.backend.delete_group(GroupName("g"), certain=True)
 
             # Verify it's gone
             with pytest.raises(MatchboxGroupNotFoundError):
-                self.backend.get_group(GroupName("admins"))
+                self.backend.get_group(GroupName("g"))
 
     def test_delete_group_requires_confirmation(self) -> None:
         """Delete group requires certain=True."""
         with self.scenario(self.backend, "bare") as _:
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             with pytest.raises(MatchboxDeletionNotConfirmed):
-                self.backend.delete_group(GroupName("admins"), certain=False)
+                self.backend.delete_group(GroupName("g"), certain=False)
 
     def test_delete_group_not_found(self) -> None:
         """Delete group raises error if group doesn't exist."""
@@ -180,7 +178,7 @@ class TestMatchboxAdminBackend:
         """Can add a user to a group."""
         with self.scenario(self.backend, "bare") as _:
             # Create group
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             # Create user
@@ -188,22 +186,22 @@ class TestMatchboxAdminBackend:
             self.backend.login(user)
 
             # Add user to group
-            self.backend.add_user_to_group("alice", GroupName("admins"))
+            self.backend.add_user_to_group("alice", GroupName("g"))
 
             # Verify membership
             groups = self.backend.get_user_groups("alice")
-            assert GroupName("admins") in groups
+            assert GroupName("g") in groups
 
     def test_add_user_to_nonexistent_user_fails(self) -> None:
         """Cannot add non-existent user to group."""
         with self.scenario(self.backend, "bare") as _:
             # Create group
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             # Try to add non-existent user to group
             with pytest.raises(MatchboxUserNotFoundError):
-                self.backend.add_user_to_group("nonexistent", GroupName("admins"))
+                self.backend.add_user_to_group("nonexistent", GroupName("g"))
 
     def test_add_user_to_group_idempotent(self) -> None:
         """Adding user to group twice doesn't cause error."""
@@ -211,14 +209,14 @@ class TestMatchboxAdminBackend:
             user = User(user_name="alice", email="alice@example.com")
             self.backend.login(user)
 
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
-            self.backend.add_user_to_group("alice", GroupName("admins"))
-            self.backend.add_user_to_group("alice", GroupName("admins"))
+            self.backend.add_user_to_group("alice", GroupName("g"))
+            self.backend.add_user_to_group("alice", GroupName("g"))
 
             groups = self.backend.get_user_groups("alice")
-            assert GroupName("admins") in groups
+            assert GroupName("g") in groups
 
     def test_add_user_to_nonexistent_group_fails(self) -> None:
         """Cannot add user to non-existent group."""
@@ -236,20 +234,20 @@ class TestMatchboxAdminBackend:
             user = User(user_name="alice", email="alice@example.com")
             self.backend.login(user)
 
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
-            self.backend.add_user_to_group("alice", GroupName("admins"))
+            self.backend.add_user_to_group("alice", GroupName("g"))
 
             # Verify user is in group
             groups = self.backend.get_user_groups("alice")
-            assert GroupName("admins") in groups
+            assert GroupName("g") in groups
 
             # Remove user from group
-            self.backend.remove_user_from_group("alice", GroupName("admins"))
+            self.backend.remove_user_from_group("alice", GroupName("g"))
 
             # Verify user is no longer in group
             groups = self.backend.get_user_groups("alice")
-            assert GroupName("admins") not in groups
+            assert GroupName("g") not in groups
 
     def test_remove_user_from_nonexistent_group_fails(self) -> None:
         """Cannot remove user from non-existent group."""
@@ -263,19 +261,19 @@ class TestMatchboxAdminBackend:
     def test_remove_nonexistent_user_from_group_fails(self) -> None:
         """Cannot remove non-existent user from group."""
         with self.scenario(self.backend, "bare") as _:
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             with pytest.raises(MatchboxUserNotFoundError):
-                self.backend.remove_user_from_group("nonexistent", GroupName("admins"))
+                self.backend.remove_user_from_group("nonexistent", GroupName("g"))
 
     def test_get_user_groups_empty(self) -> None:
         """Get user groups returns empty list for user with no groups."""
         with self.scenario(self.backend, "bare") as _:
-            user = User(user_name="alice")
+            user = User(user_name="bob")
             self.backend.login(user)
 
-            groups = self.backend.get_user_groups("alice")
+            groups = self.backend.get_user_groups("bob")
             assert groups == []
 
     def test_get_user_groups_nonexistent_user_fails(self) -> None:
@@ -288,29 +286,29 @@ class TestMatchboxAdminBackend:
         """Get user groups returns all groups for a user."""
         with self.scenario(self.backend, "bare") as _:
             # Create user
-            user = User(user_name="alice", email="alice@example.com")
+            user = User(user_name="bob", email="alice@example.com")
             self.backend.login(user)
 
             # Create groups
-            group1 = Group(name=GroupName("admins"))
+            group1 = Group(name=GroupName("g"))
             group2 = Group(name=GroupName("users"))
             self.backend.create_group(group1)
             self.backend.create_group(group2)
 
             # Add user to both groups
-            self.backend.add_user_to_group("alice", GroupName("admins"))
-            self.backend.add_user_to_group("alice", GroupName("users"))
+            self.backend.add_user_to_group("bob", GroupName("g"))
+            self.backend.add_user_to_group("bob", GroupName("users"))
 
             # Verify membership
-            groups = self.backend.get_user_groups("alice")
+            groups = self.backend.get_user_groups("bob")
             assert len(groups) == 2
-            assert set(groups) == {GroupName("admins"), GroupName("users")}
+            assert set(groups) == {GroupName("g"), GroupName("users")}
 
     def test_get_group_includes_members(self) -> None:
         """Get group returns members list."""
         with self.scenario(self.backend, "bare") as _:
             # Create group and users
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             alice = User(user_name="alice", email="alice@example.com")
@@ -319,11 +317,11 @@ class TestMatchboxAdminBackend:
             self.backend.login(bob)
 
             # Add users to group
-            self.backend.add_user_to_group("alice", GroupName("admins"))
-            self.backend.add_user_to_group("bob", GroupName("admins"))
+            self.backend.add_user_to_group("alice", GroupName("g"))
+            self.backend.add_user_to_group("bob", GroupName("g"))
 
             # Get group and verify members
-            retrieved = self.backend.get_group(GroupName("admins"))
+            retrieved = self.backend.get_group(GroupName("g"))
             assert len(retrieved.members) == 2
             member_names = {m.user_name for m in retrieved.members}
             assert member_names == {"alice", "bob"}
@@ -402,20 +400,25 @@ class TestMatchboxAdminBackend:
     ) -> None:
         """Can grant permission to a group."""
         with self.scenario(self.backend, scenario) as _:
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             self.backend.grant_permission(
-                GroupName("admins"),
+                GroupName("g"),
                 PermissionType.ADMIN,
                 resource,
             )
 
             # Verify permission was granted
             permissions = self.backend.get_permissions(resource)
-            assert len(permissions) == 1
-            assert permissions[0].group_name == "admins"
-            assert permissions[0].permission == PermissionType.ADMIN
+            permissions_minus_admin = [
+                p
+                for p in permissions
+                if p.group_name != "admins"  # filter default
+            ]
+            assert len(permissions_minus_admin) == 1
+            assert permissions_minus_admin[0].group_name == "g"
+            assert permissions_minus_admin[0].permission == PermissionType.ADMIN
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
@@ -430,22 +433,27 @@ class TestMatchboxAdminBackend:
     ) -> None:
         """Granting same permission twice doesn't cause error."""
         with self.scenario(self.backend, scenario) as _:
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             self.backend.grant_permission(
-                GroupName("admins"),
+                GroupName("g"),
                 PermissionType.READ,
                 resource,
             )
             self.backend.grant_permission(
-                GroupName("admins"),
+                GroupName("g"),
                 PermissionType.READ,
                 resource,
             )
 
             permissions = self.backend.get_permissions(resource)
-            assert len(permissions) == 1
+            permissions_minus_admin = [
+                p
+                for p in permissions
+                if p.group_name != "admins"  # filter default
+            ]
+            assert len(permissions_minus_admin) == 1
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
@@ -460,24 +468,29 @@ class TestMatchboxAdminBackend:
     ) -> None:
         """Can revoke permission from a group."""
         with self.scenario(self.backend, scenario) as _:
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
 
             # Grant then revoke
             self.backend.grant_permission(
-                GroupName("admins"),
+                GroupName("g"),
                 PermissionType.ADMIN,
                 resource,
             )
             self.backend.revoke_permission(
-                GroupName("admins"),
+                GroupName("g"),
                 PermissionType.ADMIN,
                 resource,
             )
 
             # Verify permission was revoked
             permissions = self.backend.get_permissions(resource)
-            assert len(permissions) == 0
+            permissions_minus_admin = [
+                p
+                for p in permissions
+                if p.group_name != "admins"  # filter default
+            ]
+            assert len(permissions_minus_admin) == 0
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
@@ -495,11 +508,11 @@ class TestMatchboxAdminBackend:
             user = User(user_name="alice", email="alice@example.com")
             self.backend.login(user)
 
-            group = Group(name=GroupName("admins"))
+            group = Group(name=GroupName("g"))
             self.backend.create_group(group)
-            self.backend.add_user_to_group("alice", GroupName("admins"))
+            self.backend.add_user_to_group("alice", GroupName("g"))
             self.backend.grant_permission(
-                GroupName("admins"),
+                GroupName("g"),
                 PermissionType.READ,
                 resource,
             )
@@ -523,12 +536,12 @@ class TestMatchboxAdminBackend:
     ) -> None:
         """Check permission returns False when user doesn't have permission."""
         with self.scenario(self.backend, scenario) as _:
-            user = User(user_name="alice")
+            user = User(user_name="bob")
             self.backend.login(user)
 
             # Check permission
             has_permission = self.backend.check_permission(
-                "alice", PermissionType.ADMIN, resource
+                "bob", PermissionType.ADMIN, resource
             )
             assert has_permission is False
 
@@ -569,7 +582,10 @@ class TestMatchboxAdminBackend:
         """Get permissions returns empty list when no permissions granted."""
         with self.scenario(self.backend, scenario) as _:
             permissions = self.backend.get_permissions(resource)
-            assert permissions == []
+            permissions_minus_admin = [
+                p for p in permissions if p.group_name != "admins"
+            ]
+            assert permissions_minus_admin == []
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
@@ -601,9 +617,14 @@ class TestMatchboxAdminBackend:
             )
 
             permissions = self.backend.get_permissions(resource)
-            assert len(permissions) == 2
+            permissions_minus_admin = [
+                p
+                for p in permissions
+                if p.group_name != "admins"  # filter default
+            ]
+            assert len(permissions_minus_admin) == 2
 
-            perm_dict = {p.group_name: p.permission for p in permissions}
+            perm_dict = {p.group_name: p.permission for p in permissions_minus_admin}
             assert perm_dict["readers"] == PermissionType.READ
             assert perm_dict["writers"] == PermissionType.WRITE
 

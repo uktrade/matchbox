@@ -6,7 +6,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from httpx import Client
-from pydantic import SecretStr
+from pydantic import SecretBytes
 from respx import MockRouter
 
 from matchbox.client._handler import create_client
@@ -71,6 +71,12 @@ def api_client_and_mocks(
     mock_backend = Mock()
     app.dependency_overrides[dependencies.backend] = lambda: mock_backend
 
+    # Default to permissive
+    # * Existing tests pass without individual .return_value = True
+    # * Setup mode on by default
+    mock_backend.check_permission.return_value = True
+    dependencies.SETUP_MODE = True
+
     # 3) Override upload tracker with fully functioning mock
     # Note that we don't need to patch the tracker used by the delayed task,
     # as later we set the API as the task runner, and we assume that in that setting
@@ -86,7 +92,7 @@ def api_client_and_mocks(
         backend_type=MatchboxBackends.POSTGRES,
         task_runner="api",
         authorisation=True,
-        public_key=SecretStr(public_key.decode()),
+        public_key=SecretBytes(public_key),
     )
     app.dependency_overrides[dependencies.settings] = lambda: test_settings
 

@@ -258,6 +258,15 @@ class User(BaseModel):
     email: EmailStr | None = None
 
 
+class LoginResponse(BaseModel):
+    """Response from login endpoint."""
+
+    user: User
+    setup_mode_admin: bool = Field(
+        default=False, description="Whether user was added to admins during setup mode."
+    )
+
+
 GroupName: TypeAlias = MatchboxName
 """Type alias for group names."""
 

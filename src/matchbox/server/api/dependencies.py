@@ -31,7 +31,6 @@ from matchbox.server.uploads import UploadTracker, settings_to_upload_tracker
 SETTINGS: MatchboxServerSettings | None = None
 BACKEND: MatchboxDBAdapter | None = None
 UPLOAD_TRACKER: UploadTracker | None = None
-SETUP_MODE: bool = False  # secure failsafe
 JWT_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
 
 
@@ -54,7 +53,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global SETTINGS
     global BACKEND
     global UPLOAD_TRACKER
-    global SETUP_MODE
 
     SettingsClass = get_backend_settings(MatchboxServerSettings().backend_type)
     SETTINGS = SettingsClass()
@@ -88,16 +86,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     for sql_logger in ["sqlalchemy", "sqlalchemy.engine"]:
         logging.getLogger(sql_logger).setLevel("WARNING")
 
-    # 2. Check DB state once on startup
-    if BACKEND.users.count() == 0:
-        logger.warning(
-            "No users found. Server is in SETUP MODE. "
-            "The next user to login will be an admin."
-        )
-        SETUP_MODE = True
-    else:
-        SETUP_MODE = False
-
     yield
 
     del SETTINGS
@@ -128,28 +116,6 @@ def upload_tracker() -> Generator[UploadTracker, None, None]:
 BackendDependency: TypeAlias = Annotated[MatchboxDBAdapter, Depends(backend)]
 SettingsDependency: TypeAlias = Annotated[MatchboxServerSettings, Depends(settings)]
 UploadTrackerDependency: TypeAlias = Annotated[UploadTracker, Depends(upload_tracker)]
-
-
-def setup_mode(backend: BackendDependency) -> Generator[bool, None, None]:
-    """Returns whether setup mode is active.
-
-    Setup mode indicates the user table is empty, and is exited
-    as soon as the first user is created.
-    """
-    global SETUP_MODE
-
-    if SETUP_MODE is False:
-        yield SETUP_MODE
-        return
-
-    if backend.users.count() == 0:
-        yield True
-    else:
-        SETUP_MODE = False
-        yield SETUP_MODE
-
-
-SetupModeDependency: TypeAlias = Annotated[bool, Depends(setup_mode)]
 
 
 def b64_decode(b64_bytes: bytes) -> bytes:

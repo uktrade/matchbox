@@ -255,8 +255,22 @@ class Listable(Protocol):
         ...
 
 
+class Existable(Protocol):
+    """A protocol for objects whose existance can be checked."""
+
+    def exists(self) -> bool:
+        """Returns true if there's any items in the object."""
+        ...
+
+
 class ListableAndCountable(Countable, Listable):
     """A protocol for objects that can be counted and listed."""
+
+    pass
+
+
+class ExistableAndCountable(Countable, Existable):
+    """A protocol for objects that can be counted and existed."""
 
     pass
 
@@ -275,7 +289,7 @@ class MatchboxDBAdapter(ABC):
     merges: Countable
     proposes: Countable
     source_resolutions: Countable
-    users: Countable
+    users: ExistableAndCountable
 
     # Retrieval
 

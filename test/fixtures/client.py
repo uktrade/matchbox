@@ -1,4 +1,5 @@
 from collections.abc import Callable, Generator
+from itertools import chain, repeat
 from os import environ
 from unittest.mock import Mock
 
@@ -73,9 +74,10 @@ def api_client_and_mocks(
 
     # Default to permissive
     # * Existing tests pass without individual .return_value = True
-    # * Setup mode on by default
+    # * First login is first user, and will be made system admin, subsequent
+    #   logins and users are normal
     mock_backend.check_permission.return_value = True
-    dependencies.SETUP_MODE = True
+    mock_backend.users.exists.side_effect = chain([False], repeat(True))
 
     # 3) Override upload tracker with fully functioning mock
     # Note that we don't need to patch the tracker used by the delayed task,

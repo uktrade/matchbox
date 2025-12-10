@@ -11,7 +11,6 @@ from matchbox.server.api.dependencies import (
     JWT_HEADER,
     BackendDependency,
     SettingsDependency,
-    SetupModeDependency,
     b64_decode,
     validate_jwt,
 )
@@ -45,7 +44,6 @@ def get_username_from_token(token: str | None) -> str | None:
 
 @router.post("/login")
 def login(
-    setup: SetupModeDependency,
     backend: BackendDependency,
     credentials: User,
 ) -> LoginResponse:
@@ -53,7 +51,7 @@ def login(
 
     If in setup mode, will add the user to the admins group.
     """
-    if not setup:
+    if backend.users.exists():
         return LoginResponse(user=backend.login(credentials))
     else:
         user = backend.login(credentials)

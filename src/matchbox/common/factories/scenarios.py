@@ -84,13 +84,33 @@ def create_bare_scenario(
 ) -> TestkitDAG:
     """Create a bare TestkitDAG scenario.
 
-    The warehouse and backend are empty except for a single admin user, alice.
+    The warehouse and backend are empty, no users.
     """
     dag_testkit = TestkitDAG()
 
-    # Create alice as admin
-    backend.login(User(sub="alice", email="alice@example.org"))
-    backend.add_user_to_group("alice", "admins")
+    return dag_testkit
+
+
+@register_scenario("admin")
+def create_admin_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create an admin TestkitDAG scenario.
+
+    The warehouse and backend are empty except for a single admin user, alice.
+    """
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # First user is admin
+    response = backend.login(User(sub="alice", email="alice@example.org"))
+    assert response.setup_mode_admin
 
     return dag_testkit
 
@@ -110,8 +130,8 @@ def create_preindex_scenario(
     The warehouse contains three interlinked tables that cover common linkage
     problem scenarios, but are not yet indexed.
     """
-    # First create the bare scenario
-    dag_testkit = create_bare_scenario(
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
@@ -466,8 +486,8 @@ def create_alt_dedupe_scenario(
     The warehouse contains a single table, indexed in the backend. It has
     been deduplicated twice, by two rival proabilistic models.
     """
-    # First create the bare scenario
-    dag_testkit = create_bare_scenario(
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
@@ -577,8 +597,8 @@ def create_convergent_partial_scenario(
     with repetition, and two naive dedupe models that haven't yet had their
     results inserted.
     """
-    # First create the bare scenario
-    dag_testkit = create_bare_scenario(
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
@@ -696,8 +716,8 @@ def create_mega_scenario(
     Aims to produce "mega" clusters with more features than the CLI has screen rows,
     and more variations than the CLI has screen columns.
     """
-    # First create the bare scenario
-    dag_testkit = create_bare_scenario(
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 

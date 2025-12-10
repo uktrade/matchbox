@@ -9,6 +9,7 @@ from matchbox.common.dtos import (
     CollectionName,
     Group,
     GroupName,
+    LoginResponse,
     PermissionGrant,
     PermissionType,
     User,
@@ -46,8 +47,11 @@ class MatchboxPostgresAdminMixin:
 
     # User management
 
-    def login(self, user: User) -> User:  # noqa: D102
+    def login(self, user: User) -> LoginResponse:  # noqa: D102
         with MBDB.get_session() as session:
+            # Check if this is the first user
+            is_first: bool = session.query(Users).first() is None
+
             # Try to find existing user
             existing_user = session.scalar(
                 select(Users).where(Users.name == user.user_name)
@@ -59,19 +63,43 @@ class MatchboxPostgresAdminMixin:
                     existing_user.email = user.email
                     session.commit()
 
-                return User(
-                    user_name=existing_user.name,
-                    email=existing_user.email,
+                return LoginResponse(
+                    user=User(
+                        user_name=existing_user.name,
+                        email=existing_user.email,
+                    ),
+                    setup_mode_admin=False,
                 )
 
             # Create new user
             new_user = Users(name=user.user_name, email=user.email)
             session.add(new_user)
+            session.flush()
+
+            # If first user, add to admins group
+            if is_first:
+                admins_group = session.scalar(
+                    select(Groups).where(Groups.name == GroupName("admins"))
+                )
+                if admins_group:
+                    membership = UserGroups(
+                        user_id=new_user.user_id,
+                        group_id=admins_group.group_id,
+                    )
+                    session.add(membership)
+                    logger.info(
+                        f"Added first user '{user.user_name}' to admins group",
+                        prefix="Login",
+                    )
+
             session.commit()
 
-            return User(
-                user_name=new_user.name,
-                email=new_user.email,
+            return LoginResponse(
+                user=User(
+                    user_name=new_user.name,
+                    email=new_user.email,
+                ),
+                setup_mode_admin=is_first,
             )
 
     # Group management

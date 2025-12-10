@@ -33,11 +33,14 @@ def test_setup_scenario_preindex(
 def test_scenario_registry() -> None:
     """Test that the scenario registry contains the built-in scenarios."""
     assert "bare" in SCENARIO_REGISTRY
+    assert "admin" in SCENARIO_REGISTRY
+    assert "preindex" in SCENARIO_REGISTRY
     assert "index" in SCENARIO_REGISTRY
     assert "dedupe" in SCENARIO_REGISTRY
     assert "link" in SCENARIO_REGISTRY
     assert "probabilistic_dedupe" in SCENARIO_REGISTRY
     assert "alt_dedupe" in SCENARIO_REGISTRY
+    assert "convergent_partial" in SCENARIO_REGISTRY
     assert "convergent" in SCENARIO_REGISTRY
     assert "mega" in SCENARIO_REGISTRY
 

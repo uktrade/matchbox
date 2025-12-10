@@ -42,34 +42,37 @@ class TestMatchboxAdminBackend:
 
     def test_login_creates_new_user(self) -> None:
         """Login creates a new user if they don't exist."""
-        with self.scenario(self.backend, "bare") as _:
-            user = User(user_name="alice", email="alice@example.com")
+        with self.scenario(self.backend, "admin") as _:
+            user = User(user_name="bob", email="bob@example.com")
             result = self.backend.login(user)
 
-            assert result.user_name == "alice"
-            assert result.email == "alice@example.com"
+            assert result.user.user_name == "bob"
+            assert result.user.email == "bob@example.com"
+            assert result.setup_mode_admin is False
 
     def test_login_returns_existing_user(self) -> None:
         """Login returns existing user with same ID."""
-        with self.scenario(self.backend, "bare") as _:
-            user1 = User(user_name="alice", email="alice@example.com")
+        with self.scenario(self.backend, "admin") as _:
+            user1 = User(user_name="bob", email="bob@example.com")
             result1 = self.backend.login(user1)
 
-            user2 = User(user_name="alice", email="alice@example.com")
+            user2 = User(user_name="bob", email="bob@example.com")
             result2 = self.backend.login(user2)
 
-            assert result1.user_name == result2.user_name
+            assert result1.user.user_name == result2.user.user_name
+            assert result2.setup_mode_admin is False
 
     def test_login_updates_email(self) -> None:
         """Login updates email if it changes."""
-        with self.scenario(self.backend, "bare") as _:
-            user1 = User(user_name="alice", email="alice@example.com")
+        with self.scenario(self.backend, "admin") as _:
+            user1 = User(user_name="bob", email="bob@example.com")
             _ = self.backend.login(user1)
 
-            user2 = User(user_name="alice", email="alice@newdomain.com")
+            user2 = User(user_name="bob", email="bob@newdomain.com")
             result2 = self.backend.login(user2)
 
-            assert result2.email == "alice@newdomain.com"
+            assert result2.user.email == "bob@newdomain.com"
+            assert result2.setup_mode_admin is False
 
     def test_login_different_users(self) -> None:
         """Login creates different IDs for different users."""
@@ -80,7 +83,49 @@ class TestMatchboxAdminBackend:
             alice_result = self.backend.login(alice)
             bob_result = self.backend.login(bob)
 
-            assert alice_result.user_name != bob_result.user_name
+            assert alice_result.user.user_name != bob_result.user.user_name
+            assert alice_result.setup_mode_admin is True  # First user
+            assert bob_result.setup_mode_admin is False  # Second user
+
+    def test_login_first_user_added_to_admins(self) -> None:
+        """First user login automatically adds them to admins group (setup mode)."""
+        with self.scenario(self.backend, "bare") as _:
+            # Verify admins group exists but is empty
+            admins = self.backend.get_group(GroupName("admins"))
+            assert len(admins.members) == 0
+
+            # First user login
+            first_user = User(user_name="alice", email="alice@example.com")
+            result = self.backend.login(first_user)
+
+            # Verify response indicates setup mode
+            assert result.setup_mode_admin is True
+            assert result.user.user_name == "alice"
+
+            # Verify user was added to admins group
+            user_groups = self.backend.get_user_groups("alice")
+            assert GroupName("admins") in user_groups
+
+            # Verify admins group now has the user as a member
+            admins = self.backend.get_group(GroupName("admins"))
+            assert len(admins.members) == 1
+            assert admins.members[0].user_name == "alice"
+
+            # Second user login should NOT be added to admins
+            second_user = User(user_name="bob", email="bob@example.com")
+            result2 = self.backend.login(second_user)
+
+            # Verify response indicates normal mode
+            assert result2.setup_mode_admin is False
+
+            # Verify second user was NOT added to admins group
+            bob_groups = self.backend.get_user_groups("bob")
+            assert GroupName("admins") not in bob_groups
+
+            # Verify admins group still has only alice
+            admins = self.backend.get_group(GroupName("admins"))
+            assert len(admins.members) == 1
+            assert admins.members[0].user_name == "alice"
 
     # Group management
 
@@ -276,7 +321,7 @@ class TestMatchboxAdminBackend:
 
     def test_get_user_groups_empty(self) -> None:
         """Get user groups returns empty list for user with no groups."""
-        with self.scenario(self.backend, "bare") as _:
+        with self.scenario(self.backend, "admin") as _:
             user = User(user_name="bob")
             self.backend.login(user)
 
@@ -291,9 +336,9 @@ class TestMatchboxAdminBackend:
 
     def test_get_user_groups_multiple(self) -> None:
         """Get user groups returns all groups for a user."""
-        with self.scenario(self.backend, "bare") as _:
+        with self.scenario(self.backend, "admin") as _:
             # Create user
-            user = User(user_name="bob", email="alice@example.com")
+            user = User(user_name="bob", email="bob@example.com")
             self.backend.login(user)
 
             # Create groups
@@ -338,7 +383,7 @@ class TestMatchboxAdminBackend:
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
+            (BackendResourceType.SYSTEM, "admin"),
             ("collection", "dedupe"),
         ],
         ids=["system", "collection"],
@@ -512,12 +557,12 @@ class TestMatchboxAdminBackend:
     ) -> None:
         """Check permission returns True when user has permission."""
         with self.scenario(self.backend, scenario) as _:
-            user = User(user_name="alice", email="alice@example.com")
+            user = User(user_name="bob", email="alice@example.com")
             self.backend.login(user)
 
             group = Group(name=GroupName("g"))
             self.backend.create_group(group)
-            self.backend.add_user_to_group("alice", GroupName("g"))
+            self.backend.add_user_to_group("bob", GroupName("g"))
             self.backend.grant_permission(
                 GroupName("g"),
                 PermissionType.READ,
@@ -526,14 +571,14 @@ class TestMatchboxAdminBackend:
 
             # Check permission
             has_permission = self.backend.check_permission(
-                "alice", PermissionType.READ, resource
+                "bob", PermissionType.READ, resource
             )
             assert has_permission is True
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
+            (BackendResourceType.SYSTEM, "admin"),
             ("collection", "dedupe"),
         ],
         ids=["system", "collection"],

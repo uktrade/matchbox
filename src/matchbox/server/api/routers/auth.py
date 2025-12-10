@@ -45,18 +45,13 @@ def get_username_from_token(token: str | None) -> str | None:
 @router.post("/login")
 def login(
     backend: BackendDependency,
-    credentials: User,
+    user: User,
 ) -> LoginResponse:
     """Receive a User with a username and returns it with a user ID.
 
     If in setup mode, will add the user to the admins group.
     """
-    if backend.users.exists():
-        return LoginResponse(user=backend.login(credentials))
-    else:
-        user = backend.login(credentials)
-        backend.add_user_to_group(user.user_name, "admins")
-        return LoginResponse(user=user, setup_mode_admin=True)
+    return backend.login(user=user)
 
 
 @router.get("/status")

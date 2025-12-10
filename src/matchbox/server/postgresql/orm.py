@@ -965,12 +965,6 @@ class Users(CountMixin, MBDB.MatchboxBase):
     # Constraints and indices
     __table_args__ = (UniqueConstraint("name", name="user_name_unique"),)
 
-    @classmethod
-    def exists(cls) -> bool:
-        """Check if any users exist."""
-        with MBDB.get_session() as session:
-            return session.query(cls).first() is not None
-
 
 class Groups(CountMixin, MBDB.MatchboxBase):
     """Groups for permission management."""

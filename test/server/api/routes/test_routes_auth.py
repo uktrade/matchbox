@@ -16,8 +16,10 @@ from test.scripts.authorisation import generate_json_web_token
 def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test the login endpoint at /auth/login."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.login = Mock(return_value=User(user_name="alice"))
-    mock_backend.users.count = Mock(return_value=0)
+    # First user is admin
+    mock_backend.login = Mock(
+        return_value=LoginResponse(user=User(user_name="alice"), setup_mode_admin=True)
+    )
 
     response = test_client.post(
         "/auth/login", json=User(user_name="alice").model_dump()
@@ -27,25 +29,14 @@ def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     alice_admin = LoginResponse.model_validate(response.json())
     assert alice_admin.setup_mode_admin
 
-    mock_backend.users.count = Mock(return_value=1)  # alice
-
     # Second user doesn't return admin
-    mock_backend.login = Mock(return_value=User(user_name="bob"))
+    mock_backend.login = Mock(
+        return_value=LoginResponse(user=User(user_name="bob"), setup_mode_admin=False)
+    )
 
     response = test_client.post("/auth/login", json=User(user_name="bob").model_dump())
     bob_user = LoginResponse.model_validate(response.json())
     assert not bob_user.setup_mode_admin
-
-    mock_backend.users.count = Mock(return_value=2)  # bob
-
-    # Second login from alice doesn't get admin
-    mock_backend.login = Mock(return_value=User(user_name="alice"))
-
-    response = test_client.post(
-        "/auth/login", json=User(user_name="alice").model_dump()
-    )
-    alice_user = LoginResponse.model_validate(response.json())
-    assert not alice_user.setup_mode_admin
 
 
 @pytest.mark.parametrize(

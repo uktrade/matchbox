@@ -990,6 +990,44 @@ class Groups(CountMixin, MBDB.MatchboxBase):
     # Constraints and indices
     __table_args__ = (UniqueConstraint("name", name="groups_name_key"),)
 
+    @classmethod
+    def initialise(cls) -> None:
+        """Create admins group and grant it system admin permissions."""
+        with MBDB.get_session() as session:
+            # Create admins group
+            init_statement = (
+                insert(cls)
+                .values(
+                    name="admins", description="System administrators.", is_system=True
+                )
+                .on_conflict_do_nothing()
+                .returning(cls.group_id)
+            )
+
+            result = session.execute(init_statement)
+            group_id = result.scalar_one_or_none()
+
+            # If the group already existed, fetch its ID
+            if group_id is None:
+                group_id = session.execute(
+                    select(cls.group_id).where(cls.name == "admins")
+                ).scalar_one()
+
+            # Grant admin permission on system resource
+            perm_statement = (
+                insert(Permissions)
+                .values(
+                    permission="admin",
+                    group_id=group_id,
+                    collection_id=None,
+                    is_system=True,
+                )
+                .on_conflict_do_nothing()
+            )
+
+            session.execute(perm_statement)
+            session.commit()
+
 
 class Permissions(CountMixin, MBDB.MatchboxBase):
     """Permissions granted to groups on resources.

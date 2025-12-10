@@ -9,7 +9,7 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
-from matchbox.common.dtos import BackendResourceType, Group, PermissionType, User
+from matchbox.common.dtos import User
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -88,11 +88,7 @@ def create_bare_scenario(
     """
     dag_testkit = TestkitDAG()
 
-    # Create admins group
-    backend.create_group(Group(name="admins", is_system=True))
-    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
-
-    # Create alice as admin and record in DAG
+    # Create alice as admin
     backend.login(User(sub="alice", email="alice@example.org"))
     backend.add_user_to_group("alice", "admins")
 

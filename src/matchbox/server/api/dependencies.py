@@ -16,11 +16,9 @@ from fastapi.security import APIKeyHeader
 
 from matchbox.common.dtos import (
     BackendResourceType,
-    Group,
     PermissionType,
     User,
 )
-from matchbox.common.exceptions import MatchboxGroupNotFoundError
 from matchbox.common.logging import get_formatter, logger
 from matchbox.server.base import (
     MatchboxDBAdapter,
@@ -99,20 +97,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         SETUP_MODE = True
     else:
         SETUP_MODE = False
-
-    # Bootstrap system admin group
-    try:
-        BACKEND.get_group("admins")
-    except MatchboxGroupNotFoundError:
-        logger.info("Bootstrapping 'admins' group")
-        BACKEND.create_group(
-            Group(name="admins", description="System administrators", is_system=True)
-        )
-        BACKEND.grant_permission(
-            group_name="admins",
-            permission=PermissionType.ADMIN,
-            resource=BackendResourceType.SYSTEM,
-        )
 
     yield
 

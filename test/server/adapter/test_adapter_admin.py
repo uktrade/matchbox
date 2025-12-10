@@ -107,6 +107,18 @@ class TestMatchboxAdminBackend:
             with pytest.raises(MatchboxGroupAlreadyExistsError):
                 self.backend.create_group(group2)
 
+    def test_default_admins(self) -> None:
+        """The admins system admin group is present by default."""
+        with self.scenario(self.backend, "bare") as _:
+            admin = self.backend.get_group("admins")
+            assert admin.name == "admins"
+            assert admin.description == "System administrators."
+            assert admin.is_system
+
+            groups = self.backend.list_groups()
+            assert len(groups) == 1
+            assert groups[0] == admin
+
     def test_list_groups(self) -> None:
         """List groups returns all groups."""
         with self.scenario(self.backend, "bare") as _:
@@ -117,13 +129,8 @@ class TestMatchboxAdminBackend:
             self.backend.create_group(group2)
 
             groups = self.backend.list_groups()
-            groups_minus_admin = [
-                g
-                for g in groups
-                if g.name != "admins"  # filter default
-            ]
-            assert len(groups_minus_admin) == 2
-            assert {g.name for g in groups_minus_admin} == {"g", "users"}
+            assert len(groups) == 3  # plus admins
+            assert {g.name for g in groups} == {"admins", "g", "users"}
 
     def test_get_group_not_found(self) -> None:
         """Get group raises error if group doesn't exist."""

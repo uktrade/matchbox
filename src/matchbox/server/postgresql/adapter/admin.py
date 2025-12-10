@@ -507,6 +507,7 @@ class MatchboxPostgresAdminMixin:
         if certain:
             MBDB.drop_database()
             PKSpace.initialise()
+            Groups.initialise()
         else:
             raise MatchboxDeletionNotConfirmed(
                 "This operation will drop the entire database and recreate it."
@@ -518,6 +519,7 @@ class MatchboxPostgresAdminMixin:
         if certain:
             MBDB.clear_database()
             PKSpace.initialise()
+            Groups.initialise()
         else:
             raise MatchboxDeletionNotConfirmed(
                 "This operation will drop all rows in the database but not the "

@@ -82,7 +82,10 @@ def create_bare_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a bare TestkitDAG scenario."""
+    """Create a bare TestkitDAG scenario.
+
+    The warehouse and backend are empty except for a single admin user, alice.
+    """
     dag_testkit = TestkitDAG()
 
     # Create admins group
@@ -92,8 +95,28 @@ def create_bare_scenario(
     # Create alice as admin and record in DAG
     backend.login(User(sub="alice", email="alice@example.org"))
     backend.add_user_to_group("alice", "admins")
-    dag_testkit.add_user(
-        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+
+    return dag_testkit
+
+
+@register_scenario("preindex")
+def create_preindex_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create a preindex TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios, but are not yet indexed.
+    """
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
     # Create collection and run
@@ -123,9 +146,15 @@ def create_index_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create an index TestkitDAG scenario."""
-    # First create the bare scenario
-    dag_testkit = create_bare_scenario(
+    """Create an index TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed in the backend.
+    """
+    # First create the preindex scenario
+    dag_testkit = create_preindex_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
@@ -151,7 +180,13 @@ def create_dedupe_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a dedupe TestkitDAG scenario."""
+    """Create a dedupe TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed and deduplicated in the backend.
+    """
     # First create the index scenario
     dag_testkit = create_index_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -201,7 +236,14 @@ def create_probabilistic_dedupe_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a probabilistic dedupe TestkitDAG scenario."""
+    """Create a probabilistic dedupe TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed and deduplicated in the backend using
+    probabilistic methodologies.
+    """
     # First create the index scenario
     dag_testkit = create_index_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -253,7 +295,13 @@ def create_link_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a link TestkitDAG scenario."""
+    """Create a link TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed, deduplicated and linked in the backend.
+    """
     # First create the dedupe scenario
     dag_testkit = create_dedupe_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -415,18 +463,16 @@ def create_alt_dedupe_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a TestkitDAG scenario with two alternative dedupers."""
-    dag_testkit = TestkitDAG()
+    """Create a TestkitDAG scenario with two alternative dedupers.
 
-    # Create admins group
-    backend.create_group(Group(name="admins", is_system=True))
-    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
+    One admin user, alice.
 
-    # Create alice as admin and record in DAG
-    backend.login(User(sub="alice", email="alice@example.org"))
-    backend.add_user_to_group("alice", "admins")
-    dag_testkit.add_user(
-        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    The warehouse contains a single table, indexed in the backend. It has
+    been deduplicated twice, by two rival proabilistic models.
+    """
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
     # Create collection and run
@@ -529,21 +575,15 @@ def create_convergent_partial_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with convergent sources.
 
-    This is where two sources index almost identically. TestkitDAG contains two
-    indexed sources with repetition, and two naive dedupe models that haven't yet
-    had their results inserted.
+    One admin user, alice.
+
+    Two sources index almost identically. TestkitDAG contains two indexed sources
+    with repetition, and two naive dedupe models that haven't yet had their
+    results inserted.
     """
-    dag_testkit = TestkitDAG()
-
-    # Create admins group
-    backend.create_group(Group(name="admins", is_system=True))
-    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
-
-    # Create alice as admin and record in DAG
-    backend.login(User(sub="alice", email="alice@example.org"))
-    backend.add_user_to_group("alice", "admins")
-    dag_testkit.add_user(
-        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
     # Create collection and run
@@ -621,6 +661,8 @@ def create_convergent_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with convergent sources, deduped.
 
+    One admin user, alice.
+
     This is where two sources index almost identically. TestkitDAG contains two
     indexed sources with repetition, and two naive dedupe models, all inserted.
     """
@@ -650,30 +692,17 @@ def create_mega_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario that produces large clusters.
 
+    One admin user, alice.
+
+    Two tables with many features are in the warehouse. They are indexed and linked
+    in the backend.
+
     Aims to produce "mega" clusters with more features than the CLI has screen rows,
     and more variations than the CLI has screen columns.
-
-    Args:
-        backend: MatchboxDBAdapter instance
-        warehouse_engine: SQLAlchemy engine for data warehouse
-        n_entities: Number of true product entities to generate
-        seed: Random seed for reproducibility
-        **kwargs: Additional arguments
-
-    Returns:
-        TestkitDAG with extensive product data and linking model
     """
-    dag_testkit = TestkitDAG()
-
-    # Create admins group
-    backend.create_group(Group(name="admins", is_system=True))
-    backend.grant_permission("admins", PermissionType.ADMIN, BackendResourceType.SYSTEM)
-
-    # Create alice as admin and record in DAG
-    backend.login(User(sub="alice", email="alice@example.org"))
-    backend.add_user_to_group("alice", "admins")
-    dag_testkit.add_user(
-        "alice", "admins", PermissionType.ADMIN, BackendResourceType.SYSTEM
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
     # Create collection and run
@@ -986,9 +1015,6 @@ def setup_scenario(
         # Thus, in _testkitdag_to_location we need to overwrite all testkits with
         # our new warehouse object
         dag_testkit = dag_testkit.model_copy(deep=True)
-
-        # Clear backend to cover tests outside scenario system
-        backend.clear(certain=True)
 
         # Restore backend and write sources to warehouse
         backend.restore(snapshot=snapshot)

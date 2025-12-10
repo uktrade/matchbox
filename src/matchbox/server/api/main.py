@@ -43,6 +43,7 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxDeletionNotConfirmed,
+    MatchboxGroupNotFoundError,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
 )
@@ -115,6 +116,20 @@ async def resolution_not_found_handler(
     """Handle resolution not found errors."""
     detail = NotFoundError(
         details=str(exc), entity=BackendResourceType.RESOLUTION
+    ).model_dump()
+    return JSONResponse(
+        status_code=404,
+        content=jsonable_encoder(detail),
+    )
+
+
+@app.exception_handler(MatchboxGroupNotFoundError)
+async def group_not_found_handler(
+    request: Request, exc: MatchboxGroupNotFoundError
+) -> JSONResponse:
+    """Handle group not found errors."""
+    detail = NotFoundError(
+        details=str(exc), entity=BackendResourceType.GROUP
     ).model_dump()
     return JSONResponse(
         status_code=404,

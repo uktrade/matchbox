@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
+from _pytest.mark.structures import ParameterSet
 from fastapi.testclient import TestClient
 
 from matchbox.client._settings import settings
@@ -86,23 +87,21 @@ def test_auth_status(
         assert result.username == username
 
 
-PROTECTED_ROUTES = [
-    pytest.param(
-        "post",
-        "/collections/default/runs/1/resolutions/name/data",
-        id="post_resolution_data",
-    ),
-    pytest.param(
-        "post", "/collections/default/runs/1/resolutions/name", id="post_resolution"
-    ),
-    pytest.param(
-        "put", "/collections/default/runs/1/resolutions/name", id="put_resolution"
-    ),
-    pytest.param(
-        "delete", "/collections/default/runs/1/resolutions/name", id="delete_resolution"
-    ),
-    pytest.param("delete", "/database", id="delete_database"),
+PROTECTED_ROUTES: list[ParameterSet] = [
+    pytest.param("get", "/admin/groups", id="router"),
+    pytest.param("post", "/collections/default/runs", id="endpoint"),
 ]
+"""Tests parameters for 'exemplar' authentication methods.
+
+We already cover the various endpoints that are protected. These parameters are
+to cover different families of authentication implementations we use, and are used 
+to check different high level authentication methods, such as JWTs.
+
+Examples of other routes we might add here would be:
+
+* Routes using the Security class
+* Routes that authenticate inline, for some reason
+"""
 
 
 @pytest.mark.parametrize(("method_name", "url"), PROTECTED_ROUTES)

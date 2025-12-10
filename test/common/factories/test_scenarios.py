@@ -15,11 +15,17 @@ from matchbox.server.base import MatchboxDBAdapter
 
 
 @pytest.mark.docker
-def test_setup_scenario_bare(
+def test_setup_scenario_preindex(
     matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
 ) -> None:
-    """Test that the bare scenario can be set up."""
-    with setup_scenario(matchbox_postgres, "bare", warehouse=sqlite_warehouse) as dag:
+    """Test that the preindex scenario can be set up.
+
+    This demonstrates basic instatiation of the warehouse, the backend,
+    and the factory system.
+    """
+    with setup_scenario(
+        matchbox_postgres, "preindex", warehouse=sqlite_warehouse
+    ) as dag:
         assert isinstance(dag, TestkitDAG)
         assert len(dag.sources) > 0
 
@@ -33,6 +39,7 @@ def test_scenario_registry() -> None:
     assert "probabilistic_dedupe" in SCENARIO_REGISTRY
     assert "alt_dedupe" in SCENARIO_REGISTRY
     assert "convergent" in SCENARIO_REGISTRY
+    assert "mega" in SCENARIO_REGISTRY
 
 
 @pytest.mark.docker

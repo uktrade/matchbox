@@ -39,7 +39,6 @@ from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
     MatchboxCollectionNotFoundError,
     MatchboxDeletionNotConfirmed,
-    MatchboxGroupNotFoundError,
     MatchboxLockError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
@@ -201,10 +200,7 @@ def get_permissions(
     collection: CollectionName,
 ) -> list[PermissionGrant]:
     """Get permissions for a collection resource."""
-    try:
-        return backend.get_permissions(collection)
-    except MatchboxCollectionNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    return backend.get_permissions(collection)
 
 
 @router.post(
@@ -217,15 +213,12 @@ def grant_permission(
     grant: PermissionGrant,
 ) -> ResourceOperationStatus:
     """Grant a permission on the system resource."""
-    try:
-        backend.grant_permission(grant.group_name, grant.permission, collection)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"{grant.permission} on system for {grant.group_name}",
-            operation=CRUDOperation.CREATE,
-        )
-    except (MatchboxGroupNotFoundError, MatchboxCollectionNotFoundError) as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    backend.grant_permission(grant.group_name, grant.permission, collection)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"{grant.permission} on system for {grant.group_name}",
+        operation=CRUDOperation.CREATE,
+    )
 
 
 @router.delete(
@@ -239,15 +232,12 @@ def revoke_permission(
     group_name: GroupName,
 ) -> ResourceOperationStatus:
     """Revoke a permission on the system resource."""
-    try:
-        backend.revoke_permission(group_name, permission, collection)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"{permission} on system for {group_name}",
-            operation=CRUDOperation.DELETE,
-        )
-    except (MatchboxGroupNotFoundError, MatchboxCollectionNotFoundError) as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    backend.revoke_permission(group_name, permission, collection)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"{permission} on system for {group_name}",
+        operation=CRUDOperation.DELETE,
+    )
 
 
 # Run management endpoints

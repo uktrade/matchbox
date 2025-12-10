@@ -215,6 +215,7 @@ class BackendResourceType(StrEnum):
     RESOLUTION = "resolution"
     CLUSTER = "cluster"
     USER = "user"
+    GROUP = "group"
     JUDGEMENT = "judgement"
     SYSTEM = "system"
 

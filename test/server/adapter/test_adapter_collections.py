@@ -236,7 +236,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_index_new_source(self) -> None:
         """Test that indexing a new source works."""
-        with self.scenario(self.backend, "bare") as dag_testkit:
+        with self.scenario(self.backend, "preindex") as dag_testkit:
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
 
             assert self.backend.model_clusters.count() == 0
@@ -338,7 +338,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_index_empty_source(self) -> None:
         """Can insert and retrieve empty source data"""
-        with self.scenario(self.backend, "bare") as dag_testkit:
+        with self.scenario(self.backend, "preindex") as dag_testkit:
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn")
             crn_testkit.data_hashes = crn_testkit.data_hashes.slice(length=0)
             crn_testkit.fake_run()
@@ -358,7 +358,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_index_different_resolution_same_hashes(self) -> None:
         """Test that indexing data with the same hashes but different sources works."""
-        with self.scenario(self.backend, "bare") as dag_testkit:
+        with self.scenario(self.backend, "preindex") as dag_testkit:
             # Prepare original source
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
             # Create new source with same hashes

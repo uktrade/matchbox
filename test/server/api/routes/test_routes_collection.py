@@ -242,14 +242,12 @@ def test_permission_collection_not_found(
     test_client, mock_backend, _ = api_client_and_mocks
     # Auth passes, but resource check fails inside service
     mock_backend.check_permission.return_value = True
-    mock_backend.get_permissions.side_effect = MatchboxCollectionNotFoundError(
-        "Missing"
-    )
+    mock_backend.get_permissions.side_effect = MatchboxCollectionNotFoundError()
 
     response = test_client.get("/collections/missing/permissions")
 
     assert response.status_code == 404
-    assert "Missing" in response.json()
+    assert response.json()["entity"] == BackendResourceType.COLLECTION
 
 
 # Run management tests

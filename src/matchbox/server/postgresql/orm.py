@@ -450,7 +450,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         ).scalar_one_or_none()
 
         if not run_obj:
-            raise MatchboxRunNotFoundError(number=path.run)
+            raise MatchboxRunNotFoundError(run_id=path.run)
 
         # Check if resolution already exists within run
         existing_resolutions: Resolutions = run_obj.resolutions

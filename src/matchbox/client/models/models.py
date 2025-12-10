@@ -333,7 +333,7 @@ class Model:
     def download_results(self) -> ModelResults:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(name=self.name)
-        return ModelResults(probabilities=results, metadata=self.config)
+        return ModelResults(probabilities=results)
 
     def query(self, *sources: Source, **kwargs: Any) -> Query:
         """Generate a query for this model."""

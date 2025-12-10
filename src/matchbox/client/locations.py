@@ -153,7 +153,8 @@ class Location(ABC):
         """
         ...
 
-    def from_config(config: LocationConfig) -> Self:
+    @classmethod
+    def from_config(cls, config: LocationConfig) -> Self:
         """Initialise location from a location config."""
         LocClass = location_type_to_class(config.type)
         return LocClass(name=config.name)

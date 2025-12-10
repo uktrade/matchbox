@@ -159,6 +159,7 @@ class SplinkSettings(LinkerSettings):
         return self
 
     @field_validator("linker_settings", mode="before")
+    @classmethod
     def load_linker_settings(cls, value: str | SettingsCreator) -> SettingsCreator:
         """Load serialised settings into SettingsCreator."""
         if isinstance(value, str):

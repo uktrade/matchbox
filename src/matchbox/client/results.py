@@ -1,7 +1,7 @@
 """Objects representing the results of running a model client-side."""
 
 from collections.abc import Hashable
-from typing import ParamSpec, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, Self, TypeVar
 
 import polars as pl
 from pydantic import ConfigDict
@@ -11,6 +11,11 @@ from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.hash import IntMap
 from matchbox.common.logging import logger
 from matchbox.common.transform import DisjointSet, to_clusters
+
+if TYPE_CHECKING:
+    from matchbox.client.dags import DAG
+else:
+    DAG = Any
 
 T = TypeVar("T", bound=Hashable)
 P = ParamSpec("P")
@@ -184,6 +189,15 @@ class ResolvedMatches:
         if len(sources) != len(query_results):
             raise ValueError("Mismatched length of sources and query results.")
 
+    @classmethod
+    def from_dump(cls, cluster_key_map: pl.DataFrame, dag: DAG) -> Self:
+        """Initialise ResolvedMatches from concatenated dataframe representation."""
+        partitioned = cluster_key_map.partition_by("source")
+        sources = [dag.get_source(p["source"][0]) for p in partitioned]
+        query_results = [p.drop("source") for p in partitioned]
+
+        return ResolvedMatches(sources=sources, query_results=query_results)
+
     def as_lookup(self) -> pl.DataFrame:
         """Return lookup across matchbox ID and source keys."""
         lookup = (
@@ -208,7 +222,7 @@ class ResolvedMatches:
 
         return lookup
 
-    def as_cluster_key_map(self) -> pl.DataFrame:
+    def as_dump(self) -> pl.DataFrame:
         """Return mapping across root, leaf, source and keys."""
         concat_dfs = []
         for source, query_res in zip(self.sources, self.query_results, strict=True):
@@ -219,7 +233,7 @@ class ResolvedMatches:
 
     def as_leaf_sets(self) -> list[list[int]]:
         """Return grouping of lead IDs."""
-        cluster_key_map = self.as_cluster_key_map()
+        cluster_key_map = self.as_dump()
         groups = cluster_key_map.group_by("id").agg("leaf_id")["leaf_id"].to_list()
         return [sorted(set(g)) for g in groups]
 
@@ -232,10 +246,14 @@ class ResolvedMatches:
                 Only applies to index fields - key fields are not affected.
         """
         cluster_rows = []
+        key_cols = []
         for source, query_res in zip(self.sources, self.query_results, strict=True):
             # For each source, get rows for selected cluster
             source_keys = query_res.filter(pl.col("id") == cluster_id)["key"].to_list()
+            if not source_keys:
+                continue
 
+            key_cols.append(source.qualified_key)
             # Determine column names of output dataframe
             rename_keys = {source.key_field.name: source.qualified_key}
             if not merge_fields:
@@ -255,9 +273,10 @@ class ResolvedMatches:
             cluster_rows.append(source_data)
 
         # Coerce fields to their common super-type
+        if not cluster_rows:
+            raise KeyError(f"Cluster {cluster_id} not available")
         source_concat = pl.concat(cluster_rows, how="diagonal_relaxed")
         # Re-order columns to have keys at the beginning
-        key_cols = [source.qualified_key for source in self.sources]
         remaining_cols = [col for col in source_concat.columns if col not in key_cols]
 
         return source_concat.select(*key_cols, *remaining_cols)

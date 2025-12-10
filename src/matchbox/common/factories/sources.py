@@ -109,6 +109,7 @@ class SourceTestkit(BaseModel):
     )
 
     @field_validator("data")
+    @classmethod
     def cast_table(cls, value: pa.Table) -> pa.Table:
         """Ensure that the data matches the query schema."""
         for col in SCHEMA_QUERY.names:

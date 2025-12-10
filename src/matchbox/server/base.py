@@ -36,7 +36,7 @@ from matchbox.common.dtos import (
     UploadStage,
     User,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.logging import LogLevelType
 
 if TYPE_CHECKING:
@@ -777,24 +777,15 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
-    def get_judgements(self) -> tuple[Table, Table]:
+    def get_judgements(self, tag: str | None = None) -> tuple[Table, Table]:
         """Retrieves all evaluation judgements.
+
+        Args:
+            tag: optional string by which to filter judgements
 
         Returns:
             Two PyArrow tables with the judgments and their expansion.
             See `matchbox.common.arrow` for information on the schema.
-        """
-        ...
-
-    @abstractmethod
-    def compare_models(self, paths: list[ModelResolutionPath]) -> ModelComparison:
-        """Compare metrics of models based on evaluation data.
-
-        Args:
-            paths: List of paths of model resolutions to be compared.
-
-        Returns:
-            A model comparison object, listing metrics for each model.
         """
         ...
 

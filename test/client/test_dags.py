@@ -52,7 +52,11 @@ def test_dag_list(matchbox_api: MockRouter) -> None:
 @patch.object(Model, "run")
 @patch.object(Source, "sync")
 @patch.object(Model, "sync")
+@patch.object(Source, "clear_data")
+@patch.object(Model, "clear_data")
 def test_dag_run_and_sync(
+    model_clear_mock: Mock,
+    source_clear_mock: Mock,
     model_sync_mock: Mock,
     source_sync_mock: Mock,
     model_run_mock: Mock,
@@ -113,6 +117,13 @@ def test_dag_run_and_sync(
     assert source_sync_mock.call_count == 3
     assert model_run_mock.call_count == 3
     assert model_sync_mock.call_count == 3
+    source_clear_mock.assert_not_called()
+    model_clear_mock.assert_not_called()
+
+    # Running DAG destroys intermediate results
+    dag.run_and_sync(low_memory=True)
+    assert source_clear_mock.call_count == 3
+    assert model_clear_mock.call_count == 3
 
 
 def test_dags_missing_dependency(sqlite_warehouse: Engine) -> None:

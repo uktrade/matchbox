@@ -1,3 +1,4 @@
+import tempfile
 from collections.abc import Callable
 
 import polars as pl
@@ -11,19 +12,100 @@ from sqlalchemy import Engine
 from matchbox.client.dags import DAG
 from matchbox.client.eval import get_samples
 from matchbox.client.models.linkers import DeterministicLinker
-from matchbox.common.arrow import SCHEMA_EVAL_SAMPLES, table_to_buffer
+from matchbox.client.results import ResolvedMatches
+from matchbox.common.arrow import (
+    SCHEMA_EVAL_SAMPLES,
+    SCHEMA_QUERY_WITH_LEAVES,
+    table_to_buffer,
+)
 from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run, User
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
 
 
-def test_get_samples(
+def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
+    """We can sample from a parquet dump."""
+    dag = DAG("companies")
+    foo = dag.source(
+        **source_from_tuple(
+            name="foo",
+            engine=sqlite_in_memory_warehouse,
+            data_keys=["1", "2", "2b", "3"],
+            data_tuple=(
+                {"field_a": 10},
+                {"field_a": 20},
+                {"field_a": 20},
+                {"field_a": 30},
+            ),
+        )
+        .write_to_location()
+        .into_dag()
+    )
+    bar = dag.source(
+        **source_from_tuple(
+            name="bar",
+            engine=sqlite_in_memory_warehouse,
+            data_keys=["a", "b", "c", "d"],
+            data_tuple=(
+                {"field_a": "1x", "field_b": "1y"},
+                {"field_a": "2x", "field_b": "2y"},
+                {"field_a": "3x", "field_b": "3y"},
+                {"field_a": "4x", "field_b": "4y"},
+            ),
+        )
+        .write_to_location()
+        .into_dag()
+    )
+
+    # Both foo and bar have a record that's not linked
+    # Foo has two keys for one leaf ID
+    # Foo and bar have links across; bar also has link within
+    foo_query_data = pl.DataFrame(
+        [
+            {"id": 14, "leaf_id": 1, "key": "1"},
+            {"id": 2, "leaf_id": 2, "key": "2"},
+            {"id": 2, "leaf_id": 2, "key": "2b"},
+            {"id": 356, "leaf_id": 3, "key": "3"},
+        ],
+        schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
+    )
+
+    bar_query_data = pl.DataFrame(
+        [
+            {"id": 14, "leaf_id": 4, "key": "a"},
+            {"id": 356, "leaf_id": 5, "key": "b"},
+            {"id": 356, "leaf_id": 6, "key": "c"},
+            {"id": 7, "leaf_id": 7, "key": "d"},
+        ],
+        schema=pl.Schema(SCHEMA_QUERY_WITH_LEAVES),
+    )
+
+    rm = ResolvedMatches(
+        sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+    )
+
+    # Create a temporary file with .pq suffix
+    with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
+        # Write the parquet data to the temporary file
+        rm.as_dump().write_parquet(tmp_file.name)
+
+        # Use the temporary file in get_samples
+        samples = get_samples(
+            n=2, dag=dag, user_name="alice", sample_file=tmp_file.name
+        )
+        assert len(samples) == 2
+        possible_clusters = set(foo_query_data["id"]) | set(bar_query_data["id"])
+        assert set(samples.keys()) <= possible_clusters
+
+
+def test_get_samples_remote(
     matchbox_api: MockRouter,
     sqlite_warehouse: Engine,
     sqlite_in_memory_warehouse: Engine,
     env_setter: Callable[[str, str], None],
 ) -> None:
+    """We can sample from a resolution on the server."""
     # Make dummmy data
     user = User(user_name="alice", email="alice@example.com")
 

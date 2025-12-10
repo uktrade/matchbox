@@ -51,7 +51,7 @@ from matchbox.common.dtos import (
     UploadStage,
     User,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxDataNotFound,
@@ -66,7 +66,7 @@ from matchbox.common.exceptions import (
     MatchboxUserNotFoundError,
 )
 from matchbox.common.hash import hash_to_base64
-from matchbox.common.logging import logger, profile
+from matchbox.common.logging import logger, profile_time
 
 URLEncodeHandledType = str | int | float | bytes | StrEnum
 
@@ -423,7 +423,7 @@ def update_resolution(
     return ResourceOperationStatus.model_validate(res.json())
 
 
-@profile(kwarg="path")
+@profile_time(kwarg="path")
 @http_retry
 def get_resolution(path: ResolutionPath) -> Resolution | None:
     """Get a resolution from Matchbox."""
@@ -436,7 +436,7 @@ def get_resolution(path: ResolutionPath) -> Resolution | None:
     return Resolution.model_validate(res.json())
 
 
-@profile(kwarg="path")
+@profile_time(kwarg="path")
 @http_retry
 def set_data(path: ResolutionPath, data: pl.DataFrame | Table) -> None:
     """Upload source hashes or model results to server."""
@@ -483,7 +483,7 @@ def get_resolution_stage(path: ResolutionPath) -> UploadStage:
     return upload_info.stage
 
 
-@profile(kwarg="path")
+@profile_time(kwarg="path")
 @http_retry
 def get_results(path: ModelResolutionPath) -> Table:
     """Get model results from Matchbox."""
@@ -535,16 +535,6 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_name: str) -> 
 
 
 @http_retry
-def compare_models(
-    resolutions: list[ModelResolutionPath],
-) -> ModelComparison:
-    """Get a model comparison for a set of model resolutions."""
-    res = CLIENT.post("/eval/compare", json=[r.model_dump() for r in resolutions])
-    scores = {resolution: tuple(pr) for resolution, pr in res.json().items()}
-    return scores
-
-
-@http_retry
 def send_eval_judgement(judgement: Judgement) -> None:
     """Send judgements to the server."""
     logger.debug(
@@ -555,10 +545,10 @@ def send_eval_judgement(judgement: Judgement) -> None:
 
 
 @http_retry
-def download_eval_data() -> tuple[Table, Table]:
+def download_eval_data(tag: str | None = None) -> tuple[Table, Table]:
     """Download all judgements from the server."""
     logger.debug("Retrieving all judgements.")
-    res = CLIENT.get("/eval/judgements")
+    res = CLIENT.get("/eval/judgements", params=url_params({"tag": tag}))
 
     zip_bytes = BytesIO(res.content)
     with zipfile.ZipFile(zip_bytes, "r") as zip_file:
@@ -593,8 +583,7 @@ def count_backend_items(
     log_prefix = "Backend count"
     logger.debug("Counting", prefix=log_prefix)
 
-    params = {"entity": entity} if entity else {}
-    res = CLIENT.get("/database/count", params=url_params(params))
+    res = CLIENT.get("/database/count", params=url_params({"entity": entity}))
 
     counts = res.json()
     logger.debug(f"Counts: {counts}", prefix=log_prefix)

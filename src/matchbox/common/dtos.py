@@ -6,7 +6,6 @@ import textwrap
 from collections.abc import Iterable
 from enum import StrEnum
 from importlib.metadata import version
-from json import JSONDecodeError
 from typing import Annotated, Any, Self, TypeAlias
 
 import polars as pl
@@ -598,7 +597,7 @@ class ModelConfig(BaseModel):
         """Ensure that the model settings is valid JSON."""
         try:
             isinstance(json.loads(value), dict)
-        except JSONDecodeError as e:
+        except json.JSONDecodeError as e:
             raise ValueError("Model settings are not valid JSON") from e
         return value
 

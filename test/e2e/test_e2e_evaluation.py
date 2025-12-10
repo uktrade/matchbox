@@ -1,13 +1,13 @@
+import tempfile
 from collections.abc import Generator
 
 import pytest
 from httpx import Client
 from sqlalchemy import Engine, text
 
-from matchbox.client import _handler
 from matchbox.client.cli.eval import EntityResolutionApp
 from matchbox.client.dags import DAG
-from matchbox.client.eval import compare_models
+from matchbox.client.eval import EvalData
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.common.factories.sources import (
@@ -164,27 +164,7 @@ class TestE2EModelEvaluation:
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 
-    @pytest.mark.asyncio
-    async def test_evaluation_workflow(self) -> None:
-        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
-
-        This test focuses on the full data flow through the system with real warehouse
-        data, multiple DAGs, and model comparison. UI interaction details are tested
-        separately in unit/integration tests.
-        """
-        # Load DAG from server with warehouse location
-        dag: DAG = (
-            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
-        )
-
-        # Create app and verify it can load samples from real data
-        app = EntityResolutionApp(
-            resolution=dag.final_step.resolution_path.name,
-            num_samples=2,
-            user="alice",
-            dag=dag,
-        )
-
+    async def in_app_evaluation(self, app: EntityResolutionApp) -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
 
@@ -197,29 +177,77 @@ class TestE2EModelEvaluation:
             for i in range(len(session.item.get_unique_record_groups())):
                 session.assignments[i] = "a"  # Assign all to same cluster
 
-            initial_judgements, _ = _handler.download_eval_data()
+            initial_judgements = EvalData().judgements
             initial_count = len(initial_judgements)
 
             await app.action_submit()
 
-            final_judgements, _ = _handler.download_eval_data()
+            final_judgements = EvalData().judgements
             assert len(final_judgements) == initial_count + 1, (
                 "Judgement should flow through to backend"
             )
 
-        # Test model comparison functionality with both DAGs
-        comparison = compare_models(
-            [
-                dag.final_step.resolution_path,
-                self.dag2.final_step.resolution_path,
-            ]
+    @pytest.mark.asyncio
+    async def test_evaluation_workflow_server(self) -> None:
+        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
+
+        Samples clusters from the server.
+
+        This test focuses on the full data flow through the system with real warehouse
+        data, multiple DAGs, and model comparison. UI interaction details are tested
+        separately in unit/integration tests.
+        """
+        # Load DAG from server with warehouse location
+        dag: DAG = (
+            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
         )
-        expected_keys = {
-            str(dag.final_step.resolution_path),
-            str(self.dag2.final_step.resolution_path),
-        }
-        assert expected_keys.issubset(comparison.keys()), (
-            "Comparison should include both models"
+
+        # Create app and verify it can load samples from real data
+        app = EntityResolutionApp(
+            resolution=dag.final_step.resolution_path,
+            num_samples=2,
+            session_tag="eval_session1",
+            user="alice",
+            dag=dag,
         )
-        for key in expected_keys:
-            assert len(comparison[key]) == 2, "Each model should have precision/recall"
+
+        await self.in_app_evaluation(app)
+
+        # Can filter judgements by tag
+        assert len(EvalData("eval_session1").judgements)
+        assert not len(EvalData("mispelled").judgements)
+
+    @pytest.mark.asyncio
+    async def test_evaluation_workflow_local(self) -> None:
+        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
+
+        Generates a local sample file.
+
+        This test focuses on the full data flow through the system with real warehouse
+        data, multiple DAGs, and model comparison. UI interaction details are tested
+        separately in unit/integration tests.
+        """
+        # Load DAG from server with warehouse location
+        dag: DAG = (
+            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
+        )
+        rm = dag.resolve()
+
+        with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
+            # Write the parquet data to the temporary file
+            rm.as_dump().write_parquet(tmp_file.name)
+
+            # Create app and verify it can load samples
+            app = EntityResolutionApp(
+                num_samples=2,
+                session_tag="eval_session1",
+                user="alice",
+                dag=dag,
+                sample_file=tmp_file.name,
+            )
+
+            await self.in_app_evaluation(app)
+
+        # Can filter judgements by tag
+        assert len(EvalData("eval_session1").judgements)
+        assert not len(EvalData("mispelled").judgements)

@@ -28,8 +28,8 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.logging import logger, profile
-from matchbox.common.transform import truth_int_to_float
+from matchbox.common.logging import logger, profile_time
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -197,7 +197,7 @@ class DAG:
                 right_query=Query.from_config(resolution.config.right_query, dag=self)
                 if resolution.config.right_query
                 else None,
-                truth=truth_int_to_float(resolution.truth),
+                truth=threshold_int_to_float(resolution.truth),
             )
         else:
             raise ValueError(f"Unknown resolution type {resolution.resolution_type}")
@@ -445,8 +445,15 @@ class DAG:
         self,
         start: str | None = None,
         finish: str | None = None,
+        low_memory: bool = False,
     ) -> None:
-        """Run entire DAG and send results to server."""
+        """Run entire DAG and send results to server.
+
+        Args:
+            start: name of first node to run
+            finish: name of last node to run
+            low_memory: whether to delete data for each node after it is run
+        """
         # Determine order of execution steps
         root_nodes = self.final_steps
 
@@ -499,6 +506,9 @@ class DAG:
                 logger.error(f"❌ {node.name} failed: {e}")
                 raise e
             status[step_name] = DAGNodeExecutionStatus.DONE
+
+            if low_memory:
+                node.clear_data()
         logger.info("\n" + self.draw(status=status))
 
     def set_default(self) -> None:
@@ -518,7 +528,7 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
-        threshold: int | None = None,
+        threshold: float | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
 
@@ -528,7 +538,7 @@ class DAG:
             key: The value to match from the source. Usually a primary key
             threshold (optional): The threshold to use for creating clusters.
                 If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
+                If a float, uses that threshold for the specified resolution, and the
                 resolution's cached thresholds for its ancestors
 
         Returns:
@@ -546,6 +556,10 @@ class DAG:
             )
             ```
         """
+        if threshold:
+            if not isinstance(threshold, float):
+                raise ValueError("If passed, threshold must be a float")
+            threshold = threshold_float_to_int(threshold)
         matches = _handler.match(
             targets=[
                 ResolutionPath(name=target, collection=self.name, run=self.run)
@@ -561,12 +575,13 @@ class DAG:
         # If no matches, _handler will raise
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
-    @profile(kwarg="node")
+    @profile_time(kwarg="node")
     def resolve(
         self,
         node: ResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
+        threshold: float | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
@@ -575,7 +590,15 @@ class DAG:
                 If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
+            threshold (optional): The threshold to use for creating clusters.
+                If None, uses the resolutions' default threshold
+                If a float, uses that threshold for the specified resolution, and the
+                resolution's cached thresholds for its ancestors
         """
+        if threshold:
+            if not isinstance(threshold, float):
+                raise ValueError("If passed, threshold must be a float")
+            threshold = threshold_float_to_int(threshold)
         point_of_truth = self.nodes[node] if node else self.final_step
 
         available_sources = {
@@ -610,6 +633,7 @@ class DAG:
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
                         return_leaf_id=True,
+                        threshold=threshold,
                     )
                 )
             )

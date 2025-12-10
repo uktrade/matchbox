@@ -19,7 +19,7 @@ from matchbox.client.cli.eval.widgets.styling import get_group_style
 from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
 from matchbox.client.eval import EvaluationItem, create_judgement, get_samples
-from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath
+from matchbox.common.dtos import ModelResolutionPath
 from matchbox.common.exceptions import MatchboxClientSettingsException
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,8 @@ class EntityResolutionApp(App):
     resolution: ModelResolutionPath
     user_name: str
     dag: DAG
+    session_tag: str | None
+    sample_file: str | None
     show_help: bool
 
     queue: EvaluationQueue
@@ -117,10 +119,12 @@ class EntityResolutionApp(App):
 
     def __init__(
         self,
-        resolution: ModelResolutionName,
         user: str,
         num_samples: int = 5,
+        resolution: ModelResolutionPath | None = None,
         dag: DAG | None = None,
+        session_tag: str | None = None,
+        sample_file: str | None = None,
         show_help: bool = False,
         scroll_debounce_delay: float | None = 0.3,
     ) -> None:
@@ -131,19 +135,29 @@ class EntityResolutionApp(App):
             num_samples: Number of clusters to sample for evaluation
             user: Username for authentication (overrides settings)
             dag: Pre-loaded DAG with warehouse location attached
+            session_tag: String to use for tagging judgements
+            sample_file: Path to pre-compiled sample file.
+                If set, ignores resolutions.
             show_help: Whether to show help on start
             scroll_debounce_delay: Delay before updating column headers after scroll.
                 Set to None to disable debouncing (useful for tests).
         """
         super().__init__()
 
-        self.queue = EvaluationQueue()
-        self.sample_limit = num_samples
+        if not (resolution or sample_file):
+            raise ValueError("Either a resolution or a sample file must be set")
+
+        self.resolution = resolution
         self.user_name = user
+        self.sample_limit = num_samples
         self.dag = dag
-        self.resolution = dag.get_model(resolution).resolution_path
+        self.session_tag = session_tag
+        self.sample_file = sample_file
+
         self.show_help = show_help
         self._scroll_debounce_delay = scroll_debounce_delay
+
+        self.queue = EvaluationQueue()
 
     # Lifecycle methods
     def compose(self) -> ComposeResult:
@@ -323,9 +337,10 @@ class EntityResolutionApp(App):
         try:
             new_samples_dict = get_samples(
                 n=needed,
-                resolution=self.resolution.name,
+                resolution=self.resolution.name if self.resolution else None,
                 user_name=self.user_name,
                 dag=self.dag,
+                sample_file=self.sample_file,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to fetch samples: {type(e).__name__}: {e}")
@@ -371,7 +386,10 @@ class EntityResolutionApp(App):
             if self.user_name is None:
                 raise RuntimeError("User name is not set")
             judgement = create_judgement(
-                current.item, current.assignments, self.user_name
+                item=current.item,
+                assignments=current.assignments,
+                user_name=self.user_name,
+                tag=self.session_tag,
             )
             _handler.send_eval_judgement(judgement)
         except Exception as exc:

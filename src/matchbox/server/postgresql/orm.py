@@ -450,7 +450,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         ).scalar_one_or_none()
 
         if not run_obj:
-            raise MatchboxRunNotFoundError(number=path.run)
+            raise MatchboxRunNotFoundError(run_id=path.run)
 
         # Check if resolution already exists within run
         existing_resolutions: Resolutions = run_obj.resolutions
@@ -1064,6 +1064,7 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     shown_cluster_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
     )
+    tag: Mapped[str] = mapped_column(TEXT, nullable=True)
     timestamp: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Relationships

@@ -82,6 +82,7 @@ jobs:
         with:
           tag: development
           name: Development
+          immutableCreate: true
           prerelease: true
           body: |
             This is a development build, usually from the latest main branch. 

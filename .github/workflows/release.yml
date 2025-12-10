@@ -205,4 +205,5 @@ jobs:
         with:
           tag: ${{ needs.build.outputs.tag }}
           name: ${{ needs.build.outputs.tag }}
+          immutableCreate: true
           generateReleaseNotes: true

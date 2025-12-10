@@ -12,6 +12,7 @@ from matchbox.common.dtos import (
     CollectionName,
     Group,
     GroupName,
+    PermissionGrant,
     PermissionType,
     User,
 )
@@ -383,10 +384,9 @@ class TestMatchboxAdminBackend:
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "admin"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "admin", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     @pytest.mark.parametrize(
         ("granted_permission", "can_read", "can_write", "can_admin"),
@@ -442,10 +442,9 @@ class TestMatchboxAdminBackend:
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_grant_permission(
         self, resource: str | BackendResourceType, scenario: str
@@ -462,23 +461,19 @@ class TestMatchboxAdminBackend:
             )
 
             # Verify permission was granted
+            expected_permission = PermissionGrant(
+                group_name="g", permission=PermissionType.ADMIN
+            )
+
             permissions = self.backend.get_permissions(resource)
-            permissions_minus_admin = [
-                p
-                for p in permissions
-                if p.group_name != "admins"  # filter default
-            ]
-            assert len(permissions_minus_admin) == 1
-            assert permissions_minus_admin[0].group_name == "g"
-            assert permissions_minus_admin[0].permission == PermissionType.ADMIN
+            assert expected_permission in permissions
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_grant_permission_idempotent(
         self, resource: str | BackendResourceType, scenario: str
@@ -500,20 +495,14 @@ class TestMatchboxAdminBackend:
             )
 
             permissions = self.backend.get_permissions(resource)
-            permissions_minus_admin = [
-                p
-                for p in permissions
-                if p.group_name != "admins"  # filter default
-            ]
-            assert len(permissions_minus_admin) == 1
+            assert len(set(permissions)) == len(permissions)
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_revoke_permission(
         self, resource: str | BackendResourceType, scenario: str
@@ -536,21 +525,19 @@ class TestMatchboxAdminBackend:
             )
 
             # Verify permission was revoked
+            expected_permission = PermissionGrant(
+                group_name="g", permission=PermissionType.ADMIN
+            )
+
             permissions = self.backend.get_permissions(resource)
-            permissions_minus_admin = [
-                p
-                for p in permissions
-                if p.group_name != "admins"  # filter default
-            ]
-            assert len(permissions_minus_admin) == 0
+            assert expected_permission not in permissions
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_check_permission_granted(
         self, resource: str | BackendResourceType, scenario: str
@@ -578,10 +565,9 @@ class TestMatchboxAdminBackend:
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "admin"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "admin", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_check_permission_denied(
         self, resource: str | BackendResourceType, scenario: str
@@ -621,29 +607,34 @@ class TestMatchboxAdminBackend:
                 )
 
     @pytest.mark.parametrize(
-        ("resource", "scenario"),
+        ("resource", "scenario", "expected_permissions"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
-            ("collection", "dedupe"),
+            pytest.param(
+                BackendResourceType.SYSTEM,
+                "bare",
+                [PermissionGrant(group_name="admins", permission=PermissionType.ADMIN)],
+                id="system",
+            ),
+            pytest.param("collection", "dedupe", [], id="collection"),
         ],
         ids=["system", "collection"],
     )
     def test_get_permissions_empty(
-        self, resource: str | BackendResourceType, scenario: str
+        self,
+        resource: str | BackendResourceType,
+        scenario: str,
+        expected_permissions: list[PermissionGrant],
     ) -> None:
         """Get permissions returns empty list when no permissions granted."""
         with self.scenario(self.backend, scenario) as _:
             permissions = self.backend.get_permissions(resource)
-            permissions_minus_admin = [
-                p for p in permissions if p.group_name != "admins"
-            ]
-            assert permissions_minus_admin == []
+            assert permissions == expected_permissions
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
         [
-            (BackendResourceType.SYSTEM, "bare"),
-            ("collection", "dedupe"),
+            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
         ids=["system", "collection"],
     )
@@ -669,14 +660,7 @@ class TestMatchboxAdminBackend:
             )
 
             permissions = self.backend.get_permissions(resource)
-            permissions_minus_admin = [
-                p
-                for p in permissions
-                if p.group_name != "admins"  # filter default
-            ]
-            assert len(permissions_minus_admin) == 2
-
-            perm_dict = {p.group_name: p.permission for p in permissions_minus_admin}
+            perm_dict = {p.group_name: p.permission for p in permissions}
             assert perm_dict["readers"] == PermissionType.READ
             assert perm_dict["writers"] == PermissionType.WRITE
 

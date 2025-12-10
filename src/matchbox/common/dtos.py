@@ -286,6 +286,8 @@ class PermissionGrant(BaseModel):
     Resource context should always be supplied.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     group_name: GroupName
     permission: PermissionType
 

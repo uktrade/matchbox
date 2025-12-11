@@ -9,7 +9,7 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
-from matchbox.common.dtos import User
+from matchbox.common.dtos import GroupName, PermissionGrant, PermissionType, User
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -135,8 +135,18 @@ def create_preindex_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
+        PermissionGrant(
+            group_name=GroupName("public"), permission=PermissionType.WRITE
+        ),
+    ]
+
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
@@ -491,8 +501,18 @@ def create_alt_dedupe_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
+        PermissionGrant(
+            group_name=GroupName("public"), permission=PermissionType.WRITE
+        ),
+    ]
+
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
@@ -602,8 +622,18 @@ def create_convergent_partial_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
+        PermissionGrant(
+            group_name=GroupName("public"), permission=PermissionType.WRITE
+        ),
+    ]
+
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
@@ -721,8 +751,18 @@ def create_mega_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
+        PermissionGrant(
+            group_name=GroupName("public"), permission=PermissionType.WRITE
+        ),
+    ]
+
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # ===== FEATURES WITH VARIATIONS (4 string features, 1 variation each) =====

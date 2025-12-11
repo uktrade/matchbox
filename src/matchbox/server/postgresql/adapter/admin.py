@@ -39,7 +39,7 @@ from matchbox.server.postgresql.orm import (
     UserGroups,
     Users,
 )
-from matchbox.server.postgresql.utils.db import dump, restore
+from matchbox.server.postgresql.utils.db import dump, grant_permission, restore
 
 
 class MatchboxPostgresAdminMixin:
@@ -403,65 +403,13 @@ class MatchboxPostgresAdminMixin:
         resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
     ) -> None:
         with MBDB.get_session() as session:
-            # Get group
-            group = session.scalar(select(Groups).where(Groups.name == group_name))
-            if not group:
-                raise MatchboxGroupNotFoundError(f"Group '{group_name}' not found")
-
-            if resource == BackendResourceType.SYSTEM:
-                # Grant system permission
-                # Check if already exists
-                existing = session.scalar(
-                    select(Permissions).where(
-                        and_(
-                            Permissions.group_id == group.group_id,
-                            Permissions.permission == permission,
-                            Permissions.is_system == True,  # noqa: E712
-                        )
-                    )
-                )
-
-                if not existing:
-                    new_permission = Permissions(
-                        group_id=group.group_id,
-                        permission=permission,
-                        is_system=True,
-                    )
-                    session.add(new_permission)
-            else:
-                # Grant collection permission
-                collection = session.scalar(
-                    select(Collections).where(Collections.name == resource)
-                )
-                if not collection:
-                    raise MatchboxCollectionNotFoundError(name=resource)
-
-                # Check if already exists
-                existing = session.scalar(
-                    select(Permissions).where(
-                        and_(
-                            Permissions.group_id == group.group_id,
-                            Permissions.permission == permission,
-                            Permissions.collection_id == collection.collection_id,
-                        )
-                    )
-                )
-
-                if not existing:
-                    new_permission = Permissions(
-                        group_id=group.group_id,
-                        permission=permission,
-                        collection_id=collection.collection_id,
-                    )
-                    session.add(new_permission)
-
-            session.commit()
-
-            logger.info(
-                f"Granted {permission} permission on '{resource}' "
-                f"to group '{group_name}'",
-                prefix="Grant permission",
+            grant_permission(
+                session=session,
+                group_name=group_name,
+                permission=permission,
+                resource=resource,
             )
+            session.commit()
 
     def revoke_permission(  # noqa: D102
         self,

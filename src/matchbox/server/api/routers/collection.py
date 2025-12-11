@@ -110,7 +110,6 @@ def get_collection(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(RequireCollectionWrite)],
     status_code=status.HTTP_201_CREATED,
     summary="Create a new collection",
     description="Create a new collection with the specified name.",
@@ -118,10 +117,14 @@ def get_collection(
 def create_collection(
     backend: BackendDependency,
     collection: CollectionName,
+    permissions: list[PermissionGrant],
 ) -> ResourceOperationStatus:
     """Create a new collection."""
     try:
-        backend.create_collection(name=collection)
+        backend.create_collection(
+            name=collection,
+            permissions=permissions,
+        )
         return ResourceOperationStatus(
             success=True,
             target=f"Collection {collection}",

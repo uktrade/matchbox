@@ -1,7 +1,6 @@
 """Test the backend adapter's admin functions."""
 
 from functools import partial
-from typing import Literal
 
 import pytest
 from sqlalchemy import Engine
@@ -9,7 +8,6 @@ from test.fixtures.db import BACKENDS
 
 from matchbox.common.dtos import (
     BackendResourceType,
-    CollectionName,
     Group,
     GroupName,
     PermissionGrant,
@@ -452,9 +450,9 @@ class TestMatchboxAdminBackend:
     # Permissions
 
     @pytest.mark.parametrize(
-        ("resource", "scenario"),
+        ("resource_type", "scenario"),
         [
-            pytest.param(BackendResourceType.SYSTEM, "admin", id="system"),
+            pytest.param("system", "admin", id="system"),
             pytest.param("collection", "dedupe", id="collection"),
         ],
     )
@@ -469,7 +467,7 @@ class TestMatchboxAdminBackend:
     )
     def test_permission_hierarchy(
         self,
-        resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
+        resource_type: str,
         scenario: str,
         granted_permission: PermissionType,
         can_read: bool,
@@ -478,6 +476,19 @@ class TestMatchboxAdminBackend:
     ) -> None:
         """Test permission hierarchy: ADMIN > WRITE > READ."""
         with self.scenario(self.backend, scenario) as _:
+            # Determine resource: use system or create isolated collection
+            if resource_type == "system":
+                resource = BackendResourceType.SYSTEM
+            else:
+                # Create new collection with no permissions
+                # to avoid public group interference
+                collection_name = f"col_{granted_permission}"
+                self.backend.create_collection(
+                    name=collection_name,
+                    permissions=[],  # No default permissions
+                )
+                resource = collection_name
+
             group_name = f"{granted_permission}_group"
             user_name = f"user_{granted_permission}"
 
@@ -681,28 +692,39 @@ class TestMatchboxAdminBackend:
                 )
 
     @pytest.mark.parametrize(
-        ("resource", "scenario"),
+        ("resource_type", "scenario"),
         [
-            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("system", "bare", id="system"),
             pytest.param("collection", "dedupe", id="collection"),
         ],
     )
     def test_get_permissions(
         self,
-        resource: str | BackendResourceType,
+        resource_type: str,
         scenario: str,
     ) -> None:
         """Get permissions returns correct default permissions."""
         with self.scenario(self.backend, scenario) as _:
+            # Determine resource based on type
+            if resource_type == "system":
+                resource = BackendResourceType.SYSTEM
+            else:
+                # Create new collection with no permissions
+                self.backend.create_collection(
+                    name="test_no_permissions",
+                    permissions=[],
+                )
+                resource = "test_no_permissions"
+
             permissions = self.backend.get_permissions(resource)
 
-            if resource == BackendResourceType.SYSTEM:
+            if resource_type == "system":
                 # System should have default admin permission for admins group
                 assert len(permissions) == 1
                 assert permissions[0].group_name == "admins"
                 assert permissions[0].permission == PermissionType.ADMIN
             else:
-                # Collections have no default permissions
+                # This collection has no permissions
                 assert permissions == []
 
     @pytest.mark.parametrize(
@@ -781,11 +803,15 @@ class TestMatchboxAdminBackend:
     def test_public_group_permissions_inherited(self) -> None:
         """Users automatically inherit permissions from the public group."""
         with self.scenario(self.backend, "dedupe") as _:
-            # Grant read permission to public group
-            self.backend.grant_permission(
-                GroupName("public"),
-                PermissionType.READ,
-                "collection",
+            # Create new collection with only READ permission for public
+            self.backend.create_collection(
+                name="col2",
+                permissions=[
+                    PermissionGrant(
+                        group_name=GroupName("public"),
+                        permission=PermissionType.READ,
+                    )
+                ],
             )
 
             # Create new user (alice already exists, so use bob)
@@ -793,19 +819,15 @@ class TestMatchboxAdminBackend:
             self.backend.login(user)
 
             # User should have read permission through public group membership
-            assert self.backend.check_permission(
-                "bob", PermissionType.READ, "collection"
-            )
+            assert self.backend.check_permission("bob", PermissionType.READ, "col2")
 
             # But not write permission
             assert not self.backend.check_permission(
-                "bob", PermissionType.WRITE, "collection"
+                "bob", PermissionType.WRITE, "col2"
             )
 
             # Alice should also have the permission through public group
-            assert self.backend.check_permission(
-                "alice", PermissionType.READ, "collection"
-            )
+            assert self.backend.check_permission("alice", PermissionType.READ, "col2")
 
     # Data management
 

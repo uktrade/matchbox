@@ -36,11 +36,14 @@ from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
     CollectionName,
+    GroupName,
     LoginResponse,
     Match,
     ModelResolutionPath,
     NotFoundError,
     OKMessage,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionPath,
     ResourceOperationStatus,
@@ -316,8 +319,17 @@ def create_collection(name: CollectionName) -> ResourceOperationStatus:
     log_prefix = f"Collection {name}"
     logger.debug("Creating", prefix=log_prefix)
 
+    # TODO: Allow user to configure more nuanced permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
+        PermissionGrant(
+            group_name=GroupName("public"), permission=PermissionType.WRITE
+        ),
+    ]
+
     res = CLIENT.post(
         f"/collections/{name}",
+        json=[permission.model_dump() for permission in default_permissions],
     )
 
     return ResourceOperationStatus.model_validate(res.json())

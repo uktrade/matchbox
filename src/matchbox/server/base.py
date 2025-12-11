@@ -341,11 +341,14 @@ class MatchboxDBAdapter(ABC):
     # Collection management
 
     @abstractmethod
-    def create_collection(self, name: CollectionName) -> Collection:
+    def create_collection(
+        self, name: CollectionName, permissions: list[PermissionGrant]
+    ) -> Collection:
         """Create a new collection.
 
         Args:
-            name: The name of the collection to create.
+            name: The collection name
+            permissions: A list of permissions to grant
 
         Returns:
             A Collection object containing its metadata, versions, and resolutions.

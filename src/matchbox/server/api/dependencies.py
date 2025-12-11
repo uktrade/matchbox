@@ -187,6 +187,10 @@ def get_current_user(
     if not settings.authorisation:
         return None
 
+    # No token provided: public user
+    if not client_token:
+        return User(user_name="_public", email=None)
+
     user = validate_jwt(settings, client_token)
 
     # Sync user to DB (Upsert)

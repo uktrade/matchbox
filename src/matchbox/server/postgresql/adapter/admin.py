@@ -46,6 +46,7 @@ class MatchboxPostgresAdminMixin:
     """Admin mixin for the PostgreSQL adapter for Matchbox."""
 
     # User management
+
     def login(self, user: User) -> LoginResponse:  # noqa: D102
         with MBDB.get_session() as session:
             # Try to find existing user
@@ -66,36 +67,60 @@ class MatchboxPostgresAdminMixin:
                     setup_mode_admin=False,
                 )
 
-            # Create new user
-            new_user = Users(name=user.user_name, email=user.email)
-            session.add(new_user)
-            session.flush()
+            # Get public group
+            public_group = session.scalar(select(Groups).where(Groups.name == "public"))
 
-            # Check if this is the first user after creation
-            is_first: bool = session.query(Users).first().user_id == new_user.user_id
+            # Create new user
+            new_user = Users(
+                name=user.user_name,
+                email=user.email,
+                groups=[public_group],
+            )
+            session.add(new_user)
+            session.commit()
+
+            # Store the user_id before session closes
+            new_user_id = new_user.user_id
+            new_user_name = new_user.name
+            new_user_email = new_user.email
+
+        # Check if this is the first user
+        with MBDB.get_session() as session:
+            # Check for any other non-_public user
+            other_user_exists = (
+                session.scalar(
+                    select(Users.user_id)
+                    .where(Users.name != "_public")
+                    .where(Users.user_id != new_user_id)
+                    .limit(1)
+                )
+                is not None
+            )
+
+            setup_mode_admin = not other_user_exists
 
             # If first user, add to admins group
-            if is_first:
+            if setup_mode_admin:
                 admins_group = session.scalar(
                     select(Groups).where(Groups.name == GroupName("admins"))
                 )
                 membership = UserGroups(
-                    user_id=new_user.user_id,
+                    user_id=new_user_id,
                     group_id=admins_group.group_id,
                 )
                 session.add(membership)
                 logger.info(
-                    f"Added first user '{user.user_name}' to admins group",
+                    f"Added first user '{new_user_name}' to admins group",
                     prefix="Login",
                 )
+                session.commit()
 
-            session.commit()
             return LoginResponse(
                 user=User(
-                    user_name=new_user.name,
-                    email=new_user.email,
+                    user_name=new_user_name,
+                    email=new_user_email,
                 ),
-                setup_mode_admin=is_first,
+                setup_mode_admin=setup_mode_admin,
             )
 
     # Group management

@@ -992,40 +992,38 @@ class Groups(CountMixin, MBDB.MatchboxBase):
 
     @classmethod
     def initialise(cls) -> None:
-        """Create admins group and grant it system admin permissions."""
+        """Create standard groups and permissions.
+
+        * admins group, with system admin permissions
+        * public group, with a single _public user
+        """
         with MBDB.get_session() as session:
-            # Create admins group
-            init_statement = (
-                insert(cls)
-                .values(
-                    name="admins", description="System administrators.", is_system=True
-                )
-                .on_conflict_do_nothing()
-                .returning(cls.group_id)
-            )
-
-            result = session.execute(init_statement)
-            group_id = result.scalar_one_or_none()
-
-            # If the group already existed, fetch its ID
-            if group_id is None:
-                group_id = session.execute(
-                    select(cls.group_id).where(cls.name == "admins")
-                ).scalar_one()
-
-            # Grant admin permission on system resource
-            perm_statement = (
-                insert(Permissions)
-                .values(
-                    permission="admin",
-                    group_id=group_id,
-                    collection_id=None,
+            # Create public group with _public user
+            if not session.execute(
+                select(cls).where(cls.name == "public")
+            ).scalar_one_or_none():
+                public_user = Users(name="_public", email=None)
+                public_group = cls(
+                    name="public",
+                    description="Unauthenticated users.",
                     is_system=True,
+                    members=[public_user],
                 )
-                .on_conflict_do_nothing()
-            )
+                session.add(public_group)
 
-            session.execute(perm_statement)
+            # Create admins group with permissions
+            if not session.execute(
+                select(cls).where(cls.name == "admins")
+            ).scalar_one_or_none():
+                admin_perm = Permissions(permission="admin", is_system=True)
+                admins_group = cls(
+                    name="admins",
+                    description="System administrators.",
+                    is_system=True,
+                    permissions=[admin_perm],
+                )
+                session.add(admins_group)
+
             session.commit()
 
 

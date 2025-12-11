@@ -39,6 +39,45 @@ class TestMatchboxAdminBackend:
         self.backend: MatchboxDBAdapter = backend_instance
         self.scenario = partial(setup_scenario, warehouse=sqlite_warehouse)
 
+    # Default database state
+
+    def test_default_public_user_exists(self) -> None:
+        """The _public user exists by default."""
+        with self.scenario(self.backend, "bare") as _:
+            # The _public user should exist even in bare scenario
+            groups = self.backend.get_user_groups("_public")
+            assert GroupName("public") in groups
+
+    def test_default_groups_exist(self) -> None:
+        """The admins and public groups exist by default."""
+        with self.scenario(self.backend, "bare") as _:
+            groups = self.backend.list_groups()
+            group_names = {g.name for g in groups}
+            assert "admins" in group_names
+            assert "public" in group_names
+            assert len(groups) == 2
+
+            # Verify admins group properties
+            admins = self.backend.get_group(GroupName("admins"))
+            assert admins.name == "admins"
+            assert admins.description == "System administrators."
+            assert admins.is_system is True
+            assert len(admins.members) == 0  # Empty until first login
+
+            # Verify public group properties
+            public = self.backend.get_group(GroupName("public"))
+            assert public.name == "public"
+            assert public.is_system is True
+            assert len(public.members) == 1  # Contains _public user
+
+    def test_default_system_permissions(self) -> None:
+        """The admins group has system admin permission by default."""
+        with self.scenario(self.backend, "bare") as _:
+            permissions = self.backend.get_permissions(BackendResourceType.SYSTEM)
+            assert len(permissions) == 1
+            assert permissions[0].group_name == "admins"
+            assert permissions[0].permission == PermissionType.ADMIN
+
     # User management
 
     def test_login_creates_new_user(self) -> None:
@@ -49,7 +88,24 @@ class TestMatchboxAdminBackend:
 
             assert result.user.user_name == "bob"
             assert result.user.email == "bob@example.com"
-            assert result.setup_mode_admin is False
+            assert result.setup_mode_admin is False  # admin user already exists
+
+    def test_login_adds_new_user_to_public_group(self) -> None:
+        """Login adds new users to the public group."""
+        with self.scenario(self.backend, "admin") as _:
+            user = User(user_name="bob", email="bob@example.com")
+            self.backend.login(user)
+
+            # Verify user was added to public group
+            user_groups = self.backend.get_user_groups("bob")
+            assert GroupName("public") in user_groups
+
+            # Verify public group now has bob as a member
+            public = self.backend.get_group(GroupName("public"))
+            member_names = {m.user_name for m in public.members}
+            assert "bob" in member_names
+            assert "_public" in member_names  # Default user still present
+            assert "alice" in member_names  # From admin scenario setup
 
     def test_login_returns_existing_user(self) -> None:
         """Login returns existing user with same ID."""
@@ -61,7 +117,7 @@ class TestMatchboxAdminBackend:
             result2 = self.backend.login(user2)
 
             assert result1.user.user_name == result2.user.user_name
-            assert result2.setup_mode_admin is False
+            assert result2.setup_mode_admin is False  # Alice was first
 
     def test_login_updates_email(self) -> None:
         """Login updates email if it changes."""
@@ -73,7 +129,7 @@ class TestMatchboxAdminBackend:
             result2 = self.backend.login(user2)
 
             assert result2.user.email == "bob@newdomain.com"
-            assert result2.setup_mode_admin is False
+            assert result2.setup_mode_admin is False  # Alice was first
 
     def test_login_different_users(self) -> None:
         """Login creates different IDs for different users."""
@@ -88,12 +144,16 @@ class TestMatchboxAdminBackend:
             assert alice_result.setup_mode_admin is True  # First user
             assert bob_result.setup_mode_admin is False  # Second user
 
-    def test_login_first_user_added_to_admins(self) -> None:
-        """First user login automatically adds them to admins group (setup mode)."""
+    def test_login_first_user_added_to_admins_and_public(self) -> None:
+        """First user login automatically adds them to admins and public groups."""
         with self.scenario(self.backend, "bare") as _:
-            # Verify admins group exists but is empty
+            # Verify admins group exists but has no real users (only _public in public)
             admins = self.backend.get_group(GroupName("admins"))
             assert len(admins.members) == 0
+
+            public = self.backend.get_group(GroupName("public"))
+            assert len(public.members) == 1
+            assert public.members[0].user_name == "_public"
 
             # First user login
             first_user = User(user_name="alice", email="alice@example.com")
@@ -103,16 +163,23 @@ class TestMatchboxAdminBackend:
             assert result.setup_mode_admin is True
             assert result.user.user_name == "alice"
 
-            # Verify user was added to admins group
+            # Verify user was added to both admins and public groups
             user_groups = self.backend.get_user_groups("alice")
             assert GroupName("admins") in user_groups
+            assert GroupName("public") in user_groups
 
             # Verify admins group now has the user as a member
             admins = self.backend.get_group(GroupName("admins"))
             assert len(admins.members) == 1
             assert admins.members[0].user_name == "alice"
 
-            # Second user login should NOT be added to admins
+            # Verify public group now has alice and _public
+            public = self.backend.get_group(GroupName("public"))
+            assert len(public.members) == 2
+            member_names = {m.user_name for m in public.members}
+            assert member_names == {"alice", "_public"}
+
+            # Second user login should only be added to public
             second_user = User(user_name="bob", email="bob@example.com")
             result2 = self.backend.login(second_user)
 
@@ -122,11 +189,18 @@ class TestMatchboxAdminBackend:
             # Verify second user was NOT added to admins group
             bob_groups = self.backend.get_user_groups("bob")
             assert GroupName("admins") not in bob_groups
+            assert GroupName("public") in bob_groups
 
             # Verify admins group still has only alice
             admins = self.backend.get_group(GroupName("admins"))
             assert len(admins.members) == 1
             assert admins.members[0].user_name == "alice"
+
+            # Verify public group now has alice, bob, and _public
+            public = self.backend.get_group(GroupName("public"))
+            assert len(public.members) == 3
+            member_names = {m.user_name for m in public.members}
+            assert member_names == {"alice", "bob", "_public"}
 
     # Group management
 
@@ -153,18 +227,6 @@ class TestMatchboxAdminBackend:
             with pytest.raises(MatchboxGroupAlreadyExistsError):
                 self.backend.create_group(group2)
 
-    def test_default_admins(self) -> None:
-        """The admins system admin group is present by default."""
-        with self.scenario(self.backend, "bare") as _:
-            admin = self.backend.get_group("admins")
-            assert admin.name == "admins"
-            assert admin.description == "System administrators."
-            assert admin.is_system
-
-            groups = self.backend.list_groups()
-            assert len(groups) == 1
-            assert groups[0] == admin
-
     def test_list_groups(self) -> None:
         """List groups returns all groups."""
         with self.scenario(self.backend, "bare") as _:
@@ -175,8 +237,8 @@ class TestMatchboxAdminBackend:
             self.backend.create_group(group2)
 
             groups = self.backend.list_groups()
-            assert len(groups) == 3  # plus admins
-            assert {g.name for g in groups} == {"admins", "g", "users"}
+            assert len(groups) == 4  # admins, public, g, users
+            assert {g.name for g in groups} == {"admins", "public", "g", "users"}
 
     def test_get_group_not_found(self) -> None:
         """Get group raises error if group doesn't exist."""
@@ -219,11 +281,13 @@ class TestMatchboxAdminBackend:
     def test_delete_system_group_fails(self) -> None:
         """Cannot delete a system group."""
         with self.scenario(self.backend, "bare") as _:
-            system_group = Group(name=GroupName("system_admins"), is_system=True)
-            self.backend.create_group(system_group)
-
+            # Try to delete the default admins group
             with pytest.raises(MatchboxSystemGroupError):
-                self.backend.delete_group(GroupName("system_admins"), certain=True)
+                self.backend.delete_group(GroupName("admins"), certain=True)
+
+            # Try to delete the default public group
+            with pytest.raises(MatchboxSystemGroupError):
+                self.backend.delete_group(GroupName("public"), certain=True)
 
     # User-group membership
 
@@ -320,14 +384,16 @@ class TestMatchboxAdminBackend:
             with pytest.raises(MatchboxUserNotFoundError):
                 self.backend.remove_user_from_group("nonexistent", GroupName("g"))
 
-    def test_get_user_groups_empty(self) -> None:
-        """Get user groups returns empty list for user with no groups."""
+    def test_get_user_groups(self) -> None:
+        """Get user groups returns public group for new users."""
         with self.scenario(self.backend, "admin") as _:
             user = User(user_name="bob")
             self.backend.login(user)
 
             groups = self.backend.get_user_groups("bob")
-            assert groups == []
+            # All new users are added to public group
+            assert GroupName("public") in groups
+            assert len(groups) == 1  # Bob is not in admins, only public
 
     def test_get_user_groups_nonexistent_user_fails(self) -> None:
         """Get user groups raises error for non-existent user."""
@@ -338,7 +404,7 @@ class TestMatchboxAdminBackend:
     def test_get_user_groups_multiple(self) -> None:
         """Get user groups returns all groups for a user."""
         with self.scenario(self.backend, "admin") as _:
-            # Create user
+            # Create user (alice already exists)
             user = User(user_name="bob", email="bob@example.com")
             self.backend.login(user)
 
@@ -354,8 +420,12 @@ class TestMatchboxAdminBackend:
 
             # Verify membership
             groups = self.backend.get_user_groups("bob")
-            assert len(groups) == 2
-            assert set(groups) == {GroupName("g"), GroupName("users")}
+            assert len(groups) == 3  # public (auto), g, users
+            assert set(groups) == {
+                GroupName("public"),
+                GroupName("g"),
+                GroupName("users"),
+            }
 
     def test_get_group_includes_members(self) -> None:
         """Get group returns members list."""
@@ -572,12 +642,16 @@ class TestMatchboxAdminBackend:
     def test_check_permission_denied(
         self, resource: str | BackendResourceType, scenario: str
     ) -> None:
-        """Check permission returns False when user doesn't have permission."""
+        """Check permission returns False when user doesn't have permission.
+
+        Note: In non-bare scenarios, alice already exists as the admin user.
+        Bob is a new user without special permissions.
+        """
         with self.scenario(self.backend, scenario) as _:
             user = User(user_name="bob")
             self.backend.login(user)
 
-            # Check permission
+            # Check bob only has public group membership, no special permissions
             has_permission = self.backend.check_permission(
                 "bob", PermissionType.ADMIN, resource
             )
@@ -607,27 +681,29 @@ class TestMatchboxAdminBackend:
                 )
 
     @pytest.mark.parametrize(
-        ("resource", "scenario", "expected_permissions"),
+        ("resource", "scenario"),
         [
-            pytest.param(
-                BackendResourceType.SYSTEM,
-                "bare",
-                [PermissionGrant(group_name="admins", permission=PermissionType.ADMIN)],
-                id="system",
-            ),
-            pytest.param("collection", "dedupe", [], id="collection"),
+            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
+            pytest.param("collection", "dedupe", id="collection"),
         ],
     )
-    def test_get_permissions_empty(
+    def test_get_permissions(
         self,
         resource: str | BackendResourceType,
         scenario: str,
-        expected_permissions: list[PermissionGrant],
     ) -> None:
-        """Get permissions returns empty list when no permissions granted."""
+        """Get permissions returns correct default permissions."""
         with self.scenario(self.backend, scenario) as _:
             permissions = self.backend.get_permissions(resource)
-            assert permissions == expected_permissions
+
+            if resource == BackendResourceType.SYSTEM:
+                # System should have default admin permission for admins group
+                assert len(permissions) == 1
+                assert permissions[0].group_name == "admins"
+                assert permissions[0].permission == PermissionType.ADMIN
+            else:
+                # Collections have no default permissions
+                assert permissions == []
 
     @pytest.mark.parametrize(
         ("resource", "scenario"),
@@ -663,10 +739,14 @@ class TestMatchboxAdminBackend:
             assert perm_dict["writers"] == PermissionType.WRITE
 
     def test_permissions_across_multiple_groups(self) -> None:
-        """User inherits permissions from all their groups."""
+        """User inherits permissions from all their groups.
+
+        Note: In 'dedupe' scenario, alice already exists as the admin user.
+        Creating a new alice user here for testing multiple group permissions.
+        """
         with self.scenario(self.backend, "dedupe") as _:
-            # Create user
-            user = User(user_name="alice", email="alice@example.com")
+            # Create user (different from default alice)
+            user = User(user_name="charlie", email="charlie@example.com")
             self.backend.login(user)
 
             # Create two groups with different permissions
@@ -687,15 +767,44 @@ class TestMatchboxAdminBackend:
             )
 
             # Add user to both groups
-            self.backend.add_user_to_group("alice", GroupName("readers"))
-            self.backend.add_user_to_group("alice", GroupName("writers"))
+            self.backend.add_user_to_group("charlie", GroupName("readers"))
+            self.backend.add_user_to_group("charlie", GroupName("writers"))
 
             # User should have both permissions
             assert self.backend.check_permission(
-                "alice", PermissionType.READ, "collection"
+                "charlie", PermissionType.READ, "collection"
             )
             assert self.backend.check_permission(
-                "alice", PermissionType.WRITE, "collection"
+                "charlie", PermissionType.WRITE, "collection"
+            )
+
+    def test_public_group_permissions_inherited(self) -> None:
+        """Users automatically inherit permissions from the public group."""
+        with self.scenario(self.backend, "dedupe") as _:
+            # Grant read permission to public group
+            self.backend.grant_permission(
+                GroupName("public"),
+                PermissionType.READ,
+                "collection",
+            )
+
+            # Create new user (alice already exists, so use bob)
+            user = User(user_name="bob", email="bob@example.com")
+            self.backend.login(user)
+
+            # User should have read permission through public group membership
+            assert self.backend.check_permission(
+                "bob", PermissionType.READ, "collection"
+            )
+
+            # But not write permission
+            assert not self.backend.check_permission(
+                "bob", PermissionType.WRITE, "collection"
+            )
+
+            # Alice should also have the permission through public group
+            assert self.backend.check_permission(
+                "alice", PermissionType.READ, "collection"
             )
 
     # Data management

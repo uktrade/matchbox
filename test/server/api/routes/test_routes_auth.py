@@ -9,34 +9,118 @@ from _pytest.mark.structures import ParameterSet
 from fastapi.testclient import TestClient
 
 from matchbox.client._settings import settings
-from matchbox.common.dtos import AuthStatusResponse, LoginResponse, User
+from matchbox.common.dtos import (
+    AuthStatusResponse,
+    LoginResponse,
+    User,
+)
 from test.scripts.authorisation import generate_json_web_token
 
 
-def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
-    """Test the login endpoint at /auth/login."""
+def test_login_first_user_setup_mode(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that the first user login returns setup_mode_admin=True."""
     test_client, mock_backend, _ = api_client_and_mocks
-    # First user is admin
+
+    # First user should get setup_mode_admin=True
     mock_backend.login = Mock(
-        return_value=LoginResponse(user=User(user_name="alice"), setup_mode_admin=True)
+        return_value=LoginResponse(
+            user=User(user_name="alice"),
+            setup_mode_admin=True,
+        )
     )
 
     response = test_client.post(
-        "/auth/login", json=User(user_name="alice").model_dump()
+        "/auth/login",
+        json=User(user_name="alice").model_dump(),
     )
 
     assert response.status_code == 200
     alice_admin = LoginResponse.model_validate(response.json())
-    assert alice_admin.setup_mode_admin
+    assert alice_admin.setup_mode_admin is True
+    assert alice_admin.user.user_name == "alice"
 
-    # Second user doesn't return admin
+
+def test_login_subsequent_users_normal_mode(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that subsequent user logins return setup_mode_admin=False."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    # Second and subsequent users should get setup_mode_admin=False
     mock_backend.login = Mock(
-        return_value=LoginResponse(user=User(user_name="bob"), setup_mode_admin=False)
+        return_value=LoginResponse(
+            user=User(user_name="bob"),
+            setup_mode_admin=False,
+        )
     )
 
-    response = test_client.post("/auth/login", json=User(user_name="bob").model_dump())
+    response = test_client.post(
+        "/auth/login",
+        json=User(user_name="bob").model_dump(),
+    )
+
+    assert response.status_code == 200
     bob_user = LoginResponse.model_validate(response.json())
-    assert not bob_user.setup_mode_admin
+    assert bob_user.setup_mode_admin is False
+    assert bob_user.user.user_name == "bob"
+
+
+def test_login_with_email(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
+    """Test login with email address."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    user = User(user_name="alice", email="alice@example.com")
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=user,
+            setup_mode_admin=False,
+        )
+    )
+
+    response = test_client.post(
+        "/auth/login",
+        json=user.model_dump(),
+    )
+
+    assert response.status_code == 200
+    result = LoginResponse.model_validate(response.json())
+    assert result.user.user_name == "alice"
+    assert result.user.email == "alice@example.com"
+
+
+def test_login_existing_user(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that logging in with an existing user returns the same user."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    user = User(user_name="alice", email="alice@example.com")
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=user,
+            setup_mode_admin=False,
+        )
+    )
+
+    # First login
+    response1 = test_client.post(
+        "/auth/login",
+        json=user.model_dump(),
+    )
+    assert response1.status_code == 200
+
+    # Second login (same user)
+    response2 = test_client.post(
+        "/auth/login",
+        json=user.model_dump(),
+    )
+    assert response2.status_code == 200
+
+    result1 = LoginResponse.model_validate(response1.json())
+    result2 = LoginResponse.model_validate(response2.json())
+    assert result1.user.user_name == result2.user.user_name
 
 
 @pytest.mark.parametrize(
@@ -159,13 +243,20 @@ def test_missing_authorisation_header(
     method_name: str,
     url: str,
 ) -> None:
-    """Test that routes reject requests without authorisation headers."""
-    test_client, _, _ = api_client_and_mocks
+    """Test that routes reject requests without authorisation headers.
 
+    We assume the public user doesn't have permissions to see these routes.
+    """
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    # Public user not authorised
+    mock_backend.check_permission.return_value = False
+
+    # Authorisation headers gone
     test_client.headers.pop("Authorization", None)
 
     method: Callable[..., Any] = getattr(test_client, method_name)
     response = method(url)
 
-    assert response.status_code == 401
-    assert response.content == b'"JWT required but not provided."'
+    assert response.status_code == 403
+    assert "Permission denied: requires " in str(response.content, encoding="utf-8")

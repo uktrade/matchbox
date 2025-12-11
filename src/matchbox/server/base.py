@@ -263,7 +263,14 @@ class ListableAndCountable(Countable, Listable):
 
 
 class MatchboxDBAdapter(ABC):
-    """An abstract base class for Matchbox database adapters."""
+    """An abstract base class for Matchbox database adapters.
+
+    By default the database should contain:
+
+    * A single user, _public
+    * Two groups, public and admins
+    * A single permission for the admins group: system admin
+    """
 
     settings: "MatchboxServerSettings"
 
@@ -626,7 +633,8 @@ class MatchboxDBAdapter(ABC):
     def login(self, user: User) -> LoginResponse:
         """Upserts the user to the database.
 
-        If it's the first user, will add them to the admins group.
+        * If it's the first user, will add them to the admins group
+        * For all new users, are added to the public group
 
         Args:
             user: A User with a username and optionally an email

@@ -46,12 +46,8 @@ class MatchboxPostgresAdminMixin:
     """Admin mixin for the PostgreSQL adapter for Matchbox."""
 
     # User management
-
     def login(self, user: User) -> LoginResponse:  # noqa: D102
         with MBDB.get_session() as session:
-            # Check if this is the first user
-            is_first: bool = session.query(Users).first() is None
-
             # Try to find existing user
             existing_user = session.scalar(
                 select(Users).where(Users.name == user.user_name)
@@ -62,7 +58,6 @@ class MatchboxPostgresAdminMixin:
                 if user.email and existing_user.email != user.email:
                     existing_user.email = user.email
                     session.commit()
-
                 return LoginResponse(
                     user=User(
                         user_name=existing_user.name,
@@ -76,24 +71,25 @@ class MatchboxPostgresAdminMixin:
             session.add(new_user)
             session.flush()
 
+            # Check if this is the first user after creation
+            is_first: bool = session.query(Users).first().user_id == new_user.user_id
+
             # If first user, add to admins group
             if is_first:
                 admins_group = session.scalar(
                     select(Groups).where(Groups.name == GroupName("admins"))
                 )
-                if admins_group:
-                    membership = UserGroups(
-                        user_id=new_user.user_id,
-                        group_id=admins_group.group_id,
-                    )
-                    session.add(membership)
-                    logger.info(
-                        f"Added first user '{user.user_name}' to admins group",
-                        prefix="Login",
-                    )
+                membership = UserGroups(
+                    user_id=new_user.user_id,
+                    group_id=admins_group.group_id,
+                )
+                session.add(membership)
+                logger.info(
+                    f"Added first user '{user.user_name}' to admins group",
+                    prefix="Login",
+                )
 
             session.commit()
-
             return LoginResponse(
                 user=User(
                     user_name=new_user.name,

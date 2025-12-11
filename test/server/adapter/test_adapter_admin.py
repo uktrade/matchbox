@@ -617,7 +617,6 @@ class TestMatchboxAdminBackend:
             ),
             pytest.param("collection", "dedupe", [], id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_get_permissions_empty(
         self,
@@ -636,7 +635,6 @@ class TestMatchboxAdminBackend:
             pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
             pytest.param("collection", "dedupe", id="collection"),
         ],
-        ids=["system", "collection"],
     )
     def test_get_permissions_multiple_groups(
         self, resource: str | BackendResourceType, scenario: str

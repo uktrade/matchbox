@@ -43,16 +43,17 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxDeletionNotConfirmed,
+    MatchboxGroupNotFoundError,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
 )
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
-    authorisation_dependencies,
+    RequireSysAdmin,
     lifespan,
 )
-from matchbox.server.api.routers import auth, collection, eval
+from matchbox.server.api.routers import admin, auth, collection, eval
 
 app = FastAPI(
     title="matchbox API",
@@ -64,6 +65,7 @@ app = FastAPI(
 app.include_router(collection.router)
 app.include_router(eval.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -114,6 +116,20 @@ async def resolution_not_found_handler(
     """Handle resolution not found errors."""
     detail = NotFoundError(
         details=str(exc), entity=BackendResourceType.RESOLUTION
+    ).model_dump()
+    return JSONResponse(
+        status_code=404,
+        content=jsonable_encoder(detail),
+    )
+
+
+@app.exception_handler(MatchboxGroupNotFoundError)
+async def group_not_found_handler(
+    request: Request, exc: MatchboxGroupNotFoundError
+) -> JSONResponse:
+    """Handle group not found errors."""
+    detail = NotFoundError(
+        details=str(exc), entity=BackendResourceType.GROUP
     ).model_dump()
     return JSONResponse(
         status_code=404,
@@ -291,7 +307,7 @@ def count_backend_items(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireSysAdmin)],
 )
 def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
     """Delete orphans."""
@@ -327,7 +343,7 @@ def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireSysAdmin)],
 )
 def clear_database(
     backend: BackendDependency,

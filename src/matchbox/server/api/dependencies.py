@@ -7,19 +7,18 @@ import time
 from base64 import urlsafe_b64decode
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any, TypeAlias, overload
 
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from fastapi import (
-    Depends,
-    FastAPI,
-    HTTPException,
-    Security,
-    status,
-)
+from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
 
+from matchbox.common.dtos import (
+    BackendResourceType,
+    PermissionType,
+    User,
+)
 from matchbox.common.logging import get_formatter, logger
 from matchbox.server.base import (
     MatchboxDBAdapter,
@@ -28,6 +27,11 @@ from matchbox.server.base import (
     settings_to_backend,
 )
 from matchbox.server.uploads import UploadTracker, settings_to_upload_tracker
+
+SETTINGS: MatchboxServerSettings | None = None
+BACKEND: MatchboxDBAdapter | None = None
+UPLOAD_TRACKER: UploadTracker | None = None
+JWT_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
 
 
 class ZipResponse(Response):
@@ -40,33 +44,6 @@ class ParquetResponse(Response):
     """A response object for returning parquet data."""
 
     media_type = "application/octet-stream"
-
-
-SETTINGS: MatchboxServerSettings | None = None
-BACKEND: MatchboxDBAdapter | None = None
-UPLOAD_TRACKER: UploadTracker | None = None
-JWT_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
-
-
-def backend() -> Generator[MatchboxDBAdapter, None, None]:
-    """Get the backend instance."""
-    if BACKEND is None:
-        raise ValueError("Backend not initialized.")
-    yield BACKEND
-
-
-def settings() -> Generator[MatchboxServerSettings, None, None]:
-    """Get the settings instance."""
-    if SETTINGS is None:
-        raise ValueError("Settings not initialized.")
-    yield SETTINGS
-
-
-def upload_tracker() -> Generator[UploadTracker, None, None]:
-    """Get the upload tracker instance."""
-    if UPLOAD_TRACKER is None:
-        raise ValueError("Upload tracker not initialized.")
-    yield UPLOAD_TRACKER
 
 
 @asynccontextmanager
@@ -115,9 +92,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     del BACKEND
 
 
-BackendDependency = Annotated[MatchboxDBAdapter, Depends(backend)]
-SettingsDependency = Annotated[MatchboxServerSettings, Depends(settings)]
-UploadTrackerDependency = Annotated[UploadTracker, Depends(upload_tracker)]
+def backend() -> Generator[MatchboxDBAdapter, None, None]:
+    """Get the backend instance."""
+    if BACKEND is None:
+        raise ValueError("Backend not initialised.")
+    yield BACKEND
+
+
+def settings() -> Generator[MatchboxServerSettings, None, None]:
+    """Get the settings instance."""
+    if SETTINGS is None:
+        raise ValueError("Settings not initialised.")
+    yield SETTINGS
+
+
+def upload_tracker() -> Generator[UploadTracker, None, None]:
+    """Get the upload tracker instance."""
+    if UPLOAD_TRACKER is None:
+        raise ValueError("Upload tracker not initialised.")
+    yield UPLOAD_TRACKER
+
+
+BackendDependency: TypeAlias = Annotated[MatchboxDBAdapter, Depends(backend)]
+SettingsDependency: TypeAlias = Annotated[MatchboxServerSettings, Depends(settings)]
+UploadTrackerDependency: TypeAlias = Annotated[UploadTracker, Depends(upload_tracker)]
 
 
 def b64_decode(b64_bytes: bytes) -> bytes:
@@ -130,8 +128,8 @@ def b64_decode(b64_bytes: bytes) -> bytes:
 
 def validate_jwt(
     settings: SettingsDependency,
-    client_token: str = Security(JWT_HEADER),
-) -> None:
+    client_token: str = Depends(JWT_HEADER),
+) -> User:
     """Validate client JWT with server API Key."""
     if not settings.public_key:
         raise HTTPException(
@@ -153,16 +151,9 @@ def validate_jwt(
             raise ValueError("JWT must have 3 parts")
         header_b64, payload_b64, signature_b64 = parts
 
-        payload = json.loads(b64_decode(payload_b64))
+        payload: dict[str, Any] = json.loads(b64_decode(payload_b64))
 
-        # Decode to unicode-escape removes \\n encoding for
-        # secrets stored in AWS secrets manager.
-        public_key = load_pem_public_key(
-            settings.public_key.get_secret_value()
-            .encode()
-            .decode("unicode-escape")
-            .encode()
-        )
+        public_key = load_pem_public_key(settings.public_key.get_secret_value())
 
         public_key.verify(b64_decode(signature_b64), header_b64 + b"." + payload_b64)
 
@@ -184,10 +175,117 @@ def validate_jwt(
             headers={"WWW-Authenticate": "Authorization"},
         ) from e
 
+    return User(user_name=payload["sub"], email=payload.get("email"))
 
-def authorisation_dependencies(
-    settings: SettingsDependency, client_token: str = Security(JWT_HEADER)
-) -> None:
-    """Optional authorisation."""
-    if settings.authorisation:
-        validate_jwt(settings, client_token)
+
+def get_current_user(
+    settings: SettingsDependency,
+    backend: BackendDependency,
+    client_token: str = Security(JWT_HEADER),
+) -> User | None:
+    """Get current user from JWT, or None if auth disabled."""
+    if not settings.authorisation:
+        return None
+
+    # No token provided: public user
+    if not client_token:
+        return User(user_name="_public", email=None)
+
+    user = validate_jwt(settings, client_token)
+
+    # Sync user to DB (Upsert)
+    return backend.login(user)
+
+
+CurrentUserDependency: TypeAlias = Annotated[User | None, Depends(get_current_user)]
+
+
+class RequiresPermission:
+    """Dynamic dependency for checking permissions on a specific resource."""
+
+    @overload
+    def __init__(
+        self,
+        permission: PermissionType,
+        *,
+        resource: str,
+        resource_from_path: None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        permission: PermissionType,
+        *,
+        resource: None = None,
+        resource_from_path: str,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        permission: PermissionType,
+        *,
+        resource: str | None = None,
+        resource_from_path: str | None = None,
+    ) -> None:
+        """Initialise the permission check."""
+        if resource is None and resource_from_path is None:
+            raise ValueError(
+                "Either 'resource' or 'resource_from_path' must be provided"
+            )
+        if resource is not None and resource_from_path is not None:
+            raise ValueError("Cannot specify both 'resource' and 'resource_from_path'")
+
+        self.permission = permission
+        self.static_resource = resource
+        self.path_param_key = resource_from_path
+
+    def __call__(
+        self,
+        request: Request,
+        backend: BackendDependency,
+        settings: SettingsDependency,
+        user: CurrentUserDependency,
+    ) -> None:
+        """Authenticate and authorise the user."""
+        # Short-circuit if authorisation is disabled
+        if not settings.authorisation:
+            return
+
+        # 1. Determine the target resource
+        if self.static_resource:
+            target_resource = self.static_resource
+        elif self.path_param_key:
+            target_resource = request.path_params.get(self.path_param_key)
+            if not target_resource:
+                # Verify path param exists to prevent dev errors
+                raise ValueError(
+                    f"Path parameter '{self.path_param_key}' not found in request"
+                )
+        else:
+            raise ValueError("Must provide either resource or resource_from_path")
+
+        # 2. Check authentication
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+            )
+
+        # 3. Check authorisation
+        if not backend.check_permission(
+            user.user_name, self.permission, target_resource
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Permission denied: requires {self.permission} "
+                    f"access on '{target_resource}'",
+                ),
+            )
+
+
+# Pre-configured helpers for common cases
+RequireSysAdmin = RequiresPermission(
+    PermissionType.ADMIN, resource=BackendResourceType.SYSTEM
+)

@@ -36,10 +36,14 @@ from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
     CollectionName,
+    GroupName,
+    LoginResponse,
     Match,
     ModelResolutionPath,
     NotFoundError,
     OKMessage,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionPath,
     ResourceOperationStatus,
@@ -185,11 +189,11 @@ def healthcheck() -> OKMessage:
 
 
 @http_retry
-def login(user_name: str) -> int:
+def login(user_name: str) -> str:
     """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
     response = CLIENT.post("/auth/login", json=User(user_name=user_name).model_dump())
-    return User.model_validate(response.json()).user_name
+    return LoginResponse.model_validate(response.json()).user.user_name
 
 
 @http_retry
@@ -315,8 +319,17 @@ def create_collection(name: CollectionName) -> ResourceOperationStatus:
     log_prefix = f"Collection {name}"
     logger.debug("Creating", prefix=log_prefix)
 
+    # TODO: Allow user to configure more nuanced permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
+        PermissionGrant(
+            group_name=GroupName("public"), permission=PermissionType.WRITE
+        ),
+    ]
+
     res = CLIENT.post(
         f"/collections/{name}",
+        json=[permission.model_dump() for permission in default_permissions],
     )
 
     return ResourceOperationStatus.model_validate(res.json())

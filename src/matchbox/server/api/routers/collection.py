@@ -21,8 +21,11 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     CRUDOperation,
+    GroupName,
     ModelResolutionName,
     NotFoundError,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionName,
     ResolutionPath,
@@ -45,13 +48,27 @@ from matchbox.common.exceptions import (
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
+    RequiresPermission,
     SettingsDependency,
     UploadTrackerDependency,
-    authorisation_dependencies,
 )
 from matchbox.server.uploads import file_to_s3, process_upload, process_upload_celery
 
 router = APIRouter(prefix="/collections", tags=["collection"])
+
+
+RequireCollectionAdmin = RequiresPermission(
+    PermissionType.ADMIN,
+    resource_from_path="collection",
+)
+RequireCollectionWrite = RequiresPermission(
+    PermissionType.WRITE,
+    resource_from_path="collection",
+)
+RequireCollectionRead = RequiresPermission(
+    PermissionType.READ,
+    resource_from_path="collection",
+)
 
 
 # Collection management endpoints
@@ -70,6 +87,7 @@ def list_collections(backend: BackendDependency) -> list[CollectionName]:
 @router.get(
     "/{collection}",
     responses={404: {"model": NotFoundError}},
+    dependencies=[Depends(RequireCollectionRead)],
     summary="Get collection details",
     description=(
         "Retrieve details for a specific collection, including all its versions "
@@ -93,17 +111,20 @@ def get_collection(
         },
     },
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Create a new collection",
     description="Create a new collection with the specified name.",
 )
 def create_collection(
     backend: BackendDependency,
     collection: CollectionName,
+    permissions: list[PermissionGrant],
 ) -> ResourceOperationStatus:
     """Create a new collection."""
     try:
-        backend.create_collection(name=collection)
+        backend.create_collection(
+            name=collection,
+            permissions=permissions,
+        )
         return ResourceOperationStatus(
             success=True,
             target=f"Collection {collection}",
@@ -134,7 +155,7 @@ def create_collection(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireCollectionWrite)],
     summary="Delete a collection",
     description="Delete a collection and all its versions. Requires confirmation.",
 )
@@ -170,11 +191,64 @@ def delete_collection(
         ) from e
 
 
+# Collection permissions endpoints
+
+
+@router.get(
+    "/{collection}/permissions",
+    dependencies=[Depends(RequireCollectionAdmin)],
+)
+def get_permissions(
+    backend: BackendDependency,
+    collection: CollectionName,
+) -> list[PermissionGrant]:
+    """Get permissions for a collection resource."""
+    return backend.get_permissions(collection)
+
+
+@router.post(
+    "/{collection}/permissions",
+    dependencies=[Depends(RequireCollectionAdmin)],
+)
+def grant_permission(
+    backend: BackendDependency,
+    collection: CollectionName,
+    grant: PermissionGrant,
+) -> ResourceOperationStatus:
+    """Grant a permission on the system resource."""
+    backend.grant_permission(grant.group_name, grant.permission, collection)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"{grant.permission} on system for {grant.group_name}",
+        operation=CRUDOperation.CREATE,
+    )
+
+
+@router.delete(
+    "/{collection}/permissions/{permission}/{group_name}/",
+    dependencies=[Depends(RequireCollectionAdmin)],
+)
+def revoke_permission(
+    backend: BackendDependency,
+    collection: CollectionName,
+    permission: PermissionType,
+    group_name: GroupName,
+) -> ResourceOperationStatus:
+    """Revoke a permission on the system resource."""
+    backend.revoke_permission(group_name, permission, collection)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"{permission} on system for {group_name}",
+        operation=CRUDOperation.DELETE,
+    )
+
+
 # Run management endpoints
 
 
 @router.get(
     "/{collection}/runs/{run_id}",
+    dependencies=[Depends(RequireCollectionRead)],
     responses={404: {"model": NotFoundError}},
     summary="Get specific run",
     description="Retrieve details for a specific run within a collection.",
@@ -190,6 +264,7 @@ def get_run(
 
 @router.post(
     "/{collection}/runs",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {"model": NotFoundError},
         409: {
@@ -198,7 +273,6 @@ def get_run(
         },
     },
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Create a new run",
     description="Create a new run within the specified collection.",
 )
@@ -223,6 +297,7 @@ def create_run(
 
 @router.patch(
     "/{collection}/runs/{run_id}/mutable",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {"model": NotFoundError},
         500: {
@@ -230,7 +305,6 @@ def create_run(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Change run mutability",
     description="Set whether a run can be modified.",
 )
@@ -267,6 +341,7 @@ def set_run_mutable(
 
 @router.patch(
     "/{collection}/runs/{run_id}/default",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {"model": NotFoundError},
         500: {
@@ -274,7 +349,6 @@ def set_run_mutable(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Change default run",
     description="Set whether a run is the default for its collection.",
 )
@@ -311,6 +385,7 @@ def set_run_default(
 
 @router.delete(
     "/{collection}/runs/{run_id}",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {"model": NotFoundError},
         409: {
@@ -322,7 +397,6 @@ def set_run_default(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Delete a run",
     description="Delete a run and all its resolutions. Requires confirmation.",
 )
@@ -361,6 +435,7 @@ def delete_run(
 
 @router.post(
     "/{collection}/runs/{run_id}/resolutions/{resolution_name}",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         409: {
             "model": ResourceOperationStatus,
@@ -372,7 +447,6 @@ def delete_run(
         },
     },
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Create a resolution",
     description="Create a new resolution (model or source) in the specified run.",
 )
@@ -426,6 +500,7 @@ def create_resolution(
 
 @router.get(
     "/{collection}/runs/{run_id}/resolutions/{resolution}",
+    dependencies=[Depends(RequireCollectionRead)],
     responses={404: {"model": NotFoundError}},
     summary="Get a resolution",
     description="Retrieve a specific resolution (model or source) from the backend.",
@@ -444,6 +519,7 @@ def get_resolution(
 
 @router.put(
     "/{collection}/runs/{run_id}/resolutions/{resolution_name}",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {
             "model": ResourceOperationStatus,
@@ -455,7 +531,6 @@ def get_resolution(
         },
     },
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Update a resolution",
     description="Update an existing resolution (model or source) in the specified run.",
 )
@@ -508,6 +583,7 @@ def update_resolution(
 
 @router.delete(
     "/{collection}/runs/{run_id}/resolutions/{resolution}",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {"model": NotFoundError},
         409: {
@@ -519,7 +595,6 @@ def update_resolution(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Delete a resolution",
     description="Delete a resolution from the backend. Requires confirmation.",
 )
@@ -562,6 +637,7 @@ def delete_resolution(
 
 @router.post(
     "/{collection}/runs/{run_id}/resolutions/{resolution_name}/data",
+    dependencies=[Depends(RequireCollectionWrite)],
     responses={
         404: {"model": NotFoundError},
         400: {
@@ -570,7 +646,6 @@ def delete_resolution(
         },
     },
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(authorisation_dependencies)],
     summary="Set resolution data",
     description="Create an upload task for source hashes or model results.",
 )
@@ -705,6 +780,7 @@ def set_data(
 
 @router.get(
     "/{collection}/runs/{run_id}/resolutions/{resolution}/data/status",
+    dependencies=[Depends(RequireCollectionRead)],
     responses={404: {"model": NotFoundError}},
     status_code=status.HTTP_200_OK,
 )
@@ -733,6 +809,7 @@ def get_upload_status(
 
 @router.get(
     "/{collection}/runs/{run_id}/resolutions/{resolution}/data",
+    dependencies=[Depends(RequireCollectionRead)],
     responses={404: {"model": NotFoundError}},
     summary="Get resolution results",
     description="Download results for a model as a parquet file.",

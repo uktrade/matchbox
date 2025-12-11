@@ -10,6 +10,7 @@ import boto3
 import pytest
 import redis
 from moto import mock_aws
+from pydantic import Field, SecretBytes
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine, create_engine
 
@@ -33,6 +34,7 @@ class DevelopmentSettings(BaseSettings):
     warehouse_port: int = 7654
     postgres_backend_port: int = 9876
     redis_url: str = "redis://localhost:6379/0"
+    private_key: SecretBytes | None = Field(default=None)
 
     model_config = SettingsConfigDict(
         extra="ignore",

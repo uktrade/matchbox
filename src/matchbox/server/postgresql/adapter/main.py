@@ -17,10 +17,12 @@ from matchbox.server.postgresql.orm import (
     ClusterSourceKey,
     Contains,
     EvalJudgements,
+    Groups,
     PKSpace,
     Probabilities,
     Resolutions,
     SourceConfigs,
+    Users,
 )
 
 
@@ -127,6 +129,7 @@ class MatchboxPostgres(
         MBDB.run_migrations()
 
         PKSpace.initialise()
+        Groups.initialise()
 
         self.sources = SourceConfigs
         self.models = FilteredResolutions(sources=False, models=True)
@@ -137,3 +140,4 @@ class MatchboxPostgres(
         self.merges = Contains
         self.proposes = FilteredProbabilities()
         self.source_resolutions = FilteredResolutions(sources=True, models=False)
+        self.users = Users

@@ -221,17 +221,7 @@ def test_my_adapter_function(my_backend_adapter):
 
 The scenario system is cached, so subsequent runs of the same scenario are significantly faster.
 
-### Available scenarios
-
-The following built-in scenarios are available. They are built on top of each other, so `link` includes all the steps from `dedupe`, which includes `index`, and so on.
-
-*   **`bare`**: Creates a set of linked sources and writes them to the data warehouse, but does not interact with the matchbox backend.
-*   **`index`**: Takes the `bare` scenario and indexes all the sources in the matchbox backend.
-*   **`dedupe`**: Takes the `index` scenario and adds perfectly deduplicated models for each source.
-*   **`probabilistic_dedupe`**: Like `dedupe`, but the models produce probabilistic scores rather than perfect matches.
-*   **`link`**: Takes the `dedupe` scenario and adds linking models between the deduplicated sources, culminating in a `final_join` resolution.
-*   **`alt_dedupe`**: A specialised scenario with two alternative deduplication models for the same source.
-*   **`convergent`**: A specialised scenario where two different sources index to almost identical data.
+See [the scenarios API][matchbox.common.factories.scenarios] for a full list of available scenarios.
 
 ### Creating new scenarios
 

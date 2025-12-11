@@ -215,6 +215,7 @@ class BackendResourceType(StrEnum):
     RESOLUTION = "resolution"
     CLUSTER = "cluster"
     USER = "user"
+    GROUP = "group"
     JUDGEMENT = "judgement"
     SYSTEM = "system"
 
@@ -257,6 +258,15 @@ class User(BaseModel):
     email: EmailStr | None = None
 
 
+class LoginResponse(BaseModel):
+    """Response from login endpoint."""
+
+    user: User
+    setup_mode_admin: bool = Field(
+        default=False, description="Whether user was added to admins during setup mode."
+    )
+
+
 GroupName: TypeAlias = MatchboxName
 """Type alias for group names."""
 
@@ -275,6 +285,8 @@ class PermissionGrant(BaseModel):
 
     Resource context should always be supplied.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     group_name: GroupName
     permission: PermissionType

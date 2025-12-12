@@ -17,6 +17,7 @@ from matchbox.common.dtos import (
     QueryCombineType,
     QueryConfig,
 )
+from matchbox.common.logging import profile_time
 from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
@@ -157,6 +158,7 @@ class Query:
         if self._cache_mode == CacheMode.CLEAN:
             self.data = data
 
+    @profile_time()
     def run(
         self,
         return_type: QueryReturnType = QueryReturnType.POLARS,

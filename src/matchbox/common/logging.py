@@ -3,8 +3,8 @@
 import functools
 import importlib.metadata
 import logging
+import os
 import time
-import tracemalloc
 from collections.abc import Callable
 from typing import Any, Final, Literal, ParamSpec, TypeVar
 
@@ -174,47 +174,13 @@ def profile_time(
     return decorator
 
 
-def profile_mem(
+def log_mem_usage(
     logger: PrefixedLoggerAdapter = logger,
-    level: int = logging.DEBUG,
-    prefix: str | None = "Memory",
-) -> Callable[[Callable[P, T]], Callable[P, T]]:
-    """Decorator to profile memory use of functions and methods using logger.
-
-    Args:
-        logger: The logger to use.
-        level: The level to use to log the profiling information. It defaults to INFO.
-        prefix: Prefix to pass to the logged message.
-
-    Note that this will not work reliably if two functions are decorated where one is
-    nested within the other. This is because there can only be one `tracemalloc` session
-    active at a time.
-    """
-
-    def decorator(func: Callable[P, T]) -> Callable[P, T]:
-        @functools.wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            tracemalloc.start()
-
-            try:
-                return func(*args, **kwargs)
-            finally:
-                # Final and peak mem use of decorated function
-                curr, peak = tracemalloc.get_traced_memory()
-                tracemalloc.stop()
-                # OS memory availability after function run
-                mem = psutil.virtual_memory()
-
-                msg = (
-                    f"Memory usage of {func.__name__}: "
-                    f"current {round(curr / 10**6, 2)} MB, "
-                    f"peak {round(peak / 10**6, 2)} MB. "
-                    f"Total memory: {round(mem.total / 10**6, 2)} MB, "
-                    f"available memory: {round(mem.available / 10**6, 2)} MB."
-                )
-
-                logger.log(level, msg, prefix=prefix)
-
-        return wrapper
-
-    return decorator
+    level: int = logging.INFO,
+    prefix: str | None = "Profiling",
+) -> None:
+    """Log current memory usage for this process."""
+    proc = psutil.Process(os.getpid())
+    usage = proc.memory_info().rss / (1024**2)
+    msg = f"Current memory used by process (MiB): {usage}"
+    logger.log(level, msg, prefix=prefix)

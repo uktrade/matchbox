@@ -7,7 +7,6 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
 from matchbox.client import _handler
-from matchbox.client._settings import settings
 from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
@@ -237,22 +236,27 @@ class Model:
     @profile_mem()
     @profile_time(attr="name")
     def run(
-        self, for_validation: bool = False, cache_queries: bool = False
+        self,
+        for_validation: bool = False,
+        cache_queries: bool = False,
+        batch_size: int | None = None,
     ) -> ModelResults:
         """Execute the model pipeline and return results.
 
         Args:
             for_validation: Whether to download and store extra data to explore and
-                    score results.
+                score results.
             cache_queries: Whether to cache query results on first run and re-use them
                 subsequently.
+            batch_size: If set, process data in batches internally. Indicates the
+                size of each batch.
         """
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)
         cache_mode = CacheMode.CLEAN if cache_queries else CacheMode.OFF
         left_df = self.left_query.set_cache_mode(cache_mode).run(
             return_leaf_id=for_validation,
-            batch_size=settings.batch_size,
+            batch_size=batch_size,
             reuse_cache=cache_queries,
         )
         right_df = None
@@ -261,7 +265,7 @@ class Model:
             logger.info("Executing right query", prefix=log_prefix)
             right_df = self.right_query.set_cache_mode(cache_mode).run(
                 return_leaf_id=for_validation,
-                batch_size=settings.batch_size,
+                batch_size=batch_size,
                 reuse_cache=cache_queries,
             )
 

@@ -38,10 +38,10 @@ from matchbox.server.base import MatchboxDBAdapter
 class TestMatchboxCollectionsBackend:
     @pytest.fixture(autouse=True)
     def setup(
-        self, backend_instance: MatchboxDBAdapter, sqlite_warehouse: Engine
+        self, backend_instance: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
     ) -> None:
         self.backend: MatchboxDBAdapter = backend_instance
-        self.scenario = partial(setup_scenario, warehouse=sqlite_warehouse)
+        self.scenario = partial(setup_scenario, warehouse=sqla_sqlite_warehouse)
 
     # Collection management
 

@@ -1,14 +1,12 @@
-import io
 import os
-import tempfile
 from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import boto3
 import pytest
 import redis
+from adbc_driver_sqlite import dbapi as adbc_sqlite
 from moto import mock_aws
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine, create_engine
@@ -71,34 +69,30 @@ def postgres_warehouse(
     engine.dispose()
 
 
-@contextmanager
-def named_temp_file(filename: str) -> Generator[io.BufferedWriter, None, None]:
-    """
-    Create a temporary file with a specific name that auto-deletes.
-
-    Args:
-        filename: Just the filename (not path) you want to use
-    """
-    temp_dir = Path(tempfile.gettempdir())
-    full_path = temp_dir / filename
-    try:
-        with full_path.open(mode="wb") as f:
-            yield f
-    finally:
-        if full_path.exists():
-            full_path.unlink()
-
-
 @pytest.fixture(scope="function")
-def sqlite_warehouse() -> Generator[Engine, None, None]:
+def sqla_sqlite_warehouse(tmp_path: Path) -> Generator[Engine, None, None]:
     """Creates an engine for a function-scoped SQLite warehouse database.
 
     By using a temporary file, produces a URI that can be shared between processes.
     """
-    with named_temp_file("db.sqlite") as tmp:
-        engine = create_engine(f"sqlite:///{tmp.name}")
-        yield engine
-        engine.dispose()
+    db_path = tmp_path / "test_warehouse.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="function")
+def adbc_sqlite_warehouse(
+    sqla_sqlite_warehouse: Engine,
+) -> Generator[adbc_sqlite.Connection, None, None]:
+    """Creates an ADBC SQLite warehouse connection.
+
+    Uses the same database as the SQLAlchemy warehouse fixture.
+    """
+    db_path = sqla_sqlite_warehouse.url.database
+    conn = adbc_sqlite.connect(db_path)
+    yield conn
+    conn.close()
 
 
 @pytest.fixture(scope="function")

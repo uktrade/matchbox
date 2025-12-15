@@ -7,6 +7,7 @@ from typing import Any, Self, TypeAlias
 import polars as pl
 
 from matchbox.client import _handler
+from matchbox.client._settings import settings
 from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
@@ -446,14 +447,20 @@ class DAG:
         start: str | None = None,
         finish: str | None = None,
         low_memory: bool = False,
+        batch_size: int | None = None,
     ) -> None:
         """Run entire DAG and send results to server.
 
         Args:
-            start: name of first node to run
-            finish: name of last node to run
-            low_memory: whether to delete data for each node after it is run
+            start: Name of first node to run
+            finish: Name of last node to run
+            low_memory: Whether to delete data for each node after it is run
+            batch_size: If set, process data in batches internally. Indicates the
+                size of each batch. Overrides environment variable if set.
         """
+        if batch_size is None:
+            batch_size = settings.batch_size
+
         # Determine order of execution steps
         root_nodes = self.final_steps
 
@@ -500,7 +507,7 @@ class DAG:
             status[step_name] = DAGNodeExecutionStatus.DOING
             logger.info("\n" + self.draw(status=status))
             try:
-                node.run()
+                node.run(batch_size=batch_size)
                 node.sync()
             except Exception as e:
                 logger.error(f"❌ {node.name} failed: {e}")

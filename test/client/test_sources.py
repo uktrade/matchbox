@@ -29,7 +29,7 @@ from matchbox.common.factories.sources import (
 )
 
 
-def test_source_infers_type(sqlite_warehouse: Engine) -> None:
+def test_source_infers_type(sqla_sqlite_warehouse: Engine) -> None:
     """Creating a source with type inference works."""
     # Create test data
     source_testkit = source_factory(
@@ -37,10 +37,10 @@ def test_source_infers_type(sqlite_warehouse: Engine) -> None:
         features=[
             {"name": "name", "base_generator": "word", "datatype": DataTypes.STRING},
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -57,7 +57,7 @@ def test_source_infers_type(sqlite_warehouse: Engine) -> None:
     )
 
 
-def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> None:
+def test_source_sampling_preserves_original_sql(sqla_sqlite_warehouse: Engine) -> None:
     """SQL on RelationalDBLocation is preserved.
 
     SQLGlot transpiles INSTR() to STR_POSITION() in its default dialect.
@@ -72,10 +72,10 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> Non
                 "datatype": DataTypes.STRING,
             },
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
 
     # Use SQLite's INSTR function (returns position of substring)
     # Other databases use CHARINDEX, POSITION, etc.
@@ -109,7 +109,7 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> Non
     assert len(df) == 3
 
 
-def test_source_fetch(sqlite_warehouse: Engine) -> None:
+def test_source_fetch(sqla_sqlite_warehouse: Engine) -> None:
     """Test the query method with default parameters."""
     # Create test data
     source_testkit = source_factory(
@@ -117,11 +117,11 @@ def test_source_fetch(sqlite_warehouse: Engine) -> None:
         features=[
             {"name": "name", "base_generator": "word", "datatype": DataTypes.STRING},
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Create location and source
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -247,7 +247,7 @@ def test_source_fetch_batching(
         pytest.param(2, id="with_batching"),
     ],
 )
-def test_source_run(sqlite_warehouse: Engine, batch_size: int) -> None:
+def test_source_run(sqla_sqlite_warehouse: Engine, batch_size: int) -> None:
     """Test the run method produces expected hash format."""
     # Create test data with unique values
     n_true_entities = 3
@@ -261,11 +261,11 @@ def test_source_run(sqlite_warehouse: Engine, batch_size: int) -> None:
                 "datatype": DataTypes.INT64,
             },
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Create location and source
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -315,12 +315,12 @@ def test_source_run_null_identifier(
         source.run()
 
 
-def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
+def test_source_sync(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) -> None:
     """Test source syncing flow through the API."""
     # Mock source
     testkit = source_factory(
         features=[{"name": "company_name", "base_generator": "company"}],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Mock the routes:

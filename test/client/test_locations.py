@@ -1,10 +1,11 @@
 import polars as pl
 import pytest
+from adbc_driver_manager import ProgrammingError
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
-from matchbox.client.locations import RelationalDBLocation
+from matchbox.client.locations import ClientType, RelationalDBLocation
 from matchbox.common.dtos import (
     DataTypes,
     LocationType,
@@ -17,10 +18,23 @@ from matchbox.common.factories.sources import (
 )
 
 
+@pytest.mark.parametrize(
+    ("client_fixture", "expected_client_type"),
+    [
+        pytest.param(
+            "sqlite_in_memory_warehouse", ClientType.SQLALCHEMY, id="sqlalchemy"
+        ),
+        pytest.param("adbc_sqlite_warehouse", ClientType.ADBC, id="adbc"),
+    ],
+)
 def test_relational_db_location_instantiation(
-    sqlite_in_memory_warehouse: Engine,
+    client_fixture: str,
+    expected_client_type: ClientType,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Test that RelationalDBLocation can be instantiated with valid parameters."""
+    client = request.getfixturevalue(client_fixture)
+
     location = RelationalDBLocation(name="dbname")
     assert location.config.type == LocationType.RDBMS
     assert location.config.name == "dbname"
@@ -31,14 +45,29 @@ def test_relational_db_location_instantiation(
     with pytest.raises(ValueError):
         location.set_client(12)
 
-    assert (
-        location.set_client(sqlite_in_memory_warehouse).client
-        == sqlite_in_memory_warehouse
-    )
+    assert location.set_client(client).client == client
+    assert location.client_type == expected_client_type
 
 
 @pytest.mark.parametrize(
-    ["sql", "dialects"],
+    ("client_fixture",),
+    [
+        pytest.param("sqla_sqlite_warehouse", id="sqlalchemy"),
+        pytest.param("adbc_sqlite_warehouse", id="adbc"),
+    ],
+)
+def test_relational_db_connect(
+    client_fixture: str,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Test connecting to database."""
+    client = request.getfixturevalue(client_fixture)
+    location = RelationalDBLocation(name="dbname").set_client(client)
+    assert location.connect() is True
+
+
+@pytest.mark.parametrize(
+    ("sql", "dialects"),
     [
         pytest.param("SELECT * FROM test_table", "all", id="valid-select"),
         pytest.param(
@@ -104,22 +133,22 @@ def test_relational_db_location_instantiation(
     ],
 )
 def test_relational_db_extract_transform(
-    sql: str, dialects: str, postgres_warehouse: Engine, sqlite_warehouse: Engine
+    sql: str, dialects: str, postgres_warehouse: Engine, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test SQL validation in validate_extract_transform."""
 
     if dialects == "none":
-        invalid_clients = [postgres_warehouse, sqlite_warehouse]
+        invalid_clients = [postgres_warehouse, sqla_sqlite_warehouse]
         valid_clients = []
     if dialects == "all":
         invalid_clients = []
-        valid_clients = [postgres_warehouse, sqlite_warehouse]
+        valid_clients = [postgres_warehouse, sqla_sqlite_warehouse]
     if dialects == "postgres":
-        invalid_clients = [sqlite_warehouse]
+        invalid_clients = [sqla_sqlite_warehouse]
         valid_clients = [postgres_warehouse]
     if dialects == "sqlite":
         invalid_clients = [postgres_warehouse]
-        valid_clients = [sqlite_warehouse]
+        valid_clients = [sqla_sqlite_warehouse]
 
     # Dialect-agnostic check
     if dialects == "none":
@@ -141,8 +170,21 @@ def test_relational_db_extract_transform(
             ).validate_extract_transform(sql)
 
 
-def test_relational_db_infer_types(sqlite_warehouse: Engine) -> None:
+@pytest.mark.parametrize(
+    ("client_fixture",),
+    [
+        pytest.param("sqla_sqlite_warehouse", id="sqlalchemy"),
+        pytest.param("adbc_sqlite_warehouse", id="adbc"),
+    ],
+)
+def test_relational_db_infer_types(
+    client_fixture: str,
+    sqla_sqlite_warehouse: Engine,
+    request: pytest.FixtureRequest,
+) -> None:
     """Test that types are inferred correctly from the extract transform SQL."""
+    client = request.getfixturevalue(client_fixture)
+
     source_testkit = source_from_tuple(
         data_tuple=(
             {"foo": "10", "bar": None},
@@ -151,9 +193,10 @@ def test_relational_db_infer_types(sqlite_warehouse: Engine) -> None:
         ),
         data_keys=["a", "b", "c"],
         name="source",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+
+    location = RelationalDBLocation(name="dbname").set_client(client)
 
     query = f"""
         select key as renamed_key, foo, bar from
@@ -168,17 +211,31 @@ def test_relational_db_infer_types(sqlite_warehouse: Engine) -> None:
     assert inferred_types["bar"] == DataTypes.INT64
 
 
-def test_relational_db_execute(sqlite_warehouse: Engine) -> None:
+@pytest.mark.parametrize(
+    ("client_fixture",),
+    [
+        pytest.param("sqla_sqlite_warehouse", id="sqlalchemy"),
+        pytest.param("adbc_sqlite_warehouse", id="adbc"),
+    ],
+)
+def test_relational_db_execute(
+    client_fixture: str,
+    sqla_sqlite_warehouse: Engine,
+    request: pytest.FixtureRequest,
+) -> None:
     """Test executing a query and returning results using a real SQLite database."""
+    client = request.getfixturevalue(client_fixture)
+
     features = [
         FeatureConfig(name="company", base_generator="company"),
         FeatureConfig(name="employees", base_generator="random_int"),
     ]
 
     source_testkit = source_factory(
-        features=features, n_true_entities=10, engine=sqlite_warehouse
+        features=features, n_true_entities=10, engine=sqla_sqlite_warehouse
     ).write_to_location()
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+
+    location = RelationalDBLocation(name="dbname").set_client(client)
 
     sql = f"select key, upper(company) up_company, employees from {source_testkit.name}"
 
@@ -188,7 +245,9 @@ def test_relational_db_execute(sqlite_warehouse: Engine) -> None:
     results = list(location.execute(sql, batch_size))
 
     # Right number of batches and total rows
-    assert len(results[0]) == batch_size
+    if client_fixture != "adbc_sqlite_warehouse":
+        # SQLite ADBC driver doesn't batch, can't cover this
+        assert len(results[0]) == batch_size
     combined_df: pl.DataFrame = pl.concat(results)
     assert len(combined_df) == 10
 
@@ -216,13 +275,25 @@ def test_relational_db_execute(sqlite_warehouse: Engine) -> None:
     assert_frame_equal(unfiltered_results, combined_df)
 
 
-def test_relational_db_execute_invalid(sqlite_warehouse: Engine) -> None:
+@pytest.mark.parametrize(
+    ("client_fixture",),
+    [
+        pytest.param("sqla_sqlite_warehouse", id="sqlalchemy"),
+        pytest.param("adbc_sqlite_warehouse", id="adbc"),
+    ],
+)
+def test_relational_db_execute_invalid(
+    client_fixture: str,
+    request: pytest.FixtureRequest,
+) -> None:
     """Test that invalid queries are handled correctly when executing."""
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    client = request.getfixturevalue(client_fixture)
+
+    location = RelationalDBLocation(name="dbname").set_client(client)
 
     # Invalid SQL query
     sql = "SELECT * FROM nonexistent_table"
 
     # Should raise an exception when executed
-    with pytest.raises(OperationalError):
+    with pytest.raises((OperationalError, ProgrammingError)):
         list(location.execute(sql, batch_size=10))

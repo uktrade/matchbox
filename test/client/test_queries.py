@@ -50,7 +50,7 @@ def test_init_query() -> None:
     )
 
 
-def test_query_caching(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
+def test_query_caching(sqla_sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
     """Can cache and re-use raw and clean data."""
     # Set up mocks
     source = (
@@ -58,7 +58,7 @@ def test_query_caching(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> No
             data_tuple=({"col1": " a "}, {"col1": " b "}),
             data_keys=["0", "1"],
             name="foo",
-            engine=sqlite_warehouse,
+            engine=sqla_sqlite_warehouse,
         )
         .write_to_location()
         .source
@@ -123,7 +123,9 @@ def test_query_caching(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> No
     assert query.raw_data is None
 
 
-def test_update_cleaning(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
+def test_update_cleaning(
+    sqla_sqlite_warehouse: Engine, matchbox_api: MockRouter
+) -> None:
     """Can iterate on cleaning functions with caching."""
     # Set up mocks
     source = (
@@ -131,7 +133,7 @@ def test_update_cleaning(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> 
             data_tuple=({"col1": " a "}, {"col1": " b "}),
             data_keys=["0", "1"],
             name="foo",
-            engine=sqlite_warehouse,
+            engine=sqla_sqlite_warehouse,
         )
         .write_to_location()
         .source
@@ -210,7 +212,7 @@ def test_update_cleaning(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> 
 
 
 def test_query_single_source(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Tests that we can query from a single source."""
     # Dummy data and source
@@ -218,7 +220,7 @@ def test_query_single_source(
         data_tuple=({"a": 1, "b": "2"}, {"a": 10, "b": "20"}),
         data_keys=["0", "1"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Mock API
@@ -267,7 +269,7 @@ def test_query_single_source(
 
 
 def test_query_multiple_sources(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Tests that we can query multiple sources."""
     # Dummy data and source
@@ -275,14 +277,14 @@ def test_query_multiple_sources(
         data_tuple=({"a": 1, "b": "2"}, {"a": 10, "b": "20"}),
         data_keys=["0", "1"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     testkit2 = source_from_tuple(
         data_tuple=({"c": "val"}, {"c": "val"}),
         data_keys=["2", "3"],
         name="foo2",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
 
@@ -348,13 +350,13 @@ def test_query_multiple_sources(
     }
 
 
-def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
+def test_queries_clean(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) -> None:
     """Test that cleaning in a query is applied."""
     testkit = source_from_tuple(
         data_tuple=({"val": "a", "val2": 1}, {"val": "b", "val2": 2}),
         data_keys=["0", "1"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Mock API
@@ -389,7 +391,7 @@ def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> No
     ["set_agg", "explode"],
 )
 def test_query_combine_type(
-    combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
+    combine_type: str, matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Various ways of combining multiple sources are supported."""
     # Dummy data and source
@@ -397,14 +399,14 @@ def test_query_combine_type(
         data_tuple=({"col": 20}, {"col": 40}, {"col": 60}),
         data_keys=["0", "1", "2"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     testkit2 = source_from_tuple(
         data_tuple=({"col": "val1"}, {"col": "val2"}, {"col": "val3"}),
         data_keys=["3", "4", "5"],
         name="bar",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
 
@@ -480,21 +482,21 @@ def test_query_combine_type(
     ["concat", "set_agg", "explode"],
 )
 def test_query_leaf_ids(
-    combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
+    combine_type: str, matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Leaf IDs can be derived as a query byproduct."""
     testkit1 = source_from_tuple(
         data_tuple=({"col": 20}, {"col": 40}, {"col": 60}),
         data_keys=["0", "1", "2"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     testkit2 = source_from_tuple(
         data_tuple=({"col": "val1"}, {"col": "val2"}, {"col": "val3"}),
         data_keys=["3", "4", "5"],
         name="bar",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
 
@@ -560,9 +562,11 @@ def test_query_leaf_ids(
 
 
 def test_query_404_resolution(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
-    testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
+    testkit = source_factory(
+        engine=sqla_sqlite_warehouse, name="foo"
+    ).write_to_location()
 
     # Mock API
     matchbox_api.get("/query").mock(
@@ -581,10 +585,12 @@ def test_query_404_resolution(
 
 
 def test_query_empty_results_raises_exception(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test that query raises MatchboxEmptyServerResponse when no data is returned."""
-    testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
+    testkit = source_factory(
+        engine=sqla_sqlite_warehouse, name="foo"
+    ).write_to_location()
 
     # Mock empty results
     matchbox_api.get("/query").mock(

@@ -10,6 +10,7 @@ from typing import Any, ParamSpec, Self, TypeVar
 import pandas as pd
 import polars as pl
 import pyarrow as pa
+from adbc_driver_manager.dbapi import Connection as AdbcConnection
 from faker import Faker
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, create_engine
@@ -80,7 +81,7 @@ class SourceTestkitParameters(BaseModel):
 
     features: tuple[FeatureConfig, ...] = Field(default_factory=tuple)
     name: str
-    engine: Engine = Field(default=create_engine("sqlite:///:memory:"))
+    engine: Engine | AdbcConnection = Field(default=create_engine("sqlite:///:memory:"))
     n_true_entities: int | None = Field(default=None)
     repetition: int = Field(default=0)
 

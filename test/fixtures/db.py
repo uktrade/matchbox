@@ -1,15 +1,18 @@
 import os
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, TypeAlias
 
+import adbc_driver_postgresql.dbapi as adbc_postgresql
 import boto3
 import pytest
 import redis
+from _pytest.fixtures import FixtureRequest
 from adbc_driver_sqlite import dbapi as adbc_sqlite
 from moto import mock_aws
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, MetaData, create_engine
 
 from matchbox.server.base import MatchboxDatastoreSettings, MatchboxDBAdapter
 from matchbox.server.postgresql import MatchboxPostgres, MatchboxPostgresSettings
@@ -51,8 +54,15 @@ def development_settings() -> Generator[DevelopmentSettings, None, None]:
 # Warehouse fixtures
 
 
+def drop_all_tables(engine: Engine) -> None:
+    """Drop all tables from a SQLAlchemy engine."""
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    metadata.drop_all(bind=engine)
+
+
 @pytest.fixture(scope="function")
-def postgres_warehouse(
+def sqla_postgres_warehouse(
     development_settings: DevelopmentSettings,
 ) -> Generator[Engine, None, None]:
     """Creates an engine for the test warehouse database"""
@@ -66,7 +76,27 @@ def postgres_warehouse(
         f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
     )
     yield engine
+    drop_all_tables(engine)
     engine.dispose()
+
+
+@pytest.fixture(scope="function")
+def adbc_postgres_warehouse(
+    sqla_postgres_warehouse: Engine,
+) -> Generator[adbc_postgresql.Connection, None, None]:
+    """Creates an ADBC PostgreSQL warehouse connection.
+
+    Uses the same database as the SQLAlchemy warehouse fixture.
+    """
+    url = sqla_postgres_warehouse.url
+    uri = f"postgresql://{url.username}:{url.password}@{url.host}:{url.port}/{url.database}"
+
+    conn = adbc_postgresql.connect(uri)
+    conn.dialect = SimpleNamespace(
+        name="postgresql"
+    )  # only missing SQLAlchemy attribute
+    yield conn
+    conn.close()
 
 
 @pytest.fixture(scope="function")
@@ -78,6 +108,7 @@ def sqla_sqlite_warehouse(tmp_path: Path) -> Generator[Engine, None, None]:
     db_path = tmp_path / "test_warehouse.db"
     engine = create_engine(f"sqlite:///{db_path}")
     yield engine
+    drop_all_tables(engine)
     engine.dispose()
 
 
@@ -101,6 +132,34 @@ def sqlite_in_memory_warehouse() -> Generator[Engine, None, None]:
     engine = create_engine("sqlite:///:memory:")
     yield engine
     engine.dispose()
+
+
+WarehouseConnectionType: TypeAlias = (
+    Engine | adbc_postgresql.Connection | adbc_sqlite.Connection
+)
+
+
+@pytest.fixture
+def warehouse(
+    request: FixtureRequest,
+    sqla_postgres_warehouse: Engine,
+    sqla_sqlite_warehouse: Engine,
+    sqlite_in_memory_warehouse: Engine,
+    adbc_postgres_warehouse: adbc_postgresql.Connection,
+    adbc_sqlite_warehouse: adbc_sqlite.Connection,
+) -> WarehouseConnectionType:
+    """Parametrisable warehouse fixture.
+
+    Use with indirect parametrisation to select which warehouse to test against.
+    """
+    warehouses = {
+        "sqla_postgres": sqla_postgres_warehouse,
+        "sqla_sqlite": sqla_sqlite_warehouse,
+        "adbc_postgres": adbc_postgres_warehouse,
+        "adbc_sqlite": adbc_sqlite_warehouse,
+        "sqlite_in_memory": sqlite_in_memory_warehouse,
+    }
+    return warehouses[request.param]
 
 
 # Matchbox database fixtures

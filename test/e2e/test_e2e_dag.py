@@ -3,14 +3,16 @@ from collections.abc import Generator
 
 import polars as pl
 import pytest
+from adbc_driver_manager import AdbcConnection
 from httpx import Client
 from polars.testing import assert_frame_equal
-from sqlalchemy import Engine, text
 
 from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.sources import Source, SourceField
+from matchbox.common.dtos import DataTypes
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.factories.sources import (
     FeatureConfig,
@@ -51,12 +53,12 @@ class TestE2EPipelineBuilder:
     def setup_environment(
         self,
         matchbox_client: Client,
-        postgres_warehouse: Engine,
+        adbc_postgres_warehouse: AdbcConnection,
     ) -> Generator[None, None, None]:
         """Set up warehouse and database using fixtures."""
         # Persist shared setup for use in the test body
         n_true_entities = 10  # Keep it small for simplicity
-        self.warehouse_engine = postgres_warehouse
+        self.warehouse_engine = adbc_postgres_warehouse
 
         # Create simple feature configurations - just two sources
         features = {
@@ -69,13 +71,18 @@ class TestE2EPipelineBuilder:
                 base_generator="bothify",
                 parameters=(("text", "REG-###-???"),),
             ),
+            "tags": FeatureConfig(
+                name="tags",
+                base_generator="words",
+                parameters=(("nb", 3),),
+            ),
         }
 
         # Create two simple sources that can be linked
         source_parameters = (
             SourceTestkitParameters(
                 name="source_a",
-                engine=postgres_warehouse,
+                engine=self.warehouse_engine,
                 features=(
                     features["company_name"].add_variations(
                         SuffixRule(suffix=" Ltd"),
@@ -88,10 +95,11 @@ class TestE2EPipelineBuilder:
             ),
             SourceTestkitParameters(
                 name="source_b",
-                engine=postgres_warehouse,
+                engine=self.warehouse_engine,
                 features=(
                     features["company_name"],
                     features["registration_id"],
+                    features["tags"],
                 ),
                 n_true_entities=n_true_entities // 2,  # Half overlap
                 repetition=1,  # Duplicate all rows for deduplication testing
@@ -115,11 +123,6 @@ class TestE2EPipelineBuilder:
         yield
 
         # Teardown
-        with postgres_warehouse.connect() as conn:
-            for source_name in self.linked_testkit.sources:
-                conn.execute(text(f"DROP TABLE IF EXISTS {source_name};"))
-            conn.commit()
-
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 
@@ -158,13 +161,14 @@ class TestE2EPipelineBuilder:
                 select
                     key::text as id,
                     company_name,
-                    registration_id
+                    registration_id,
+                    tags::text[] as tags
                 from
                     source_b;
             """,
             infer_types=True,
             key_field="id",
-            index_fields=["company_name", "registration_id"],
+            index_fields=["company_name", "registration_id", "tags"],
         )
 
         # Dedupe steps
@@ -260,6 +264,14 @@ class TestE2EPipelineBuilder:
         # Load default
         reconstructed_dag = DAG("companies").load_default()
         assert reconstructed_dag.run == dag.run
+
+        # Check complex types serialise and deserialise
+        source_b_remote: Source = reconstructed_dag.get_source("source_b")
+        tags_field: SourceField = next(
+            f for f in source_b_remote.index_fields if f.name == "tags"
+        )
+        assert tags_field.type == DataTypes.LIST(DataTypes.STRING)
+
         # Previous update was effective
         assert reconstructed_dag.get_model("final").description == "Updated description"
 

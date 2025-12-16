@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from adbc_driver_manager.dbapi import Connection as ADBCConnection
+    from adbc_driver_manager.dbapi import Connection as AdbcConnection
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Iterator
@@ -49,9 +49,9 @@ CLIENT_CLASSES: dict[ClientType, type | tuple[type, ...]] = {
 }
 
 try:
-    from adbc_driver_manager.dbapi import Connection as ADBCConnection
+    from adbc_driver_manager.dbapi import Connection as AdbcConnection
 
-    CLIENT_CLASSES[ClientType.ADBC] = ADBCConnection
+    CLIENT_CLASSES[ClientType.ADBC] = AdbcConnection
 except ImportError:
     pass
 
@@ -181,7 +181,7 @@ class Location(ABC):
 class RelationalDBLocation(Location):
     """A location for a relational database."""
 
-    client: Engine | ADBCConnection
+    client: Engine | AdbcConnection
     location_type: LocationType = LocationType.RDBMS
 
     @property
@@ -192,7 +192,7 @@ class RelationalDBLocation(Location):
         return ClientType.ADBC
 
     @contextmanager
-    def _get_connection(self) -> Generator[Connection | ADBCConnection, None, None]:
+    def _get_connection(self) -> Generator[Connection | AdbcConnection, None, None]:
         """Context manager for getting database connections with proper cleanup."""
         # ADBC connections are already connected
         if self.client_type == ClientType.ADBC:

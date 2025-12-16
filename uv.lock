@@ -1331,6 +1331,7 @@ server = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "adbc-driver-postgresql" },
     { name = "adbc-driver-sqlite" },
     { name = "docker" },
     { name = "griffe-inherited-docstrings" },
@@ -1394,6 +1395,7 @@ provides-extras = ["server"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "adbc-driver-postgresql", specifier = ">=1.9.0" },
     { name = "adbc-driver-sqlite", specifier = ">=1.9.0" },
     { name = "docker", specifier = ">=7.1.0" },
     { name = "griffe-inherited-docstrings", specifier = ">=1.1.1" },

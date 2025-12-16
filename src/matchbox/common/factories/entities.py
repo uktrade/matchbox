@@ -511,7 +511,12 @@ def generate_entities(
             generator_func = generator.unique if feature.unique else generator
             value_generator = getattr(generator_func, feature.base_generator)
             parameters = {} if not feature.parameters else dict(feature.parameters)
-            base_values[feature.name] = value_generator(**parameters)
+
+            value = value_generator(**parameters)
+            # Explicitly cast lists to tuples to ensure they are hashable
+            if isinstance(value, list):
+                value = tuple(value)
+            base_values[feature.name] = value
 
         entities.append(SourceEntity(base_values=base_values, keys=EntityReference()))
     return tuple(entities)

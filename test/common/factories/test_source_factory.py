@@ -169,9 +169,9 @@ def test_source_factory_mock_properties(sqlite_in_memory_warehouse: Engine) -> N
     # Verify source properties are preserved through model_dump
     dump = source_config.model_dump()
     assert str(dump["location_config"]["name"]) == location_name
-    assert dump["key_field"] == {"name": "key", "type": DataTypes.STRING}
+    assert dump["key_field"] == {"name": "key", "type": str(DataTypes.STRING)}
     assert dump["index_fields"] == tuple(
-        {"name": f.name, "type": f.datatype} for f in features
+        {"name": f.name, "type": str(f.datatype)} for f in features
     )
 
 

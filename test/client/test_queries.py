@@ -8,7 +8,7 @@ from respx import MockRouter
 from sqlalchemy import Engine
 from sqlglot.errors import ParseError
 
-from matchbox.client.queries import CacheMode, Query, _clean
+from matchbox.client.queries import CacheMode, Query, QueryCombineType, _clean
 from matchbox.common.arrow import (
     SCHEMA_QUERY,
     SCHEMA_QUERY_WITH_LEAVES,
@@ -239,7 +239,7 @@ def test_query_single_source(
     # Tests with no optional params
     results = Query(testkit.source, dag=testkit.source.dag).run()
     assert len(results) == 2
-    assert {"foo_a", "foo_b", "foo_key", "id"} == set(results.columns)
+    assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
         "collection": testkit.source.dag.name,
@@ -255,7 +255,7 @@ def test_query_single_source(
 
     assert isinstance(results, PandasDataFrame)
     assert len(results) == 2
-    assert {"foo_a", "foo_b", "foo_key", "id"} == set(results.columns)
+    assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
         "collection": testkit.source.dag.name,
@@ -323,14 +323,7 @@ def test_query_multiple_sources(
         testkit1.source, testkit2.source, model=model, dag=testkit1.source.dag
     ).run()
     assert len(results) == 4
-    assert {
-        "foo_a",
-        "foo_b",
-        "foo_key",
-        "foo2_c",
-        "foo2_key",
-        "id",
-    } == set(results.columns)
+    assert {"foo_a", "foo_b", "foo2_c", "id"} == set(results.columns)
 
     assert dict(query_route.calls[-2].request.url.params) == {
         "collection": testkit1.source.dag.name,
@@ -386,7 +379,8 @@ def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> No
 
 @pytest.mark.parametrize(
     "combine_type",
-    ["set_agg", "explode"],
+    [QueryCombineType.SET_AGG, QueryCombineType.EXPLODE],
+    ids=["set_agg", "explode"],
 )
 def test_query_combine_type(
     combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
@@ -466,18 +460,13 @@ def test_query_combine_type(
         expected_len = 5
 
     assert len(results) == expected_len
-    assert {
-        "foo_col",
-        "foo_key",
-        "bar_col",
-        "bar_key",
-        "id",
-    } == set(results.columns)
+    assert {"foo_col", "bar_col", "id"} == set(results.columns)
 
 
 @pytest.mark.parametrize(
     "combine_type",
-    ["concat", "set_agg", "explode"],
+    [QueryCombineType.CONCAT, QueryCombineType.SET_AGG, QueryCombineType.EXPLODE],
+    ids=["concat", "set_agg", "explode"],
 )
 def test_query_leaf_ids(
     combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
@@ -540,7 +529,7 @@ def test_query_leaf_ids(
         dag=testkit1.source.dag,
     )
     data: pl.DataFrame = query.run(return_leaf_id=True)
-    assert set(data.columns) == {"foo_key", "foo_col", "bar_key", "bar_col", "id"}
+    assert set(data.columns) == {"foo_col", "bar_col", "id"}
 
     assert_frame_equal(
         pl.DataFrame(query.leaf_id),

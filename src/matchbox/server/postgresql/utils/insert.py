@@ -43,7 +43,15 @@ from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leave
 def _fetch_existing_clusters(
     conn: PoolProxiedConnection, hashes: list[bytes], chunk: int = 1000
 ) -> pl.DataFrame:
-    """Fetch existing clusters from database, using chunking for large hashes lists."""
+    """Fetch existing clusters from database, using chunking for large hashes lists.
+
+    Note this will only work with Postgresql.
+
+    Args:
+        conn: a PoolProxiedConnection connection
+        hashes: list with all hashes to search in the database
+        chunk: maximum length of the list to use on each query
+    """
     if not hashes:
         return pl.DataFrame(
             schema={
@@ -148,6 +156,7 @@ def insert_hashes(
     # Don't insert new hashes, but new keys need existing hash IDs
     with MBDB.get_adbc_connection() as conn:
         existing_hash_lookup = _fetch_existing_clusters(conn, unique_data_hashes)
+    del unique_data_hashes
 
     if existing_hash_lookup.is_empty():
         new_hashes = data_hashes.select("hash").unique()
@@ -156,7 +165,7 @@ def insert_hashes(
             data_hashes.select("hash")
             .unique()
             .join(
-                other=existing_hash_lookup,
+                other=existing_hash_lookup.select(["cluster_hash"]),
                 left_on="hash",
                 right_on="cluster_hash",
                 how="anti",
@@ -185,16 +194,21 @@ def insert_hashes(
 
     # Create a combined lookup with both existing and new mappings
     lookup = pl.concat([existing_hash_lookup, cluster_records], how="vertical")
+    del existing_hash_lookup
 
     # Add cluster_id values to data hashes
     hashes_with_ids = data_hashes.join(lookup, left_on="hash", right_on="cluster_hash")
+    del data_hashes, lookup
 
     # Explode keys
+    # If we expect large lists of keys, we might want to batch this
+    # Checking the database suggests this is not an issue at the moment
     keys_records = (
         hashes_with_ids.select(["cluster_id", "keys"])
         .explode("keys")
         .rename({"keys": "key"})
     )
+    del hashes_with_ids
 
     log_mem_usage()
     if keys_records.shape[0] > 0:
@@ -546,6 +560,7 @@ def _results_to_insert_tables(
     )
 
 
+@profile_time()
 def insert_results(
     path: ModelResolutionPath,
     results: pa.Table,
@@ -592,7 +607,7 @@ def insert_results(
 
         if existing_results > 0:
             raise MatchboxResolutionExistingData
-
+    log_mem_usage()
     logger.info(
         f"Writing results data with batch size {batch_size:,}", prefix=log_prefix
     )
@@ -664,6 +679,7 @@ def insert_results(
             )
 
             adbc_connection.commit()
+            log_mem_usage()
 
         except Exception as e:
             logger.error(

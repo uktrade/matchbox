@@ -6,6 +6,8 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
+from polars import DataFrame
+
 from matchbox.client import _handler
 from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
@@ -23,7 +25,7 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_model_results
-from matchbox.common.logging import logger, profile_mem, profile_time
+from matchbox.common.logging import logger, profile_time
 from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
@@ -233,8 +235,20 @@ class Model:
         result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
         return result.success
 
-    @profile_mem()
     @profile_time(attr="name")
+    def compute_probabilities(
+        self, left_df: DataFrame, right_df: DataFrame | None = None
+    ) -> DataFrame:
+        """Run model instance against data."""
+        if self.config.type == ModelType.LINKER:
+            self.model_instance.prepare(left_df, right_df)
+            probabilities = self.model_instance.link(left=left_df, right=right_df)
+        else:
+            self.model_instance.prepare(left_df)
+            probabilities = self.model_instance.dedupe(data=left_df)
+
+        return probabilities
+
     def run(
         self,
         for_validation: bool = False,
@@ -269,27 +283,23 @@ class Model:
                 reuse_cache=cache_queries,
             )
 
-            self.model_instance.prepare(left_df, right_df)
-            results = self.model_instance.link(left=left_df, right=right_df)
-        else:
-            self.model_instance.prepare(left_df)
-            results = self.model_instance.dedupe(data=left_df)
+        logger.info("Running model logic", prefix=log_prefix)
+        probabilities = self.compute_probabilities(left_df, right_df)
 
         if for_validation:
             self.results = ModelResults(
-                probabilities=results,
+                probabilities=probabilities,
                 left_root_leaf=self.left_query.leaf_id,
                 right_root_leaf=self.right_query.leaf_id
                 if right_df is not None
                 else None,
             )
         else:
-            self.results = ModelResults(probabilities=results)
+            self.results = ModelResults(probabilities=probabilities)
 
         return self.results
 
     @post_run
-    @profile_mem()
     @profile_time(attr="name")
     def sync(self) -> None:
         """Send the model config and results to the server.
@@ -300,8 +310,8 @@ class Model:
         resolution = self.to_resolution()
         try:
             existing_resolution = _handler.get_resolution(path=self.resolution_path)
-        except MatchboxResolutionNotFoundError:
             logger.info("Found existing resolution", prefix=log_prefix)
+        except MatchboxResolutionNotFoundError:
             existing_resolution = None
 
         if existing_resolution:

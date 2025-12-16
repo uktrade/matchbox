@@ -28,7 +28,7 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.logging import logger, profile_time
+from matchbox.common.logging import log_mem_usage, logger, profile_time
 from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 
@@ -446,6 +446,7 @@ class DAG:
         start: str | None = None,
         finish: str | None = None,
         low_memory: bool = False,
+        profile: bool = False,
     ) -> None:
         """Run entire DAG and send results to server.
 
@@ -453,6 +454,7 @@ class DAG:
             start: name of first node to run
             finish: name of last node to run
             low_memory: whether to delete data for each node after it is run
+            profile: whether to log to INFO level the memory usage
         """
         # Determine order of execution steps
         root_nodes = self.final_steps
@@ -502,6 +504,8 @@ class DAG:
             try:
                 node.run()
                 node.sync()
+                if profile:
+                    log_mem_usage()
             except Exception as e:
                 logger.error(f"❌ {node.name} failed: {e}")
                 raise e
@@ -509,6 +513,9 @@ class DAG:
 
             if low_memory:
                 node.clear_data()
+                logger.info("Cleared node data")
+                if profile:
+                    log_mem_usage()
         logger.info("\n" + self.draw(status=status))
 
     def set_default(self) -> None:

@@ -6,6 +6,7 @@ import polars as pl
 import pyarrow as pa
 from sqlalchemy import func, join, select
 from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.pool import PoolProxiedConnection
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -18,7 +19,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionInvalidData,
 )
 from matchbox.common.hash import IntMap, hash_arrow_table, hash_model_results
-from matchbox.common.logging import logger
+from matchbox.common.logging import log_mem_usage, logger, profile_time
 from matchbox.common.transform import Cluster, DisjointSet
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
@@ -39,6 +40,58 @@ from matchbox.server.postgresql.utils.db import (
 from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leaves
 
 
+def _fetch_existing_clusters(
+    conn: PoolProxiedConnection, hashes: list[bytes], chunk: int = 1000
+) -> pl.DataFrame:
+    """Fetch existing clusters from database, using chunking for large hashes lists."""
+    if not hashes:
+        return pl.DataFrame(
+            schema={
+                "cluster_id": pl.Int64,
+                "cluster_hash": pl.Binary,
+            }
+        )
+
+    out: list[pl.DataFrame] = []
+    for i in range(0, len(hashes), chunk):
+        part = hashes[i : i + chunk]
+        if not part:
+            continue
+
+        # Placeholders to insert parameters in Postgresql ($1, $2, etc)
+        # Should be the same length as chunk
+        placeholders = ",".join(f"${j}" for j in range(1, len(part) + 1))
+        sql = f"""
+            SELECT cluster_id, cluster_hash
+            FROM {Clusters.__table__.fullname}
+            WHERE cluster_hash IN ({placeholders})
+        """
+
+        df = sql_to_df(
+            stmt=sql,
+            connection=conn.dbapi_connection,
+            return_type="polars",
+            execute_options={"parameters": tuple(part)},
+            schema_overrides={
+                "cluster_id": pl.Int64,
+                "cluster_hash": pl.Binary,
+            },
+        )
+        if not df.is_empty():
+            out.append(df)
+
+    if not out:
+        return pl.DataFrame(
+            schema={
+                "cluster_id": pl.Int64,
+                "cluster_hash": pl.Binary,
+            }
+        )
+
+    return pl.concat(out, how="vertical")
+
+
+@profile_time()
 def insert_hashes(
     path: SourceResolutionPath,
     data_hashes: pa.Table,
@@ -88,15 +141,14 @@ def insert_hashes(
 
         source_config_id = resolution.source_config.source_config_id
 
+    log_mem_usage()
+    data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
+    unique_data_hashes = data_hashes.get_column("hash").unique().to_list()
+
     # Don't insert new hashes, but new keys need existing hash IDs
     with MBDB.get_adbc_connection() as conn:
-        existing_hash_lookup: pl.DataFrame = sql_to_df(
-            stmt=compile_sql(select(Clusters.cluster_id, Clusters.cluster_hash)),
-            connection=conn.dbapi_connection,
-            return_type="polars",
-        )
+        existing_hash_lookup = _fetch_existing_clusters(conn, unique_data_hashes)
 
-    data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
     if existing_hash_lookup.is_empty():
         new_hashes = data_hashes.select("hash").unique()
     else:
@@ -118,6 +170,7 @@ def insert_hashes(
         # The value of next_cluster_id is irrelevant as cluster_records will be empty
         next_cluster_id = 0
 
+    log_mem_usage()
     cluster_records = (
         new_hashes.with_row_index("cluster_id")
         .with_columns(
@@ -143,6 +196,7 @@ def insert_hashes(
         .rename({"keys": "key"})
     )
 
+    log_mem_usage()
     if keys_records.shape[0] > 0:
         next_key_id = PKSpace.reserve_block("cluster_keys", len(keys_records))
     else:
@@ -187,6 +241,7 @@ def insert_hashes(
                 )
 
             adbc_connection.commit()
+            log_mem_usage()
 
         except Exception as e:
             # Log the error and rollback

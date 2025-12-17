@@ -1,6 +1,6 @@
 # Command Line Interface
 
-Matchbox comes with a Command Line Interface (CLI) that allows users to perform certain management tasks. It also allows users to access the interactive entity evaluation tool, which is documented [here](evaluation.md).
+Matchbox comes with a Command Line Interface (CLI) that allows users to perform certain management tasks.
 
 To run the CLI:
 ```bash

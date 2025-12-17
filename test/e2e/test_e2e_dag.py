@@ -235,11 +235,13 @@ class TestE2EPipelineBuilder:
         logging.info(f"First run produced {first_run_entities} unique entities")
 
         # Lookup works too
-        test_key = list(
-            self.linked_testkit.find_entities(
-                min_appearances={source_b.name: 1, source_a.name: 1}
-            )[0].keys[source_b.name]
-        )[0]
+        test_key = next(
+            iter(
+                self.linked_testkit.find_entities(
+                    min_appearances={source_b.name: 1, source_a.name: 1}
+                )[0].keys[source_b.name]
+            )
+        )
 
         matches = dag.lookup_key(
             from_source=source_b.name,

@@ -269,10 +269,11 @@ class Query:
                 raw_data = raw_data.explode(pl.all().exclude("id")).unique()
 
             raw_data = raw_data.collect()
-            clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
 
-            self._set_cache(raw_data, clean_data)
-            return _convert_df(clean_data, return_type=return_type)
+        clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
+        self._set_cache(raw_data, clean_data)
+
+        return _convert_df(clean_data, return_type=return_type)
 
     def clean(
         self,

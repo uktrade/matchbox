@@ -2,9 +2,12 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 import polars as pl
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+from matchbox.common.dtos import QueryCombineType
 
 
 class DeduperSettings(BaseModel):
@@ -31,6 +34,7 @@ class Deduper(BaseModel, ABC):
     """A base class for dedupers."""
 
     settings: DeduperSettings
+    allowed_combines: ClassVar[None | list[QueryCombineType]] = None
 
     @abstractmethod
     def prepare(self, data: pl.DataFrame) -> None:

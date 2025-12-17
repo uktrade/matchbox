@@ -47,7 +47,7 @@ class TestE2EMethodologyIntegration:
 
     def _clean_field(self, column: str) -> str:
         """Generate basic cleaning SQL."""
-        return f"trim({column})"
+        return f"trim({column}[1])"
 
     @pytest.mark.parametrize(("Deduper", "configure_deduper"), DEDUPERS)
     def test_deduper_integration(
@@ -124,11 +124,13 @@ class TestE2EMethodologyIntegration:
             settings = configure_linker(crn_testkit, dh_testkit)
 
             link_result = crn_source.query(
+                combine_type="set_agg",
                 cleaning={
                     "company_name": self._clean_field(crn_source.f("company_name")),
                 },
             ).linker(
                 dh_source.query(
+                    combine_type="set_agg",
                     cleaning={
                         "company_name": self._clean_field(dh_source.f("company_name")),
                     },

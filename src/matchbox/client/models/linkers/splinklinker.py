@@ -19,6 +19,7 @@ from splink import Linker as SplinkLibLinkerClass
 from splink.internals.linker_components.training import LinkerTraining
 
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
+from matchbox.common.dtos import QueryCombineType
 from matchbox.common.logging import logger
 
 
@@ -178,6 +179,7 @@ class SplinkLinker(Linker):
     """A linker that leverages Bayesian record linkage using Splink."""
 
     settings: SplinkSettings
+    allowed_combines = [QueryCombineType.SET_AGG]
 
     _linker: SplinkLibLinkerClass
     _id_dtype_l: pl.DataType

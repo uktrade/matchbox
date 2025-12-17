@@ -138,6 +138,24 @@ class Model:
             self.model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
         else:
             self.model_class = model_class
+
+        # Check that combine types are compatible with model class
+        if self.model_class.allowed_combines:
+            if self.left_query.combine_type not in self.model_class.allowed_combines:
+                raise ValueError(
+                    f"Combine type {self.left_query.combine_type} for left query "
+                    f"incompatible with model type {self.model_class.__name__}"
+                )
+            if (
+                self.right_query
+                and self.right_query.combine_type
+                not in self.model_class.allowed_combines
+            ):
+                raise ValueError(
+                    f"Combine type {self.right_query.combine_type} for right query "
+                    f"incompatible with model type {self.model_class.__name__}"
+                )
+
         self.model_instance = self.model_class(settings=model_settings)
 
         self.model_type: ModelType = (

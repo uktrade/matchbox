@@ -2,9 +2,12 @@
 
 import warnings
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 import polars as pl
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+from matchbox.common.dtos import QueryCombineType
 
 
 class LinkerSettings(BaseModel):
@@ -36,6 +39,7 @@ class Linker(BaseModel, ABC):
     """A base class for linkers."""
 
     settings: LinkerSettings
+    allowed_combines: ClassVar[None | list[QueryCombineType]] = None
 
     @abstractmethod
     def prepare(self, left: pl.DataFrame, right: pl.DataFrame) -> None:

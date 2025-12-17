@@ -25,6 +25,7 @@ from matchbox.client.models.linkers.weighteddeterministic import (
 )
 from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
+from matchbox.common.dtos import QueryCombineType
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.sources import (
     SourceTestkit,
@@ -330,8 +331,12 @@ def test_exact_match_linking(
         description="Linking with exact matches",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source.source, dag=linked.dag),
-        right_query=Query(right_source.source, dag=linked.dag),
+        left_query=Query(
+            left_source.source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
+        right_query=Query(
+            right_source.source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
     )
     results: ModelResults = linker.run()
 
@@ -396,8 +401,12 @@ def test_exact_match_with_duplicates_linking(
         description="Linking with exact matches",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source, dag=linked.dag),
-        right_query=Query(right_source, dag=linked.dag),
+        left_query=Query(
+            left_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
+        right_query=Query(
+            right_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
     )
     results: ModelResults = linker.run()
 
@@ -467,8 +476,12 @@ def test_partial_entity_linking(
         description="Linking with partial entity coverage",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source, dag=linked.dag),
-        right_query=Query(right_source, dag=linked.dag),
+        left_query=Query(
+            left_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
+        right_query=Query(
+            right_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
     )
     results = linker.run()
 
@@ -530,8 +543,12 @@ def test_no_matching_entities_linking(
         description="Linking with no matching entities",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source, dag=linked.dag),
-        right_query=Query(right_source, dag=linked.dag),
+        left_query=Query(
+            left_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
+        right_query=Query(
+            right_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
     )
     results = linker.run()
 

@@ -18,6 +18,7 @@ from matchbox.client.models.linkers.weighteddeterministic import (
 )
 from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
+from matchbox.common.dtos import QueryCombineType
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -248,8 +249,12 @@ def test_probabilistic_scores_generation(
         description="Testing probability generation",
         model_class=Linker,
         model_settings=configure_linker(left_source, right_source),
-        left_query=Query(left_source, dag=linked.dag),
-        right_query=Query(right_source, dag=linked.dag),
+        left_query=Query(
+            left_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
+        right_query=Query(
+            right_source, dag=linked.dag, combine_type=QueryCombineType.SET_AGG
+        ),
     )
 
     results: ModelResults = linker.run()

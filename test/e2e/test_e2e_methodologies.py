@@ -22,6 +22,7 @@ from matchbox.client.models.linkers.splinklinker import SplinkLinker
 from matchbox.client.models.linkers.weighteddeterministic import (
     WeightedDeterministicLinker,
 )
+from matchbox.common.dtos import QueryCombineType
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
 from matchbox.server.base import MatchboxDBAdapter
@@ -123,14 +124,45 @@ class TestE2EMethodologyIntegration:
             # Create settings and linker
             settings = configure_linker(crn_testkit, dh_testkit)
 
+            valid_combine = QueryCombineType.CONCAT
+            if Linker.allowed_combines:
+                incompatible_combine = set(QueryCombineType) - set(
+                    Linker.allowed_combines
+                )
+                valid_combine = Linker.allowed_combines[0]
+                if incompatible_combine:
+                    bad_combine = next(iter(incompatible_combine))
+                    with pytest.raises(ValueError):
+                        crn_source.query(
+                            combine_type=bad_combine,
+                            cleaning={
+                                "company_name": self._clean_field(
+                                    crn_source.f("company_name")
+                                ),
+                            },
+                        ).linker(
+                            dh_source.query(
+                                combine_type=bad_combine,
+                                cleaning={
+                                    "company_name": self._clean_field(
+                                        dh_source.f("company_name")
+                                    ),
+                                },
+                            ),
+                            name=f"test_{Linker.__name__}",
+                            description=f"Integration test for {Linker.__name__}",
+                            model_class=Linker,
+                            model_settings=settings,
+                        )
+
             link_result = crn_source.query(
-                combine_type="set_agg",
+                combine_type=valid_combine,
                 cleaning={
                     "company_name": self._clean_field(crn_source.f("company_name")),
                 },
             ).linker(
                 dh_source.query(
-                    combine_type="set_agg",
+                    combine_type=valid_combine,
                     cleaning={
                         "company_name": self._clean_field(dh_source.f("company_name")),
                     },

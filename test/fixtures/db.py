@@ -1,7 +1,6 @@
 import os
 from collections.abc import Generator
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import adbc_driver_postgresql.dbapi as adbc_postgresql
@@ -92,9 +91,6 @@ def adbc_postgres_warehouse(
     uri = f"postgresql://{url.username}:{url.password}@{url.host}:{url.port}/{url.database}"
 
     conn = adbc_postgresql.connect(uri)
-    conn.dialect = SimpleNamespace(
-        name="postgresql"
-    )  # only missing SQLAlchemy attribute
     yield conn
     conn.close()
 

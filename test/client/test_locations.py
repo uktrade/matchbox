@@ -7,8 +7,8 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
 from matchbox.client.locations import ClientType, RelationalDBLocation
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
-    DataTypes,
     LocationType,
 )
 from matchbox.common.exceptions import MatchboxSourceExtractTransformError

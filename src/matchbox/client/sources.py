@@ -9,12 +9,12 @@ from pyarrow import Table as ArrowTable
 
 from matchbox.client import _handler
 from matchbox.client.queries import Query
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.db import (
     QueryReturnClass,
     QueryReturnType,
 )
 from matchbox.common.dtos import (
-    DataTypes,
     Resolution,
     ResolutionType,
     SourceConfig,

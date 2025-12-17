@@ -12,7 +12,7 @@ from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.sources import Source, SourceField
-from matchbox.common.dtos import DataTypes
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.factories.sources import (
     FeatureConfig,

@@ -4,7 +4,7 @@ import base64
 import json
 from datetime import UTC, datetime
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.exceptions import MatchboxClientSettingsException
@@ -17,7 +17,7 @@ class ClientSettings(BaseSettings):
     default_warehouse: str | None = None
     jwt: str | None = None
     user: str | None = None
-    batch_size: int | None = None
+    batch_size: int = Field(default=10_000)
 
     model_config = SettingsConfigDict(
         extra="ignore",

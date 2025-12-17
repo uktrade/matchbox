@@ -5,7 +5,8 @@ from faker import Faker
 from sqlalchemy import Engine
 
 from matchbox.common.arrow import SCHEMA_INDEX
-from matchbox.common.dtos import DataTypes, LocationConfig, LocationType
+from matchbox.common.datatypes import DataTypes
+from matchbox.common.dtos import LocationConfig, LocationType
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,

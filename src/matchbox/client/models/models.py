@@ -262,8 +262,8 @@ class Model:
                 score results.
             cache_queries: Whether to cache query results on first run and re-use them
                 subsequently.
-            batch_size: If set, process data in batches internally. Indicates the
-                size of each batch.
+            batch_size: The size used for internal batching. Overrides environment
+                variable if set.
         """
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)

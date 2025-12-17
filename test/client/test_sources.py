@@ -12,10 +12,10 @@ from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.sources import (
     Source,
 )
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
-    DataTypes,
     NotFoundError,
     Resolution,
     ResourceOperationStatus,

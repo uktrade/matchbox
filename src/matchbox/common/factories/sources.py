@@ -21,8 +21,8 @@ from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_QUERY
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
-    DataTypes,
     SourceConfig,
     SourceField,
     SourceResolutionName,

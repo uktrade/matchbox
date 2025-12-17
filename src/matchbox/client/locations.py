@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from matchbox.common.datatypes import DataTypes
+
 if TYPE_CHECKING:
     from adbc_driver_manager.dbapi import Connection as AdbcConnection
 
@@ -26,7 +28,7 @@ from matchbox.common.db import (
     QueryReturnType,
     sql_to_df,
 )
-from matchbox.common.dtos import DataTypes, LocationConfig, LocationType
+from matchbox.common.dtos import LocationConfig, LocationType
 from matchbox.common.exceptions import (
     MatchboxSourceClientError,
     MatchboxSourceExtractTransformError,
@@ -155,7 +157,8 @@ class Location(ABC):
 
         Args:
             extract_transform: The ET logic to execute.
-            batch_size: The size of the batches to return.
+            batch_size: The size used for internal batching. Overrides environment
+                variable if set.
             rename: Renaming to apply after the ET logic is executed.
 
                 * If a dictionary is provided, it will be used to rename the columns.
@@ -181,15 +184,17 @@ class Location(ABC):
 class RelationalDBLocation(Location):
     """A location for a relational database."""
 
-    client: Engine | AdbcConnection
+    client: Engine | AdbcConnection | None
     location_type: LocationType = LocationType.RDBMS
 
     @property
-    def client_type(self) -> ClientType:
+    def client_type(self) -> ClientType | None:
         """Determine client type from the client."""
         if isinstance(self.client, Engine):
             return ClientType.SQLALCHEMY
-        return ClientType.ADBC
+        elif isinstance(self.client, AdbcConnection):
+            return ClientType.ADBC
+        return None
 
     @contextmanager
     def _get_connection(self) -> Generator[Connection | AdbcConnection, None, None]:
@@ -233,20 +238,26 @@ class RelationalDBLocation(Location):
                 "SQL statement is empty or only contains whitespace."
             )
 
-        dialect = None
-        # If a client is present, we can make the SQLGlot validation more targeted
-        if self.client:
-            match self.client.dialect.name:
-                case "postgresql":
-                    dialect = "postgres"
-                case "sqlite":
-                    dialect = "sqlite"
+        # Attempt to make the SQLGlot validation more targeted
+        sqlglot_dialect: str | None = None
+        client_dialect: str | None = None
 
-        if not dialect:
-            logger.warning("Could not validate specific dialect.")
+        if self.client and self.client_type == ClientType.SQLALCHEMY:
+            client_dialect = self.client.dialect.name
+        elif self.client and self.client_type == ClientType.ADBC:
+            client_dialect = self.client.adbc_get_info().get("vendor_name")
+            client_dialect = client_dialect.lower() if client_dialect else None
+
+        match client_dialect:
+            case "postgresql":
+                sqlglot_dialect = "postgres"
+            case "sqlite":
+                sqlglot_dialect = "sqlite"
+            case _:
+                logger.warning("Could not validate specific dialect.")
 
         try:
-            expressions = sqlglot.parse(extract_transform, dialect=dialect)
+            expressions = sqlglot.parse(extract_transform, dialect=sqlglot_dialect)
         except ParseError as e:
             raise MatchboxSourceExtractTransformError(
                 "SQL statement could not be parsed."

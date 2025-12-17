@@ -18,7 +18,7 @@ from matchbox.client.models.linkers.weighteddeterministic import (
 )
 from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
-from matchbox.common.dtos import DataTypes
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -134,10 +134,7 @@ def configure_splink_probabilistic(
 
         # String fields
         if field_type.base_type == DataTypes.STRING:
-            if field[0:3].isalpha():
-                blocking_rules.append(
-                    f"SUBSTR(l.{field}, 1, 3) = SUBSTR(r.{field}, 1, 3)"
-                )
+            blocking_rules.append(f"SUBSTR(l.{field}, 1, 3) = SUBSTR(r.{field}, 1, 3)")
             comparisons.append(cl.JaroWinklerAtThresholds(field, [0.9, 0.7]))
 
         # Numeric fields

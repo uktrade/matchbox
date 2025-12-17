@@ -456,8 +456,8 @@ class DAG:
             start: Name of first node to run
             finish: Name of last node to run
             low_memory: Whether to delete data for each node after it is run
-            batch_size: If set, process data in batches internally. Indicates the
-                size of each batch. Overrides environment variable if set.
+            batch_size: The size used for internal batching. Overrides environment
+                variable if set.
             profile: whether to log to INFO level the memory usage
         """
         if batch_size is None:

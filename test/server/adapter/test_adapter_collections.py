@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import Engine
 from test.fixtures.db import BACKENDS
 
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
-    DataTypes,
     ModelConfig,
     Resolution,
     ResolutionPath,

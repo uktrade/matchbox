@@ -1,5 +1,6 @@
 from unittest.mock import Mock, patch
 
+import adbc_driver_postgresql.dbapi as adbc_postgres
 import polars as pl
 import pyarrow as pa
 import pytest
@@ -12,10 +13,10 @@ from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.sources import (
     Source,
 )
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
-    DataTypes,
     NotFoundError,
     Resolution,
     ResourceOperationStatus,
@@ -26,10 +27,12 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.factories.sources import (
     source_factory,
+    source_from_tuple,
 )
+from test.fixtures.db import WarehouseConnectionType
 
 
-def test_source_infers_type(sqlite_warehouse: Engine) -> None:
+def test_source_infers_type(sqla_sqlite_warehouse: Engine) -> None:
     """Creating a source with type inference works."""
     # Create test data
     source_testkit = source_factory(
@@ -37,10 +40,10 @@ def test_source_infers_type(sqlite_warehouse: Engine) -> None:
         features=[
             {"name": "name", "base_generator": "word", "datatype": DataTypes.STRING},
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -57,7 +60,7 @@ def test_source_infers_type(sqlite_warehouse: Engine) -> None:
     )
 
 
-def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> None:
+def test_source_sampling_preserves_original_sql(sqla_sqlite_warehouse: Engine) -> None:
     """SQL on RelationalDBLocation is preserved.
 
     SQLGlot transpiles INSTR() to STR_POSITION() in its default dialect.
@@ -72,10 +75,10 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> Non
                 "datatype": DataTypes.STRING,
             },
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
 
     # Use SQLite's INSTR function (returns position of substring)
     # Other databases use CHARINDEX, POSITION, etc.
@@ -109,7 +112,7 @@ def test_source_sampling_preserves_original_sql(sqlite_warehouse: Engine) -> Non
     assert len(df) == 3
 
 
-def test_source_fetch(sqlite_warehouse: Engine) -> None:
+def test_source_fetch(sqla_sqlite_warehouse: Engine) -> None:
     """Test the query method with default parameters."""
     # Create test data
     source_testkit = source_factory(
@@ -117,11 +120,11 @@ def test_source_fetch(sqlite_warehouse: Engine) -> None:
         features=[
             {"name": "name", "base_generator": "word", "datatype": DataTypes.STRING},
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Create location and source
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -247,7 +250,7 @@ def test_source_fetch_batching(
         pytest.param(2, id="with_batching"),
     ],
 )
-def test_source_run(sqlite_warehouse: Engine, batch_size: int) -> None:
+def test_source_run(sqla_sqlite_warehouse: Engine, batch_size: int) -> None:
     """Test the run method produces expected hash format."""
     # Create test data with unique values
     n_true_entities = 3
@@ -261,11 +264,11 @@ def test_source_run(sqlite_warehouse: Engine, batch_size: int) -> None:
                 "datatype": DataTypes.INT64,
             },
         ],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Create location and source
-    location = RelationalDBLocation(name="dbname").set_client(sqlite_warehouse)
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
     source = Source(
         dag=source_testkit.source.dag,
         location=location,
@@ -315,12 +318,12 @@ def test_source_run_null_identifier(
         source.run()
 
 
-def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
+def test_source_sync(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) -> None:
     """Test source syncing flow through the API."""
     # Mock source
     testkit = source_factory(
         features=[{"name": "company_name", "base_generator": "company"}],
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Mock the routes:
@@ -481,3 +484,70 @@ def test_source_sync(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None
 
     assert delete_route.called
     assert insert_hashes_route.called
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("warehouse", ["adbc_postgres", "sqla_postgres"], indirect=True)
+@pytest.mark.parametrize(
+    ("mb_type", "pl_type", "test_data", "expected_value"),
+    [
+        pytest.param(
+            DataTypes.LIST(DataTypes.STRING),
+            pl.List(pl.String),
+            ({"tags": ["a", "b"]}, {"tags": ["c", "d"]}),
+            ["a", "b"],
+            id="List",
+        ),
+        pytest.param(
+            DataTypes.ARRAY(DataTypes.STRING, shape=2),
+            pl.Array(pl.String, shape=2),
+            ({"tags": ["a", "b"]}, {"tags": ["c", "d"]}),
+            ["a", "b"],
+            id="Array",
+        ),
+        # Structs not supported in PostgreSQL
+    ],
+)
+def test_source_fetch_complex_types_postgres(
+    warehouse: WarehouseConnectionType,
+    adbc_postgres_warehouse: adbc_postgres.Connection,
+    mb_type: DataTypes,
+    pl_type: pl.DataType,
+    test_data: tuple[dict, dict],
+    expected_value: list | dict,
+) -> None:
+    """Test that Source handles complex types correctly with a real Postgres DB."""
+    keys = ("1", "2")
+
+    # Write test data to Postgres
+    source_testkit = source_from_tuple(
+        data_tuple=test_data,
+        data_keys=keys,
+        name="test_complex_source_pg",
+        engine=adbc_postgres_warehouse,
+    ).write_to_location()
+
+    # Configure Source with explicit type
+    location = RelationalDBLocation(name="postgres_db").set_client(warehouse)
+
+    source = Source(
+        dag=source_testkit.source.dag,
+        location=location,
+        name=source_testkit.source.name,
+        extract_transform=source_testkit.source.config.extract_transform,
+        infer_types=False,
+        key_field=source_testkit.source.config.key_field,
+        index_fields=[SourceField(name="tags", type=mb_type)],
+    )
+
+    # Fetch and verify
+    results = list(source.fetch())
+    df = results[0]
+
+    assert len(df) == 2
+    assert df["tags"].dtype == pl_type
+
+    if isinstance(expected_value, list):
+        assert df["tags"][0].to_list() == expected_value
+    elif isinstance(expected_value, dict):
+        assert dict(df["tags"][0]) == expected_value

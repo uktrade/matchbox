@@ -39,11 +39,11 @@ class TestE2EMethodologyIntegration:
     def setup(
         self,
         matchbox_postgres: MatchboxDBAdapter,
-        sqlite_warehouse: Engine,
+        sqla_sqlite_warehouse: Engine,
     ) -> None:
         """Set up scenario system for tests."""
         self.backend = matchbox_postgres
-        self.warehouse = sqlite_warehouse
+        self.warehouse = sqla_sqlite_warehouse
 
     def _clean_field(self, column: str) -> str:
         """Generate basic cleaning SQL."""

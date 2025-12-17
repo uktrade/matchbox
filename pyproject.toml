@@ -94,7 +94,8 @@ upgrade-package = ["ruff"]
 constraint-dependencies = [
     "urllib3>=2.6.0",
     "werkzeug>=3.1.4",
-    "setuptools-scm>=9.2.0"
+    "setuptools-scm>=9.2.0",
+    "filelock>=3.20.1"
 ]
 
 [tool.ruff]

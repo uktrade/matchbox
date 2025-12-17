@@ -256,39 +256,20 @@ class Query:
                 self.leaf_id = mb_ids.select("id", "leaf_id").collect()
                 mb_ids = mb_ids.drop("leaf_id")
 
-            if self.config.combine_type == QueryCombineType.EXPLODE:
-                source_mb_ids = mb_ids.filter(
-                    pl.col("source") == self.sources[0].name
-                ).drop("source")
-                raw_data = (
-                    lazy_sources[0]
-                    .drop("source")
-                    .join(source_mb_ids, on="key", how="inner")
-                    .drop("key")
-                )
-                for i, lz in enumerate(lazy_sources[1:], start=1):
-                    source_mb_ids = mb_ids.filter(
-                        pl.col("source") == self.sources[i].name
-                    ).drop("source")
-                    lz_ids = (
-                        lz.drop("source")
-                        .join(source_mb_ids, on="key", how="inner")
-                        .drop("key")
-                    )
-                    raw_data = raw_data.join(lz_ids, on="id", how="full", coalesce=True)
-            else:
-                raw_data = (
-                    pl.concat(lazy_sources, how="diagonal")
-                    .join(mb_ids, how="inner", on=("source", "key"))
-                    .drop("source", "key")
-                )
+            raw_data = (
+                pl.concat(lazy_sources, how="diagonal")
+                .join(mb_ids, how="inner", on=("source", "key"))
+                .drop("source", "key")
+            )
 
             if self.config.combine_type == QueryCombineType.SET_AGG:
                 raw_data = raw_data.group_by("id").agg(pl.all().exclude("id").unique())
+            if self.config.combine_type == QueryCombineType.EXPLODE:
+                raw_data = raw_data.group_by("id").agg(pl.all().exclude("id"))
+                raw_data = raw_data.explode(pl.all().exclude("id")).unique()
 
-            clean_data = _clean(
-                data=raw_data.collect(), cleaning_dict=self.config.cleaning
-            )
+            raw_data = raw_data.collect()
+            clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
 
             self._set_cache(raw_data, clean_data)
             return _convert_df(clean_data, return_type=return_type)

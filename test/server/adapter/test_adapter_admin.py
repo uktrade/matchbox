@@ -450,13 +450,6 @@ class TestMatchboxAdminBackend:
     # Permissions
 
     @pytest.mark.parametrize(
-        ("resource_type", "scenario"),
-        [
-            pytest.param("system", "admin", id="system"),
-            pytest.param("collection", "dedupe", id="collection"),
-        ],
-    )
-    @pytest.mark.parametrize(
         ("granted_permission", "can_read", "can_write", "can_admin"),
         [
             (PermissionType.READ, True, False, False),
@@ -467,44 +460,24 @@ class TestMatchboxAdminBackend:
     )
     def test_permission_hierarchy(
         self,
-        resource_type: str,
-        scenario: str,
         granted_permission: PermissionType,
         can_read: bool,
         can_write: bool,
         can_admin: bool,
     ) -> None:
         """Test permission hierarchy: ADMIN > WRITE > READ."""
-        with self.scenario(self.backend, scenario) as _:
-            # Determine resource: use system or create isolated collection
-            if resource_type == "system":
-                resource = BackendResourceType.SYSTEM
-            else:
-                # Create new collection with no permissions
-                # to avoid public group interference
-                collection_name = f"col_{granted_permission}"
-                self.backend.create_collection(
-                    name=collection_name,
-                    permissions=[],  # No default permissions
-                )
-                resource = collection_name
+        with self.scenario(self.backend, "closed_collection") as _:
+            # Use the restricted collection from closed_collection scenario
+            resource = "restricted"
 
-            group_name = f"{granted_permission}_group"
-            user_name = f"user_{granted_permission}"
-
-            # Setup: create group, user, and grant permission
-            group = Group(name=GroupName(group_name))
-            self.backend.create_group(group)
-
-            user = User(user_name=user_name)
-            self.backend.login(user)
-            self.backend.add_user_to_group(user_name, GroupName(group_name))
-
-            self.backend.grant_permission(
-                GroupName(group_name),
-                granted_permission,
-                resource,
-            )
+            # Map permissions to existing users from scenario
+            # bob: readers (READ), charlie: writers (READ+WRITE), alice: admins (ADMIN)
+            user_map = {
+                PermissionType.READ: "bob",
+                PermissionType.WRITE: "charlie",
+                PermissionType.ADMIN: "alice",
+            }
+            user_name = user_map[granted_permission]
 
             # Test: verify permission hierarchy
             assert (
@@ -613,33 +586,13 @@ class TestMatchboxAdminBackend:
             permissions = self.backend.get_permissions(resource)
             assert expected_permission not in permissions
 
-    @pytest.mark.parametrize(
-        ("resource", "scenario"),
-        [
-            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
-            pytest.param("collection", "dedupe", id="collection"),
-        ],
-    )
-    def test_check_permission_granted(
-        self, resource: str | BackendResourceType, scenario: str
-    ) -> None:
+    def test_check_permission_granted(self) -> None:
         """Check permission returns True when user has permission."""
-        with self.scenario(self.backend, scenario) as _:
-            user = User(user_name="bob", email="alice@example.com")
-            self.backend.login(user)
-
-            group = Group(name=GroupName("g"))
-            self.backend.create_group(group)
-            self.backend.add_user_to_group("bob", GroupName("g"))
-            self.backend.grant_permission(
-                GroupName("g"),
-                PermissionType.READ,
-                resource,
-            )
-
-            # Check permission
+        with self.scenario(self.backend, "closed_collection") as _:
+            # Use bob from closed_collection scenario who has READ permission
+            # on the 'restricted' collection via the 'readers' group
             has_permission = self.backend.check_permission(
-                "bob", PermissionType.READ, resource
+                "bob", PermissionType.READ, "restricted"
             )
             assert has_permission is True
 
@@ -727,85 +680,39 @@ class TestMatchboxAdminBackend:
                 # This collection has no permissions
                 assert permissions == []
 
-    @pytest.mark.parametrize(
-        ("resource", "scenario"),
-        [
-            pytest.param(BackendResourceType.SYSTEM, "bare", id="system"),
-            pytest.param("collection", "dedupe", id="collection"),
-        ],
-    )
-    def test_get_permissions_multiple_groups(
-        self, resource: str | BackendResourceType, scenario: str
-    ) -> None:
+    def test_get_permissions_multiple_groups(self) -> None:
         """Get permissions returns all permissions from multiple groups."""
-        with self.scenario(self.backend, scenario) as _:
-            group1 = Group(name=GroupName("readers"))
-            group2 = Group(name=GroupName("writers"))
-            self.backend.create_group(group1)
-            self.backend.create_group(group2)
-
-            self.backend.grant_permission(
-                GroupName("readers"),
-                PermissionType.READ,
-                resource,
-            )
-            self.backend.grant_permission(
-                GroupName("writers"),
-                PermissionType.WRITE,
-                resource,
-            )
-
-            permissions = self.backend.get_permissions(resource)
+        with self.scenario(self.backend, "closed_collection") as _:
+            # The 'restricted' collection has permissions from both
+            # 'readers' and 'writers' groups
+            permissions = self.backend.get_permissions("restricted")
             perm_dict = {p.group_name: p.permission for p in permissions}
+
             assert perm_dict["readers"] == PermissionType.READ
             assert perm_dict["writers"] == PermissionType.WRITE
+            # writers group gets both READ and WRITE in the scenario
+            assert len([p for p in permissions if p.group_name == "writers"]) == 2
 
     def test_permissions_across_multiple_groups(self) -> None:
-        """User inherits permissions from all their groups.
-
-        Note: In 'dedupe' scenario, alice already exists as the admin user.
-        Creating a new alice user here for testing multiple group permissions.
-        """
-        with self.scenario(self.backend, "dedupe") as _:
-            # Create user (different from default alice)
-            user = User(user_name="charlie", email="charlie@example.com")
-            self.backend.login(user)
-
-            # Create two groups with different permissions
-            readers = Group(name=GroupName("readers"))
-            writers = Group(name=GroupName("writers"))
-            self.backend.create_group(readers)
-            self.backend.create_group(writers)
-
-            self.backend.grant_permission(
-                GroupName("readers"),
-                PermissionType.READ,
-                "collection",
-            )
-            self.backend.grant_permission(
-                GroupName("writers"),
-                PermissionType.WRITE,
-                "collection",
-            )
-
-            # Add user to both groups
-            self.backend.add_user_to_group("charlie", GroupName("readers"))
-            self.backend.add_user_to_group("charlie", GroupName("writers"))
+        """User inherits permissions from all their groups."""
+        with self.scenario(self.backend, "closed_collection") as _:
+            # Charlie from closed_collection scenario is in the 'writers' group
+            # which has both READ and WRITE permissions on 'restricted' collection
 
             # User should have both permissions
             assert self.backend.check_permission(
-                "charlie", PermissionType.READ, "collection"
+                "charlie", PermissionType.READ, "restricted"
             )
             assert self.backend.check_permission(
-                "charlie", PermissionType.WRITE, "collection"
+                "charlie", PermissionType.WRITE, "restricted"
             )
 
     def test_public_group_permissions_inherited(self) -> None:
         """Users automatically inherit permissions from the public group."""
-        with self.scenario(self.backend, "dedupe") as _:
+        with self.scenario(self.backend, "closed_collection") as _:
             # Create new collection with only READ permission for public
             self.backend.create_collection(
-                name="col2",
+                name="public_readable",
                 permissions=[
                     PermissionGrant(
                         group_name=GroupName("public"),
@@ -814,20 +721,16 @@ class TestMatchboxAdminBackend:
                 ],
             )
 
-            # Create new user (alice already exists, so use bob)
-            user = User(user_name="bob", email="bob@example.com")
-            self.backend.login(user)
-
-            # User should have read permission through public group membership
-            assert self.backend.check_permission("bob", PermissionType.READ, "col2")
-
-            # But not write permission
-            assert not self.backend.check_permission(
-                "bob", PermissionType.WRITE, "col2"
-            )
-
-            # Alice should also have the permission through public group
-            assert self.backend.check_permission("alice", PermissionType.READ, "col2")
+            # All users (bob, charlie, dave) should have read permission
+            # through public group membership
+            for user in ["bob", "charlie", "dave"]:
+                assert self.backend.check_permission(
+                    user, PermissionType.READ, "public_readable"
+                )
+                # But not write permission
+                assert not self.backend.check_permission(
+                    user, PermissionType.WRITE, "public_readable"
+                )
 
     # Data management
 

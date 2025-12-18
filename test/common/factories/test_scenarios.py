@@ -34,6 +34,7 @@ def test_scenario_registry() -> None:
     """Test that the scenario registry contains the built-in scenarios."""
     assert "bare" in SCENARIO_REGISTRY
     assert "admin" in SCENARIO_REGISTRY
+    assert "closed_collection" in SCENARIO_REGISTRY
     assert "preindex" in SCENARIO_REGISTRY
     assert "index" in SCENARIO_REGISTRY
     assert "dedupe" in SCENARIO_REGISTRY

@@ -9,7 +9,7 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
-from matchbox.common.dtos import GroupName, PermissionGrant, PermissionType, User
+from matchbox.common.dtos import Group, GroupName, PermissionGrant, PermissionType, User
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -111,6 +111,69 @@ def create_admin_scenario(
     # First user is admin
     response = backend.login(User(sub="alice", email="alice@example.org"))
     assert response.setup_mode_admin
+
+    return dag_testkit
+
+
+@register_scenario("closed_collection")
+def create_closed_collection_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create a closed collection scenario for permission testing.
+
+    Users:
+    - alice: admin (from setup_mode_admin)
+    - bob: member of 'readers' group (has READ)
+    - charlie: member of 'writers' group (has READ + WRITE)
+    - dave: no permissions (public group only)
+
+    Collection 'restricted' has:
+    - READ permission granted to 'readers' group
+    - WRITE permission granted to 'writers' group
+    - No public permissions
+    """
+    # Start with admin scenario
+    dag_testkit = create_admin_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # Create additional test users
+    backend.login(User(sub="bob", email="bob@example.org"))
+    backend.login(User(sub="charlie", email="charlie@example.org"))
+    backend.login(User(sub="dave", email="dave@example.org"))
+
+    # Create groups
+    backend.create_group(
+        Group(name=GroupName("readers"), description="Read-only access")
+    )
+    backend.create_group(
+        Group(name=GroupName("writers"), description="Read-write access")
+    )
+
+    # Assign users to groups
+    backend.add_user_to_group("bob", GroupName("readers"))
+    backend.add_user_to_group("charlie", GroupName("writers"))
+    # dave remains in public group only
+
+    # Create closed collection with restricted permissions
+    restricted_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName("admins"), permission=PermissionType.ADMIN
+        ),
+        PermissionGrant(
+            group_name=GroupName("readers"), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName("writers"), permission=PermissionType.WRITE
+        ),
+    ]
+
+    backend.create_collection(name="restricted", permissions=restricted_permissions)
+    dag_testkit.dag.run = backend.create_run(collection="restricted").run_id
 
     return dag_testkit
 
@@ -1041,6 +1104,9 @@ def setup_scenario(
     backend: MatchboxDBAdapter,
     scenario_type: Literal[
         "bare",
+        "admin",
+        "closed_collection",
+        "preindex",
         "index",
         "dedupe",
         "link",

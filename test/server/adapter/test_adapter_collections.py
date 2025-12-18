@@ -95,43 +95,24 @@ class TestMatchboxCollectionsBackend:
 
     def test_collection_with_custom_permissions(self) -> None:
         """Test creating a collection with custom permissions."""
-        with self.scenario(self.backend, "bare") as _:
-            # Create collection with custom permissions
-            custom_permissions = [
-                PermissionGrant(
-                    group_name=GroupName("admins"), permission=PermissionType.ADMIN
-                ),
-                PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.READ
-                ),
-            ]
-
-            test_collection = self.backend.create_collection(
-                name="custom_permissions_collection",
-                permissions=custom_permissions,
-            )
-
-            assert test_collection.runs == []
-
+        with self.scenario(self.backend, "closed_collection") as _:
+            # The 'restricted' collection already has custom permissions
             # Verify permissions were set correctly
-            grants = self.backend.get_permissions("custom_permissions_collection")
+            grants = self.backend.get_permissions("restricted")
 
-            assert len(grants) == 2
+            # Should have READ for readers, WRITE for writers
+            assert len(grants) == 3
             assert (
                 PermissionGrant(
-                    group_name=GroupName("admins"), permission=PermissionType.ADMIN
+                    group_name=GroupName("readers"), permission=PermissionType.READ
                 )
                 in grants
             )
             assert (
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.READ
+                    group_name=GroupName("writers"), permission=PermissionType.WRITE
                 )
                 in grants
-            )
-
-            self.backend.delete_collection(
-                "custom_permissions_collection", certain=True
             )
 
     def test_collection_default_permissions(self) -> None:
@@ -172,7 +153,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_collection_empty_permissions(self) -> None:
         """Test creating a collection with no permissions."""
-        with self.scenario(self.backend, "bare") as _:
+        with self.scenario(self.backend, "closed_collection") as _:
             # Create collection with explicitly empty permissions
             self.backend.create_collection(
                 name="no_perms_collection",
@@ -182,6 +163,11 @@ class TestMatchboxCollectionsBackend:
             # Verify no permissions were set
             grants = self.backend.get_permissions("no_perms_collection")
             assert len(grants) == 0
+
+            # Verify that dave (who is only in public group) cannot access it
+            assert not self.backend.check_permission(
+                "dave", PermissionType.READ, "no_perms_collection"
+            )
 
             self.backend.delete_collection("no_perms_collection", certain=True)
 

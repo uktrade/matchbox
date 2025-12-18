@@ -1,19 +1,19 @@
 # Command Line Interface
 
-Matchbox comes with a Command Line Interface (CLI) that allows users to perform certain management tasks. It also allows users to access the interactive entity evaluation tool, which is documented [here](evaluation.md).
+Matchbox comes with a Command Line Interface (CLI) that allows users to perform certain management tasks.
 
 To run the CLI:
-```bash
+```shell
 matchbox [OPTIONS] COMMAND [ARGS]
 ```
 
 To get help:
-```bash
+```shell
 matchbox --help
 ```
 
 To get help on specific commands:
-```bash
+```shell
 matchbox COMMAND --help
 ```
 
@@ -21,19 +21,19 @@ matchbox COMMAND --help
 
 ### Version
 To get the Matchbox client version, run:
-```bash
+```shell
 matchbox version
 ```
 
 ### Server status
 To get the status of the server and the Matchbox server version, run:
-```bash
+```shell
 matchbox server health
 ```
 
 ### Auth status
 To get the authentication status of the client, run:
-```bash
+```shell
 matchbox auth status
 ```
 
@@ -43,7 +43,7 @@ matchbox auth status
 When resolutions are modified or deleted, it is possible that the database ends up having clusters which are not related to any table containing sources, models or evaluations. These clusters are considered orphaned, and they should be deleted regularly to reduce bloat.
 
 To do this, run:
-```bash
+```shell
 matchbox server delete-orphans
 ```
 

@@ -5,7 +5,8 @@ from faker import Faker
 from sqlalchemy import Engine
 
 from matchbox.common.arrow import SCHEMA_INDEX
-from matchbox.common.dtos import DataTypes, LocationConfig, LocationType
+from matchbox.common.datatypes import DataTypes
+from matchbox.common.dtos import LocationConfig, LocationType
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -169,9 +170,9 @@ def test_source_factory_mock_properties(sqlite_in_memory_warehouse: Engine) -> N
     # Verify source properties are preserved through model_dump
     dump = source_config.model_dump()
     assert str(dump["location_config"]["name"]) == location_name
-    assert dump["key_field"] == {"name": "key", "type": DataTypes.STRING}
+    assert dump["key_field"] == {"name": "key", "type": str(DataTypes.STRING)}
     assert dump["index_fields"] == tuple(
-        {"name": f.name, "type": f.datatype} for f in features
+        {"name": f.name, "type": str(f.datatype)} for f in features
     )
 
 

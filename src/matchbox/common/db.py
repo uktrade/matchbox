@@ -18,9 +18,9 @@ from pyarrow import Table as ArrowTable
 from sqlalchemy.engine import Engine
 
 if TYPE_CHECKING:
-    from adbc_driver_postgresql.dbapi import Connection as ADBCConnection
+    from adbc_driver_postgresql.dbapi import Connection as AdbcConnection
 else:
-    ADBCConnection = Any
+    AdbcConnection = Any
 
 
 class QueryReturnType(StrEnum):
@@ -39,7 +39,7 @@ T = TypeVar("T")
 @overload
 def sql_to_df(
     stmt: str,
-    connection: Engine | ADBCConnection,
+    connection: Engine | AdbcConnection,
     return_type: QueryReturnType,
     *,
     return_batches: Literal[False] = False,
@@ -53,7 +53,7 @@ def sql_to_df(
 @overload
 def sql_to_df(
     stmt: str,
-    connection: Engine | ADBCConnection,
+    connection: Engine | AdbcConnection,
     return_type: QueryReturnType,
     *,
     return_batches: Literal[True],
@@ -66,7 +66,7 @@ def sql_to_df(
 
 def sql_to_df(
     stmt: str,
-    connection: Engine | ADBCConnection,
+    connection: Engine | AdbcConnection,
     return_type: QueryReturnType = QueryReturnType.PANDAS,
     *,
     return_batches: bool = False,

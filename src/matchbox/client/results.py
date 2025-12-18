@@ -83,14 +83,16 @@ class ModelResults:
                 .list.join("_")
                 .alias("sorted_ids")
             )
-            .sort("probability")  # sort so smallest probability comes first
+            .sort(
+                "probability", descending=True
+            )  # sort so largest probability comes first
             .unique(
                 subset=["sorted_ids"], keep="first"
             )  # keep first occurrence after sorting
         ).drop("sorted_ids")
         if len(probabilities) != len(unique_probabilities):
             logger.warning(
-                "Duplicate pairs! Keeping only pairs with lowest probability."
+                "Duplicate pairs! Keeping only pairs with highest probability."
             )
 
         # Process probability field if it contains floating-point or decimal values

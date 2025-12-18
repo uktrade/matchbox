@@ -8,6 +8,7 @@ resolution-markers = [
 
 [manifest]
 constraints = [
+    { name = "filelock", specifier = ">=3.20.1" },
     { name = "setuptools-scm", specifier = ">=9.2.0" },
     { name = "urllib3", specifier = ">=2.6.0" },
     { name = "werkzeug", specifier = ">=3.1.4" },
@@ -58,6 +59,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f6/af/5b590d43a2369efda1245b6a619edc3b018554fe4d44659439db21577c22/adbc_driver_postgresql-1.9.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a80a47d722c757e86f52fa1be708b7fed534d84458bcebecc7f27a4e81c6897e", size = 3756944, upload-time = "2025-11-07T01:46:19.859Z" },
     { url = "https://files.pythonhosted.org/packages/44/7a/aa7b76a5a376f2b55869b6511d9ad27cd2c6dfa0b3d7dce037d01e740bb8/adbc_driver_postgresql-1.9.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0aa0a49a4c17fec4dce17217083aa03457f5dd00d18fe10693b6a9d98812211a", size = 3430108, upload-time = "2025-11-07T01:46:21.713Z" },
     { url = "https://files.pythonhosted.org/packages/fa/dc/3dacf3314ff0c58ef88363c7c1ad9f3cb4a09d6ea94e2018d1daf9d211a9/adbc_driver_postgresql-1.9.0-py3-none-win_amd64.whl", hash = "sha256:a8164ea2985a1ec8dd5ed8bc71d55f8d4967a7273cbb03765bac111333075929", size = 3019152, upload-time = "2025-11-07T01:46:23.844Z" },
+]
+
+[[package]]
+name = "adbc-driver-sqlite"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "adbc-driver-manager" },
+    { name = "importlib-resources" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/53/3c/98c652fb3892f56a53c55a50948fdcb5b575ff78a8241f34b974ae0f4f17/adbc_driver_sqlite-1.9.0.tar.gz", hash = "sha256:446db7ee9e269fc21241b4325267dfb828528179ad54729c11965616db70e21e", size = 18294, upload-time = "2025-11-07T01:46:58.549Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/2e/7be376ddc4bae4b760d0d178c764315627a531f146ecb5e00f7470ea09ac/adbc_driver_sqlite-1.9.0-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:1de17693d09f379c594cf3d22a21595e45c6e87acd4b8735ea1f2ddddb2ba021", size = 1051101, upload-time = "2025-11-07T01:46:45.017Z" },
+    { url = "https://files.pythonhosted.org/packages/33/83/5906fecc68c14f4f8aa11dd1eeec3372cd084597a4cee9f9ff769cad63d9/adbc_driver_sqlite-1.9.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7e7a064719e75806e70dfff4262b099470b5cc045813b69d761ff708edbdaea9", size = 1029291, upload-time = "2025-11-07T01:46:46.779Z" },
+    { url = "https://files.pythonhosted.org/packages/26/39/6499d79d331471b236b23a462171ff575966d465705ec01e4c443f8f422a/adbc_driver_sqlite-1.9.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d4bbcde3c42b175b4b5973c120cce6fce3d888b721189842554d6ba1fdb551ff", size = 1138524, upload-time = "2025-11-07T01:46:48.844Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/24/c05ce956c6f58c9043222e452253a9a5905e3fd7a3ff284de6e46900de5b/adbc_driver_sqlite-1.9.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:fb18551c820188cd0de62e0e94e949a668033fbc62ace4ef1ce696aadd0d18d7", size = 1157805, upload-time = "2025-11-07T01:46:50.855Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/28/21bca34b10a6e4a8b11360f494c5508d29afa7ff43fab7129412f44ecd78/adbc_driver_sqlite-1.9.0-py3-none-win_amd64.whl", hash = "sha256:c43630020c188181c7d8d4b68718fc4a807912da0e150453add6c67324a1169e", size = 955792, upload-time = "2025-11-07T01:46:52.411Z" },
 ]
 
 [[package]]
@@ -755,11 +773,11 @@ standard-no-fastapi-cloud-cli = [
 
 [[package]]
 name = "filelock"
-version = "3.20.0"
+version = "3.20.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/58/46/0028a82567109b5ef6e4d2a1f04a583fb513e6cf9527fcdd09afd817deeb/filelock-3.20.0.tar.gz", hash = "sha256:711e943b4ec6be42e1d4e6690b48dc175c822967466bb31c0c293f34334c13f4", size = 18922, upload-time = "2025-10-08T18:03:50.056Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/23/ce7a1126827cedeb958fc043d61745754464eb56c5937c35bbf2b8e26f34/filelock-3.20.1.tar.gz", hash = "sha256:b8360948b351b80f420878d8516519a2204b07aefcdcfd24912a5d33127f188c", size = 19476, upload-time = "2025-12-15T23:54:28.027Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/91/7216b27286936c16f5b4d0c530087e4a54eead683e6b0b73dd0c64844af6/filelock-3.20.0-py3-none-any.whl", hash = "sha256:339b4732ffda5cd79b13f4e2711a31b0365ce445d95d243bb996273d072546a2", size = 16054, upload-time = "2025-10-08T18:03:48.35Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/7f/a1a97644e39e7316d850784c642093c99df1290a460df4ede27659056834/filelock-3.20.1-py3-none-any.whl", hash = "sha256:15d9e9a67306188a44baa72f569d2bfd803076269365fdea0934385da4dc361a", size = 16666, upload-time = "2025-12-15T23:54:26.874Z" },
 ]
 
 [[package]]
@@ -1314,6 +1332,8 @@ server = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "adbc-driver-postgresql" },
+    { name = "adbc-driver-sqlite" },
     { name = "docker" },
     { name = "griffe-inherited-docstrings" },
     { name = "ipykernel" },
@@ -1376,6 +1396,8 @@ provides-extras = ["server"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "adbc-driver-postgresql", specifier = ">=1.9.0" },
+    { name = "adbc-driver-sqlite", specifier = ">=1.9.0" },
     { name = "docker", specifier = ">=7.1.0" },
     { name = "griffe-inherited-docstrings", specifier = ">=1.1.1" },
     { name = "ipykernel", specifier = ">=6.29.5" },

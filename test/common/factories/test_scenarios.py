@@ -16,10 +16,12 @@ from matchbox.server.base import MatchboxDBAdapter
 
 @pytest.mark.docker
 def test_setup_scenario_bare(
-    matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
+    matchbox_postgres: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test that the bare scenario can be set up."""
-    with setup_scenario(matchbox_postgres, "bare", warehouse=sqlite_warehouse) as dag:
+    with setup_scenario(
+        matchbox_postgres, "bare", warehouse=sqla_sqlite_warehouse
+    ) as dag:
         assert isinstance(dag, TestkitDAG)
         assert len(dag.sources) > 0
 
@@ -37,7 +39,7 @@ def test_scenario_registry() -> None:
 
 @pytest.mark.docker
 def test_register_custom_scenario(
-    matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
+    matchbox_postgres: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test that a custom scenario can be registered and used."""
 
@@ -54,7 +56,9 @@ def test_register_custom_scenario(
         )
 
     assert "custom" in SCENARIO_REGISTRY
-    with setup_scenario(matchbox_postgres, "custom", warehouse=sqlite_warehouse) as dag:
+    with setup_scenario(
+        matchbox_postgres, "custom", warehouse=sqla_sqlite_warehouse
+    ) as dag:
         assert isinstance(dag, TestkitDAG)
 
     # Clean up the registry
@@ -63,12 +67,14 @@ def test_register_custom_scenario(
 
 @pytest.mark.docker
 def test_setup_unknown_scenario(
-    matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
+    matchbox_postgres: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test that asking for an unknown scenario raises a ValueError."""
     with (
         pytest.raises(ValueError, match="Unknown scenario type: nonexistent"),
-        setup_scenario(matchbox_postgres, "nonexistent", warehouse=sqlite_warehouse),
+        setup_scenario(
+            matchbox_postgres, "nonexistent", warehouse=sqla_sqlite_warehouse
+        ),
     ):
         pass
 
@@ -77,7 +83,7 @@ def test_setup_unknown_scenario(
 @patch("matchbox.common.factories.scenarios._DATABASE_SNAPSHOTS_CACHE", {})
 @patch("matchbox.common.factories.scenarios.SCENARIO_REGISTRY", {})
 def test_caching_scenario(
-    matchbox_postgres: MatchboxDBAdapter, sqlite_warehouse: Engine
+    matchbox_postgres: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test that scenario caching works."""
 
@@ -97,18 +103,22 @@ def test_caching_scenario(
             backend, warehouse_engine, n_entities=n_entities, seed=seed, **kwargs
         )
 
-    with setup_scenario(matchbox_postgres, "cacheable", warehouse=sqlite_warehouse):
+    with setup_scenario(
+        matchbox_postgres, "cacheable", warehouse=sqla_sqlite_warehouse
+    ):
         pass
     assert call_count == 1
 
     # Running it again should use the cache
-    with setup_scenario(matchbox_postgres, "cacheable", warehouse=sqlite_warehouse):
+    with setup_scenario(
+        matchbox_postgres, "cacheable", warehouse=sqla_sqlite_warehouse
+    ):
         pass
     assert call_count == 1
 
     # Running with a different seed should not use the cache
     with setup_scenario(
-        matchbox_postgres, "cacheable", warehouse=sqlite_warehouse, seed=43
+        matchbox_postgres, "cacheable", warehouse=sqla_sqlite_warehouse, seed=43
     ):
         pass
     assert call_count == 2

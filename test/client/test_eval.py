@@ -101,7 +101,7 @@ def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
 
 def test_get_samples_remote(
     matchbox_api: MockRouter,
-    sqlite_warehouse: Engine,
+    sqla_sqlite_warehouse: Engine,
     sqlite_in_memory_warehouse: Engine,
     env_setter: Callable[[str, str], None],
 ) -> None:
@@ -115,7 +115,7 @@ def test_get_samples_remote(
         data_keys=["1", "1bis", "2", "3", "4"],
         name="foo",
         location_name="db",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     bar_testkit = source_from_tuple(
@@ -123,7 +123,7 @@ def test_get_samples_remote(
         data_keys=["a", "b", "c", "d"],
         name="bar",
         location_name="db",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # This will be excluded as the location name differs
@@ -132,7 +132,7 @@ def test_get_samples_remote(
         data_keys=["x"],
         name="baz",
         location_name="db_other",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     dag = TestkitDAG().dag
@@ -215,7 +215,7 @@ def test_get_samples_remote(
     # (can't reuse the existing dag as it already has sources added)
 
     loaded_dag: DAG = (
-        DAG(name=str(dag.name)).load_pending().set_client(sqlite_warehouse)
+        DAG(name=str(dag.name)).load_pending().set_client(sqla_sqlite_warehouse)
     )
 
     # Check results - test with samples that include all three sources

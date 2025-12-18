@@ -16,6 +16,8 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     ModelResolutionPath,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionPath,
     ResourceOperationStatus,
@@ -57,8 +59,15 @@ def create_collection(name: CollectionName) -> ResourceOperationStatus:
     log_prefix = f"Collection {name}"
     logger.debug("Creating", prefix=log_prefix)
 
+    # All collections are public r/w for now
+    permission_grant = PermissionGrant(
+        group_name="public",
+        permission=PermissionType.WRITE,
+    )
+
     res = CLIENT.post(
         f"/collections/{name}",
+        json=[permission_grant.model_dump()],
     )
 
     return ResourceOperationStatus.model_validate(res.json())

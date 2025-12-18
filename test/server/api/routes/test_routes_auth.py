@@ -5,27 +5,122 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
+from _pytest.mark.structures import ParameterSet
 from fastapi.testclient import TestClient
 
 from matchbox.client._settings import settings
 from matchbox.common.dtos import (
     AuthStatusResponse,
+    LoginResponse,
     User,
 )
 from test.scripts.authorisation import generate_json_web_token
 
 
-def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
-    """Test the login endpoint at /auth/login."""
+def test_login_first_user_setup_mode(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that the first user login returns setup_mode_admin=True."""
     test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.login = Mock(return_value=User(user_name="alice"))
+
+    # First user should get setup_mode_admin=True
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=User(user_name="alice"),
+            setup_mode_admin=True,
+        )
+    )
 
     response = test_client.post(
-        "/auth/login", json=User(user_name="alice").model_dump()
+        "/auth/login",
+        json=User(user_name="alice").model_dump(),
     )
 
     assert response.status_code == 200
-    assert User.model_validate(response.json())
+    alice_admin = LoginResponse.model_validate(response.json())
+    assert alice_admin.setup_mode_admin is True
+    assert alice_admin.user.user_name == "alice"
+
+
+def test_login_subsequent_users_normal_mode(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that subsequent user logins return setup_mode_admin=False."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    # Second and subsequent users should get setup_mode_admin=False
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=User(user_name="bob"),
+            setup_mode_admin=False,
+        )
+    )
+
+    response = test_client.post(
+        "/auth/login",
+        json=User(user_name="bob").model_dump(),
+    )
+
+    assert response.status_code == 200
+    bob_user = LoginResponse.model_validate(response.json())
+    assert bob_user.setup_mode_admin is False
+    assert bob_user.user.user_name == "bob"
+
+
+def test_login_with_email(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
+    """Test login with email address."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    user = User(user_name="alice", email="alice@example.com")
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=user,
+            setup_mode_admin=False,
+        )
+    )
+
+    response = test_client.post(
+        "/auth/login",
+        json=user.model_dump(),
+    )
+
+    assert response.status_code == 200
+    result = LoginResponse.model_validate(response.json())
+    assert result.user.user_name == "alice"
+    assert result.user.email == "alice@example.com"
+
+
+def test_login_existing_user(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that logging in with an existing user returns the same user."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    user = User(user_name="alice", email="alice@example.com")
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=user,
+            setup_mode_admin=False,
+        )
+    )
+
+    # First login
+    response1 = test_client.post(
+        "/auth/login",
+        json=user.model_dump(),
+    )
+    assert response1.status_code == 200
+
+    # Second login (same user)
+    response2 = test_client.post(
+        "/auth/login",
+        json=user.model_dump(),
+    )
+    assert response2.status_code == 200
+
+    result1 = LoginResponse.model_validate(response1.json())
+    result2 = LoginResponse.model_validate(response2.json())
+    assert result1.user.user_name == result2.user.user_name
 
 
 @pytest.mark.parametrize(
@@ -67,23 +162,21 @@ def test_auth_status(
         assert result.username == username
 
 
-PROTECTED_ROUTES = [
-    pytest.param(
-        "post",
-        "/collections/default/runs/1/resolutions/name/data",
-        id="post_resolution_data",
-    ),
-    pytest.param(
-        "post", "/collections/default/runs/1/resolutions/name", id="post_resolution"
-    ),
-    pytest.param(
-        "put", "/collections/default/runs/1/resolutions/name", id="put_resolution"
-    ),
-    pytest.param(
-        "delete", "/collections/default/runs/1/resolutions/name", id="delete_resolution"
-    ),
-    pytest.param("delete", "/database", id="delete_database"),
+PROTECTED_ROUTES: list[ParameterSet] = [
+    pytest.param("get", "/admin/groups", id="router"),
+    pytest.param("post", "/collections/default/runs", id="endpoint"),
 ]
+"""Tests parameters for 'exemplar' authentication methods.
+
+We already cover the various endpoints that are protected. These parameters are
+to cover different families of authentication implementations we use, and are used 
+to check different high level authentication methods, such as JWTs.
+
+Examples of other routes we might add here would be:
+
+* Routes using the Security class
+* Routes that authenticate inline, for some reason
+"""
 
 
 @pytest.mark.parametrize(("method_name", "url"), PROTECTED_ROUTES)
@@ -150,13 +243,20 @@ def test_missing_authorisation_header(
     method_name: str,
     url: str,
 ) -> None:
-    """Test that routes reject requests without authorisation headers."""
-    test_client, _, _ = api_client_and_mocks
+    """Test that routes reject requests without authorisation headers.
 
+    We assume the public user doesn't have permissions to see these routes.
+    """
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    # Public user not authorised
+    mock_backend.check_permission.return_value = False
+
+    # Authorisation headers gone
     test_client.headers.pop("Authorization", None)
 
     method: Callable[..., Any] = getattr(test_client, method_name)
     response = method(url)
 
-    assert response.status_code == 401
-    assert response.content == b'"JWT required but not provided."'
+    assert response.status_code == 403
+    assert "Permission denied: requires " in str(response.content, encoding="utf-8")

@@ -9,6 +9,9 @@ from fastapi.testclient import TestClient
 from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
+    GroupName,
+    PermissionGrant,
+    PermissionType,
     Run,
 )
 from matchbox.common.exceptions import (
@@ -18,6 +21,46 @@ from matchbox.common.exceptions import (
     MatchboxRunNotFoundError,
 )
 from matchbox.common.factories.sources import source_factory
+
+# Authorisation
+
+
+@pytest.mark.parametrize(
+    ["method", "endpoint"],
+    [
+        # Collection management (admin)
+        pytest.param("DELETE", "/collections/col1", id="delete_collection"),
+        pytest.param("GET", "/collections/col1/permissions", id="get_perms"),
+        pytest.param("POST", "/collections/col1/permissions", id="grant_perm"),
+        pytest.param(
+            "DELETE", "/collections/col1/permissions/g/read", id="revoke_perm"
+        ),
+        # Run and resolution management (write)
+        pytest.param("POST", "/collections/col1/runs", id="create_run"),
+        pytest.param("DELETE", "/collections/col1/runs/1", id="delete_run"),
+        pytest.param("PATCH", "/collections/col1/runs/1/mutable", id="set_mutable"),
+        pytest.param(
+            "DELETE", "/collections/col1/runs/1/resolutions/res1", id="delete_res"
+        ),
+    ],
+)
+def test_collection_routes_forbidden(
+    method: str,
+    endpoint: str,
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Verify protected routes return 403 when permission check fails."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    # Force permission check to fail
+    mock_backend.check_permission.return_value = False
+
+    response = test_client.request(method, endpoint)
+
+    assert response.status_code == 403
+    assert "Permission denied" in response.json()[0]
+    mock_backend.check_permission.assert_called()
+
 
 # Collection management tests
 
@@ -89,11 +132,76 @@ def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) 
 
     mock_backend.create_collection = Mock()
 
-    response = test_client.post("/collections/new_collection")
+    permissions_payload = [
+        {"group_name": "public", "permission": "read"},
+        {"group_name": "public", "permission": "write"},
+    ]
+
+    response = test_client.post("/collections/new_collection", json=permissions_payload)
 
     assert response.status_code == 201
     assert response.json()["success"] is True
-    mock_backend.create_collection.assert_called_once_with(name="new_collection")
+    mock_backend.create_collection.assert_called_once_with(
+        name="new_collection",
+        permissions=[
+            PermissionGrant(
+                group_name=GroupName("public"), permission=PermissionType.READ
+            ),
+            PermissionGrant(
+                group_name=GroupName("public"), permission=PermissionType.WRITE
+            ),
+        ],
+    )
+
+
+def test_create_collection_with_custom_permissions(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test creating a collection with custom permissions."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    mock_backend.create_collection = Mock()
+
+    permissions_payload = [
+        {"group_name": "admins", "permission": "admin"},
+        {"group_name": "viewers", "permission": "read"},
+    ]
+
+    response = test_client.post(
+        "/collections/custom_collection", json=permissions_payload
+    )
+
+    assert response.status_code == 201
+    assert response.json()["success"] is True
+    mock_backend.create_collection.assert_called_once_with(
+        name="custom_collection",
+        permissions=[
+            PermissionGrant(
+                group_name=GroupName("admins"), permission=PermissionType.ADMIN
+            ),
+            PermissionGrant(
+                group_name=GroupName("viewers"), permission=PermissionType.READ
+            ),
+        ],
+    )
+
+
+def test_create_collection_with_empty_permissions(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test creating a collection with no permissions."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    mock_backend.create_collection = Mock()
+
+    response = test_client.post("/collections/no_perms_collection", json=[])
+
+    assert response.status_code == 201
+    assert response.json()["success"] is True
+    mock_backend.create_collection.assert_called_once_with(
+        name="no_perms_collection",
+        permissions=[],
+    )
 
 
 def test_create_collection_already_exists(
@@ -103,7 +211,13 @@ def test_create_collection_already_exists(
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.create_collection = Mock(side_effect=MatchboxCollectionAlreadyExists())
 
-    response = test_client.post("/collections/existing_collection")
+    permissions_payload = [
+        {"group_name": "public", "permission": "read"},
+    ]
+
+    response = test_client.post(
+        "/collections/existing_collection", json=permissions_payload
+    )
 
     assert response.status_code == 409
     assert response.json()["success"] is False
@@ -144,6 +258,68 @@ def test_delete_collection_needs_confirmation(
     assert response.json()["operation"] == "delete"
     assert str(1) in response.json()["details"]
     assert str(2) in response.json()["details"]
+
+
+# Collection permissions
+
+
+def test_get_collection_permissions(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test getting permissions for a specific collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.check_permission.return_value = True
+    mock_backend.get_permissions.return_value = [
+        PermissionGrant(group_name="viewers", permission=PermissionType.READ)
+    ]
+
+    response = test_client.get("/collections/col1/permissions")
+
+    assert response.status_code == 200
+    assert response.json()[0]["permission"] == "read"
+    mock_backend.get_permissions.assert_called_with("col1")
+
+
+def test_grant_collection_permission(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test granting permission on a collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.check_permission.return_value = True
+
+    payload = {"group_name": "g", "permission": "write"}
+    response = test_client.post("/collections/col1/permissions", json=payload)
+
+    assert response.status_code == 200
+    mock_backend.grant_permission.assert_called_with("g", PermissionType.WRITE, "col1")
+
+
+def test_revoke_collection_permission(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test revoking permission from a collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.check_permission.return_value = True
+
+    response = test_client.delete("/collections/col1/permissions/write/g")
+
+    assert response.status_code == 200
+    mock_backend.revoke_permission.assert_called_with("g", PermissionType.WRITE, "col1")
+
+
+def test_permission_collection_not_found(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test 404 when operating on missing collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    # Auth passes, but resource check fails inside service
+    mock_backend.check_permission.return_value = True
+    mock_backend.get_permissions.side_effect = MatchboxCollectionNotFoundError()
+
+    response = test_client.get("/collections/missing/permissions")
+
+    assert response.status_code == 404
+    assert response.json()["entity"] == BackendResourceType.COLLECTION
 
 
 # Run management tests

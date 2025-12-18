@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 import boto3
 from botocore.exceptions import ClientError
 from pyarrow import Table
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretBytes,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.dtos import (
@@ -17,6 +24,7 @@ from matchbox.common.dtos import (
     CollectionName,
     Group,
     GroupName,
+    LoginResponse,
     Match,
     ModelResolutionPath,
     PermissionGrant,
@@ -146,7 +154,7 @@ class MatchboxServerSettings(BaseSettings):
     redis_uri: str | None
     uploads_expiry_minutes: int | None
     authorisation: bool = True
-    public_key: SecretStr | None = Field(default=None)
+    public_key: SecretBytes | None = Field(default=None)
     log_level: LogLevelType = "INFO"
 
     @model_validator(mode="after")
@@ -255,7 +263,14 @@ class ListableAndCountable(Countable, Listable):
 
 
 class MatchboxDBAdapter(ABC):
-    """An abstract base class for Matchbox database adapters."""
+    """An abstract base class for Matchbox database adapters.
+
+    By default the database should contain:
+
+    * A single user, _public
+    * Two groups, public and admins
+    * A single permission for the admins group: system admin
+    """
 
     settings: "MatchboxServerSettings"
 
@@ -268,6 +283,7 @@ class MatchboxDBAdapter(ABC):
     merges: Countable
     proposes: Countable
     source_resolutions: Countable
+    users: Countable
 
     # Retrieval
 
@@ -325,11 +341,14 @@ class MatchboxDBAdapter(ABC):
     # Collection management
 
     @abstractmethod
-    def create_collection(self, name: CollectionName) -> Collection:
+    def create_collection(
+        self, name: CollectionName, permissions: list[PermissionGrant]
+    ) -> Collection:
         """Create a new collection.
 
         Args:
-            name: The name of the collection to create.
+            name: The collection name
+            permissions: A list of permissions to grant
 
         Returns:
             A Collection object containing its metadata, versions, and resolutions.
@@ -614,8 +633,11 @@ class MatchboxDBAdapter(ABC):
     # User, group and permissions management
 
     @abstractmethod
-    def login(self, user: User) -> User:
+    def login(self, user: User) -> LoginResponse:
         """Upserts the user to the database.
+
+        * If it's the first user, will add them to the admins group
+        * For all new users, are added to the public group
 
         Args:
             user: A User with a username and optionally an email

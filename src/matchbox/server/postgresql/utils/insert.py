@@ -19,7 +19,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionInvalidData,
 )
 from matchbox.common.hash import IntMap, hash_arrow_table, hash_model_results
-from matchbox.common.logging import log_mem_usage, logger, profile_time
+from matchbox.common.logging import logger
 from matchbox.common.transform import Cluster, DisjointSet
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
@@ -99,7 +99,6 @@ def _fetch_existing_clusters(
     return pl.concat(out, how="vertical")
 
 
-@profile_time()
 def insert_hashes(
     path: SourceResolutionPath,
     data_hashes: pa.Table,
@@ -149,7 +148,6 @@ def insert_hashes(
 
         source_config_id = resolution.source_config.source_config_id
 
-    log_mem_usage()
     data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
     unique_data_hashes = data_hashes.get_column("hash").unique().to_list()
 
@@ -179,7 +177,6 @@ def insert_hashes(
         # The value of next_cluster_id is irrelevant as cluster_records will be empty
         next_cluster_id = 0
 
-    log_mem_usage()
     cluster_records = (
         new_hashes.with_row_index("cluster_id")
         .with_columns(
@@ -210,7 +207,6 @@ def insert_hashes(
     )
     del hashes_with_ids
 
-    log_mem_usage()
     if keys_records.shape[0] > 0:
         next_key_id = PKSpace.reserve_block("cluster_keys", len(keys_records))
     else:
@@ -255,7 +251,6 @@ def insert_hashes(
                 )
 
             adbc_connection.commit()
-            log_mem_usage()
 
         except Exception as e:
             # Log the error and rollback
@@ -560,7 +555,6 @@ def _results_to_insert_tables(
     )
 
 
-@profile_time()
 def insert_results(
     path: ModelResolutionPath,
     results: pa.Table,
@@ -607,7 +601,6 @@ def insert_results(
 
         if existing_results > 0:
             raise MatchboxResolutionExistingData
-    log_mem_usage()
     logger.info(
         f"Writing results data with batch size {batch_size:,}", prefix=log_prefix
     )
@@ -679,7 +672,6 @@ def insert_results(
             )
 
             adbc_connection.commit()
-            log_mem_usage()
 
         except Exception as e:
             logger.error(

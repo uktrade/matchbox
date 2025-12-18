@@ -6,7 +6,6 @@ import polars as pl
 import pyarrow as pa
 from sqlalchemy import func, join, select
 from sqlalchemy.dialects.postgresql import BYTEA
-from sqlalchemy.pool import PoolProxiedConnection
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -40,63 +39,28 @@ from matchbox.server.postgresql.utils.db import (
 from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leaves
 
 
-def _fetch_existing_clusters(
-    conn: PoolProxiedConnection, hashes: list[bytes], chunk: int = 1000
-) -> pl.DataFrame:
-    """Fetch existing clusters from database, using chunking for large hashes lists.
-
-    Note this will only work with Postgresql.
-
-    Args:
-        conn: a PoolProxiedConnection connection
-        hashes: list with all hashes to search in the database
-        chunk: maximum length of the list to use on each query
-    """
-    if not hashes:
-        return pl.DataFrame(
-            schema={
-                "cluster_id": pl.Int64,
-                "cluster_hash": pl.Binary,
-            }
+def _fetch_existing_clusters(data_hashes: pa.Table, column: str) -> pl.DataFrame:
+    """Fetch existing clusters from database by joining with temporary table."""
+    # Insert temporary table with current hashes
+    with ingest_to_temporary_table(
+        table_name="hashes",
+        schema_name="mb",
+        column_types={
+            "cluster_hash": BYTEA,
+        },
+        data=data_hashes.select([column]).rename_columns(["cluster_hash"]),
+    ) as temp_table:
+        existing_cluster_stmt = select(Clusters.cluster_id, Clusters.cluster_hash).join(
+            temp_table, temp_table.c.cluster_hash == Clusters.cluster_hash
         )
 
-    out: list[pl.DataFrame] = []
-    for i in range(0, len(hashes), chunk):
-        part = hashes[i : i + chunk]
-        if not part:
-            continue
-
-        # Placeholders to insert parameters in Postgresql ($1, $2, etc)
-        # Should be the same length as chunk
-        placeholders = ",".join(f"${j}" for j in range(1, len(part) + 1))
-        sql = f"""
-            SELECT cluster_id, cluster_hash
-            FROM {Clusters.__table__.fullname}
-            WHERE cluster_hash IN ({placeholders})
-        """
-
-        df = sql_to_df(
-            stmt=sql,
-            connection=conn.dbapi_connection,
-            return_type="polars",
-            execute_options={"parameters": tuple(part)},
-            schema_overrides={
-                "cluster_id": pl.Int64,
-                "cluster_hash": pl.Binary,
-            },
-        )
-        if not df.is_empty():
-            out.append(df)
-
-    if not out:
-        return pl.DataFrame(
-            schema={
-                "cluster_id": pl.Int64,
-                "cluster_hash": pl.Binary,
-            }
-        )
-
-    return pl.concat(out, how="vertical")
+        with MBDB.get_adbc_connection() as conn:
+            existing_cluster_df: pl.DataFrame = sql_to_df(
+                stmt=compile_sql(existing_cluster_stmt),
+                connection=conn.dbapi_connection,
+                return_type="polars",
+            )
+    return existing_cluster_df
 
 
 def insert_hashes(
@@ -148,14 +112,12 @@ def insert_hashes(
 
         source_config_id = resolution.source_config.source_config_id
 
+    existing_hash_lookup = _fetch_existing_clusters(data_hashes, "hash")
+
+    # Convert to polars after getting existing hashes to save one conversion
     data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
-    unique_data_hashes = data_hashes.get_column("hash").unique().to_list()
 
     # Don't insert new hashes, but new keys need existing hash IDs
-    with MBDB.get_adbc_connection() as conn:
-        existing_hash_lookup = _fetch_existing_clusters(conn, unique_data_hashes)
-    del unique_data_hashes
-
     if existing_hash_lookup.is_empty():
         new_hashes = data_hashes.select("hash").unique()
     else:
@@ -411,25 +373,9 @@ def _create_clusters_dataframe(all_clusters: dict[bytes, Cluster]) -> pl.DataFra
         },
     )
 
-    # Look up existing clusters in the database
-    with ingest_to_temporary_table(
-        table_name="hashes",
-        schema_name="mb",
-        column_types={
-            "cluster_hash": BYTEA,
-        },
-        data=all_clusters_df.select("cluster_hash").to_arrow(),
-    ) as temp_table:
-        existing_cluster_stmt = select(Clusters.cluster_id, Clusters.cluster_hash).join(
-            temp_table, temp_table.c.cluster_hash == Clusters.cluster_hash
-        )
-
-        with MBDB.get_adbc_connection() as conn:
-            existing_cluster_df: pl.DataFrame = sql_to_df(
-                stmt=compile_sql(existing_cluster_stmt),
-                connection=conn.dbapi_connection,
-                return_type="polars",
-            )
+    existing_cluster_df = _fetch_existing_clusters(
+        all_clusters_df.to_arrow(), "cluster_hash"
+    )
 
     # Use anti_join to find hashes that don't exist in the lookup
     new_clusters_df = all_clusters_df.join(

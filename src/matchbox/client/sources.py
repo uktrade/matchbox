@@ -9,12 +9,12 @@ from pyarrow import Table as ArrowTable
 
 from matchbox.client import _handler
 from matchbox.client.queries import Query
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.db import (
     QueryReturnClass,
     QueryReturnType,
 )
 from matchbox.common.dtos import (
-    DataTypes,
     Resolution,
     ResolutionType,
     SourceConfig,
@@ -24,7 +24,7 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import HashMethod, hash_arrow_table, hash_rows
-from matchbox.common.logging import logger, profile_mem, profile_time
+from matchbox.common.logging import logger, profile_time
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -223,7 +223,6 @@ class Source:
             return False
         return self.config == other.config
 
-    @profile_time(attr="name")
     def fetch(
         self,
         qualify_names: bool = False,
@@ -270,7 +269,6 @@ class Source:
                 return_type=return_type,
             )
 
-    @profile_mem()
     @profile_time(attr="name")
     def run(self, batch_size: int | None = None) -> ArrowTable:
         """Hash a dataset from its warehouse, ready to be inserted, and cache hashes.
@@ -376,7 +374,6 @@ class Source:
         return self.config.f(self.name, fields)
 
     @post_run
-    @profile_mem()
     @profile_time(attr="name")
     def sync(self) -> None:
         """Send the source config and hashes to the server.
@@ -387,8 +384,8 @@ class Source:
         resolution = self.to_resolution()
         try:
             existing_resolution = _handler.get_resolution(path=self.resolution_path)
-        except MatchboxResolutionNotFoundError:
             logger.info("Found existing resolution", prefix=log_prefix)
+        except MatchboxResolutionNotFoundError:
             existing_resolution = None
 
         if existing_resolution:

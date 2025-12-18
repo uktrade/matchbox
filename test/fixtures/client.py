@@ -9,7 +9,7 @@ from httpx import Client
 from pydantic import SecretBytes
 from respx import MockRouter
 
-from matchbox.client._handler import create_client
+from matchbox.client._handler.main import create_client
 from matchbox.client._settings import ClientSettings
 from matchbox.client._settings import settings as client_settings
 from matchbox.server.api import app, dependencies

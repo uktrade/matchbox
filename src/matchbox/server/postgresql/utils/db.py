@@ -10,8 +10,8 @@ from collections.abc import Generator
 from typing import Literal
 
 import pyarrow as pa
-from adbc_driver_manager import ProgrammingError as ADBCProgrammingError
-from adbc_driver_postgresql.dbapi import Connection as ADBCConnection
+from adbc_driver_manager import ProgrammingError as AdbcProgrammingError
+from adbc_driver_postgresql.dbapi import Connection as AdbcConnection
 from pyarrow import Table as ArrowTable
 from sqlalchemy import Column, MetaData, Table, and_, func, select, text
 from sqlalchemy.dialects import postgresql
@@ -246,7 +246,7 @@ def compile_sql(stmt: Select) -> str:
 def _copy_to_table(
     table_name: str,
     schema_name: str,
-    connection: ADBCConnection,
+    connection: AdbcConnection,
     data: ArrowTable,
     max_chunksize: int | None = None,
 ) -> None:
@@ -297,7 +297,7 @@ def large_append(
             data=data,
             max_chunksize=max_chunksize,
         )
-    except ADBCProgrammingError as e:
+    except AdbcProgrammingError as e:
         raise MatchboxDatabaseWriteError from e
 
 

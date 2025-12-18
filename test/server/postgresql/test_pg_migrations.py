@@ -55,7 +55,7 @@ def test_migrations_stairway(
 
 @pytest.mark.docker
 def test_migrations_stairway_with_data(
-    matchbox_postgres: MatchboxPostgres, sqlite_warehouse: Engine
+    matchbox_postgres: MatchboxPostgres, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Tests that all migrations can be applied and rolled back with data.
 
@@ -63,7 +63,7 @@ def test_migrations_stairway_with_data(
 
     Will start at head, then downgrade to base, step by step.
     """
-    with setup_scenario(matchbox_postgres, "link", warehouse=sqlite_warehouse):
+    with setup_scenario(matchbox_postgres, "link", warehouse=sqla_sqlite_warehouse):
         alembic_config: Config = (
             matchbox_postgres.settings.postgres.get_alembic_config()
         )

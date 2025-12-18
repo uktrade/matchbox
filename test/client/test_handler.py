@@ -4,7 +4,8 @@ import httpx
 from httpx import Response
 from respx import MockRouter
 
-from matchbox.client._handler import auth_status, create_client, healthcheck, login
+from matchbox.client._handler import auth_status, healthcheck, login
+from matchbox.client._handler.main import create_client
 from matchbox.client._settings import ClientSettings
 
 

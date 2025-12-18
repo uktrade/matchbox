@@ -46,6 +46,8 @@ server = [
 
 [dependency-groups]
 dev = [
+    "adbc-driver-postgresql>=1.9.0",
+    "adbc-driver-sqlite>=1.9.0",
     "docker>=7.1.0",
     "griffe-inherited-docstrings>=1.1.1",
     "ipykernel>=6.29.5",
@@ -92,7 +94,8 @@ upgrade-package = ["ruff"]
 constraint-dependencies = [
     "urllib3>=2.6.0",
     "werkzeug>=3.1.4",
-    "setuptools-scm>=9.2.0"
+    "setuptools-scm>=9.2.0",
+    "filelock>=3.20.1"
 ]
 
 [tool.ruff]

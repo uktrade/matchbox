@@ -30,14 +30,16 @@ from matchbox.common.factories.models import MockLinker, model_factory
 from matchbox.common.factories.sources import source_factory
 
 
-def test_init_and_run_model(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
+def test_init_and_run_model(
+    sqla_sqlite_warehouse: Engine, matchbox_api: MockRouter
+) -> None:
     """Test that model can be initialised and run correctly."""
     # Register "custom" model
     add_model_class(MockLinker)
 
     # Mock API
-    foo = source_factory(engine=sqlite_warehouse).write_to_location()
-    bar = source_factory(engine=sqlite_warehouse).write_to_location()
+    foo = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
+    bar = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
 
     foo_leafy_data = foo.data.append_column(
         "leaf_id", pa.array(range(len(foo.data)), type=pa.int64())

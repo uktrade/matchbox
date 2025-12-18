@@ -34,3 +34,5 @@ You can download an entire lookup as a PyArrow table.
 
     lookup = DAG("companies").load_default().resolve().as_lookup()
     ```
+
+The output of `dag.resolve()` has type [`ResolvedMatches`][matchbox.client.results.ResolvedMatches], which lets you explore your resolved entities in different ways.

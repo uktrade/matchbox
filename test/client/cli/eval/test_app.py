@@ -130,12 +130,12 @@ class TestScenarioIntegration:
         )
 
     @pytest.fixture(autouse=True)
-    def setup(self, backend_instance: str, sqlite_warehouse: Engine) -> None:
+    def setup(self, backend_instance: str, sqla_sqlite_warehouse: Engine) -> None:
         """Set up test fixtures."""
         self.backend: MatchboxDBAdapter = backend_instance
-        self.warehouse_engine: Engine = sqlite_warehouse
+        self.warehouse_engine: Engine = sqla_sqlite_warehouse
         self.scenario: Callable[..., TestkitDAG] = partial(
-            setup_scenario, warehouse=sqlite_warehouse
+            setup_scenario, warehouse=sqla_sqlite_warehouse
         )
 
     @pytest.mark.asyncio

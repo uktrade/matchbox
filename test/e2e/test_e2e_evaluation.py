@@ -3,7 +3,7 @@ from collections.abc import Generator
 
 import pytest
 from httpx import Client
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine
 
 from matchbox.client.cli.eval import EntityResolutionApp
 from matchbox.client.dags import DAG
@@ -39,20 +39,20 @@ class TestE2EModelEvaluation:
     def setup_environment(
         self,
         matchbox_client: Client,
-        postgres_warehouse: Engine,
+        sqla_postgres_warehouse: Engine,
     ) -> Generator[None, None, None]:
         """Set up warehouse and database using fixtures."""
         # Persist shared setup for use in the test body
         n_true_entities = 10
         final_resolution_1_name = "final_1"
         final_resolution_2_name = "final_2"
-        self.warehouse_engine = postgres_warehouse
+        self.warehouse_engine = sqla_postgres_warehouse
 
         # Create a SINGLE source with duplicates
         source_parameters = (
             SourceTestkitParameters(
                 name="source_a",
-                engine=postgres_warehouse,
+                engine=self.warehouse_engine,
                 features=(
                     FeatureConfig(
                         name="company_name",
@@ -82,7 +82,7 @@ class TestE2EModelEvaluation:
         assert response.status_code == 200, "Failed to clear matchbox database"
 
         # Create DAG
-        dw_loc = RelationalDBLocation(name="postgres").set_client(postgres_warehouse)
+        dw_loc = RelationalDBLocation(name="postgres").set_client(self.warehouse_engine)
 
         # === DAG 1: Created by User 1 (Strict Deduplication) ===
         dag1 = DAG("companies1").new_run()
@@ -157,10 +157,6 @@ class TestE2EModelEvaluation:
         yield
 
         # Teardown
-        with postgres_warehouse.connect() as conn:
-            for source_name in self.linked_testkit.sources:
-                conn.execute(text(f"DROP TABLE IF EXISTS {source_name};"))
-            conn.commit()
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 

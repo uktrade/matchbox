@@ -1,10 +1,14 @@
 """Definition of model inputs."""
 
 from enum import StrEnum
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Self
 
 import duckdb
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 from polars import DataFrame as PolarsDataFrame
 from sqlglot import expressions, parse_one
 from sqlglot import select as sqlglot_select
@@ -17,6 +21,7 @@ from matchbox.common.dtos import (
     QueryCombineType,
     QueryConfig,
 )
+from matchbox.common.logging import profile_time
 from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
@@ -157,6 +162,7 @@ class Query:
         if self._cache_mode == CacheMode.CLEAN:
             self.data = data
 
+    @profile_time()
     def run(
         self,
         return_type: QueryReturnType = QueryReturnType.POLARS,
@@ -191,69 +197,82 @@ class Query:
                 self._set_cache(self.raw_data, self.data)
                 return result
 
-        source_results: list[PolarsDataFrame] = []
-        for source in self.sources:
-            mb_ids = pl.from_arrow(
-                _handler.query(
+        with TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            mb_ids_path = tmpdir / "mb_ids.parquet"
+            # Download data from Matchbox server
+            writer = None
+            for source in self.sources:
+                res = _handler.query(
                     source=source.resolution_path,
                     resolution=self.model.resolution_path if self.model else None,
                     threshold=self.config.threshold,
                     return_leaf_id=return_leaf_id,
                 )
-            )
 
-            raw_batches = source.fetch(
-                qualify_names=True,
-                batch_size=batch_size,
-                return_type=QueryReturnType.POLARS,
-            )
-
-            processed_batches = [
-                b.join(
-                    other=mb_ids,
-                    left_on=source.qualified_key,
-                    right_on="key",
-                    how="inner",
+                res = res.append_column(
+                    "source", pa.array([source.name] * res.num_rows)
                 )
-                for b in raw_batches
-            ]
-            source_results.append(pl.concat(processed_batches, how="vertical"))
+                if writer is None:
+                    writer = pq.ParquetWriter(
+                        mb_ids_path,
+                        res.schema,
+                        compression="snappy",
+                        use_dictionary=True,
+                    )
+                writer.write_table(res)
 
-        # Process all data and return a single result
-        tables: list[PolarsDataFrame] = list(source_results)
+            writer.close()
 
-        # Combine results based on combine_type
-        if return_leaf_id:
-            concatenated = pl.concat(tables, how="diagonal")
-            self.leaf_id = concatenated.select(["id", "leaf_id"])
-
-        if self.config.combine_type == QueryCombineType.CONCAT:
-            if return_leaf_id:  # can reuse the concatenated dataframe
-                raw_data = concatenated.drop(["leaf_id"])
-            else:
-                raw_data = pl.concat(tables, how="diagonal")
-        else:
-            raw_data = tables[0].drop("leaf_id", strict=False)
-            for table in tables[1:]:
-                raw_data = raw_data.join(
-                    table.drop("leaf_id", strict=False),
-                    on="id",
-                    how="full",
-                    coalesce=True,
+            # Download sources from warehouse
+            lazy_sources = []
+            for source in self.sources:
+                source_path = tmpdir / f"{source.name}.parquet"
+                source_batches = source.fetch(
+                    qualify_names=True,
+                    batch_size=batch_size,
+                    return_type=QueryReturnType.ARROW,
                 )
 
-            raw_data = raw_data.select(["id", pl.all().exclude("id")])
+                first_batch = next(source_batches)
+                writer = pq.ParquetWriter(
+                    source_path, first_batch.schema, compression="snappy"
+                )
+                writer.write_table(first_batch)
+
+                for table in source_batches:
+                    writer.write_table(table)
+
+                writer.close()
+                lazy_sources.append(
+                    pl.scan_parquet(source_path)
+                    .with_columns(pl.lit(source.name).alias("source"))
+                    .rename({source.qualified_key: "key"})
+                )
+
+            mb_ids = pl.scan_parquet(mb_ids_path)
+
+            if return_leaf_id:
+                self.leaf_id = mb_ids.select("id", "leaf_id").collect()
+                mb_ids = mb_ids.drop("leaf_id")
+
+            raw_data = (
+                pl.concat(lazy_sources, how="diagonal")
+                .join(mb_ids, how="inner", on=("source", "key"))
+                .drop("source", "key")
+            )
 
             if self.config.combine_type == QueryCombineType.SET_AGG:
-                # Aggregate into lists
-                agg_expressions = [
-                    pl.col(col).unique() for col in raw_data.columns if col != "id"
-                ]
-                raw_data = raw_data.group_by("id").agg(agg_expressions)
+                raw_data = raw_data.group_by("id").agg(pl.all().exclude("id").unique())
+            if self.config.combine_type == QueryCombineType.EXPLODE:
+                raw_data = raw_data.group_by("id").agg(pl.all().exclude("id"))
+                raw_data = raw_data.explode(pl.all().exclude("id")).unique()
+
+            raw_data = raw_data.collect()
 
         clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
-
         self._set_cache(raw_data, clean_data)
+
         return _convert_df(clean_data, return_type=return_type)
 
     def clean(

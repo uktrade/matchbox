@@ -50,16 +50,10 @@ Before building a pipeline, it's worth configuring logging:
 
     # Configure logging
     logging.basicConfig(
-        level=logging.DEBUG,
         format="%(asctime)s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    logger = logging.getLogger()
-
-    # Reduce noise from HTTP libraries
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("http").setLevel(logging.WARNING)
+    logging.getLogger("matchbox").setLevel(logging.INFO)
     ```
 
 You will also need to define the engine to read your data sources:

@@ -118,7 +118,6 @@ def insert_hashes(
 
     existing_hash_lookup = _fetch_existing_clusters(data_hashes, "hash")
 
-    # Convert to polars after getting existing hashes to save one conversion
     data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
 
     # Don't insert new hashes, but new keys need existing hash IDs

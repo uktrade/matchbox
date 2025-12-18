@@ -40,8 +40,12 @@ from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leave
 
 
 def _fetch_existing_clusters(data_hashes: pa.Table, column: str) -> pl.DataFrame:
-    """Fetch existing clusters from database by joining with temporary table."""
-    # Insert temporary table with current hashes
+    """Fetch existing clusters from database by joining with temporary table.
+
+    Args:
+        data_hashes: Arrow table with cluster hashes
+        column: Name of the column containing the cluster hashes
+    """
     with ingest_to_temporary_table(
         table_name="hashes",
         schema_name="mb",

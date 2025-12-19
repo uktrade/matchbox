@@ -1,5 +1,14 @@
 """Interface to locations where source data is stored."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from matchbox.common.datatypes import DataTypes
+
+if TYPE_CHECKING:
+    from adbc_driver_manager.dbapi import Connection as AdbcConnection
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
@@ -19,7 +28,7 @@ from matchbox.common.db import (
     QueryReturnType,
     sql_to_df,
 )
-from matchbox.common.dtos import DataTypes, LocationConfig, LocationType
+from matchbox.common.dtos import LocationConfig, LocationType
 from matchbox.common.exceptions import (
     MatchboxSourceClientError,
     MatchboxSourceExtractTransformError,
@@ -34,9 +43,19 @@ class ClientType(StrEnum):
     """Enumeration of valid location clients."""
 
     SQLALCHEMY = "sqlalchemy"
+    ADBC = "adbc"
 
 
-CLIENT_CLASSES = {ClientType.SQLALCHEMY: Engine}
+CLIENT_CLASSES: dict[ClientType, type | tuple[type, ...]] = {
+    ClientType.SQLALCHEMY: Engine
+}
+
+try:
+    from adbc_driver_manager.dbapi import Connection as AdbcConnection
+
+    CLIENT_CLASSES[ClientType.ADBC] = AdbcConnection
+except ImportError:
+    pass
 
 
 def requires_client(method: Callable[..., T]) -> Callable[..., T]:
@@ -49,7 +68,7 @@ def requires_client(method: Callable[..., T]) -> Callable[..., T]:
     """
 
     @wraps(method)
-    def wrapper(self: "Location", *args: Any, **kwargs: Any) -> T:
+    def wrapper(self: Location, *args: Any, **kwargs: Any) -> T:
         if self.client is None:
             raise MatchboxSourceClientError
         return method(self, *args, **kwargs)
@@ -82,7 +101,8 @@ class Location(ABC):
 
     def set_client(self, client: Any) -> Self:  # noqa: ANN401
         """Set client for location and return the location."""
-        if not isinstance(client, CLIENT_CLASSES[self.client_type]):
+        # Validate against all possible client types
+        if not isinstance(client, tuple(CLIENT_CLASSES.values())):
             raise ValueError(
                 f"Type {client.__class__} is not valid for {self.__class__}"
             )
@@ -137,7 +157,8 @@ class Location(ABC):
 
         Args:
             extract_transform: The ET logic to execute.
-            batch_size: The size of the batches to return.
+            batch_size: The size used for internal batching. Overrides environment
+                variable if set.
             rename: Renaming to apply after the ET logic is executed.
 
                 * If a dictionary is provided, it will be used to rename the columns.
@@ -163,18 +184,30 @@ class Location(ABC):
 class RelationalDBLocation(Location):
     """A location for a relational database."""
 
-    client: Engine
+    client: Engine | AdbcConnection | None
     location_type: LocationType = LocationType.RDBMS
-    client_type: ClientType = ClientType.SQLALCHEMY
+
+    @property
+    def client_type(self) -> ClientType | None:
+        """Determine client type from the client."""
+        if isinstance(self.client, Engine):
+            return ClientType.SQLALCHEMY
+        elif isinstance(self.client, AdbcConnection):
+            return ClientType.ADBC
+        return None
 
     @contextmanager
-    def _get_connection(self) -> Generator[Connection, None, None]:
+    def _get_connection(self) -> Generator[Connection | AdbcConnection, None, None]:
         """Context manager for getting database connections with proper cleanup."""
-        connection = self.client.connect()
-        try:
-            yield connection
-        finally:
-            connection.close()
+        # ADBC connections are already connected
+        if self.client_type == ClientType.ADBC:
+            yield self.client
+        else:  # SQLAlchemy Engine
+            connection = self.client.connect()
+            try:
+                yield connection
+            finally:
+                connection.close()
 
     @requires_client
     def connect(self) -> bool:  # noqa: D102
@@ -205,20 +238,26 @@ class RelationalDBLocation(Location):
                 "SQL statement is empty or only contains whitespace."
             )
 
-        dialect = None
-        # If a client is present, we can make the SQLGlot validation more targeted
-        if self.client:
-            match self.client.dialect.name:
-                case "postgresql":
-                    dialect = "postgres"
-                case "sqlite":
-                    dialect = "sqlite"
+        # Attempt to make the SQLGlot validation more targeted
+        sqlglot_dialect: str | None = None
+        client_dialect: str | None = None
 
-        if not dialect:
-            logger.warning("Could not validate specific dialect.")
+        if self.client and self.client_type == ClientType.SQLALCHEMY:
+            client_dialect = self.client.dialect.name
+        elif self.client and self.client_type == ClientType.ADBC:
+            client_dialect = self.client.adbc_get_info().get("vendor_name")
+            client_dialect = client_dialect.lower() if client_dialect else None
+
+        match client_dialect:
+            case "postgresql":
+                sqlglot_dialect = "postgres"
+            case "sqlite":
+                sqlglot_dialect = "sqlite"
+            case _:
+                logger.warning("Could not validate specific dialect.")
 
         try:
-            expressions = sqlglot.parse(extract_transform, dialect=dialect)
+            expressions = sqlglot.parse(extract_transform, dialect=sqlglot_dialect)
         except ParseError as e:
             raise MatchboxSourceExtractTransformError(
                 "SQL statement could not be parsed."
@@ -256,7 +295,7 @@ class RelationalDBLocation(Location):
     def infer_types(self, extract_transform: str) -> dict[str, DataTypes]:  # noqa: D102
         extract_transform = extract_transform.rstrip(" \t\n;")
         one_row_query = f"select * from ({extract_transform}) as sub limit 1;"
-        one_row: pl.DataFrame = list(self.execute(one_row_query))[0]
+        one_row: pl.DataFrame = next(self.execute(one_row_query))
         column_names = one_row.columns
 
         inferred_types = {}
@@ -288,7 +327,13 @@ class RelationalDBLocation(Location):
         keys: tuple[str, list[str]] | None = None,
         schema_overrides: dict[str, pl.DataType] | None = None,
     ) -> Generator[QueryReturnClass, None, None]:
-        batch_size = batch_size or 10_000
+        # Strip semicolon, as it can block extended query protocol
+        # and slow some engines down
+        extract_transform = extract_transform.replace(";", "")
+
+        # We always work in batches to simplify higher level logic
+        batch_size: int = batch_size or 10_000
+
         with self._get_connection() as conn:
             if keys:
                 key_field, filter_values = keys
@@ -296,8 +341,6 @@ class RelationalDBLocation(Location):
                 # Only filter original SQL if keys are provided
                 if quoted_key_values:
                     comma_separated_values = ", ".join(quoted_key_values)
-                    # Deal with end-of-statement semi-colons that could be supplied
-                    extract_transform = extract_transform.replace(";", "")
                     # This "IN" expression is a SQL standard;
                     # though this is hard to prove as the standard is behind a paywall
                     extract_transform = (

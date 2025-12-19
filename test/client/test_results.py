@@ -17,8 +17,8 @@ class TestModelResults:
         """Removes redundant pairs, keeping lowest probability."""
         simple_duplicate = pl.DataFrame(
             [
-                {"left_id": 4, "right_id": 5, "probability": 100},
                 {"left_id": 4, "right_id": 5, "probability": 50},
+                {"left_id": 4, "right_id": 5, "probability": 100},
             ]
         )
 
@@ -32,8 +32,8 @@ class TestModelResults:
 
         symmetric_duplicate = pl.DataFrame(
             [
-                {"left_id": 4, "right_id": 5, "probability": 100},
                 {"left_id": 5, "right_id": 4, "probability": 50},
+                {"left_id": 4, "right_id": 5, "probability": 100},
             ]
         )
 
@@ -47,8 +47,8 @@ class TestModelResults:
 
         no_duplicates = pl.DataFrame(
             [
-                {"left_id": 4, "right_id": 5, "probability": 100},
                 {"left_id": 4, "right_id": 6, "probability": 50},
+                {"left_id": 4, "right_id": 5, "probability": 100},
             ]
         )
 

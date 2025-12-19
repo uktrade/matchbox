@@ -61,13 +61,19 @@ def test_dag_run_and_sync(
     source_sync_mock: Mock,
     model_run_mock: Mock,
     source_run_mock: Mock,
-    sqlite_warehouse: Engine,
+    sqla_sqlite_warehouse: Engine,
 ) -> None:
     """A legal DAG can be built and run."""
     # Set up constituents
-    foo_tkit = source_factory(name="foo", engine=sqlite_warehouse).write_to_location()
-    bar_tkit = source_factory(name="bar", engine=sqlite_warehouse).write_to_location()
-    baz_tkit = source_factory(name="baz", engine=sqlite_warehouse).write_to_location()
+    foo_tkit = source_factory(
+        name="foo", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+    bar_tkit = source_factory(
+        name="bar", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+    baz_tkit = source_factory(
+        name="baz", engine=sqla_sqlite_warehouse
+    ).write_to_location()
 
     dag = TestkitDAG().dag
 
@@ -126,11 +132,11 @@ def test_dag_run_and_sync(
     assert model_clear_mock.call_count == 3
 
 
-def test_dags_missing_dependency(sqlite_warehouse: Engine) -> None:
+def test_dags_missing_dependency(sqla_sqlite_warehouse: Engine) -> None:
     """Steps cannot be added before their dependencies."""
     dag = TestkitDAG().dag
 
-    foo = source_factory(name="foo", engine=sqlite_warehouse, dag=dag).source
+    foo = source_factory(name="foo", engine=sqla_sqlite_warehouse, dag=dag).source
 
     with pytest.raises(ValueError, match="not added to DAG"):
         dag.model(
@@ -145,12 +151,12 @@ def test_dags_missing_dependency(sqlite_warehouse: Engine) -> None:
     assert not len(dag.graph)
 
 
-def test_mixing_dags_fails(sqlite_warehouse: Engine) -> None:
+def test_mixing_dags_fails(sqla_sqlite_warehouse: Engine) -> None:
     """Cannot reference a different DAG when adding a step."""
     dag = TestkitDAG().dag
     dag2 = TestkitDAG().dag
 
-    foo_tkit = source_factory(name="foo", engine=sqlite_warehouse)
+    foo_tkit = source_factory(name="foo", engine=sqla_sqlite_warehouse)
     foo = dag.source(**foo_tkit.into_dag())
 
     with pytest.raises(ValueError, match="mix DAGs"):
@@ -167,12 +173,12 @@ def test_mixing_dags_fails(sqlite_warehouse: Engine) -> None:
     assert not len(dag2.graph)
 
 
-def test_dag_name_clash(sqlite_warehouse: Engine) -> None:
+def test_dag_name_clash(sqla_sqlite_warehouse: Engine) -> None:
     """Under some conditions, nodes can be overwritten."""
     dag = TestkitDAG().dag
 
-    foo_tkit = source_factory(name="foo", engine=sqlite_warehouse)
-    bar_tkit = source_factory(name="bar", engine=sqlite_warehouse)
+    foo_tkit = source_factory(name="foo", engine=sqla_sqlite_warehouse)
+    bar_tkit = source_factory(name="bar", engine=sqla_sqlite_warehouse)
 
     foo = dag.source(**foo_tkit.into_dag())
     bar = dag.source(**bar_tkit.into_dag())
@@ -216,7 +222,7 @@ def test_dag_name_clash(sqlite_warehouse: Engine) -> None:
         model_settings={"comparisons": "l.field=r.field"},
     )
 
-    baz_tkit = source_factory(name="baz", engine=sqlite_warehouse)
+    baz_tkit = source_factory(name="baz", engine=sqla_sqlite_warehouse)
     baz = dag.source(**baz_tkit.into_dag())
     with pytest.raises(ValueError, match="Cannot re-assign"):
         foo.query().linker(
@@ -241,7 +247,7 @@ def test_dag_name_clash(sqlite_warehouse: Engine) -> None:
     assert dag.graph[linker.name] == [foo.name, bar.name]
 
 
-def test_dag_final_steps(sqlite_warehouse: Engine) -> None:
+def test_dag_final_steps(sqla_sqlite_warehouse: Engine) -> None:
     """Test final_steps property returns all apex nodes."""
     dag = TestkitDAG().dag
 
@@ -249,12 +255,12 @@ def test_dag_final_steps(sqlite_warehouse: Engine) -> None:
     assert dag.final_steps == []
 
     # Single apex
-    foo_tkit = source_factory(name="foo", engine=sqlite_warehouse)
+    foo_tkit = source_factory(name="foo", engine=sqla_sqlite_warehouse)
     foo = dag.source(**foo_tkit.into_dag())
     assert dag.final_steps == [foo]
 
     # Multiple apexes (disconnected)
-    bar_tkit = source_factory(name="bar", engine=sqlite_warehouse)
+    bar_tkit = source_factory(name="bar", engine=sqla_sqlite_warehouse)
     bar = dag.source(**bar_tkit.into_dag())
     assert set(dag.final_steps) == {foo, bar}
 
@@ -269,12 +275,18 @@ def test_dag_final_steps(sqlite_warehouse: Engine) -> None:
     assert dag.final_steps[0].name == "foo_bar"
 
 
-def test_dag_draw(sqlite_warehouse: Engine) -> None:
+def test_dag_draw(sqla_sqlite_warehouse: Engine) -> None:
     """Test that the draw method produces a correct string representation of the DAG."""
     # Set up a simple DAG
-    foo_tkit = source_factory(name="foo", engine=sqlite_warehouse).write_to_location()
-    bar_tkit = source_factory(name="bar", engine=sqlite_warehouse).write_to_location()
-    baz_tkit = source_factory(name="baz", engine=sqlite_warehouse).write_to_location()
+    foo_tkit = source_factory(
+        name="foo", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+    bar_tkit = source_factory(
+        name="bar", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+    baz_tkit = source_factory(
+        name="baz", engine=sqla_sqlite_warehouse
+    ).write_to_location()
 
     dag = TestkitDAG().dag
 
@@ -403,8 +415,8 @@ def test_dag_draw(sqlite_warehouse: Engine) -> None:
 
     # Test 7: Multiple disconnected components
     disconnected_dag = TestkitDAG().dag
-    qux_tkit = source_factory(name="qux", engine=sqlite_warehouse)
-    quux_tkit = source_factory(name="quux", engine=sqlite_warehouse)
+    qux_tkit = source_factory(name="qux", engine=sqla_sqlite_warehouse)
+    quux_tkit = source_factory(name="quux", engine=sqla_sqlite_warehouse)
     _ = disconnected_dag.source(**qux_tkit.into_dag())
     _ = disconnected_dag.source(**quux_tkit.into_dag())
 
@@ -593,17 +605,17 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     assert_frame_equal(loaded_res.query_results[baz_index], pl.from_arrow(baz_data))
 
 
-def test_lookup_key_ok(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
+def test_lookup_key_ok(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) -> None:
     """The DAG can map between single keys."""
     # Set up dummy data
     foo_testkit = source_factory(
-        engine=sqlite_warehouse, name="foo"
+        engine=sqla_sqlite_warehouse, name="foo"
     ).write_to_location()
     bar_testkit = source_factory(
-        engine=sqlite_warehouse, name="bar"
+        engine=sqla_sqlite_warehouse, name="bar"
     ).write_to_location()
     baz_testkit = source_factory(
-        engine=sqlite_warehouse, name="baz"
+        engine=sqla_sqlite_warehouse, name="baz"
     ).write_to_location()
 
     dag = TestkitDAG().dag
@@ -681,15 +693,15 @@ def test_lookup_key_404_source(matchbox_api: MockRouter) -> None:
 
 
 def test_lookup_key_no_matches(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Key lookup raises MatchboxEmptyServerResponse when no matches are found."""
     # Set up dummy data
     source_testkit = source_factory(
-        engine=sqlite_warehouse, name="source"
+        engine=sqla_sqlite_warehouse, name="source"
     ).write_to_location()
     target_testkit = source_factory(
-        engine=sqlite_warehouse, name="target"
+        engine=sqla_sqlite_warehouse, name="target"
     ).write_to_location()
 
     dag = TestkitDAG().dag
@@ -772,7 +784,7 @@ def test_from_resolution() -> None:
 
 def test_dag_creates_new_collection(
     matchbox_api: MockRouter,
-    sqlite_warehouse: Engine,
+    sqla_sqlite_warehouse: Engine,
 ) -> None:
     """Connect creates a new collection when it doesn't exist."""
     dag = DAG(name="test_collection")
@@ -1089,7 +1101,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     assert loaded_dag.graph == test_dag.graph
 
 
-def test_dag_set_client(sqlite_warehouse: Engine) -> None:
+def test_dag_set_client(sqla_sqlite_warehouse: Engine) -> None:
     """Client can be set for all sources at once."""
     # Create factory data
     foo_params = source_factory(name="foo").into_dag()
@@ -1101,16 +1113,16 @@ def test_dag_set_client(sqlite_warehouse: Engine) -> None:
     dag.source(**bar_params)
 
     # Setting client re-assigns all clients
-    assert dag.get_source("foo").location.client != sqlite_warehouse
-    assert dag.get_source("bar").location.client != sqlite_warehouse
-    dag.set_client(sqlite_warehouse)
-    assert dag.get_source("foo").location.client == sqlite_warehouse
-    assert dag.get_source("bar").location.client == sqlite_warehouse
+    assert dag.get_source("foo").location.client != sqla_sqlite_warehouse
+    assert dag.get_source("bar").location.client != sqla_sqlite_warehouse
+    dag.set_client(sqla_sqlite_warehouse)
+    assert dag.get_source("foo").location.client == sqla_sqlite_warehouse
+    assert dag.get_source("bar").location.client == sqla_sqlite_warehouse
 
 
 def test_dag_set_default_ok(
     matchbox_api: MockRouter,
-    sqlite_warehouse: Engine,
+    sqla_sqlite_warehouse: Engine,
 ) -> None:
     """Set default makes run immutable and sets as default."""
     # Create test data
@@ -1163,12 +1175,12 @@ def test_dag_set_default_not_connected() -> None:
         dag.set_default()
 
 
-def test_dag_set_default_unreachable_nodes(sqlite_warehouse: Engine) -> None:
+def test_dag_set_default_unreachable_nodes(sqla_sqlite_warehouse: Engine) -> None:
     """Nodes cannot be unreachable from root when setting a default run."""
     dag = TestkitDAG().dag
 
-    foo_tkit = source_factory(name="foo", engine=sqlite_warehouse)
-    bar_tkit = source_factory(name="bar", engine=sqlite_warehouse)
+    foo_tkit = source_factory(name="foo", engine=sqla_sqlite_warehouse)
+    bar_tkit = source_factory(name="bar", engine=sqla_sqlite_warehouse)
 
     dag.source(**foo_tkit.into_dag())
     dag.source(**bar_tkit.into_dag())

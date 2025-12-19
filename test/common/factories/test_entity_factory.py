@@ -4,7 +4,8 @@ import polars as pl
 import pytest
 from faker import Faker
 
-from matchbox.common.dtos import DataTypes, SourceResolutionName
+from matchbox.common.datatypes import DataTypes
+from matchbox.common.dtos import SourceResolutionName
 from matchbox.common.factories.entities import (
     ClusterEntity,
     EntityReference,

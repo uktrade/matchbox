@@ -20,10 +20,10 @@ from matchbox.server.base import MatchboxDBAdapter
 class TestMatchboxQueryBackend:
     @pytest.fixture(autouse=True)
     def setup(
-        self, backend_instance: MatchboxDBAdapter, sqlite_warehouse: Engine
+        self, backend_instance: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
     ) -> None:
         self.backend: MatchboxDBAdapter = backend_instance
-        self.scenario = partial(setup_scenario, warehouse=sqlite_warehouse)
+        self.scenario = partial(setup_scenario, warehouse=sqla_sqlite_warehouse)
 
     def test_query_only_source(self) -> None:
         """Test querying data from a link point of truth."""

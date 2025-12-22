@@ -76,12 +76,8 @@ class DAG:
         # These issues are not checked when adding a node for the first time either.
         if step.name in self.nodes:
             if step.config.parents != self.nodes[step.name].config.parents:
-                raise ValueError(
-                    "Cannot re-assign name to model with different inputs."
-                )
-            logger.info(
-                f"Overwriting node '{step.name}' and resetting its descendants."
-            )
+                raise ValueError("Cannot re-assign name to model with different inputs")
+            logger.info(f"Overwriting node '{step.name}'.")
 
         if isinstance(step, Model):
             self._check_dag(step.left_query.dag)

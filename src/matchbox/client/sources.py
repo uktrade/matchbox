@@ -286,10 +286,7 @@ class Source:
             A PyArrow Table containing source keys and their hashes.
         """
         log_prefix = f"Hash {self.name}"
-        batch_info = (
-            f"with batch size {batch_size:,}" if batch_size else "without batching"
-        )
-        logger.info(f"Retrieving and hashing {batch_info}", prefix=log_prefix)
+        logger.info("Retrieving and hashing", prefix=log_prefix)
 
         key_field: str = self.config.key_field.name
         index_fields: list[str] = [field.name for field in self.config.index_fields]

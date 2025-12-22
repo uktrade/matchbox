@@ -42,7 +42,7 @@ class TestEvaluationQueue:
     def test_add_items_increases_count(self) -> None:
         """Test adding items increases count."""
         queue = EvaluationQueue()
-        items = [Mock(item=Mock(cluster_id=1)), Mock(item=Mock(cluster_id=2))]
+        items = [Mock(item=Mock(leaves=[1, 2])), Mock(item=Mock(leaves=[3, 4]))]
 
         added = queue.add_sessions(items)
 
@@ -53,8 +53,8 @@ class TestEvaluationQueue:
     def test_add_items_prevents_duplicates(self) -> None:
         """Test that duplicate cluster IDs are not added."""
         queue = EvaluationQueue()
-        item1 = Mock(item=Mock(cluster_id=1))
-        item2 = Mock(item=Mock(cluster_id=1))  # Duplicate
+        item1 = Mock(item=Mock(leaves=[1, 2]))
+        item2 = Mock(item=Mock(leaves=[2, 1]))  # Duplicate
 
         queue.add_sessions([item1])
         added = queue.add_sessions([item2])
@@ -175,7 +175,7 @@ class TestScenarioIntegration:
                 assert pilot.app.query("Footer")
                 assert app.queue.total_count > 0
                 assert app.queue.current is not None
-                assert app.queue.current.item.cluster_id is not None
+                assert app.queue.current.item.leaves is not None
 
                 # 2. Test keyboard workflow: letter then digit
                 await pilot.press("a")

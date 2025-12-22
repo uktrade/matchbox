@@ -31,7 +31,7 @@ def test_insert_judgement_ok(
 ) -> None:
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
-    judgement = Judgement(user_name="alice", shown=10, endorsed=[[1]])
+    judgement = Judgement(user_name="alice", shown=[1, 2], endorsed=[[1], [2]])
     response = test_client.post("/eval/judgements", json=judgement.model_dump())
     assert response.status_code == 201
     assert (
@@ -44,7 +44,9 @@ def test_insert_judgement_error(
 ) -> None:
     """Test that judgement insertion bubbles up errors."""
     test_client, mock_backend, _ = api_client_and_mocks
-    fake_judgement = Judgement(user_name="alice", shown=10, endorsed=[[1]]).model_dump()
+    fake_judgement = Judgement(
+        user_name="alice", shown=[1, 2], endorsed=[[1], [2]]
+    ).model_dump()
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
     response = test_client.post("/eval/judgements", json=fake_judgement)

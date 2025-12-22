@@ -7,14 +7,23 @@ from matchbox.common.eval import Judgement, precision_recall, process_judgements
 
 def test_judgement_validation() -> None:
     """Judgement validates source cluster IDs."""
-    with pytest.raises(ValueError):
-        Judgement(user_name="alice", shown=10, endorsed=[[1, 2, 3], [3, 4, 5]])
-
-    with pytest.raises(ValueError):
-        Judgement(user_name="alice", shown=10, endorsed=[[1, 2, 3, 1]])
+    # Repeated across groups
+    with pytest.raises(ValueError, match="repeated"):
+        Judgement(
+            user_name="alice", shown=[1, 2, 3, 4, 5], endorsed=[[1, 2, 3], [3, 4, 5]]
+        )
+    # Repeated within group
+    with pytest.raises(ValueError, match="repeated"):
+        Judgement(user_name="alice", shown=[1, 2, 3], endorsed=[[1, 2, 3, 1]])
+    # Missing leaf in endorsed
+    with pytest.raises(ValueError, match="Inconsistent"):
+        Judgement(user_name="alice", shown=[1, 2, 3], endorsed=[[1, 2]])
+    # Extra leaf in endorsed
+    with pytest.raises(ValueError, match="Inconsistent"):
+        Judgement(user_name="alice", shown=[1, 2, 3], endorsed=[[1, 2], [3, 4]])
 
     # Something sensible does work
-    Judgement(user_name="alice", shown=10, endorsed=[[1, 2, 3], [4, 5]])
+    Judgement(user_name="alice", shown=[1, 2, 3, 4, 5], endorsed=[[1, 2, 3], [4, 5]])
 
 
 def test_precision_recall_fails() -> None:

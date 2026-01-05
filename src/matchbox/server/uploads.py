@@ -165,7 +165,7 @@ celery.conf.update(
     prefetch_multiplier=1,
     # Limit number of tasks a worker can complete before restarting
     # This may prevent OOM errors caused by memory not being deallocated properly
-    worker_max_tasks_per_child=5,
+    worker_max_tasks_per_child=1,
 )
 
 

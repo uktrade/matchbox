@@ -126,10 +126,7 @@ just migrate apply
 
 ## Debugging
 
-We have a VSCode default debugging profile called "API debug", which allows you to set breakpoints on the API when running tests. After running this profile, change your `.env` file  as follows:
-
-- Change the `MB__CLIENT__API_ROOT` variable to redirect tests to use the debug port (`8080`)
-- Disable time-outs by commenting out the `MB__CLIENT__TIMEOUT` variable
+If using an editor which supports the [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/), you can attach a debugger to the API running in its container. We have a profile for VSCode pre-configured for this (in `.vscode/launch.json`). Please note that this profile needs to be updated if changing `MB__DEV__DEBUGGER_PORT` in your `.env`. 
 
 ## Releasing
 

@@ -35,8 +35,13 @@ services:
       dockerfile: src/matchbox/server/Dockerfile
       target: dev
     ports:
-      - "${MB__DEV__API_PORT}:8000"
-    command: fastapi dev --host 0.0.0.0 src/matchbox/server/api
+      - "${MB__DEV__API_PORT}:8000" # api
+      - "${MB__DEV__DEBUGGER_PORT}:5678" # debug
+    environment:
+      - ENABLE_DEBUGPY=1
+    command: >
+      python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 -m
+      fastapi dev --host 0.0.0.0 src/matchbox/server/api
     depends_on:
       - postgres
       - warehouse

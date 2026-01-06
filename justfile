@@ -7,7 +7,7 @@ mod migrate 'src/matchbox/server/postgresql/justfile'
 build *DOCKER_ARGS:
     uv sync --extra server
     MB_VERSION=$(uv run --frozen python -m setuptools_scm) \
-    docker compose --env-file .env --env-file environments/containers.env up --build {{DOCKER_ARGS}}
+    docker compose --env-file .env up --build {{DOCKER_ARGS}}
 
 # Delete all compiled Python files
 clean:

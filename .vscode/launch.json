@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Matchbox: Debug",
+            "name": "Matchbox: Debug file",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
@@ -17,7 +17,7 @@
             "cwd": "${workspaceFolder}",
         },
         {
-            "name": "Matchbox: Profile",
+            "name": "Matchbox: Profile file",
             "type": "debugpy",
             "request": "launch",
             "module": "cProfile",
@@ -26,12 +26,20 @@
             ]
         },
         {
-            "name": "API debug",
+            "name": "Matchbox: Attach to API in Docker",
             "type": "debugpy",
-            "request": "launch",
-            "module": "uvicorn",
-            "args": ["matchbox.server.api:app","--reload","--port","8080"]
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678,
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/code"
+                }
+            ],
+            "justMyCode": true
         }
-        
     ]
 }

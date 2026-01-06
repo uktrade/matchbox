@@ -40,10 +40,8 @@ ENV PATH="/code/.venv/bin:$PATH"
 # Local development stage: with locally-specified environment variables and hot reloading
 FROM base AS dev
 
-# Concatenate local env and overrides for containers
-COPY .env /code/.env.local
-COPY environments/containers.env /code/.env.containers
-RUN cat .env.local .env.containers > .env
+COPY .env /code/.env
+RUN uv pip install "debugpy"
 
 
 # Production stage: no environment variables (they come from the infrastructure) and no hot reloading

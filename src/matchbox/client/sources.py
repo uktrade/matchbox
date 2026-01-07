@@ -2,10 +2,12 @@
 
 from collections.abc import Callable, Generator, Iterable
 from functools import wraps
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 import polars as pl
 from pyarrow import Table as ArrowTable
+from pyarrow import parquet as pq
 
 from matchbox.client import _handler
 from matchbox.client.queries import Query
@@ -223,6 +225,11 @@ class Source:
             return False
         return self.config == other.config
 
+    @property
+    def cache_path(self) -> Path:
+        """The path within the DAG cache for storing this source data."""
+        return self.dag.cache_path / f"{self.name}.parquet"
+
     def fetch(
         self,
         qualify_names: bool = False,
@@ -230,7 +237,7 @@ class Source:
         return_type: QueryReturnType = QueryReturnType.POLARS,
         keys: list[str] | None = None,
     ) -> Generator[QueryReturnClass, None, None]:
-        """Applies the extract/transform logic to the source and returns the results.
+        """Applies the extract/transform logic to the source and returns batches lazily.
 
         Args:
             qualify_names: If True, qualify the names of the columns with the
@@ -281,22 +288,40 @@ class Source:
         Args:
             batch_size: If set, process data in batches internally. Indicates the
                 size of each batch.
-
-        Returns:
-            A PyArrow Table containing source keys and their hashes.
         """
-        log_prefix = f"Hash {self.name}"
-        logger.info("Retrieving and hashing", prefix=log_prefix)
+        log_prefix = f"Run {self.name}"
+
+        if not self.cache_path.exists():
+            logger.info("Retrieving source data", prefix=log_prefix)
+            writer = None
+            for batch in self.fetch(
+                batch_size=batch_size, return_type=QueryReturnType.ARROW
+            ):
+                if writer is None:
+                    # Initialise writer with the first batch's schema
+                    writer = pq.ParquetWriter(
+                        self.cache_path,
+                        schema=batch.schema,
+                        compression="snappy",
+                        use_dictionary=True,
+                    )
+
+                writer.write_table(batch)  # appends as a new row group
+
+            if writer is not None:
+                writer.close()
+        else:
+            logger.info("Using cached source data", prefix=log_prefix)
 
         key_field: str = self.config.key_field.name
         index_fields: list[str] = [field.name for field in self.config.index_fields]
 
         all_results: list[pl.DataFrame] = []
-        for batch in self.fetch(
-            batch_size=batch_size,
-            return_type="polars",
-        ):
-            batch: pl.DataFrame
+
+        pf = pq.ParquetFile(self.cache_path)
+        for rg_idx in range(pf.num_row_groups):
+            table = pf.read_row_group(rg_idx)
+            batch = pl.from_arrow(table)
 
             if batch[key_field].is_null().any():
                 raise ValueError("keys column contains null values")
@@ -319,8 +344,6 @@ class Source:
         )
 
         return self.hashes
-
-    # Note: name, description, truth are now instance variables, not properties
 
     @property
     def resolution_path(self) -> SourceResolutionPath:

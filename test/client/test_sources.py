@@ -310,7 +310,7 @@ def test_source_run_null_identifier(
     )
 
     # Mock query to return data with null keys
-    mock_df = pl.DataFrame({"key": ["1", None], "name": ["a", "b"]})
+    mock_df = pa.Table.from_pydict({"key": ["1", None], "name": ["a", "b"]})
     mock_fetch.return_value = (x for x in [mock_df])
 
     # Hashing data should raise ValueErrors for null keys

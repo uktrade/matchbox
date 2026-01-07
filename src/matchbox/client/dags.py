@@ -1,7 +1,9 @@
 """Objects to define a DAG which indexes, deduplicates and links data."""
 
 import json
+import tempfile
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Self, TypeAlias
 
 import polars as pl
@@ -43,6 +45,8 @@ class DAGNodeExecutionStatus(StrEnum):
 
 DAGExecutionStatus: TypeAlias = dict[str, DAGNodeExecutionStatus]
 
+CACHE_DIR = Path.cwd() / ".mb_cache"
+
 
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
@@ -53,6 +57,16 @@ class DAG:
         self._run: RunID | None = None
         self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self._cache_dir = tempfile.TemporaryDirectory(dir=str(CACHE_DIR))
+        self.cache_path = Path(self._cache_dir.name)
+
+    def clear_cache(self) -> None:
+        """Clear disk cache of source data."""
+        for file in self.cache_path.iterdir():
+            if file.is_file():
+                file.unlink()
 
     def _check_dag(self, dag: Self) -> None:
         """Check that the given DAG is the same as this one."""

@@ -3,6 +3,7 @@
 ######################
 
 datasets.toml
+.mb_cache
 scratch/
 *.ipynb_checkpoints
 .ruff_cache

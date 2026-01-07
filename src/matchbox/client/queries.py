@@ -227,25 +227,11 @@ class Query:
             # Download sources from warehouse
             lazy_sources = []
             for source in self.sources:
-                source_path = tmpdir / f"{source.name}.parquet"
-                source_batches = source.fetch(
-                    qualify_names=True,
-                    batch_size=batch_size,
-                    return_type=QueryReturnType.ARROW,
-                )
+                source.run()
 
-                first_batch = next(source_batches)
-                writer = pq.ParquetWriter(
-                    source_path, first_batch.schema, compression="snappy"
-                )
-                writer.write_table(first_batch)
-
-                for table in source_batches:
-                    writer.write_table(table)
-
-                writer.close()
                 lazy_sources.append(
-                    pl.scan_parquet(source_path)
+                    pl.scan_parquet(source.cache_path)
+                    .select(pl.all().name.prefix(f"{source.name}_"))
                     .with_columns(pl.lit(source.name).alias("source"))
                     .rename({source.qualified_key: "key"})
                 )

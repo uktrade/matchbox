@@ -229,7 +229,7 @@ class TestE2EPipelineBuilder:
         link_a_b.sync()
 
         # Basic verification - we have some linked results and can retrieve them
-        final_df = link_a_b.query(source_a, source_b).run()
+        final_df = link_a_b.query(source_a, source_b).data()
 
         # # Should have linked results
         assert len(final_df) > 0, "Expected some results from first run"
@@ -328,4 +328,4 @@ class TestE2EPipelineBuilder:
         source_a.sync()
         # This will cause downstream queries to fail
         with pytest.raises(MatchboxResolutionNotFoundError):
-            pending_dag.get_model("final").query(source_a).run()
+            pending_dag.get_model("final").query(source_a).data()

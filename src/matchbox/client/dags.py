@@ -519,7 +519,10 @@ class DAG:
             status[step_name] = DAGNodeExecutionStatus.DOING
             logger.info("\n" + self.draw(status=status))
             try:
-                node.run(batch_size=batch_size)
+                if isinstance(node, Source):
+                    node.run(batch_size=batch_size)
+                else:
+                    node.run()
                 node.sync()
                 if profile:
                     log_mem_usage()

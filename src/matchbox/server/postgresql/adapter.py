@@ -563,7 +563,7 @@ class MatchboxPostgres(MatchboxDBAdapter):
             raise MatchboxDataNotFound(
                 message="Some items don't exist in Clusters table.",
                 table=Clusters.__tablename__,
-                data=missing_ids,
+                data=list(missing_ids),
             )
 
         return True

@@ -12,7 +12,6 @@ from matchbox.client.authorisation import (
 )
 from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import (
-    BackendResourceType,
     LoginAttempt,
     LoginResult,
     Match,
@@ -108,7 +107,7 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.COLLECTION
+    assert response.json()["exception_type"] == "MatchboxCollectionNotFoundError"
 
     mock_backend.query = Mock(side_effect=MatchboxRunNotFoundError())
 
@@ -122,7 +121,7 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
         },
     )
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RUN
+    assert response.json()["exception_type"] == "MatchboxRunNotFoundError"
 
     mock_backend.query = Mock(side_effect=MatchboxResolutionNotFoundError())
 
@@ -137,7 +136,7 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RESOLUTION
+    assert response.json()["exception_type"] == "MatchboxResolutionNotFoundError"
 
 
 def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -192,7 +191,7 @@ def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.COLLECTION
+    assert response.json()["exception_type"] == "MatchboxCollectionNotFoundError"
 
     mock_backend.match = Mock(side_effect=MatchboxRunNotFoundError())
 
@@ -209,7 +208,7 @@ def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RUN
+    assert response.json()["exception_type"] == "MatchboxRunNotFoundError"
 
     mock_backend.match = Mock(side_effect=MatchboxResolutionNotFoundError())
 
@@ -226,7 +225,7 @@ def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RESOLUTION
+    assert response.json()["exception_type"] == "MatchboxResolutionNotFoundError"
 
 
 # Admin

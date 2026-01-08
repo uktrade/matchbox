@@ -786,3 +786,19 @@ class InvalidParameterError(BaseModel):
 
     details: str
     parameter: BackendParameterType | None
+
+
+class ErrorResponse(BaseModel):
+    """Unified error response for all HTTP error status codes.
+
+    This DTO enables the client to reconstruct the exact exception
+    type that was raised on the server.
+    """
+
+    exception_type: str = Field(
+        description="The name of the exception class raised on the server"
+    )
+    message: str = Field(description="Human-readable error message")
+    details: dict[str, Any] | None = Field(
+        default=None, description="Exception-specific data for reconstruction"
+    )

@@ -507,56 +507,6 @@ dag.run_and_sync()
 dag.set_default()
 ```
 
-
-### Running DAG nodes manually
-
-When building and debugging a DAG for the first time, you might want to do it interactively, in a Python notebook for instance. In this context, it can be useful to run and sync nodes manually, one by one. A node must be run before it's synced. Before a node can be run, its dependencies must be run and synced. Printing the DAG structure (`dag.draw()`) helps you see a node's dependencies.
-
-```python
-source1.run()
-source1.sync()
-dedupe_source1.run()
-dedupe_source1.sync()
-...
-```
-
-You can also run only part of the DAG, based on the node execution order output by `dag.draw()`, which must be read from bottom to top:
-
-```python
-dag.run_and_sync(start="node1", finish="node2")
-```
-
-If you haven't assigned a node to a variable, you can retrieve it from a DAG by name:
-
-```python
-source1 = dag.get_source("source1")
-dedupe_source1 = dag.get_model("dedupe_source1")
-```
-
-You can overwrite a node in a DAG by creating a new node with the same name:
-
-```python
-source1 = dag.source("source1", location=location1, ...)
-source1 = dag.source("source1", location=location2, ...)
-```
-
-Running a model returns [`ModelResults`][matchbox.client.results.ModelResults] that can be inspected. The same results are accessible using the attribute `results` on a model node which has been run.
-
-If iterating on a model, it is convenient to cache the result of its queries so that they're not re-run every time the model is re-run. To accomplish this, you can pass `cache_queries=True` to `model.run()`.
-
-It is also possible to run queries separately to sense-check and debug them:
-
-```python
-query = source.query()
-df = query.run(return_type="pandas")
-```
-
-If you want to apply new cleaning rules without re-fetching the raw data, you can do:
-
-```python
-df = query.clean(cleaning_dict, return_type="pandas")
-```
-
 ## Best practices
 
 ### 1. Data preparation

@@ -291,27 +291,26 @@ class Source:
         """
         log_prefix = f"Run {self.name}"
 
-        if not self.cache_path.exists():
-            logger.info("Retrieving source data", prefix=log_prefix)
-            writer = None
-            for batch in self.fetch(
-                batch_size=batch_size, return_type=QueryReturnType.ARROW
-            ):
-                if writer is None:
-                    # Initialise writer with the first batch's schema
-                    writer = pq.ParquetWriter(
-                        self.cache_path,
-                        schema=batch.schema,
-                        compression="snappy",
-                        use_dictionary=True,
-                    )
+        self.cache_path.unlink(missing_ok=True)
 
-                writer.write_table(batch)  # appends as a new row group
+        logger.info("Retrieving source data", prefix=log_prefix)
+        writer = None
+        for batch in self.fetch(
+            batch_size=batch_size, return_type=QueryReturnType.ARROW
+        ):
+            if writer is None:
+                # Initialise writer with the first batch's schema
+                writer = pq.ParquetWriter(
+                    self.cache_path,
+                    schema=batch.schema,
+                    compression="snappy",
+                    use_dictionary=True,
+                )
 
-            if writer is not None:
-                writer.close()
-        else:
-            logger.info("Using cached source data", prefix=log_prefix)
+            writer.write_table(batch)  # appends as a new row group
+
+        if writer is not None:
+            writer.close()
 
         key_field: str = self.config.key_field.name
         index_fields: list[str] = [field.name for field in self.config.index_fields]

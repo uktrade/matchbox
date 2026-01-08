@@ -12,6 +12,7 @@ nav:
   - Explore DAGs: client/explore-dags.md
   - Look up matches: client/look-up.md
   - Link and deduplicate: client/link-data.md
+  - Run DAGs interactively: client/dag-interactive.md
   - Evaluate models: client/evaluation.md
   - API: 
     - Overview: api/client/index.md

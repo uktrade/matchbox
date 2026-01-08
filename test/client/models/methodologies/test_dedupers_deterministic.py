@@ -60,7 +60,7 @@ DEDUPERS = [
 
 
 @pytest.mark.parametrize(("Deduper", "configure_deduper"), DEDUPERS)
-@patch.object(Query, "run")
+@patch.object(Query, "data")
 def test_no_deduplication(
     mock_query_run: Mock,
     Deduper: Deduper,
@@ -117,7 +117,7 @@ def test_no_deduplication(
 
 
 @pytest.mark.parametrize(("Deduper", "configure_deduper"), DEDUPERS)
-@patch.object(Query, "run")
+@patch.object(Query, "data")
 def test_exact_duplicate_deduplication(
     mock_query_run: Mock, Deduper: Deduper, configure_deduper: DeduperConfigurator
 ) -> None:

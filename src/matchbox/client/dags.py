@@ -63,12 +63,6 @@ class DAG:
         self._cache_dir = tempfile.TemporaryDirectory(dir=str(CACHE_DIR))
         self.cache_path = Path(self._cache_dir.name)
 
-    def clear_cache(self) -> None:
-        """Clear disk cache of source data."""
-        for file in self.cache_path.iterdir():
-            if file.is_file():
-                file.unlink()
-
     def _check_dag(self, dag: Self) -> None:
         """Check that the given DAG is the same as this one."""
         if self != dag:

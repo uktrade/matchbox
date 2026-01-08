@@ -36,7 +36,7 @@ By default, a Polars dataframe is returned. Other return types are supported. Fo
 source1.sample(return_type="pandas")
 ```
 
-Once you're happy, you can run the source node. Source data is cached to disk (in the local `.mb_cache` folder) so that queries using that source don't need to retrieve data again. However, re-running the source node manually updates the disk cache. If you change the definition of a a node, including a source node, you must re-run it and sync it for downstream queries to be correct.
+Once you're happy, you can run the source node. Source data is cached to disk so that queries using that source don't need to retrieve data again. However, re-running the source node manually updates the disk cache. If you change the definition of a a node, including a source node, you must re-run it and sync it for downstream queries to be correct.
 
 ## Iterating on queries
 

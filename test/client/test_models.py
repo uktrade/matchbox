@@ -58,7 +58,7 @@ def test_init_and_run_model(
             # First query
             Response(200, content=table_to_buffer(foo.data).read()),
             Response(200, content=table_to_buffer(bar.data).read()),
-            # Second query (cached)
+            # Second query (for pre-fetching)
             Response(200, content=table_to_buffer(foo.data).read()),
             Response(200, content=table_to_buffer(bar.data).read()),
             # Third query (for validation)
@@ -92,13 +92,10 @@ def test_init_and_run_model(
     assert model.results.left_root_leaf is None
     assert model.results.right_root_leaf is None
 
-    # When caching queries, the first ones still have to go through
+    # Can use pre-fetched query data
+    left_df, right_df = foo_query.data(), bar_query.data()
     old_query_count = query_endpoint.call_count
-    model.run(cache_queries=True)
-    assert query_endpoint.call_count > old_query_count
-    # Subsequent queries are cached
-    old_query_count = query_endpoint.call_count
-    model.run(cache_queries=True)
+    model.run(left_df, right_df)
     assert query_endpoint.call_count == old_query_count
 
     model.run(for_validation=True)

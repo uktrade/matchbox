@@ -44,23 +44,23 @@ After running your source node, you can create a query from it, and inspect its 
 
 ```python
 source1_query = source1.query()
-source1_query.raw() # query data before cleaning
-source1_query.cleaned() # after applying cleaning rules
+source1_query.data() # query data and clean it
+source1_query.data_raw() # query data without cleaning it
 ```
 
-The `return_type` argument can also be passed to the `.raw()` and `.cleaned()` query methods.
+The `return_type` argument can also be passed to the `.data()` and `.data_raw()` query methods.
 
 You can iterate on the cleaning logic:
 
 ```python
 # Re-use raw query data to avoid fetching data from the Matchbox server repeatedly
-raw_query_data = source1_query.raw() # must use the default return_type
+raw_query_data = source1_query.data_raw() # must use the default return_type
 
 # Update cleaning rules
 source1_query.cleaning = new_cleaning
 
 # Try out the new cleaning
-source1_query.cleaned(raw_query_data)
+source1_query.data(raw_query_data)
 ```
 
 ## Iterating on models
@@ -77,7 +77,7 @@ You can iterate on the model logic:
 
 ```python
 # Re-use query data to avoid processing query repeatedly
-dedupe_data = dedupe1.query(source1).cleaned()
+dedupe_data = dedupe1.query(source1).data()
 
 # Update model
 dedupe_source1.model_settings["unique_fields"] = ["a", "b"]

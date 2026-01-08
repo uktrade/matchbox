@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Self, TypeAlias
 
 import polars as pl
+from platformdirs import user_cache_path
 
 from matchbox.client import _handler
 from matchbox.client._settings import settings
@@ -45,7 +46,7 @@ class DAGNodeExecutionStatus(StrEnum):
 
 DAGExecutionStatus: TypeAlias = dict[str, DAGNodeExecutionStatus]
 
-CACHE_DIR = Path.cwd() / ".mb_cache"
+CACHE_DIR = user_cache_path("matchbox")
 
 
 class DAG:

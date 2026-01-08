@@ -15,6 +15,7 @@ dependencies = [
     "frozendict>=2.4.6",
     "httpx>=0.28.0",
     "pandas>=2.2.3",
+    "platformdirs>=4.5.0",
     "polars-hash>=0.5.3",
     "polars>=1.32.3",
     "psutil>=7.1.3",

@@ -33,7 +33,7 @@ linker = deduper.query().linker(other_source.query())
 All these objects are lazy: they don't actually retrieve any data unless you run them, for example:
 
 ```python
-queried_data = query.final()
+queried_data = query.data()
 deduper_results = deduper.run()
 linker_results = linker.run()
 ```
@@ -226,7 +226,7 @@ When you query a source without cleaning, all columns are qualified with the sou
 
 ```python
 # No cleaning - all columns qualified
-companies_house.query().final()
+companies_house.query().data()
 # Columns: id, companies_house_key, companies_house_company_name, companies_house_company_number, companies_house_postcode
 ```
 
@@ -239,7 +239,7 @@ companies_house.query(
         "name": f"lower({companies_house.f('company_name')})",
         "number": companies_house.f("company_number"),
     }
-).run()
+).data()
 # Columns: id, companies_house_key, name, number
 # Note: postcode is DROPPED because it's not in cleaning dict
 ```

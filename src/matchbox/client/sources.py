@@ -276,6 +276,12 @@ class Source:
                 return_type=return_type,
             )
 
+    def sample(
+        self, n: int = 100, return_type: QueryReturnType = QueryReturnType.POLARS
+    ) -> None:
+        """Peek at the top n entries in a source."""
+        return next(self.fetch(batch_size=n, return_type=return_type))
+
     @profile_time(attr="name")
     def run(self, batch_size: int | None = None) -> ArrowTable:
         """Hash a dataset from its warehouse, ready to be inserted, and cache hashes.

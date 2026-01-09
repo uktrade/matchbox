@@ -99,18 +99,18 @@ def url_params(
 
 
 def reconstruct_exception(
-    exception_class: type[MatchboxException], error: ErrorResponse
+    ExceptionClass: type[MatchboxException], error: ErrorResponse
 ) -> MatchboxException:
     """Reconstruct an exception from ErrorResponse data."""
     # Handle exceptions with special constructor signatures
     if error.details:
         try:
-            return exception_class(message=error.message, **error.details)
+            return ExceptionClass(message=error.message, **error.details)
         except TypeError:
             pass
 
     # Default: just pass the message
-    return exception_class(error.message)
+    return ExceptionClass(error.message)
 
 
 def handle_http_code(res: httpx.Response) -> httpx.Response:
@@ -123,13 +123,12 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
     try:
         data = res.json()
 
-        # Check if this is the new ErrorResponse format
         if "exception_type" in data:
             error = ErrorResponse.model_validate(data)
-            exception_class = EXCEPTION_REGISTRY.get(error.exception_type)
+            ExceptionClass = EXCEPTION_REGISTRY.get(error.exception_type)
 
-            if exception_class:
-                raise reconstruct_exception(exception_class, error)
+            if ExceptionClass:
+                raise reconstruct_exception(ExceptionClass, error)
             raise MatchboxUnhandledServerResponse(
                 http_status=res.status_code,
                 details=f"Unknown exception type: {error.exception_type}",

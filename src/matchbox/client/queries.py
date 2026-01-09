@@ -1,10 +1,13 @@
 """Definition of model inputs."""
 
-from enum import StrEnum
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Self
 
 import duckdb
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 from polars import DataFrame as PolarsDataFrame
 from sqlglot import expressions, parse_one
 from sqlglot import select as sqlglot_select
@@ -17,7 +20,8 @@ from matchbox.common.dtos import (
     QueryCombineType,
     QueryConfig,
 )
-from matchbox.common.transform import truth_float_to_int, truth_int_to_float
+from matchbox.common.logging import profile_time
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -27,14 +31,6 @@ else:
     DAG = Any
     Model = Any
     Source = Any
-
-
-class CacheMode(StrEnum):
-    """Settings determining what query data gets cached."""
-
-    OFF = "off"
-    RAW = "raw"
-    CLEAN = "clean"
 
 
 class Query:
@@ -77,14 +73,12 @@ class Query:
                 expression that will populate a new column.
         """
         self.raw_data: PolarsDataFrame | None = None
-        self.data: PolarsDataFrame | None = None
         self.dag = dag
         self.sources = sources
         self.model = model
         self.combine_type = combine_type
         self.threshold = threshold
         self.cleaning = cleaning
-        self._cache_mode: CacheMode = CacheMode.OFF
 
     @property
     def config(self) -> QueryConfig:
@@ -93,7 +87,9 @@ class Query:
             source_resolutions=[source.name for source in self.sources],
             model_resolution=self.model.name if self.model else None,
             combine_type=self.combine_type,
-            threshold=truth_float_to_int(self.threshold) if self.threshold else None,
+            threshold=threshold_float_to_int(self.threshold)
+            if self.threshold
+            else None,
             cleaning=self.cleaning,
         )
 
@@ -119,7 +115,9 @@ class Query:
         )
 
         # Convert threshold back to float
-        threshold = truth_int_to_float(config.threshold) if config.threshold else None
+        threshold = (
+            threshold_int_to_float(config.threshold) if config.threshold else None
+        )
 
         return cls(
             *sources,
@@ -130,159 +128,108 @@ class Query:
             cleaning=config.cleaning,
         )
 
-    def set_cache_mode(self, mode: CacheMode = CacheMode.OFF) -> Self:
-        """Configures caching behaviour of query operations.
-
-        * If "off" (default), doesn't cache anything
-        * If "raw", caches data as fetched from the source
-        * If "clean", it additionally caches the result of applying the
-            cleaning dict.
-        """
-        self._cache_mode = mode
-        return self
-
-    def _set_cache(
-        self, raw_data: PolarsDataFrame | None, data: PolarsDataFrame | None
-    ) -> None:
-        self.raw_data = None
-        self.data = None
-
-        if self._cache_mode in [CacheMode.RAW, CacheMode.CLEAN]:
-            self.raw_data = raw_data
-
-        if self._cache_mode == CacheMode.CLEAN:
-            self.data = data
-
-    def run(
+    def data_raw(
         self,
         return_type: QueryReturnType = QueryReturnType.POLARS,
         return_leaf_id: bool = False,
-        batch_size: int | None = None,
-        reuse_cache: bool = False,
     ) -> QueryReturnClass:
-        """Runs queries against the selected backend.
+        """Fetches raw query data by joining source data and matchbox matches.
 
         Args:
             return_type (optional): Type of dataframe returned, defaults to "polars".
                 Other options are "pandas" and "arrow".
             return_leaf_id (optional): Whether matchbox IDs for source clusters should
                 be saved as a byproduct in the `leaf_ids` attribute.
-            batch_size (optional): The size of each batch when fetching data from the
-                warehouse, which helps reduce memory usage and load on the database.
-                Default is None.
-            reuse_cache: Whether to re-use raw cached data if available.
 
         Returns: Data in the requested return type
 
         Raises:
             MatchboxEmptyServerResponse: If no data was returned by the server.
         """
-        if reuse_cache:
-            if self.data is not None:
-                result = _convert_df(self.data, return_type=return_type)
-                self._set_cache(self.raw_data, self.data)
-                return result
-            elif self.raw_data is not None:
-                result = self.clean(self.cleaning, return_type=return_type)
-                self._set_cache(self.raw_data, self.data)
-                return result
-
-        source_results: list[PolarsDataFrame] = []
-        for source in self.sources:
-            mb_ids = pl.from_arrow(
-                _handler.query(
+        with TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            mb_ids_path = tmpdir / "mb_ids.parquet"
+            # Download data from Matchbox server
+            writer = None
+            for source in self.sources:
+                res = _handler.query(
                     source=source.resolution_path,
                     resolution=self.model.resolution_path if self.model else None,
                     threshold=self.config.threshold,
                     return_leaf_id=return_leaf_id,
                 )
-            )
 
-            raw_batches = source.fetch(
-                qualify_names=True,
-                batch_size=batch_size,
-                return_type=QueryReturnType.POLARS,
-            )
-
-            processed_batches = [
-                b.join(
-                    other=mb_ids,
-                    left_on=source.qualified_key,
-                    right_on="key",
-                    how="inner",
+                res = res.append_column(
+                    "source", pa.array([source.name] * res.num_rows)
                 )
-                for b in raw_batches
-            ]
-            source_results.append(pl.concat(processed_batches, how="vertical"))
+                if writer is None:
+                    writer = pq.ParquetWriter(
+                        mb_ids_path,
+                        res.schema,
+                        compression="snappy",
+                        use_dictionary=True,
+                    )
+                writer.write_table(res)
 
-        # Process all data and return a single result
-        tables: list[PolarsDataFrame] = list(source_results)
+            writer.close()
 
-        # Combine results based on combine_type
-        if return_leaf_id:
-            concatenated = pl.concat(tables, how="diagonal")
-            self.leaf_id = concatenated.select(["id", "leaf_id"])
+            # Download sources from warehouse
+            lazy_sources = []
+            for source in self.sources:
+                source.run()
 
-        if self.config.combine_type == QueryCombineType.CONCAT:
-            if return_leaf_id:  # can reuse the concatenated dataframe
-                raw_data = concatenated.drop(["leaf_id"])
-            else:
-                raw_data = pl.concat(tables, how="diagonal")
-        else:
-            raw_data = tables[0].drop("leaf_id", strict=False)
-            for table in tables[1:]:
-                raw_data = raw_data.join(
-                    table.drop("leaf_id", strict=False),
-                    on="id",
-                    how="full",
-                    coalesce=True,
+                lazy_sources.append(
+                    pl.scan_parquet(source.cache_path)
+                    .select(pl.all().name.prefix(f"{source.name}_"))
+                    .with_columns(pl.lit(source.name).alias("source"))
+                    .rename({source.qualified_key: "key"})
                 )
 
-            raw_data = raw_data.select(["id", pl.all().exclude("id")])
+            mb_ids = pl.scan_parquet(mb_ids_path)
+
+            if return_leaf_id:
+                self.leaf_id = mb_ids.select("id", "leaf_id").collect()
+                mb_ids = mb_ids.drop("leaf_id")
+
+            raw_data = (
+                pl.concat(lazy_sources, how="diagonal")
+                .join(mb_ids, how="inner", on=("source", "key"))
+                .drop("source", "key")
+            )
 
             if self.config.combine_type == QueryCombineType.SET_AGG:
-                # Aggregate into lists
-                agg_expressions = [
-                    pl.col(col).unique() for col in raw_data.columns if col != "id"
-                ]
-                raw_data = raw_data.group_by("id").agg(agg_expressions)
+                raw_data = raw_data.group_by("id").agg(pl.all().exclude("id").unique())
+            if self.config.combine_type == QueryCombineType.EXPLODE:
+                raw_data = raw_data.group_by("id").agg(pl.all().exclude("id"))
+                raw_data = raw_data.explode(pl.all().exclude("id")).unique()
+
+            return _convert_df(raw_data.collect(), return_type=return_type)
+
+    @profile_time()
+    def data(
+        self,
+        raw_data: pl.DataFrame | None = None,
+        return_type: QueryReturnType = QueryReturnType.POLARS,
+        return_leaf_id: bool = False,
+    ) -> QueryReturnClass:
+        """Returns final data from defined query.
+
+        Args:
+            raw_data: If passed, will only apply cleaning instead of fetching raw data.
+            return_type (optional): Type of dataframe returned, defaults to "polars".
+                Other options are "pandas" and "arrow".
+            return_leaf_id (optional): Whether matchbox IDs for source clusters should
+                be saved as a byproduct in the `leaf_ids` attribute. If pre-fetched raw
+                data is passed, this argument is ignored.
+
+        Returns: Data in the requested return type
+        """
+        if raw_data is None:
+            raw_data = self.data_raw(return_leaf_id=return_leaf_id)
 
         clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
 
-        self._set_cache(raw_data, clean_data)
         return _convert_df(clean_data, return_type=return_type)
-
-    def clean(
-        self,
-        cleaning: dict[str, str] | None,
-        return_type: QueryReturnType = QueryReturnType.POLARS,
-    ) -> QueryReturnClass:
-        """Change cleaning dictionary and re-apply cleaning, if raw data was cached.
-
-        Args:
-            cleaning: A dictionary mapping field aliases to SQL expressions.
-                The SQL expressions can reference columns in the data using their names.
-                If None, no cleaning is applied and the original data is returned.
-                `SourceConfig.f()` can be used to help reference qualified fields.
-            return_type (optional): Type of dataframe returned, defaults to "polars".
-                    Other options are "pandas" and "arrow".
-        """
-        if self.raw_data is None:
-            raise RuntimeError("No raw data is stored in this query.")
-
-        clean_data = _convert_df(
-            data=_clean(
-                data=self.raw_data,
-                cleaning_dict=cleaning,
-            ),
-            return_type=return_type,
-        )
-
-        self.cleaning = cleaning
-
-        self._set_cache(self.raw_data, clean_data)
-
-        return clean_data
 
     def deduper(
         self,

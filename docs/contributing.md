@@ -166,3 +166,22 @@ We commit as frequently as possible. We keep our commits as atomic as possible. 
 ### AI
 
 In order to help reviewers prioritise their time appropriately, we expect any use of AI to be declared in your PR comment.
+
+### Actions
+
+In order to avoid supply chain attacks, we [pin all actions in workflows](https://codeql.github.com/codeql-query-help/actions/actions-unpinned-tag/).
+
+When upgrading actions, we expect PR comments to confirm that the new commit is safe. You need to cover:
+
+* That the commit's `action.yml` only uses pinned child actions, if it has children
+* That there are no critical security concerns raised in the issues
+
+See [#395](https://github.com/uktrade/matchbox/pull/395) for an example of the due diligence we expect.
+
+We suggest using tools like [`wayneashleyberry/gh-act`](https://github.com/wayneashleyberry/gh-act) to help manage this, allowing you to perform the upgrade in a single line:
+
+```shell
+gh act update --pin
+```
+
+You will still need to independently verify that the new pins are safe.

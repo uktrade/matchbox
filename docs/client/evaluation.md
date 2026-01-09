@@ -7,20 +7,36 @@ After running models to deduplicate and link your data, you’ll likely want to 
 
 To calculate these, we need a **ground truth** - a set of correct matches created by people. This is called **validation data**.
 
+## Creating a sample set
+
+First, you need to create a local set of sample clusters that you want to evaluate. If you're evaluating a single model:
+
+```python
+dag = ... # your DAG, defined elsewhere 
+dag.resolve().as_dump().write_parquet("samples.pq")
+```
+
+Or, if you're comparing two models:
+
+```python
+dag = ... # your DAG, defined elsewhere
+
+resolved_model1 = dag.resolve("model1")
+resolved_model2 = dag.resolve("model2")
+# Forms clusters as the union of the clusters output by each model
+resolved_joint = resolved_model1.merge(resolved_model2)
+resolved_joint.as_dump().write_parquet("samples.pq")
+```
+
 ## Creating validation data
 
 Matchbox provides a terminal-based UI to help you create this validation data. Here's how it works:
 
-1. **Launch the evaluation tool** using `matchbox eval --collection <collection_name> --user <your_username>`
-    a. You can also set your username with the `MB__CLIENT__USER` environment variable.
-    b. Define `MB__CLIENT__DEFAULT_WAREHOUSE` (or use `--warehouse <connection_string>`) so the CLI can reach your warehouse.
-    c. If your DAG isn't complete, include `--resolution <resolution_name>` to pick a specific run.
-2. Matchbox will **download clusters** for you to review. It avoids clusters you've already judged and focuses on ones the model is unsure about.
-3. In the terminal interface, you'll review each cluster:
-   * Use keyboard commands like `b+1,3,5` to assign rows 1, 3, and 5 to group B
-   * Press `space` to send your judgements to Matchbox
-   * Skip to the next item without reviewing with `→` (right arrow)
-   * Press `?` or `F1` for help with commands
+1. **Launch the evaluation tool** using `matchbox eval --collection <collection_name> --user <your_username> --file <path_to_samples>`
+    - Define `MB__CLIENT__DEFAULT_WAREHOUSE` (or use `--warehouse <connection_string>`) so the CLI can reach your warehouse.
+    - Use `--tag <session_tag>` to tag your judgements so they can be filtered later
+2. Matchbox will **load clusters** from your warehouse, for you to review.  
+3. In the terminal interface, you will review each cluster.  
 
 Once enough users have reviewed clusters, this data can be used to evaluate model performance.
 
@@ -80,28 +96,17 @@ model = source.query().deduper(
 results = model.run()
 ```
 
-Download validation data:
+Download validation data, filtering by tag:
 
 ```python
 from matchbox.client.eval import EvalData
-eval_data = EvalData()
+eval_data = EvalData(tag="companies__15_02_2025")
 ```
 
 Check precision and recall at a specific threshold:
 
 ```python
 precision, recall = eval_data.precision_recall(results, threshold=0.5)
-```
-
-Compare multiple model resolutions:
-
-```python
-from matchbox.client.eval import compare_models, ModelResolutionPath
-
-comparison = compare_models([
-    ModelResolutionPath(collection="companies", run=1, name="deduper"),
-    ModelResolutionPath(collection="companies", run=2, name="deduper"),
-])
 ```
 
 !!! tip "Deterministic models"

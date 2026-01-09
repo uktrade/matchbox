@@ -181,15 +181,17 @@ class MatchboxServerFileError(MatchboxException):
 class MatchboxUserNotFoundError(MatchboxException):
     """User not found."""
 
-    def __init__(self, message: str | None = None, user_id: str | None = None) -> None:
+    def __init__(
+        self, message: str | None = None, user_name: str | None = None
+    ) -> None:
         """Initialise the exception."""
         if message is None:
             message = "User not found."
-            if user_id is not None:
-                message = f"User {user_id} not found."
+            if user_name is not None:
+                message = f"User {user_name} not found."
 
         super().__init__(message)
-        self.user_id = user_id
+        self.user_name = user_name
 
     def to_details(self) -> dict[str, Any] | None:
         """Return user_id if set."""
@@ -300,6 +302,10 @@ class MatchboxConnectionError(MatchboxException):
     """Connection to Matchbox's backend database failed."""
 
 
+class MatchboxPermissionDeniedError(MatchboxException):
+    """Raised when a user lacks permission for an action."""
+
+
 class MatchboxDeletionNotConfirmed(MatchboxException):
     """Deletion must be confirmed: if certain, rerun with certain=True."""
 
@@ -364,6 +370,18 @@ class MatchboxRunNotWriteable(MatchboxException):
 
 class MatchboxTooManySamplesRequested(MatchboxException):
     """Too many samples have been requested from the server."""
+
+
+class MatchboxGroupNotFoundError(MatchboxException):
+    """Raised when a group is not found."""
+
+
+class MatchboxGroupAlreadyExistsError(MatchboxException):
+    """Raised when attempting to create a group that already exists."""
+
+
+class MatchboxSystemGroupError(MatchboxException):
+    """Raised when attempting to modify or delete a system group."""
 
 
 # -- Adapter DB exceptions --

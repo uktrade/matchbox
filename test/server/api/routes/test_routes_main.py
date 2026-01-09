@@ -1,19 +1,13 @@
 from importlib.metadata import version
 from io import BytesIO
-from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from fastapi.testclient import TestClient
 
-from matchbox.client.authorisation import (
-    generate_json_web_token,
-)
 from matchbox.common.arrow import SCHEMA_QUERY
 from matchbox.common.dtos import (
-    LoginAttempt,
-    LoginResult,
     Match,
     OKMessage,
     SourceResolutionPath,
@@ -23,13 +17,8 @@ from matchbox.common.exceptions import (
     MatchboxDeletionNotConfirmed,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
+    MatchboxUnhandledServerResponse,
 )
-
-if TYPE_CHECKING:
-    from mypy_boto3_s3.client import S3Client
-else:
-    S3Client = Any
-
 
 # General
 
@@ -42,20 +31,6 @@ def test_healthcheck(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
     response = OKMessage.model_validate(response.json())
     assert response.status == "OK"
     assert response.version == version("matchbox-db")
-
-
-def test_login(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
-    """Test the login endpoint."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.login = Mock(return_value=1)
-
-    response = test_client.post(
-        "/login", json=LoginAttempt(user_name="alice").model_dump()
-    )
-
-    assert response.status_code == 200
-    response = LoginResult.model_validate(response.json())
-    assert response.user_id == 1
 
 
 # Retrieval
@@ -239,11 +214,12 @@ def test_count_all_backend_items(
     entity_counts = {
         "sources": 1,
         "models": 2,
-        "data": 3,
-        "clusters": 4,
-        "creates": 5,
-        "merges": 6,
-        "proposes": 7,
+        "source_clusters": 3,
+        "model_clusters": 4,
+        "all_clusters": 7,
+        "creates": 6,
+        "merges": 7,
+        "proposes": 8,
     }
     for e, c in entity_counts.items():
         mock_e = Mock()
@@ -288,45 +264,23 @@ def test_clear_backend_errors(
     assert response.content
 
 
-def test_api_key_authorisation(
+def test_delete_orphans_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_orphans = Mock(return_value=42)
+
+    response = test_client.delete("/database/orphans")
+    assert response.status_code == 200
+    OKMessage.model_validate(response.json())
+    assert response.json()["details"] == "Deleted 42 orphans."
+
+
+def test_delete_orphans_errors(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ) -> None:
-    test_client, _, _ = api_client_and_mocks
-    routes = [
-        (test_client.post, "/collections/default/runs/1/resolutions/name/data"),
-        (test_client.post, "/collections/default/runs/1/resolutions/name"),
-        (test_client.put, "/collections/default/runs/1/resolutions/name"),
-        (test_client.delete, "/collections/default/runs/1/resolutions/name"),
-        (test_client.delete, "/database"),
-    ]
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.delete_orphans = Mock(side_effect=MatchboxUnhandledServerResponse)
 
-    # Incorrect signature
-    _, _, signature_b64 = test_client.headers["Authorization"].encode().split(b".")
-    header_b64, payload_64, _ = (
-        generate_json_web_token(sub="incorrect.user@email.com").encode().split(b".")
-    )
-    test_client.headers["Authorization"] = b".".join(
-        [header_b64, payload_64, signature_b64]
-    ).decode()
-
-    for method, url in routes:
-        response = method(url)
-        assert response.status_code == 401
-        assert response.content == b'"JWT invalid."'
-
-    # Expired JWT
-    with patch("matchbox.client.authorisation.EXPIRY_AFTER_X_HOURS", -2):
-        test_client.headers["Authorization"] = generate_json_web_token(
-            sub="test.user@email.com"
-        )
-        for method, url in routes:
-            response = method(url)
-            assert response.status_code == 401
-            assert response.content == b'"JWT expired."'
-
-    # Missing Authorization header
-    test_client.headers.pop("Authorization")
-    for method, url in routes:
-        response = method(url)
-        assert response.status_code == 401
-        assert response.content == b'"JWT required but not provided."'
+    response = test_client.delete("/database/orphans")
+    assert response.status_code == 500
+    # We send some explanatory message
+    assert response.content

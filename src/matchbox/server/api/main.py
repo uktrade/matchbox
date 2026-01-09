@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import (
     Depends,
     FastAPI,
+    HTTPException,
     Query,
     Request,
     Response,
@@ -30,8 +31,6 @@ from matchbox.common.dtos import (
     CountResult,
     CRUDOperation,
     ErrorResponse,
-    LoginAttempt,
-    LoginResult,
     Match,
     ModelResolutionName,
     OKMessage,
@@ -69,7 +68,7 @@ from matchbox.server.api.dependencies import (
     authorisation_dependencies,
     lifespan,
 )
-from matchbox.server.api.routers import collection, eval
+from matchbox.server.api.routers import auth, collection, eval
 
 app = FastAPI(
     title="matchbox API",
@@ -80,6 +79,7 @@ app = FastAPI(
 )
 app.include_router(collection.router)
 app.include_router(eval.router)
+app.include_router(auth.router)
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -189,17 +189,6 @@ async def healthcheck() -> OKMessage:
     return OKMessage()
 
 
-@app.post(
-    "/login",
-)
-def login(
-    backend: BackendDependency,
-    credentials: LoginAttempt,
-) -> LoginResult:
-    """Receives a user name and returns a user ID."""
-    return LoginResult(user_id=backend.login(credentials.user_name))
-
-
 # Retrieval
 
 
@@ -291,6 +280,38 @@ def count_backend_items(
     else:
         res = {str(e): get_count(e) for e in BackendCountableType}
         return CountResult(entities=res)
+
+
+@app.delete(
+    "/database/orphans",
+    responses={
+        500: {
+            "model": ResourceOperationStatus,
+            **ResourceOperationStatus.error_examples(),
+        },
+    },
+    dependencies=[Depends(authorisation_dependencies)],
+)
+def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
+    """Delete orphans."""
+    try:
+        orphans = backend.delete_orphans()
+        return ResourceOperationStatus(
+            success=True,
+            target="Database",
+            operation=CRUDOperation.DELETE,
+            details=f"Deleted {orphans} orphans.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ResourceOperationStatus(
+                success=False,
+                target="Database",
+                operation=CRUDOperation.DELETE,
+                details=str(e),
+            ),
+        ) from e
 
 
 @app.delete(

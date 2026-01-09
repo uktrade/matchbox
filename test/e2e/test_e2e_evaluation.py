@@ -1,13 +1,13 @@
+import tempfile
 from collections.abc import Generator
 
 import pytest
 from httpx import Client
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine
 
-from matchbox.client import _handler
 from matchbox.client.cli.eval import EntityResolutionApp
 from matchbox.client.dags import DAG
-from matchbox.client.eval import compare_models
+from matchbox.client.eval import EvalData
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.common.factories.sources import (
@@ -39,20 +39,20 @@ class TestE2EModelEvaluation:
     def setup_environment(
         self,
         matchbox_client: Client,
-        postgres_warehouse: Engine,
+        sqla_postgres_warehouse: Engine,
     ) -> Generator[None, None, None]:
         """Set up warehouse and database using fixtures."""
         # Persist shared setup for use in the test body
         n_true_entities = 10
         final_resolution_1_name = "final_1"
         final_resolution_2_name = "final_2"
-        self.warehouse_engine = postgres_warehouse
+        self.warehouse_engine = sqla_postgres_warehouse
 
         # Create a SINGLE source with duplicates
         source_parameters = (
             SourceTestkitParameters(
                 name="source_a",
-                engine=postgres_warehouse,
+                engine=self.warehouse_engine,
                 features=(
                     FeatureConfig(
                         name="company_name",
@@ -82,7 +82,7 @@ class TestE2EModelEvaluation:
         assert response.status_code == 200, "Failed to clear matchbox database"
 
         # Create DAG
-        dw_loc = RelationalDBLocation(name="postgres").set_client(postgres_warehouse)
+        dw_loc = RelationalDBLocation(name="postgres").set_client(self.warehouse_engine)
 
         # === DAG 1: Created by User 1 (Strict Deduplication) ===
         dag1 = DAG("companies1").new_run()
@@ -157,16 +157,37 @@ class TestE2EModelEvaluation:
         yield
 
         # Teardown
-        with postgres_warehouse.connect() as conn:
-            for source_name in self.linked_testkit.sources:
-                conn.execute(text(f"DROP TABLE IF EXISTS {source_name};"))
-            conn.commit()
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 
+    async def in_app_evaluation(self, app: EntityResolutionApp) -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Verify app authenticated and loaded samples from real warehouse data
+            assert app.user_name is not None
+            assert len(app.queue.sessions) > 0, "Should load samples from warehouse"
+
+            # Submit one judgement to verify data flow
+            session = app.queue.sessions[0]
+            for i in range(len(session.item.get_unique_record_groups())):
+                session.assignments[i] = "a"  # Assign all to same cluster
+
+            initial_judgements = EvalData().judgements
+            initial_count = len(initial_judgements)
+
+            await app.action_submit()
+
+            final_judgements = EvalData().judgements
+            assert len(final_judgements) == initial_count + 1, (
+                "Judgement should flow through to backend"
+            )
+
     @pytest.mark.asyncio
-    async def test_evaluation_workflow(self) -> None:
+    async def test_evaluation_workflow_server(self) -> None:
         """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
+
+        Samples clusters from the server.
 
         This test focuses on the full data flow through the system with real warehouse
         data, multiple DAGs, and model comparison. UI interaction details are tested
@@ -179,47 +200,50 @@ class TestE2EModelEvaluation:
 
         # Create app and verify it can load samples from real data
         app = EntityResolutionApp(
-            resolution=dag.final_step.resolution_path.name,
+            resolution=dag.final_step.resolution_path,
             num_samples=2,
+            session_tag="eval_session1",
             user="alice",
             dag=dag,
         )
 
-        async with app.run_test() as pilot:
-            await pilot.pause()
+        await self.in_app_evaluation(app)
 
-            # Verify app authenticated and loaded samples from real warehouse data
-            assert app.user_id is not None
-            assert len(app.queue.items) > 0, "Should load samples from warehouse"
+        # Can filter judgements by tag
+        assert len(EvalData("eval_session1").judgements)
+        assert not len(EvalData("mispelled").judgements)
 
-            # Submit one judgement to verify data flow
-            item = app.queue.items[0]
-            for i in range(len(item.display_columns)):
-                item.assignments[i] = "a"  # Assign all to same cluster
+    @pytest.mark.asyncio
+    async def test_evaluation_workflow_local(self) -> None:
+        """Test end-to-end data pipeline: DAG → samples → judgement → model comparison.
 
-            initial_judgements, _ = _handler.download_eval_data()
-            initial_count = len(initial_judgements)
+        Generates a local sample file.
 
-            await app.action_submit()
+        This test focuses on the full data flow through the system with real warehouse
+        data, multiple DAGs, and model comparison. UI interaction details are tested
+        separately in unit/integration tests.
+        """
+        # Load DAG from server with warehouse location
+        dag: DAG = (
+            DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
+        )
+        rm = dag.resolve()
 
-            final_judgements, _ = _handler.download_eval_data()
-            assert len(final_judgements) == initial_count + 1, (
-                "Judgement should flow through to backend"
+        with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
+            # Write the parquet data to the temporary file
+            rm.as_dump().write_parquet(tmp_file.name)
+
+            # Create app and verify it can load samples
+            app = EntityResolutionApp(
+                num_samples=2,
+                session_tag="eval_session1",
+                user="alice",
+                dag=dag,
+                sample_file=tmp_file.name,
             )
 
-        # Test model comparison functionality with both DAGs
-        comparison = compare_models(
-            [
-                dag.final_step.resolution_path,
-                self.dag2.final_step.resolution_path,
-            ]
-        )
-        expected_keys = {
-            str(dag.final_step.resolution_path),
-            str(self.dag2.final_step.resolution_path),
-        }
-        assert expected_keys.issubset(comparison.keys()), (
-            "Comparison should include both models"
-        )
-        for key in expected_keys:
-            assert len(comparison[key]) == 2, "Each model should have precision/recall"
+            await self.in_app_evaluation(app)
+
+        # Can filter judgements by tag
+        assert len(EvalData("eval_session1").judgements)
+        assert not len(EvalData("mispelled").judgements)

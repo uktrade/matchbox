@@ -6,13 +6,12 @@ import textwrap
 from collections.abc import Iterable
 from enum import StrEnum
 from importlib.metadata import version
-from json import JSONDecodeError
 from typing import Annotated, Any, Self, TypeAlias
 
-import polars as pl
 from pydantic import (
     BaseModel,
     ConfigDict,
+    EmailStr,
     Field,
     GetCoreSchemaHandler,
     GetJsonSchemaHandler,
@@ -25,181 +24,9 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.exceptions import MatchboxNameError
 from matchbox.common.hash import base64_to_hash, hash_to_base64
-
-
-class DataTypes(StrEnum):
-    """Enumeration of supported data types.
-
-    Uses polars datatypes as its backend.
-    """
-
-    # Boolean
-    BOOLEAN = "Boolean"
-
-    # Integers
-    INT8 = "Int8"
-    INT16 = "Int16"
-    INT32 = "Int32"
-    INT64 = "Int64"
-
-    # Unsigned integers
-    UINT8 = "UInt8"
-    UINT16 = "UInt16"
-    UINT32 = "UInt32"
-    UINT64 = "UInt64"
-
-    # Floating point
-    FLOAT32 = "Float32"
-    FLOAT64 = "Float64"
-
-    # Decimal
-    DECIMAL = "Decimal"
-
-    # String & Binary
-    STRING = "String"
-    BINARY = "Binary"
-
-    # Date & Time related
-    DATE = "Date"
-    TIME = "Time"
-    DATETIME = "Datetime"
-    DURATION = "Duration"
-
-    # Container types
-    ARRAY = "Array"
-    LIST = "List"
-
-    # Special types
-    OBJECT = "Object"
-    CATEGORICAL = "Categorical"
-    ENUM = "Enum"
-    STRUCT = "Struct"
-    NULL = "Null"
-
-    def to_dtype(self) -> pl.DataType:
-        """Convert enum value to actual polars dtype."""
-        # Map from enum values to actual polars datatypes
-        # We do this because polars datatypes are not directly serialisable in Pydantic
-        dtype_map = {
-            self.BOOLEAN: pl.Boolean,
-            self.INT8: pl.Int8,
-            self.INT16: pl.Int16,
-            self.INT32: pl.Int32,
-            self.INT64: pl.Int64,
-            self.UINT8: pl.UInt8,
-            self.UINT16: pl.UInt16,
-            self.UINT32: pl.UInt32,
-            self.UINT64: pl.UInt64,
-            self.FLOAT32: pl.Float32,
-            self.FLOAT64: pl.Float64,
-            self.DECIMAL: pl.Decimal,
-            self.STRING: pl.String,
-            self.BINARY: pl.Binary,
-            self.DATE: pl.Date,
-            self.TIME: pl.Time,
-            self.DATETIME: pl.Datetime,
-            self.DURATION: pl.Duration,
-            self.ARRAY: pl.Array,
-            self.LIST: pl.List,
-            self.OBJECT: pl.Object,
-            self.CATEGORICAL: pl.Categorical,
-            self.ENUM: pl.Enum,
-            self.STRUCT: pl.Struct,
-            self.NULL: pl.Null,
-        }
-        return dtype_map[self]
-
-    def to_pytype(self) -> type:
-        """Convert enum value to actual Python type."""
-        return self.to_dtype().to_python()
-
-    @classmethod
-    def from_dtype(cls, dtype: pl.DataType) -> "DataTypes":
-        """Get enum value from a polars dtype."""
-        # Find the name of the dtype class
-        dtype_name = dtype.__class__.__name__
-        # Find the matching enum value
-        for enum_val in cls:
-            if enum_val.value == dtype_name:
-                return enum_val
-        raise ValueError(f"No matching polars DataTypes for dtype: {dtype_name}")
-
-    @classmethod
-    def from_pytype(cls, pytype: type) -> "DataTypes":
-        """Get enum value from a Python type."""
-        return DataTypes.from_dtype(pl.DataType.from_python(pytype))
-
-
-class OKMessage(BaseModel):
-    """Generic HTTP OK response."""
-
-    status: str = Field(default="OK")
-    version: str = Field(default_factory=lambda: version("matchbox-db"))
-
-
-class LoginAttempt(BaseModel):
-    """Request for log in process."""
-
-    user_name: str
-
-
-class LoginResult(BaseModel):
-    """Response from log in process."""
-
-    user_id: int
-
-
-class BackendCountableType(StrEnum):
-    """Enumeration of supported backend countable types."""
-
-    SOURCES = "sources"
-    MODELS = "models"
-    DATA = "data"
-    CLUSTERS = "clusters"
-    CREATES = "creates"
-    MERGES = "merges"
-    PROPOSES = "proposes"
-
-
-class ModelResultsType(StrEnum):
-    """Enumeration of supported model results types."""
-
-    PROBABILITIES = "probabilities"
-    CLUSTERS = "clusters"
-
-
-class BackendResourceType(StrEnum):
-    """Enumeration of resources types referenced by client or API."""
-
-    COLLECTION = "collection"
-    RUN = "run"
-    RESOLUTION = "resolution"
-    CLUSTER = "cluster"
-    USER = "user"
-    JUDGEMENT = "judgement"
-
-
-class BackendParameterType(StrEnum):
-    """Enumeration of parameter types passable to the API."""
-
-    SAMPLE_SIZE = "sample_size"
-    NAME = "name"
-
-
-class CRUDOperation(StrEnum):
-    """Enumeration of CRUD operations."""
-
-    CREATE = "create"
-    UPDATE = "update"
-    DELETE = "delete"
-
-
-class LocationType(StrEnum):
-    """Enumeration of location types."""
-
-    RDBMS = "rdbms"
 
 
 class MatchboxName(str):
@@ -248,6 +75,114 @@ class MatchboxName(str):
             }
         )
         return json_schema
+
+
+class OKMessage(BaseModel):
+    """Generic HTTP OK response."""
+
+    status: str = Field(default="OK")
+    version: str = Field(default_factory=lambda: version("matchbox-db"))
+
+
+class BackendCountableType(StrEnum):
+    """Enumeration of supported backend countable types."""
+
+    SOURCES = "sources"
+    MODELS = "models"
+    SOURCE_CLUSTERS = "source_clusters"
+    MODEL_CLUSTERS = "model_clusters"
+    CLUSTERS = "all_clusters"
+    CREATES = "creates"
+    MERGES = "merges"
+    PROPOSES = "proposes"
+
+
+class ModelResultsType(StrEnum):
+    """Enumeration of supported model results types."""
+
+    PROBABILITIES = "probabilities"
+    CLUSTERS = "clusters"
+
+
+class BackendResourceType(StrEnum):
+    """Enumeration of resources types referenced by client or API."""
+
+    COLLECTION = "collection"
+    RUN = "run"
+    RESOLUTION = "resolution"
+    CLUSTER = "cluster"
+    USER = "user"
+    JUDGEMENT = "judgement"
+    SYSTEM = "system"
+
+
+class BackendParameterType(StrEnum):
+    """Enumeration of parameter types passable to the API."""
+
+    SAMPLE_SIZE = "sample_size"
+    NAME = "name"
+
+
+class CRUDOperation(StrEnum):
+    """Enumeration of CRUD operations."""
+
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+
+
+class LocationType(StrEnum):
+    """Enumeration of location types."""
+
+    RDBMS = "rdbms"
+
+
+class PermissionType(StrEnum):
+    """Permission levels for resource access."""
+
+    READ = "read"
+    WRITE = "write"
+    ADMIN = "admin"
+
+
+class User(BaseModel):
+    """User identity."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_name: str = Field(alias="sub")
+    email: EmailStr | None = None
+
+
+GroupName: TypeAlias = MatchboxName
+"""Type alias for group names."""
+
+
+class Group(BaseModel):
+    """Group definition."""
+
+    name: GroupName
+    description: str | None = None
+    is_system: bool = False
+    members: list[User] = []
+
+
+class PermissionGrant(BaseModel):
+    """A permission on a resource.
+
+    Resource context should always be supplied.
+    """
+
+    group_name: GroupName
+    permission: PermissionType
+
+
+class AuthStatusResponse(BaseModel):
+    """Response model for authentication status."""
+
+    authenticated: bool
+    username: str | None = None
+    token: str | None = None
 
 
 CollectionName: TypeAlias = MatchboxName
@@ -550,7 +485,7 @@ class ModelConfig(BaseModel):
         """Ensure that the model settings is valid JSON."""
         try:
             isinstance(json.loads(value), dict)
-        except JSONDecodeError as e:
+        except json.JSONDecodeError as e:
             raise ValueError("Model settings are not valid JSON") from e
         return value
 

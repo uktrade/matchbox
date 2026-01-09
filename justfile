@@ -16,12 +16,12 @@ clean:
 
 # Run a local documentation development server
 docs:
-    uv run mkdocs serve
+    uv run mkdocs serve --livereload
 
 # Reformat and lint
 format:
-    uvx ruff format .
-    uvx ruff check . --fix
+    uvx ruff@latest format .
+    uvx ruff@latest check . --fix
     uvx uv-sort pyproject.toml
 
 # Scan for secrets

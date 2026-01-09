@@ -1,40 +1,52 @@
 """Common operations to produce model evaluation scores."""
 
 from itertools import chain, combinations
-from typing import TypeAlias
+from typing import Self, TypeAlias
 
 import polars as pl
-from pydantic import BaseModel, Field, field_validator
-
-from matchbox.common.dtos import ModelResolutionPath
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Pair: TypeAlias = tuple[int, int]
 Pairs: TypeAlias = set[Pair]
 
 PrecisionRecall: TypeAlias = tuple[float, float]
-ModelComparison: TypeAlias = dict[ModelResolutionPath, PrecisionRecall]
 
 
 class Judgement(BaseModel):
     """User determination on how to group source clusters from a model cluster."""
 
-    user_id: int
-    shown: int = Field(description="ID of the model cluster shown to the user")
+    user_name: str
+    tag: str | None = None
+    shown: list[int] = Field(
+        description="IDs of the source clusters shown to user at once"
+    )
     endorsed: list[list[int]] = Field(
         description="""Groups of source cluster IDs that user thinks belong together"""
     )
 
     @field_validator("endorsed", mode="before")
     @classmethod
-    def check_endorsed(cls, value: list[list[int]]) -> list[list[int]]:
+    def check_no_duplicates(cls, value: list[list[int]]) -> list[list[int]]:
         """Ensure no cluster IDs are repeated in the endorsement."""
         concat_ids = list(chain(*value))
         if len(concat_ids) != len(set(concat_ids)):
             raise ValueError(
-                "One or more cluster IDs were repeated in the endorsement data."
+                "One or more cluster IDs were repeated in the endorsement data"
             )
 
         return value
+
+    @model_validator(mode="after")
+    def check_consistency(self) -> Self:
+        """Ensure union of endorsed clusters matches shown cluster."""
+        all_shown = set(self.shown)
+        all_endorsed = set(chain(*self.endorsed))
+        if all_shown != all_endorsed:
+            raise ValueError(
+                "Inconsistent source cluster IDs between shown and endorsed clusters"
+            )
+
+        return self
 
 
 def precision_recall(
@@ -109,7 +121,7 @@ def precision_recall(
             if (
                 a in shared_leaves
                 and b in shared_leaves
-                # remove neutrally-judged pairs from the model
+                # Remove neutrally-judged pairs from the model
                 and validation_net_count[(a, b)] != 0
             )
         }
@@ -119,7 +131,7 @@ def precision_recall(
         for a, b in validation_pairs
         if a in shared_leaves
         and b in shared_leaves
-        # remove all neutrally or negatively judged pairs
+        # Remove all neutrally or negatively judged pairs
         and validation_net_count[(a, b)] > 0
     }
 
@@ -179,7 +191,7 @@ def process_judgements(
             expansion, left_on="endorsed", right_on="root", how="left"
         )  # left join as singleton leaves won't be expanded
         .rename({"leaves": "endorsed_leaves"})
-        # if missing expansion, assume we're dealing with singleton leaves
+        # If missing expansion, assume we're dealing with singleton leaves
         .with_columns(
             pl.when(pl.col("endorsed_leaves").is_null())
             .then(

@@ -1,19 +1,19 @@
-import io
 import os
-import tempfile
 from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
+import adbc_driver_postgresql.dbapi as adbc_postgresql
 import boto3
 import pytest
 import redis
+from _pytest.fixtures import FixtureRequest
+from adbc_driver_sqlite import dbapi as adbc_sqlite
 from moto import mock_aws
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, MetaData, create_engine
 
-from matchbox.server.base import MatchboxDatastoreSettings
+from matchbox.server.base import MatchboxDatastoreSettings, MatchboxDBAdapter
 from matchbox.server.postgresql import MatchboxPostgres, MatchboxPostgresSettings
 from matchbox.server.uploads import InMemoryUploadTracker, RedisUploadTracker
 
@@ -53,8 +53,15 @@ def development_settings() -> Generator[DevelopmentSettings, None, None]:
 # Warehouse fixtures
 
 
+def drop_all_tables(engine: Engine) -> None:
+    """Drop all tables from a SQLAlchemy engine."""
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    metadata.drop_all(bind=engine)
+
+
 @pytest.fixture(scope="function")
-def postgres_warehouse(
+def sqla_postgres_warehouse(
     development_settings: DevelopmentSettings,
 ) -> Generator[Engine, None, None]:
     """Creates an engine for the test warehouse database"""
@@ -68,37 +75,51 @@ def postgres_warehouse(
         f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
     )
     yield engine
+    drop_all_tables(engine)
     engine.dispose()
 
 
-@contextmanager
-def named_temp_file(filename: str) -> Generator[io.BufferedWriter, None, None]:
-    """
-    Create a temporary file with a specific name that auto-deletes.
+@pytest.fixture(scope="function")
+def adbc_postgres_warehouse(
+    sqla_postgres_warehouse: Engine,
+) -> Generator[adbc_postgresql.Connection, None, None]:
+    """Creates an ADBC PostgreSQL warehouse connection.
 
-    Args:
-        filename: Just the filename (not path) you want to use
+    Uses the same database as the SQLAlchemy warehouse fixture.
     """
-    temp_dir = Path(tempfile.gettempdir())
-    full_path = temp_dir / filename
-    try:
-        with full_path.open(mode="wb") as f:
-            yield f
-    finally:
-        if full_path.exists():
-            full_path.unlink()
+    url = sqla_postgres_warehouse.url
+    uri = f"postgresql://{url.username}:{url.password}@{url.host}:{url.port}/{url.database}"
+
+    conn = adbc_postgresql.connect(uri)
+    yield conn
+    conn.close()
 
 
 @pytest.fixture(scope="function")
-def sqlite_warehouse() -> Generator[Engine, None, None]:
+def sqla_sqlite_warehouse(tmp_path: Path) -> Generator[Engine, None, None]:
     """Creates an engine for a function-scoped SQLite warehouse database.
 
     By using a temporary file, produces a URI that can be shared between processes.
     """
-    with named_temp_file("db.sqlite") as tmp:
-        engine = create_engine(f"sqlite:///{tmp.name}")
-        yield engine
-        engine.dispose()
+    db_path = tmp_path / "test_warehouse.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    yield engine
+    drop_all_tables(engine)
+    engine.dispose()
+
+
+@pytest.fixture(scope="function")
+def adbc_sqlite_warehouse(
+    sqla_sqlite_warehouse: Engine,
+) -> Generator[adbc_sqlite.Connection, None, None]:
+    """Creates an ADBC SQLite warehouse connection.
+
+    Uses the same database as the SQLAlchemy warehouse fixture.
+    """
+    db_path = sqla_sqlite_warehouse.url.database
+    conn = adbc_sqlite.connect(db_path)
+    yield conn
+    conn.close()
 
 
 @pytest.fixture(scope="function")
@@ -107,6 +128,34 @@ def sqlite_in_memory_warehouse() -> Generator[Engine, None, None]:
     engine = create_engine("sqlite:///:memory:")
     yield engine
     engine.dispose()
+
+
+WarehouseConnectionType: TypeAlias = (
+    Engine | adbc_postgresql.Connection | adbc_sqlite.Connection
+)
+
+
+@pytest.fixture
+def warehouse(
+    request: FixtureRequest,
+    sqla_postgres_warehouse: Engine,
+    sqla_sqlite_warehouse: Engine,
+    sqlite_in_memory_warehouse: Engine,
+    adbc_postgres_warehouse: adbc_postgresql.Connection,
+    adbc_sqlite_warehouse: adbc_sqlite.Connection,
+) -> WarehouseConnectionType:
+    """Parametrisable warehouse fixture.
+
+    Use with indirect parametrisation to select which warehouse to test against.
+    """
+    warehouses = {
+        "sqla_postgres": sqla_postgres_warehouse,
+        "sqla_sqlite": sqla_sqlite_warehouse,
+        "adbc_postgres": adbc_postgres_warehouse,
+        "adbc_sqlite": adbc_sqlite_warehouse,
+        "sqlite_in_memory": sqlite_in_memory_warehouse,
+    }
+    return warehouses[request.param]
 
 
 # Matchbox database fixtures
@@ -229,3 +278,18 @@ def upload_tracker_redis(
     empty_tracker()
     yield tracker
     empty_tracker()
+
+
+# Backends
+
+BACKENDS = [
+    pytest.param("matchbox_postgres", id="postgres"),
+]
+
+
+@pytest.fixture(scope="function")
+def backend_instance(request: pytest.FixtureRequest, backend: str) -> MatchboxDBAdapter:
+    """Create a fresh backend instance for each test."""
+    backend_obj = request.getfixturevalue(backend)
+    backend_obj.clear(certain=True)
+    return backend_obj

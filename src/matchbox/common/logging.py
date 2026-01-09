@@ -1,9 +1,14 @@
 """Logging utilities."""
 
+import functools
 import importlib.metadata
 import logging
-from typing import Any, Final, Literal
+import os
+import time
+from collections.abc import Callable
+from typing import Any, Final, Literal, ParamSpec, TypeVar
 
+import psutil
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -106,3 +111,76 @@ def build_progress_bar(console_: Console | None = None) -> Progress:
         TimeRemainingColumn(),
         console=console_,
     )
+
+
+T = TypeVar("T")
+P = ParamSpec("P")
+
+
+def profile_time(
+    logger: PrefixedLoggerAdapter = logger,
+    level: int = logging.INFO,
+    prefix: str | None = "Profiling",
+    attr: str | None = None,
+    kwarg: str | None = None,
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Decorator to profile running time of functions and methods using logger.
+
+    Args:
+        logger: The logger to use.
+        level: The level to use to log the profiling information. It defaults to INFO.
+        prefix: Prefix to pass to the logged message.
+        attr: Attribute name to extract from instantiated class.
+        kwarg: Argument name to extract from function call.
+
+    `attr` should be used when we want to include some class atribute in the log, e.g.
+    node name in Source.
+    `kwarg` should be used when we want to include the value passed to some function
+    argument, e.g. path in `set_data`. This will only work if the argument is passed
+    to the function as a kwarg, and not a positional argument.
+    """
+
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
+        @functools.wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            # If attr, will try to get its value from class instance
+            if attr is not None:
+                # If class, first argument will be self
+                self = args[0] if args else None
+                node = getattr(self, attr) if self and hasattr(self, attr) else None
+            # If kwarg, will try to get value passed to function
+            if kwarg is not None:
+                value = kwargs.get(kwarg)
+
+            start = time.perf_counter()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                duration = time.perf_counter() - start
+
+                if attr:
+                    msg = f"`{func.__name__}` in node `{node}` took {duration:.3f}s"
+                elif kwarg:
+                    msg = (
+                        f"`{func.__name__}` with {kwarg} `{value}` took {duration:.3f}s"
+                    )
+                else:
+                    msg = f"`{func.__name__}` took {duration:.3f}s"
+
+                logger.log(level, msg, prefix=prefix)
+
+        return wrapper
+
+    return decorator
+
+
+def log_mem_usage(
+    logger: PrefixedLoggerAdapter = logger,
+    level: int = logging.INFO,
+    prefix: str | None = "Profiling",
+) -> None:
+    """Log current memory usage for this process."""
+    proc = psutil.Process(os.getpid())
+    usage = proc.memory_info().rss / (1024**2)
+    msg = f"Current memory used by process (MiB): {usage}"
+    logger.log(level, msg, prefix=prefix)

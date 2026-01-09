@@ -3,10 +3,11 @@ import pytest
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
+from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults, ResolvedMatches
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES
-from matchbox.common.factories.sources import source_from_tuple
+from matchbox.common.factories.sources import source_factory, source_from_tuple
 
 
 class TestModelResults:
@@ -16,8 +17,8 @@ class TestModelResults:
         """Removes redundant pairs, keeping lowest probability."""
         simple_duplicate = pl.DataFrame(
             [
-                {"left_id": 4, "right_id": 5, "probability": 100},
                 {"left_id": 4, "right_id": 5, "probability": 50},
+                {"left_id": 4, "right_id": 5, "probability": 100},
             ]
         )
 
@@ -31,8 +32,8 @@ class TestModelResults:
 
         symmetric_duplicate = pl.DataFrame(
             [
-                {"left_id": 4, "right_id": 5, "probability": 100},
                 {"left_id": 5, "right_id": 4, "probability": 50},
+                {"left_id": 4, "right_id": 5, "probability": 100},
             ]
         )
 
@@ -46,8 +47,8 @@ class TestModelResults:
 
         no_duplicates = pl.DataFrame(
             [
-                {"left_id": 4, "right_id": 5, "probability": 100},
                 {"left_id": 4, "right_id": 6, "probability": 50},
+                {"left_id": 4, "right_id": 5, "probability": 100},
             ]
         )
 
@@ -88,9 +89,9 @@ class TestModelResults:
 
         probabilities = pl.DataFrame(
             [
-                # simple left-right merge
+                # Simple left-right merge
                 {"left_id": 4, "right_id": 5, "probability": 100},
-                # dedupe through linking
+                # Dedupe through linking
                 {"left_id": 10, "right_id": 6, "probability": 100},
                 {"left_id": 10, "right_id": 7, "probability": 100},
             ]
@@ -212,6 +213,40 @@ class TestResolvedMatches:
 
         return foo, bar, foo_query_data, bar_query_data
 
+    def test_from_dump(
+        self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
+    ) -> None:
+        """Can initialise ResolvedMatches from concatenated dataframe representation."""
+        foo, bar, foo_query_data, bar_query_data = dummy_data
+        # These won't be the same sources as above, but we only need them them
+        # to have the same name
+        dag = DAG("companies")
+        dag.source(**source_factory(name="foo").into_dag())
+        dag.source(**source_factory(name="bar").into_dag())
+
+        original = ResolvedMatches(
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
+        )
+
+        new = ResolvedMatches.from_dump(cluster_key_map=original.as_dump(), dag=dag)
+
+        assert new.sources[0] == dag.get_source("foo")
+        assert new.sources[1] == dag.get_source("bar")
+
+        assert_frame_equal(
+            foo_query_data,
+            new.query_results[0],
+            check_row_order=False,
+            check_column_order=False,
+        )
+
+        assert_frame_equal(
+            bar_query_data,
+            new.query_results[1],
+            check_row_order=False,
+            check_column_order=False,
+        )
+
     def test_as_lookup(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
@@ -264,7 +299,7 @@ class TestResolvedMatches:
             check_column_order=False,
         )
 
-    def test_as_cluster_key_map(
+    def test_as_dump(
         self, dummy_data: tuple[Source, Source, pl.DataFrame, pl.DataFrame]
     ) -> None:
         """Mapping across root, leaf, source and key can be generated."""
@@ -272,7 +307,7 @@ class TestResolvedMatches:
 
         mapping = ResolvedMatches(
             sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
-        ).as_cluster_key_map()
+        ).as_dump()
 
         expected_mapping = pl.DataFrame(
             [
@@ -348,12 +383,13 @@ class TestResolvedMatches:
             check_column_order=False,
         )
 
-        # View cluster with multiple keys per leaf
+        # View cluster with multiple keys per leaf, but only one source
         cluster_convergent = ResolvedMatches(
-            sources=[foo], query_results=[foo_query_data]
+            sources=[foo, bar], query_results=[foo_query_data, bar_query_data]
         ).view_cluster(2)
         expected_cluster_convergent = pl.DataFrame(
             [
+                # No columns from "bar"
                 {"foo_key": "2", "foo_field_a": 20},
                 {"foo_key": "2b", "foo_field_a": 20},
             ]
@@ -403,9 +439,7 @@ class TestResolvedMatches:
 
         # Merge the two
         merged_resolved = resolved_one.merge(resolved_two)
-        new_clusters = (
-            merged_resolved.as_cluster_key_map().group_by("id").agg("leaf_id")
-        )
+        new_clusters = merged_resolved.as_dump().group_by("id").agg("leaf_id")
         # The sources are unchanged
         assert merged_resolved.sources == [foo, bar]
         # All cluster IDs now have negative integers

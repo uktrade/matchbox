@@ -1,7 +1,5 @@
 """Client-side helpers for retrieving and preparing evaluation samples."""
 
-from typing import cast
-
 import polars as pl
 from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
@@ -10,115 +8,170 @@ from matchbox.client import _handler
 from matchbox.client.dags import DAG
 from matchbox.client.results import ModelResults
 from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
-from matchbox.common.eval import Judgement, ModelComparison, precision_recall
+from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
 
+class EvaluationFieldMetadata(BaseModel):
+    """Metadata for a field in evaluation."""
+
+    display_name: str
+    source_columns: list[str]
+
+
 class EvaluationItem(BaseModel):
-    """A cluster awaiting evaluation, with pre-computed display data."""
+    """A cluster ready for evaluation.
+
+    The records dataframe contains the leaf IDs and the qualified index fields
+    associated with it. For example:
+
+    | leaf_id | src_a_first | src_a_last | src_b_first | src_b_last |
+    |---------|-------------|------------|-------------|------------|
+    | 1       | Thomas      | Bayes      |             |            |
+    | 2       | Tommy       | B          |             |            |
+    | 12      |             |            | Tom         | Bayes      |
+
+    The fields attribute allows any evaluation system to map between a display
+    version of the source columns, and the actual columns contained in the
+    records dataframe. For example:
+
+    ```text
+    {
+        "display_name": "first",
+        "source_columns": "src_a_first", "src_b_first"
+    }
+    ```
+    """
 
     model_config = {"arbitrary_types_allowed": True}
 
-    cluster_id: int
-    dataframe: pl.DataFrame  # Original raw data (needed for judgement leaf IDs)
-    display_data: dict[str, list[str]]  # field_name -> [val1, val2, val3]
-    duplicate_groups: list[list[int]]  # Groups of leaf_ids with identical data
-    display_columns: list[int]  # Representative leaf_id for each displayed column
-    assignments: dict[int, str] = {}  # display_column_index -> group_letter
+    leaves: list[int]
+    records: pl.DataFrame
+    fields: list[EvaluationFieldMetadata]
+
+    def get_unique_record_groups(self) -> list[list[int]]:
+        """Group identical records by leaf ID.
+
+        Returns:
+            List of groups, where each group is a list of leaf IDs
+            that have identical values across all data fields.
+            Example: [[1, 3], [2], [4, 5, 6]] means records 1 & 3 are identical.
+        """
+        # Get all data column names (not "leaf")
+        # Flatten the source_columns lists from all fields
+        data_cols = [col for field in self.fields for col in field.source_columns]
+
+        # Group by all data columns to find duplicates
+        grouped = self.records.group_by(data_cols, maintain_order=True).agg(
+            pl.col("leaf")
+        )
+
+        # Extract list of leaf ID lists
+        return [group for group in grouped["leaf"]]
 
 
-def create_judgement(item: EvaluationItem, user_id: int) -> Judgement:
+def create_judgement(
+    item: EvaluationItem,
+    assignments: dict[int, str],
+    user_name: str,
+    tag: str | None = None,
+) -> Judgement:
     """Convert item assignments to Judgement - no default group assignment.
 
     Args:
-        item: Evaluation item with assignments
-        user_id: User ID for the judgement
+        item: evaluation item
+        assignments: column assignments (group_idx -> group_letter)
+        user_name: user name for the judgement
+        tag: string by which to tag the judgement
 
     Returns:
         Judgement with endorsed groups based on assignments
     """
     groups: dict[str, list[int]] = {}
+    unique_record_groups = item.get_unique_record_groups()
 
-    for col_idx, group in item.assignments.items():
-        leaf_ids = item.duplicate_groups[col_idx]
+    for col_idx, group in assignments.items():
+        leaf_ids = unique_record_groups[col_idx]
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
-    return Judgement(user_id=user_id, shown=item.cluster_id, endorsed=endorsed)
+    return Judgement(user_name=user_name, shown=item.leaves, endorsed=endorsed, tag=tag)
 
 
 def create_evaluation_item(
-    df: pl.DataFrame, source_configs: list[tuple[str, SourceConfig]], cluster_id: int
+    df: pl.DataFrame, source_configs: list[tuple[str, SourceConfig]], leaves: list[int]
 ) -> EvaluationItem:
-    """Create EvaluationItem with pre-computed display data."""
+    """Create EvaluationItem with structured metadata."""
     # Get all data columns (exclude metadata columns)
     data_cols = [c for c in df.columns if c not in ["root", "leaf", "key"]]
 
-    # Extract field names from source configs
-    field_names = []
-    for _, config in source_configs:
-        for field in config.index_fields:
-            if field.name not in field_names:
-                field_names.append(field.name)
+    # Build mapping of field_name -> list of qualified column names
+    field_to_columns: dict[str, list[str]] = {}
 
-    if not data_cols:
-        # No data columns found - return empty item
-        return EvaluationItem(
-            cluster_id=cluster_id,
-            dataframe=df,
-            display_data={},
-            duplicate_groups=[],
-            display_columns=[],
-            assignments={},
+    for source_id, config in source_configs:
+        for field in config.index_fields:
+            # Build qualified column name for this source+field
+            column_name = config.qualify_field(source_id, field.name)
+
+            # Only add if this column exists in DataFrame
+            if column_name in data_cols:
+                # Add to list for this field name
+                if field.name not in field_to_columns:
+                    field_to_columns[field.name] = []
+                field_to_columns[field.name].append(column_name)
+
+    # Create EvaluationFieldMetadata objects (one per unique field name)
+    fields: list[EvaluationFieldMetadata] = []
+    for field_name, source_columns in field_to_columns.items():
+        fields.append(
+            EvaluationFieldMetadata(
+                display_name=field_name, source_columns=source_columns
+            )
         )
 
-    # Deduplicate using polars group_by
-    df_dedup = df.select(["leaf"] + data_cols)
-    grouped = df_dedup.group_by(data_cols, maintain_order=True).agg(pl.col("leaf"))
+    # Keep ALL data columns in records
+    records = df.select(["leaf"] + data_cols)
 
-    duplicate_groups = [group for group in grouped["leaf"]]
-    display_columns = [group[0] for group in duplicate_groups]
+    return EvaluationItem(leaves=leaves, records=records, fields=fields)
 
-    # Build display data
-    display_data = {}
-    for field_name in field_names:
-        qualified_cols = [c for c in data_cols if c.endswith(f"_{field_name}")]
 
-        values = []
-        for leaf_id in display_columns:
-            row = df.filter(pl.col("leaf") == leaf_id).row(0, named=True)
-            val = next(
-                (str(row.get(c, "")).strip() for c in qualified_cols if row.get(c)), ""
-            )
-            values.append(val)
+def _read_sample_file(sample_file: str, n: int) -> pl.DataFrame:
+    resolved_matches_dump = pl.read_parquet(sample_file)
+    clusters = resolved_matches_dump["id"].unique()
+    select_clusters = clusters.sample(min(n, len(clusters)), shuffle=True).to_list()
+    select_rows = resolved_matches_dump.filter(pl.col("id").is_in(select_clusters))
+    return select_rows.rename({"id": "root", "leaf_id": "leaf"})
 
-        if any(values):  # Only include fields with data
-            display_data[field_name] = values
 
-    return EvaluationItem(
-        cluster_id=cluster_id,
-        dataframe=df,
-        display_data=display_data,
-        duplicate_groups=duplicate_groups,
-        display_columns=display_columns,
-        assignments={},
+def _get_samples_from_server(
+    dag: DAG, user_name: str, n: int, resolution: ModelResolutionName | None = None
+) -> pl.DataFrame:
+    if resolution:
+        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    else:
+        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+    return pl.from_arrow(
+        _handler.sample_for_eval(n=n, resolution=resolution_path, user_name=user_name)
     )
 
 
 def get_samples(
     n: int,
     dag: DAG,
-    user_id: int,
+    user_name: str,
     resolution: ModelResolutionName | None = None,
+    sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.
 
     Args:
         n: Number of clusters to sample
         dag: DAG for which to retrieve samples
-        user_id: ID of the user requesting the samples
-        resolution: The optional resolution from which to sample. If not provided,
-            the final step in the DAG is used
+        user_name: Name of the user requesting the samples
+        resolution: The optional resolution from which to sample. If not set, the final
+            step in the DAG is used. If sample_file is set, resolution is ignored
+        sample_file: path to parquet file output by ResolvedMatches. If specified,
+            won't sample from server, ignoring the user_name and resolution arguments
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster
@@ -127,17 +180,12 @@ def get_samples(
         MatchboxSourceTableError: If a source cannot be queried from a location using
             provided or default clients.
     """
-    if resolution:
-        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+    if sample_file:
+        samples = _read_sample_file(sample_file=sample_file, n=n)
     else:
-        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-
-    samples: pl.DataFrame = cast(
-        pl.DataFrame,
-        pl.from_arrow(
-            _handler.sample_for_eval(n=n, resolution=resolution_path, user_id=user_id)
-        ),
-    )
+        samples = _get_samples_from_server(
+            dag=dag, user_name=user_name, n=n, resolution=resolution
+        )
 
     if not len(samples):
         return {}
@@ -183,7 +231,8 @@ def get_samples(
     results_by_root: dict[int, EvaluationItem] = {}
     for root in all_results["root"].unique():
         cluster_df = all_results.filter(pl.col("root") == root).drop("root")
-        evaluation_item = create_evaluation_item(cluster_df, source_configs, root)
+        leaves = cluster_df.select("leaf").to_series().to_list()
+        evaluation_item = create_evaluation_item(cluster_df, source_configs, leaves)
         results_by_root[root] = evaluation_item
 
     return results_by_root
@@ -192,9 +241,10 @@ def get_samples(
 class EvalData:
     """Object which caches evaluation data to measure model performance."""
 
-    def __init__(self) -> None:
+    def __init__(self, tag: str | None = None) -> None:
         """Download judgement and expansion data used to compute evaluation metrics."""
-        self.judgements, self.expansion = _handler.download_eval_data()
+        self.tag = tag
+        self.judgements, self.expansion = _handler.download_eval_data(tag)
 
     def precision_recall(
         self, results: ModelResults, threshold: float
@@ -207,8 +257,3 @@ class EvalData:
         root_leaf = results.root_leaf().rename({"root_id": "root", "leaf_id": "leaf"})
         values = precision_recall([root_leaf], self.judgements, self.expansion)[0]
         return values[0], values[1]
-
-
-def compare_models(resolutions: list[ModelResolutionPath]) -> ModelComparison:
-    """Compare metrics of models based on cached evaluation data."""
-    return _handler.compare_models(resolutions)

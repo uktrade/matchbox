@@ -33,7 +33,7 @@ linker = deduper.query().linker(other_source.query())
 All these objects are lazy: they don't actually retrieve any data unless you run them, for example:
 
 ```python
-queried_data = query.run()
+queried_data = query.data()
 deduper_results = deduper.run()
 linker_results = linker.run()
 ```
@@ -50,16 +50,10 @@ Before building a pipeline, it's worth configuring logging:
 
     # Configure logging
     logging.basicConfig(
-        level=logging.DEBUG,
         format="%(asctime)s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    logger = logging.getLogger()
-
-    # Reduce noise from HTTP libraries
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("http").setLevel(logging.WARNING)
+    logging.getLogger("matchbox").setLevel(logging.INFO)
     ```
 
 You will also need to define the engine to read your data sources:
@@ -232,7 +226,7 @@ When you query a source without cleaning, all columns are qualified with the sou
 
 ```python
 # No cleaning - all columns qualified
-companies_house.query().run()
+companies_house.query().data()
 # Columns: id, companies_house_key, companies_house_company_name, companies_house_company_number, companies_house_postcode
 ```
 
@@ -245,7 +239,7 @@ companies_house.query(
         "name": f"lower({companies_house.f('company_name')})",
         "number": companies_house.f("company_number"),
     }
-).run()
+).data()
 # Columns: id, companies_house_key, name, number
 # Note: postcode is DROPPED because it's not in cleaning dict
 ```
@@ -504,16 +498,14 @@ This example demonstrates how you can:
 ### Re-run a previous DAG
 
 You might want to publish a new run of your DAG based on newer data. You can retrieve the old DAG and inspect it. You can't sync or publish it, as it will be read-only. However, you can generate a new run from it explicitly
-
-=== "Example"
-    ```python    
-    # Create a new DAG identical to the previous default
-    dag = DAG(name="companies").load_default().set_client(engine).new_run()
-    # Run new DAG
-    dag.run_and_sync()
-    # Make the DAG the new default
-    dag.set_default()
-    ```
+```python    
+# Create a new DAG identical to the previous default
+dag = DAG(name="companies").load_default().set_client(engine).new_run()
+# Run new DAG
+dag.run_and_sync()
+# Make the DAG the new default
+dag.set_default()
+```
 
 ## Best practices
 
@@ -545,6 +537,7 @@ Data cleaning is 90% of any record matching problem.
 - Start with small samples to test your pipeline
 - Monitor performance and adjust batch sizes accordingly
 - Use the `draw()` method to visualise and debug your DAG
+- Pass `low_memory=True` to `dag.run_and_sync()` to reduce memory usage for a scheduled pipeline
 
 ## Conclusion
 

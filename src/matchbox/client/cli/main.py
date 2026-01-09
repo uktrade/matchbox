@@ -3,7 +3,8 @@
 import typer
 from rich import print
 
-from matchbox.client import _handler
+from matchbox import __version__
+from matchbox.client.cli import auth, server
 from matchbox.client.cli.eval.run import evaluate
 
 app = typer.Typer(
@@ -12,12 +13,14 @@ app = typer.Typer(
 
 
 @app.command()
-def health() -> None:
-    """Checks the health of the Matchbox server."""
-    response = _handler.healthcheck()
-    print(response)
+def version() -> None:
+    """Shows the local Matchbox version."""
+    print(f"Matchbox version: {__version__}")
 
 
+# Add subcommands
+app.add_typer(server.app, name="server")
+app.add_typer(auth.app, name="auth")
 app.command(name="eval")(evaluate)
 
 if __name__ == "__main__":

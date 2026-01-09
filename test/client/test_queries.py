@@ -8,7 +8,7 @@ from respx import MockRouter
 from sqlalchemy import Engine
 from sqlglot.errors import ParseError
 
-from matchbox.client.queries import CacheMode, Query, _clean
+from matchbox.client.queries import Query, QueryCombineType, _clean
 from matchbox.common.arrow import (
     SCHEMA_QUERY,
     SCHEMA_QUERY_WITH_LEAVES,
@@ -50,167 +50,8 @@ def test_init_query() -> None:
     )
 
 
-def test_query_caching(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
-    """Can cache and re-use raw and clean data."""
-    # Set up mocks
-    source = (
-        source_from_tuple(
-            data_tuple=({"col1": " a "}, {"col1": " b "}),
-            data_keys=["0", "1"],
-            name="foo",
-            engine=sqlite_warehouse,
-        )
-        .write_to_location()
-        .source
-    )
-
-    query = Query(
-        source,
-        dag=source.dag,
-        cleaning={"col1": f"upper({source.f('col1')})"},
-    )
-
-    query_route = matchbox_api.get("/query").mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"key": "0", "id": 1},
-                        {"key": "1", "id": 2},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
-        )
-    )
-
-    # By default, query caches nothing
-    query.run()
-    assert query_route.call_count == 1
-    assert query.data is None
-    assert query.raw_data is None
-
-    # With no cache to reuse, must re-fetch
-    query.run(reuse_cache=True)
-    assert query_route.call_count == 2
-
-    # Can cache raw data
-    query.set_cache_mode(CacheMode.RAW).run()
-    assert query_route.call_count == 3
-    assert query.data is None
-    assert query.raw_data is not None
-    # Could re-use values from cache
-    query.run(reuse_cache=True)
-    assert query_route.call_count == 3  # unchanged
-    assert query.data is None
-    assert query.raw_data is not None
-
-    # Can also cache clean data
-    query.set_cache_mode(CacheMode.CLEAN).run()
-    assert query_route.call_count == 4
-    assert query.data is not None
-    assert query.raw_data is not None
-    # Could re-use values from cache
-    query.run(reuse_cache=True)
-    assert query_route.call_count == 4  # unchanged
-    assert query.data is not None
-    assert query.raw_data is not None
-
-    # Even if we reuse cache, cache gets cleared
-    query.set_cache_mode(CacheMode.OFF).run(reuse_cache=True)
-    assert query.data is None
-    assert query.raw_data is None
-
-
-def test_update_cleaning(sqlite_warehouse: Engine, matchbox_api: MockRouter) -> None:
-    """Can iterate on cleaning functions with caching."""
-    # Set up mocks
-    source = (
-        source_from_tuple(
-            data_tuple=({"col1": " a "}, {"col1": " b "}),
-            data_keys=["0", "1"],
-            name="foo",
-            engine=sqlite_warehouse,
-        )
-        .write_to_location()
-        .source
-    )
-
-    query = Query(
-        source,
-        dag=source.dag,
-        cleaning={"col1": f"upper({source.f('col1')})"},
-    )
-
-    matchbox_api.get("/query").mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [
-                        {"key": "0", "id": 1},
-                        {"key": "1", "id": 2},
-                    ],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
-        )
-    )
-
-    new_cleaning = {"col1": f"trim(upper({source.f('col1')}))"}
-
-    # Run a query a first time without caching
-    query.run()
-
-    # Can't change cleaning if data wasn't cached
-    with pytest.raises(RuntimeError, match="raw data"):
-        query.clean(new_cleaning)
-
-    # Let's try again, caching this time
-    cleaned1 = query.set_cache_mode(CacheMode.CLEAN).run()
-
-    cleaned1_expected = pl.DataFrame(
-        [
-            {"id": 1, "col1": " A "},
-            {"id": 2, "col1": " B "},
-        ]
-    )
-
-    assert_frame_equal(
-        cleaned1, cleaned1_expected, check_column_order=False, check_row_order=False
-    )
-
-    # Now we can iterate on the cleaning
-    assert query.data is not None
-    assert query.raw_data is not None
-    cleaned2 = query.clean(cleaning=new_cleaning)
-    # "clean" caching mode retains the data
-    assert query.data is not None
-    # "raw" mode clears clean data from cache
-    query.set_cache_mode(CacheMode.RAW).clean(cleaning=new_cleaning)
-    assert query.raw_data is not None
-    assert query.data is None
-    # "off" mode clears cache completely
-    query.set_cache_mode(CacheMode.OFF).clean(cleaning=new_cleaning)
-    assert query.raw_data is None
-    assert query.data is None
-
-    # New cleaning took effect
-    cleaned2_expected = pl.DataFrame(
-        [
-            {"id": 1, "col1": "A"},
-            {"id": 2, "col1": "B"},
-        ]
-    )
-    assert_frame_equal(
-        cleaned2, cleaned2_expected, check_column_order=False, check_row_order=False
-    )
-    assert query.config.cleaning == new_cleaning
-
-
 def test_query_single_source(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Tests that we can query from a single source."""
     # Dummy data and source
@@ -218,7 +59,7 @@ def test_query_single_source(
         data_tuple=({"a": 1, "b": "2"}, {"a": 10, "b": "20"}),
         data_keys=["0", "1"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     # Mock API
@@ -237,9 +78,9 @@ def test_query_single_source(
         )
     )
     # Tests with no optional params
-    results = Query(testkit.source, dag=testkit.source.dag).run()
+    results = testkit.source.query().data()
     assert len(results) == 2
-    assert {"foo_a", "foo_b", "foo_key", "id"} == set(results.columns)
+    assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
         "collection": testkit.source.dag.name,
@@ -249,13 +90,11 @@ def test_query_single_source(
     }
 
     # Tests with optional params
-    results = Query(testkit.source, threshold=0.5, dag=testkit.source.dag).run(
-        return_type="pandas"
-    )
+    results = testkit.source.query(threshold=0.5).data(return_type="pandas")
 
     assert isinstance(results, PandasDataFrame)
     assert len(results) == 2
-    assert {"foo_a", "foo_b", "foo_key", "id"} == set(results.columns)
+    assert {"foo_a", "foo_b", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
         "collection": testkit.source.dag.name,
@@ -267,7 +106,7 @@ def test_query_single_source(
 
 
 def test_query_multiple_sources(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Tests that we can query multiple sources."""
     # Dummy data and source
@@ -275,14 +114,14 @@ def test_query_multiple_sources(
         data_tuple=({"a": 1, "b": "2"}, {"a": 10, "b": "20"}),
         data_keys=["0", "1"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     testkit2 = source_from_tuple(
         data_tuple=({"c": "val"}, {"c": "val"}),
         data_keys=["2", "3"],
         name="foo2",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
 
@@ -319,18 +158,9 @@ def test_query_multiple_sources(
 
     model = model_factory(dag=testkit1.source.dag).model
     # Validate results (no cleaning, so all columns passed through)
-    results = Query(
-        testkit1.source, testkit2.source, model=model, dag=testkit1.source.dag
-    ).run()
+    results = model.query(testkit1.source, testkit2.source).data()
     assert len(results) == 4
-    assert {
-        "foo_a",
-        "foo_b",
-        "foo_key",
-        "foo2_c",
-        "foo2_key",
-        "id",
-    } == set(results.columns)
+    assert {"foo_a", "foo_b", "foo2_c", "id"} == set(results.columns)
 
     assert dict(query_route.calls[-2].request.url.params) == {
         "collection": testkit1.source.dag.name,
@@ -348,16 +178,24 @@ def test_query_multiple_sources(
     }
 
 
-def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> None:
-    """Test that cleaning in a query is applied."""
-    testkit = source_from_tuple(
-        data_tuple=({"val": "a", "val2": 1}, {"val": "b", "val2": 2}),
-        data_keys=["0", "1"],
-        name="foo",
-        engine=sqlite_warehouse,
-    ).write_to_location()
+def test_query_cleaning(
+    sqla_sqlite_warehouse: Engine, matchbox_api: MockRouter
+) -> None:
+    """Can iterate on cleaning functions."""
+    # Set up mocks
+    source = (
+        source_from_tuple(
+            data_tuple=({"col1": " a "}, {"col1": " b "}),
+            data_keys=["0", "1"],
+            name="foo",
+            engine=sqla_sqlite_warehouse,
+        )
+        .write_to_location()
+        .source
+    )
 
-    # Mock API
+    query = source.query(cleaning={"col1": f"upper({source.f('col1')})"})
+
     matchbox_api.get("/query").mock(
         return_value=Response(
             200,
@@ -373,23 +211,83 @@ def test_queries_clean(matchbox_api: MockRouter, sqlite_warehouse: Engine) -> No
         )
     )
 
-    result = Query(
-        testkit.source,
-        cleaning={"new_val": f"lower({testkit.source.f('val')})"},
-        dag=testkit.source.dag,
-    ).run()
+    # Original query can be run
+    cleaned1 = query.data()
 
-    assert len(result) == 2
-    assert result["new_val"].to_list() == ["a", "b"]
-    assert set(result.columns) == {"id", "new_val"}
+    cleaned1_expected = pl.DataFrame(
+        [
+            {"id": 1, "col1": " A "},
+            {"id": 2, "col1": " B "},
+        ]
+    )
+
+    assert_frame_equal(
+        cleaned1, cleaned1_expected, check_column_order=False, check_row_order=False
+    )
+
+    # After, we can iterate on the cleaning
+    query.cleaning = {"col1": f"trim(upper({source.f('col1')}))"}
+    cleaned2 = query.data()
+
+    cleaned2_expected = pl.DataFrame(
+        [
+            {"id": 1, "col1": "A"},
+            {"id": 2, "col1": "B"},
+        ]
+    )
+
+    assert_frame_equal(
+        cleaned2, cleaned2_expected, check_column_order=False, check_row_order=False
+    )
+
+
+def test_query_prefetching(
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
+) -> None:
+    """Tests that we can iterate on cleaning without re-fetching raw data."""
+    # Dummy data and source
+    testkit = source_from_tuple(
+        data_tuple=({"a": 1, "b": "2"}, {"a": 10, "b": "20"}),
+        data_keys=["0", "1"],
+        name="foo",
+        engine=sqla_sqlite_warehouse,
+    ).write_to_location()
+
+    # Mock API
+    query_route = matchbox_api.get("/query").mock(
+        return_value=Response(
+            200,
+            content=table_to_buffer(
+                pa.Table.from_pylist(
+                    [
+                        {"key": "0", "id": 1},
+                        {"key": "1", "id": 2},
+                    ],
+                    schema=SCHEMA_QUERY,
+                )
+            ).read(),
+        )
+    )
+
+    query = testkit.source.query()
+
+    raw = query.data_raw()
+    assert query_route.call_count == 1
+
+    data_prefetched = query.data(raw)
+    assert query_route.call_count == 1
+
+    assert_frame_equal(query.data(), data_prefetched, check_row_order=False)
+    assert query_route.call_count == 2
 
 
 @pytest.mark.parametrize(
     "combine_type",
-    ["set_agg", "explode"],
+    [QueryCombineType.SET_AGG, QueryCombineType.EXPLODE],
+    ids=["set_agg", "explode"],
 )
 def test_query_combine_type(
-    combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
+    combine_type: str, matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Various ways of combining multiple sources are supported."""
     # Dummy data and source
@@ -397,14 +295,14 @@ def test_query_combine_type(
         data_tuple=({"col": 20}, {"col": 40}, {"col": 60}),
         data_keys=["0", "1", "2"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     testkit2 = source_from_tuple(
         data_tuple=({"col": "val1"}, {"col": "val2"}, {"col": "val3"}),
         data_keys=["3", "4", "5"],
         name="bar",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
 
@@ -444,13 +342,9 @@ def test_query_combine_type(
     model = model_factory(dag=testkit1.source.dag).model
 
     # Validate results
-    results = Query(
-        testkit1.source,
-        testkit2.source,
-        model=model,
-        combine_type=combine_type,
-        dag=testkit1.source.dag,
-    ).run()
+    results = model.query(
+        testkit1.source, testkit2.source, combine_type=combine_type
+    ).data()
 
     if combine_type == "set_agg":
         expected_len = 3
@@ -466,35 +360,30 @@ def test_query_combine_type(
         expected_len = 5
 
     assert len(results) == expected_len
-    assert {
-        "foo_col",
-        "foo_key",
-        "bar_col",
-        "bar_key",
-        "id",
-    } == set(results.columns)
+    assert {"foo_col", "bar_col", "id"} == set(results.columns)
 
 
 @pytest.mark.parametrize(
     "combine_type",
-    ["concat", "set_agg", "explode"],
+    [QueryCombineType.CONCAT, QueryCombineType.SET_AGG, QueryCombineType.EXPLODE],
+    ids=["concat", "set_agg", "explode"],
 )
 def test_query_leaf_ids(
-    combine_type: str, matchbox_api: MockRouter, sqlite_warehouse: Engine
+    combine_type: str, matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Leaf IDs can be derived as a query byproduct."""
     testkit1 = source_from_tuple(
         data_tuple=({"col": 20}, {"col": 40}, {"col": 60}),
         data_keys=["0", "1", "2"],
         name="foo",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
     ).write_to_location()
 
     testkit2 = source_from_tuple(
         data_tuple=({"col": "val1"}, {"col": "val2"}, {"col": "val3"}),
         data_keys=["3", "4", "5"],
         name="bar",
-        engine=sqlite_warehouse,
+        engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
 
@@ -532,15 +421,9 @@ def test_query_leaf_ids(
 
     model = model_factory(dag=testkit1.source.dag).model
 
-    query = Query(
-        testkit1.source,
-        testkit2.source,
-        model=model,
-        combine_type=combine_type,
-        dag=testkit1.source.dag,
-    )
-    data: pl.DataFrame = query.run(return_leaf_id=True)
-    assert set(data.columns) == {"foo_key", "foo_col", "bar_key", "bar_col", "id"}
+    query = model.query(testkit1.source, testkit2.source, combine_type=combine_type)
+    data: pl.DataFrame = query.data(return_leaf_id=True)
+    assert set(data.columns) == {"foo_col", "bar_col", "id"}
 
     assert_frame_equal(
         pl.DataFrame(query.leaf_id),
@@ -560,9 +443,11 @@ def test_query_leaf_ids(
 
 
 def test_query_404_resolution(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
-    testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
+    testkit = source_factory(
+        engine=sqla_sqlite_warehouse, name="foo"
+    ).write_to_location()
 
     # Mock API
     matchbox_api.get("/query").mock(
@@ -577,14 +462,16 @@ def test_query_404_resolution(
 
     # Test with no optional params
     with pytest.raises(MatchboxResolutionNotFoundError, match="42"):
-        Query(testkit.source, dag=testkit.source.dag).run()
+        testkit.source.query().data()
 
 
 def test_query_empty_results_raises_exception(
-    matchbox_api: MockRouter, sqlite_warehouse: Engine
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     """Test that query raises MatchboxEmptyServerResponse when no data is returned."""
-    testkit = source_factory(engine=sqlite_warehouse, name="foo").write_to_location()
+    testkit = source_factory(
+        engine=sqla_sqlite_warehouse, name="foo"
+    ).write_to_location()
 
     # Mock empty results
     matchbox_api.get("/query").mock(
@@ -600,7 +487,73 @@ def test_query_empty_results_raises_exception(
     with pytest.raises(
         MatchboxEmptyServerResponse, match="The query operation returned no data"
     ):
-        Query(testkit.source, dag=testkit.source.dag).run()
+        testkit.source.query().data()
+
+
+def test_query_from_config() -> None:
+    """Test reconstructing a Query from a QueryConfig."""
+    dag = TestkitDAG().dag
+
+    # Create test sources
+    linked_testkit = linked_sources_factory(dag=dag)
+    crn_testkit = linked_testkit.sources["crn"]
+    dh_testkit = linked_testkit.sources["dh"]
+
+    model_testkit = model_factory(
+        left_testkit=crn_testkit,
+        right_testkit=dh_testkit,
+        true_entities=linked_testkit.true_entities,
+        dag=dag,
+    )
+
+    # Add to DAG
+    dag.source(**crn_testkit.into_dag())
+    dag.source(**dh_testkit.into_dag())
+    dag.model(**model_testkit.into_dag())
+
+    # Create original query
+    original_query = model_testkit.model.query(
+        crn_testkit.source,
+        dh_testkit.source,
+        combine_type="explode",
+        threshold=0.75,
+        cleaning={"new_col": "foo_a * 2"},
+    )
+
+    # Get config and reconstruct
+    config = original_query.config
+    reconstructed_query = Query.from_config(config, dag=dag)
+
+    # Verify reconstruction matches original
+    assert reconstructed_query.config == original_query.config
+    assert reconstructed_query.sources == original_query.sources
+    assert reconstructed_query.model.config == original_query.model.config
+    assert reconstructed_query.combine_type == original_query.combine_type
+    assert reconstructed_query.threshold == original_query.threshold
+    assert reconstructed_query.cleaning == original_query.cleaning
+
+
+def test_query_from_config_no_model() -> None:
+    """Test reconstructing a Query without a model."""
+    dag = TestkitDAG().dag
+
+    # Create test source
+    testkit = source_factory(dag=dag)
+
+    # Add to DAG
+    dag.source(**testkit.into_dag())
+
+    # Create query without model
+    original_query = testkit.source.query(threshold=0.5)
+
+    # Reconstruct from config
+    config = original_query.config
+    reconstructed_query = Query.from_config(config, dag=dag)
+
+    # Verify
+    assert reconstructed_query.config == original_query.config
+    assert reconstructed_query.model is None
+    assert reconstructed_query.threshold == 0.5
 
 
 @pytest.mark.parametrize(
@@ -804,7 +757,7 @@ def test_clean_multi_source_data() -> None:
 
     result = _clean(test_data, cleaning_dict)
 
-    # id is always included, plus the cleaned column
+    # Id is always included, plus the cleaned column
     assert set(result.columns) == {"id", "combined"}
     assert result["combined"].to_list() == [
         "Alice: 10",
@@ -812,75 +765,3 @@ def test_clean_multi_source_data() -> None:
         "Bob: 30",
         "Bob: 40",
     ]
-
-
-def test_query_from_config() -> None:
-    """Test reconstructing a Query from a QueryConfig."""
-    dag = TestkitDAG().dag
-
-    # Create test sources
-    linked_testkit = linked_sources_factory(dag=dag)
-    crn_testkit = linked_testkit.sources["crn"]
-    dh_testkit = linked_testkit.sources["dh"]
-
-    model_testkit = model_factory(
-        left_testkit=crn_testkit,
-        right_testkit=dh_testkit,
-        true_entities=linked_testkit.true_entities,
-        dag=dag,
-    )
-
-    # Add to DAG
-    dag.source(**crn_testkit.into_dag())
-    dag.source(**dh_testkit.into_dag())
-    dag.model(**model_testkit.into_dag())
-
-    # Create original query
-    original_query = Query(
-        crn_testkit.source,
-        dh_testkit.source,
-        dag=dag,
-        model=model_testkit.model,
-        combine_type="explode",
-        threshold=0.75,
-        cleaning={"new_col": "foo_a * 2"},
-    )
-
-    # Get config and reconstruct
-    config = original_query.config
-    reconstructed_query = Query.from_config(config, dag=dag)
-
-    # Verify reconstruction matches original
-    assert reconstructed_query.config == original_query.config
-    assert reconstructed_query.sources == original_query.sources
-    assert reconstructed_query.model.config == original_query.model.config
-    assert reconstructed_query.combine_type == original_query.combine_type
-    assert reconstructed_query.threshold == original_query.threshold
-    assert reconstructed_query.cleaning == original_query.cleaning
-
-
-def test_query_from_config_no_model() -> None:
-    """Test reconstructing a Query without a model."""
-    dag = TestkitDAG().dag
-
-    # Create test source
-    testkit = source_factory(dag=dag)
-
-    # Add to DAG
-    dag.source(**testkit.into_dag())
-
-    # Create query without model
-    original_query = Query(
-        testkit.source,
-        dag=dag,
-        threshold=0.5,
-    )
-
-    # Reconstruct from config
-    config = original_query.config
-    reconstructed_query = Query.from_config(config, dag=dag)
-
-    # Verify
-    assert reconstructed_query.config == original_query.config
-    assert reconstructed_query.model is None
-    assert reconstructed_query.threshold == 0.5

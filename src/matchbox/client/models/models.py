@@ -6,12 +6,13 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
+from polars import DataFrame
+
 from matchbox.client import _handler
-from matchbox.client._settings import settings
 from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
-from matchbox.client.queries import CacheMode, Query
+from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
 from matchbox.common.dtos import (
     ModelConfig,
@@ -24,8 +25,8 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_model_results
-from matchbox.common.logging import logger
-from matchbox.common.transform import truth_float_to_int, truth_int_to_float
+from matchbox.common.logging import logger, profile_time
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -127,7 +128,7 @@ class Model:
         self.dag = dag
         self.name = name
         self.description = description
-        self._truth: int = truth_float_to_int(truth)
+        self._truth: int = threshold_float_to_int(truth)
         self.left_query = left_query
         self.right_query = right_query
         self.results: ModelResults | None = None
@@ -204,7 +205,7 @@ class Model:
             right_query=Query.from_config(resolution.config.right_query, dag=dag)
             if resolution.config.right_query
             else None,
-            truth=truth_int_to_float(resolution.truth),
+            truth=threshold_int_to_float(resolution.truth),
         )
 
     @property
@@ -220,13 +221,13 @@ class Model:
     def truth(self) -> float | None:
         """Returns the truth threshold for the model as a float."""
         if self._truth is not None:
-            return truth_int_to_float(self._truth)
+            return threshold_int_to_float(self._truth)
         return None
 
     @truth.setter
     def truth(self, truth: float) -> None:
         """Set the truth threshold for the model."""
-        self._truth = truth_float_to_int(truth)
+        self._truth = threshold_float_to_int(truth)
 
     def delete(self, certain: bool = False) -> bool:
         """Delete the model from the database."""
@@ -234,55 +235,72 @@ class Model:
         result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
         return result.success
 
+    @profile_time(attr="name")
+    def compute_probabilities(
+        self, left_df: DataFrame, right_df: DataFrame | None = None
+    ) -> DataFrame:
+        """Run model instance against data."""
+        if self.config.type == ModelType.LINKER:
+            self.model_instance.prepare(left_df, right_df)
+            probabilities = self.model_instance.link(left=left_df, right=right_df)
+        else:
+            self.model_instance.prepare(left_df)
+            probabilities = self.model_instance.dedupe(data=left_df)
+
+        return probabilities
+
     def run(
-        self, for_validation: bool = False, cache_queries: bool = False
+        self,
+        left_data: DataFrame | None = None,
+        right_data: DataFrame | None = None,
+        for_validation: bool = False,
     ) -> ModelResults:
         """Execute the model pipeline and return results.
 
         Args:
+            left_data (optional): Pre-fetched query data to deduplicate if the model is
+                a deduper, or link on the left if the model is a linker.
+            right_data (optional): Pre-fetched query data to link on the right, if the
+                model is a linker. If the model is a deduper, this argument is ignored.
             for_validation: Whether to download and store extra data to explore and
-                    score results.
-            cache_queries: Whether to cache query results on first run and re-use them
-                subsequently.
+                score results.
         """
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)
-        cache_mode = CacheMode.CLEAN if cache_queries else CacheMode.OFF
-        left_df = self.left_query.set_cache_mode(cache_mode).run(
-            return_leaf_id=for_validation,
-            batch_size=settings.batch_size,
-            reuse_cache=cache_queries,
+
+        left_df = (
+            left_data
+            if left_data is not None
+            else self.left_query.data(return_leaf_id=for_validation)
         )
         right_df = None
 
         if self.config.type == ModelType.LINKER:
             logger.info("Executing right query", prefix=log_prefix)
-            right_df = self.right_query.set_cache_mode(cache_mode).run(
-                return_leaf_id=for_validation,
-                batch_size=settings.batch_size,
-                reuse_cache=cache_queries,
+            right_df = (
+                right_data
+                if right_data is not None
+                else self.right_query.data(return_leaf_id=for_validation)
             )
 
-            self.model_instance.prepare(left_df, right_df)
-            results = self.model_instance.link(left=left_df, right=right_df)
-        else:
-            self.model_instance.prepare(left_df)
-            results = self.model_instance.dedupe(data=left_df)
+        logger.info("Running model logic", prefix=log_prefix)
+        probabilities = self.compute_probabilities(left_df, right_df)
 
         if for_validation:
             self.results = ModelResults(
-                probabilities=results,
+                probabilities=probabilities,
                 left_root_leaf=self.left_query.leaf_id,
                 right_root_leaf=self.right_query.leaf_id
                 if right_df is not None
                 else None,
             )
         else:
-            self.results = ModelResults(probabilities=results)
+            self.results = ModelResults(probabilities=probabilities)
 
         return self.results
 
     @post_run
+    @profile_time(attr="name")
     def sync(self) -> None:
         """Send the model config and results to the server.
 
@@ -292,8 +310,8 @@ class Model:
         resolution = self.to_resolution()
         try:
             existing_resolution = _handler.get_resolution(path=self.resolution_path)
-        except MatchboxResolutionNotFoundError:
             logger.info("Found existing resolution", prefix=log_prefix)
+        except MatchboxResolutionNotFoundError:
             existing_resolution = None
 
         if existing_resolution:
@@ -329,8 +347,12 @@ class Model:
     def download_results(self) -> ModelResults:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(name=self.name)
-        return ModelResults(probabilities=results, metadata=self.config)
+        return ModelResults(probabilities=results)
 
     def query(self, *sources: Source, **kwargs: Any) -> Query:
         """Generate a query for this model."""
         return Query(*sources, **kwargs, model=self, dag=self.dag)
+
+    def clear_data(self) -> None:
+        """Deletes data computed for node."""
+        self.results = None

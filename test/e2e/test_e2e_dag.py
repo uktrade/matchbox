@@ -1,16 +1,17 @@
 import logging
 from collections.abc import Generator
 
-import polars as pl
 import pytest
+from adbc_driver_manager import AdbcConnection
 from httpx import Client
 from polars.testing import assert_frame_equal
-from sqlalchemy import Engine, text
 
 from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.sources import Source, SourceField
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.factories.sources import (
     FeatureConfig,
@@ -51,12 +52,12 @@ class TestE2EPipelineBuilder:
     def setup_environment(
         self,
         matchbox_client: Client,
-        postgres_warehouse: Engine,
+        adbc_postgres_warehouse: AdbcConnection,
     ) -> Generator[None, None, None]:
         """Set up warehouse and database using fixtures."""
         # Persist shared setup for use in the test body
         n_true_entities = 10  # Keep it small for simplicity
-        self.warehouse_engine = postgres_warehouse
+        self.warehouse_engine = adbc_postgres_warehouse
 
         # Create simple feature configurations - just two sources
         features = {
@@ -69,13 +70,18 @@ class TestE2EPipelineBuilder:
                 base_generator="bothify",
                 parameters=(("text", "REG-###-???"),),
             ),
+            "tags": FeatureConfig(
+                name="tags",
+                base_generator="words",
+                parameters=(("nb", 3),),
+            ),
         }
 
         # Create two simple sources that can be linked
         source_parameters = (
             SourceTestkitParameters(
                 name="source_a",
-                engine=postgres_warehouse,
+                engine=self.warehouse_engine,
                 features=(
                     features["company_name"].add_variations(
                         SuffixRule(suffix=" Ltd"),
@@ -88,10 +94,11 @@ class TestE2EPipelineBuilder:
             ),
             SourceTestkitParameters(
                 name="source_b",
-                engine=postgres_warehouse,
+                engine=self.warehouse_engine,
                 features=(
                     features["company_name"],
                     features["registration_id"],
+                    features["tags"],
                 ),
                 n_true_entities=n_true_entities // 2,  # Half overlap
                 repetition=1,  # Duplicate all rows for deduplication testing
@@ -115,11 +122,6 @@ class TestE2EPipelineBuilder:
         yield
 
         # Teardown
-        with postgres_warehouse.connect() as conn:
-            for source_name in self.linked_testkit.sources:
-                conn.execute(text(f"DROP TABLE IF EXISTS {source_name};"))
-            conn.commit()
-
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200, "Failed to clear matchbox database"
 
@@ -158,13 +160,14 @@ class TestE2EPipelineBuilder:
                 select
                     key::text as id,
                     company_name,
-                    registration_id
+                    registration_id,
+                    tags::text[] as tags
                 from
                     source_b;
             """,
             infer_types=True,
             key_field="id",
-            index_fields=["company_name", "registration_id"],
+            index_fields=["company_name", "registration_id", "tags"],
         )
 
         # Dedupe steps
@@ -226,7 +229,7 @@ class TestE2EPipelineBuilder:
         link_a_b.sync()
 
         # Basic verification - we have some linked results and can retrieve them
-        final_df = link_a_b.query(source_a, source_b).run()
+        final_df = link_a_b.query(source_a, source_b).data()
 
         # # Should have linked results
         assert len(final_df) > 0, "Expected some results from first run"
@@ -236,9 +239,13 @@ class TestE2EPipelineBuilder:
         logging.info(f"First run produced {first_run_entities} unique entities")
 
         # Lookup works too
-        test_key = final_df.filter(
-            pl.col(source_b.f(source_b.config.key_field.name)).is_not_null()
-        )[source_b.f(source_b.config.key_field.name)][0]
+        test_key = next(
+            iter(
+                self.linked_testkit.find_entities(
+                    min_appearances={source_b.name: 1, source_a.name: 1}
+                )[0].keys[source_b.name]
+            )
+        )
 
         matches = dag.lookup_key(
             from_source=source_b.name,
@@ -260,6 +267,14 @@ class TestE2EPipelineBuilder:
         # Load default
         reconstructed_dag = DAG("companies").load_default()
         assert reconstructed_dag.run == dag.run
+
+        # Check complex types serialise and deserialise
+        source_b_remote: Source = reconstructed_dag.get_source("source_b")
+        tags_field: SourceField = next(
+            f for f in source_b_remote.index_fields if f.name == "tags"
+        )
+        assert tags_field.type == DataTypes.LIST(DataTypes.STRING)
+
         # Previous update was effective
         assert reconstructed_dag.get_model("final").description == "Updated description"
 
@@ -313,4 +328,4 @@ class TestE2EPipelineBuilder:
         source_a.sync()
         # This will cause downstream queries to fail
         with pytest.raises(MatchboxResolutionNotFoundError):
-            pending_dag.get_model("final").query(source_a).run()
+            pending_dag.get_model("final").query(source_a).data()

@@ -18,6 +18,7 @@ from matchbox.client.models.linkers.weighteddeterministic import (
 )
 from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.factories.entities import (
     FeatureConfig,
     ReplaceRule,
@@ -132,16 +133,14 @@ def configure_splink_probabilistic(
         deterministic_matching_rules.append(f"l.{field} = r.{field}")
 
         # String fields
-        if "TEXT" in field_type.upper():
-            if field_type != "TEXT" or field[0:3].isalpha():
-                blocking_rules.append(
-                    f"SUBSTR(l.{field}, 1, 3) = SUBSTR(r.{field}, 1, 3)"
-                )
+        if field_type.base_type == DataTypes.STRING:
+            blocking_rules.append(f"SUBSTR(l.{field}, 1, 3) = SUBSTR(r.{field}, 1, 3)")
             comparisons.append(cl.JaroWinklerAtThresholds(field, [0.9, 0.7]))
 
         # Numeric fields
         elif any(
-            t in field_type.upper() for t in ["INT", "FLOAT", "DECIMAL", "DOUBLE"]
+            t in field_type
+            for t in [DataTypes.INT64, DataTypes.FLOAT64, DataTypes.DECIMAL]
         ):
             blocking_rules.append(f"CAST(l.{field} AS INT) = CAST(r.{field} AS INT)")
             comparisons.append(cl.ExactMatch(field))
@@ -198,7 +197,7 @@ PROBABILISTIC_LINKERS = [
 
 
 @pytest.mark.parametrize(("Linker", "configure_linker"), PROBABILISTIC_LINKERS)
-@patch.object(Query, "run")
+@patch.object(Query, "data")
 def test_probabilistic_scores_generation(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
 ) -> None:

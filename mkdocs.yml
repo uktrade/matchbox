@@ -12,12 +12,14 @@ nav:
   - Explore DAGs: client/explore-dags.md
   - Look up matches: client/look-up.md
   - Link and deduplicate: client/link-data.md
+  - Run DAGs interactively: client/dag-interactive.md
   - Evaluate models: client/evaluation.md
   - API: 
     - Overview: api/client/index.md
 - Server:
   - Matchbox concepts: server/concepts.md
   - Installation: server/install.md
+  - CLI: server/cli.md
   - Data and security risks: server/risks.md
   - API: 
     - Overview: api/server/index.md

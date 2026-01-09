@@ -20,7 +20,6 @@ from tenacity import (
 )
 
 from matchbox.client._settings import ClientSettings, settings
-from matchbox.client.authorisation import generate_json_web_token
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
     SCHEMA_JUDGEMENTS,
@@ -31,12 +30,11 @@ from matchbox.common.arrow import (
     table_to_buffer,
 )
 from matchbox.common.dtos import (
+    AuthStatusResponse,
     BackendCountableType,
     Collection,
     CollectionName,
     ErrorResponse,
-    LoginAttempt,
-    LoginResult,
     Match,
     ModelResolutionPath,
     OKMessage,
@@ -48,8 +46,9 @@ from matchbox.common.dtos import (
     SourceResolutionPath,
     UploadInfo,
     UploadStage,
+    User,
 )
-from matchbox.common.eval import Judgement, ModelComparison
+from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     EXCEPTION_REGISTRY,
     MatchboxEmptyServerResponse,
@@ -157,8 +156,6 @@ def create_headers(settings: ClientSettings) -> dict[str, str]:
     headers = {"X-Matchbox-Client-Version": version("matchbox_db")}
     if settings.jwt:
         headers["Authorization"] = settings.jwt
-    elif settings.user and settings.private_key:
-        headers["Authorization"] = generate_json_web_token(sub=settings.user)
     return headers
 
 
@@ -171,14 +168,23 @@ def healthcheck() -> OKMessage:
     return OKMessage.model_validate(CLIENT.get("/health").json())
 
 
+# Authentication
+
+
 @http_retry
 def login(user_name: str) -> int:
     """Log into Matchbox and return the user ID."""
     logger.debug(f"Log in attempt for {user_name}")
-    response = CLIENT.post(
-        "/login", json=LoginAttempt(user_name=user_name).model_dump()
-    )
-    return LoginResult.model_validate(response.json()).user_id
+    response = CLIENT.post("/auth/login", json=User(user_name=user_name).model_dump())
+    return User.model_validate(response.json()).user_name
+
+
+@http_retry
+def auth_status() -> AuthStatusResponse:
+    """Check authentication status and return user details."""
+    logger.debug("Checking authentication status")
+    response = CLIENT.get("/auth/status")
+    return AuthStatusResponse.model_validate(response.json())
 
 
 # Retrieval
@@ -493,7 +499,7 @@ def delete_resolution(
 
 
 @http_retry
-def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Table:
+def sample_for_eval(n: int, resolution: ModelResolutionPath, user_name: str) -> Table:
     """Sample model results for evaluation."""
     res = CLIENT.get(
         "/eval/samples",
@@ -503,7 +509,7 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Ta
                 "collection": resolution.collection,
                 "run_id": resolution.run,
                 "resolution": resolution.name,
-                "user_id": user_id,
+                "user_name": user_name,
             }
         ),
     )
@@ -512,30 +518,20 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_id: int) -> Ta
 
 
 @http_retry
-def compare_models(
-    resolutions: list[ModelResolutionPath],
-) -> ModelComparison:
-    """Get a model comparison for a set of model resolutions."""
-    res = CLIENT.post("/eval/compare", json=[r.model_dump() for r in resolutions])
-    scores = {resolution: tuple(pr) for resolution, pr in res.json().items()}
-    return scores
-
-
-@http_retry
 def send_eval_judgement(judgement: Judgement) -> None:
     """Send judgements to the server."""
     logger.debug(
         f"Submitting judgement {judgement.shown}:{judgement.endorsed} "
-        f"for {judgement.user_id}"
+        f"for {judgement.user_name}"
     )
     CLIENT.post("/eval/judgements", json=judgement.model_dump())
 
 
 @http_retry
-def download_eval_data() -> tuple[Table, Table]:
+def download_eval_data(tag: str | None = None) -> tuple[Table, Table]:
     """Download all judgements from the server."""
     logger.debug("Retrieving all judgements.")
-    res = CLIENT.get("/eval/judgements")
+    res = CLIENT.get("/eval/judgements", params=url_params({"tag": tag}))
 
     zip_bytes = BytesIO(res.content)
     with zipfile.ZipFile(zip_bytes, "r") as zip_file:
@@ -570,10 +566,18 @@ def count_backend_items(
     log_prefix = "Backend count"
     logger.debug("Counting", prefix=log_prefix)
 
-    params = {"entity": entity} if entity else {}
-    res = CLIENT.get("/database/count", params=url_params(params))
+    res = CLIENT.get("/database/count", params=url_params({"entity": entity}))
 
     counts = res.json()
     logger.debug(f"Counts: {counts}", prefix=log_prefix)
 
     return counts
+
+
+@http_retry
+def delete_orphans() -> int:
+    """Delete orphaned clusters."""
+    logger.debug("Deleting orphans")
+
+    res = CLIENT.delete("/database/orphans")
+    return ResourceOperationStatus.model_validate(res.json())

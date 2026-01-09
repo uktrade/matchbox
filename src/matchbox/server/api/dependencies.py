@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import (
     Depends,
@@ -21,7 +20,7 @@ from fastapi import (
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
 
-from matchbox.common.logging import get_formatter
+from matchbox.common.logging import get_formatter, logger
 from matchbox.server.base import (
     MatchboxDBAdapter,
     MatchboxServerSettings,
@@ -148,33 +147,42 @@ def validate_jwt(
             headers={"WWW-Authenticate": "Authorization"},
         )
 
-    header_b64, payload_b64, signature_b64 = client_token.encode().split(b".")
-    payload = json.loads(b64_decode(payload_b64))
-
-    # Decode to unicode-escape removes \\n encoding for
-    # secrets stored in AWS secrets manager.
-    public_key = load_pem_public_key(
-        settings.public_key.get_secret_value()
-        .encode()
-        .decode("unicode-escape")
-        .encode()
-    )
-
     try:
+        parts = client_token.encode().split(b".")
+        if len(parts) != 3:
+            raise ValueError("JWT must have 3 parts")
+        header_b64, payload_b64, signature_b64 = parts
+
+        payload = json.loads(b64_decode(payload_b64))
+
+        # Decode to unicode-escape removes \\n encoding for
+        # secrets stored in AWS secrets manager.
+        public_key = load_pem_public_key(
+            settings.public_key.get_secret_value()
+            .encode()
+            .decode("unicode-escape")
+            .encode()
+        )
+
         public_key.verify(b64_decode(signature_b64), header_b64 + b"." + payload_b64)
-    except InvalidSignature as e:
+
+        if payload["exp"] <= time.time():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="JWT expired.",
+                headers={"WWW-Authenticate": "Authorization"},
+            )
+
+    except HTTPException:
+        raise  # Re-raise HTTPExceptions as-is
+    except Exception as e:
+        logger.exception(f"Invalid JWT. Token: {client_token}")
+        # Anything else is an invalid token -> 401
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="JWT invalid.",
             headers={"WWW-Authenticate": "Authorization"},
         ) from e
-
-    if payload["exp"] <= time.time():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT expired.",
-            headers={"WWW-Authenticate": "Authorization"},
-        )
 
 
 def authorisation_dependencies(

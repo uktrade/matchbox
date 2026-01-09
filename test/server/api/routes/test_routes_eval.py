@@ -13,13 +13,9 @@ from matchbox.common.arrow import (
     SCHEMA_JUDGEMENTS,
     JudgementsZipFilenames,
 )
-from matchbox.common.dtos import (
-    ModelResolutionPath,
-)
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
-    MatchboxNoJudgements,
     MatchboxResolutionNotFoundError,
     MatchboxTooManySamplesRequested,
     MatchboxUserNotFoundError,
@@ -31,7 +27,7 @@ def test_insert_judgement_ok(
 ) -> None:
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
-    judgement = Judgement(user_id=1, shown=10, endorsed=[[1]])
+    judgement = Judgement(user_name="alice", shown=[1, 2], endorsed=[[1], [2]])
     response = test_client.post("/eval/judgements", json=judgement.model_dump())
     assert response.status_code == 201
     assert (
@@ -44,7 +40,9 @@ def test_insert_judgement_error(
 ) -> None:
     """Test that judgement insertion bubbles up errors."""
     test_client, mock_backend, _ = api_client_and_mocks
-    fake_judgement = Judgement(user_id=1, shown=10, endorsed=[[1]]).model_dump()
+    fake_judgement = Judgement(
+        user_name="alice", shown=[1, 2], endorsed=[[1], [2]]
+    ).model_dump()
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
     response = test_client.post("/eval/judgements", json=fake_judgement)
@@ -61,8 +59,8 @@ def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> 
     """Test that all judgements can be retrieved."""
     judgements = pa.Table.from_pylist(
         [
-            {"user_id": 1, "shown": 10, "endorsed": 11},
-            {"user_id": 1, "shown": 10, "endorsed": 12},
+            {"user_name": "alice", "shown": 10, "endorsed": 11},
+            {"user_name": "alice", "shown": 10, "endorsed": 12},
         ],
         schema=SCHEMA_JUDGEMENTS,
     )
@@ -100,50 +98,6 @@ def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> 
     assert downloaded_expansion.equals(expansion)
 
 
-def test_compare_models_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
-    test_client, mock_backend, _ = api_client_and_mocks
-    model_a_path = ModelResolutionPath(name="a", collection="default", run=1)
-    model_b_path = ModelResolutionPath(name="b", collection="default", run=1)
-    mock_pr = {model_a_path: (1, 0.5), model_b_path: (0.5, 1)}
-    mock_backend.compare_models.return_value = mock_pr
-
-    response = test_client.post(
-        "/eval/compare",
-        json=[m.model_dump() for m in [model_a_path, model_b_path]],
-    )
-
-    assert response.status_code == 200
-    result = response.json()
-    assert sorted(result.keys()) == ["default/1/a", "default/1/b"]
-    assert tuple(result["default/1/a"]) == mock_pr[model_a_path]
-    assert tuple(result["default/1/b"]) == mock_pr[model_b_path]
-
-
-def test_compare_models_404(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, mock_backend, _ = api_client_and_mocks
-    model_a_path = ModelResolutionPath(name="a", collection="default", run=1)
-    model_b_path = ModelResolutionPath(name="b", collection="default", run=1)
-    model_c_path = ModelResolutionPath(name="c", collection="default", run=1)
-
-    mock_backend.compare_models.side_effect = MatchboxResolutionNotFoundError
-    response = test_client.post(
-        "/eval/compare",
-        json=[m.model_dump() for m in [model_a_path, model_b_path, model_c_path]],
-    )
-    assert response.status_code == 404
-    assert response.json()["exception_type"] == "MatchboxResolutionNotFoundError"
-
-    mock_backend.compare_models.side_effect = MatchboxNoJudgements
-    response = test_client.post(
-        "/eval/compare",
-        json=[m.model_dump() for m in [model_a_path, model_b_path, model_c_path]],
-    )
-    assert response.status_code == 404
-    assert response.json()["exception_type"] == "MatchboxNoJudgements"
-
-
 def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     """Test that samples can be requested."""
     sample = pa.Table.from_pylist(
@@ -167,7 +121,7 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_id": 12,
+            "user_name": "alice",
         },
     )
     assert response.status_code == 200
@@ -208,7 +162,7 @@ def test_get_samples_404(
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_id": 12,
+            "user_name": "alice",
         },
     )
 
@@ -228,7 +182,7 @@ def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]) ->
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_id": 12,
+            "user_name": "alice",
         },
     )
 

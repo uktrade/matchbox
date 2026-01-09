@@ -51,6 +51,22 @@ def evaluate(
             help="Log file path to redirect all logging output (keeps UI clean)",
         ),
     ] = None,
+    sample_file: Annotated[
+        str | None,
+        typer.Option(
+            "--file",
+            "-f",
+            help="Pre-compiled sample file. If set, ignores resolutions parameters.",
+        ),
+    ] = None,
+    session_tag: Annotated[
+        str | None,
+        typer.Option(
+            "--tag",
+            "-t",
+            help="String to use to tag judgements sent to the server.",
+        ),
+    ] = None,
 ) -> None:
     """Start the interactive entity resolution evaluation tool.
 
@@ -82,15 +98,21 @@ def evaluate(
     # Attach warehouse to all objects
     dag: DAG = dag.set_client(warehouse_engine)
 
-    # Get resolution name from --resolution or DAG's final_step
-    model = dag.get_model(resolution) if resolution is not None else dag.final_step
+    if sample_file:
+        resolution = None
+    else:
+        # Get resolution name from --resolution or DAG's final_step
+        model = dag.get_model(resolution) if resolution is not None else dag.final_step
+        resolution = model.resolution_path
 
     try:
         # Create app with loaded DAG (not warehouse string)
         app = EntityResolutionApp(
-            resolution=model.resolution_path.name,
+            resolution=resolution,
             user=user,
             dag=dag,
+            session_tag=session_tag,
+            sample_file=sample_file,
             show_help=True,
         )
         app.run()

@@ -217,14 +217,14 @@ def calculate_min_max_edges(
     min_mod, max_mod = sorted([left_mod, right_mod])
 
     min_edges, max_edges = 0, 0
-    # components where both sides have maximum nodes
+    # Components where both sides have maximum nodes
     min_edges += (
         _min_edges_component(left_div + 1, right_div + 1, deduplicate) * min_mod
     )
     max_edges += (
         _max_edges_component(left_div + 1, right_div + 1, deduplicate) * min_mod
     )
-    # components where one side has maximum nodes
+    # Components where one side has maximum nodes
     left_after_min_mod, right_after_min_mod = left_div + 1, right_div
     if left_mod == min_mod:
         left_after_min_mod, right_after_min_mod = left_div, right_div + 1
@@ -234,7 +234,7 @@ def calculate_min_max_edges(
     max_edges += _max_edges_component(
         left_after_min_mod, right_after_min_mod, deduplicate
     ) * (max_mod - min_mod)
-    # components where both side have minimum nodes
+    # Components where both side have minimum nodes
     min_edges += _min_edges_component(left_div, right_div, deduplicate) * (
         num_components - max_mod
     )
@@ -358,10 +358,10 @@ def generate_dummy_probabilities(
             # For linking (A B) and (C D E), we begin by adding (A - C) and (B - D)
             for i in range(min_comp_nodes):
                 base_edges.add((comp_left_values[i], comp_right_values[i]))
-            # we now add (C - B)
+            # We now add (C - B)
             for i in range(min_comp_nodes - 1):
                 base_edges.add((comp_left_values[i + 1], comp_right_values[i]))
-            # we now add (A - D)
+            # We now add (A - D)
             left_right_diff = max_comp_nodes - min_comp_nodes
             for i in range(left_right_diff):
                 left_i, right_i = 0, min_comp_nodes + i
@@ -884,6 +884,7 @@ def model_factory(
         if right_entities
         else None,
         probabilities=probabilities,
+        _threshold=model._truth,
     )
 
 
@@ -987,4 +988,5 @@ def query_to_model_factory(
         if right_clusters
         else None,
         probabilities=probabilities,
+        _threshold=model._truth,
     )

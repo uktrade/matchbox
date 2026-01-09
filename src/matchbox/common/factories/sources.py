@@ -10,6 +10,7 @@ from typing import Any, ParamSpec, Self, TypeVar
 import pandas as pd
 import polars as pl
 import pyarrow as pa
+from adbc_driver_manager.dbapi import Connection as AdbcConnection
 from faker import Faker
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, create_engine
@@ -20,8 +21,8 @@ from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_QUERY
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
-    DataTypes,
     SourceConfig,
     SourceField,
     SourceResolutionName,
@@ -80,7 +81,7 @@ class SourceTestkitParameters(BaseModel):
 
     features: tuple[FeatureConfig, ...] = Field(default_factory=tuple)
     name: str
-    engine: Engine = Field(default=create_engine("sqlite:///:memory:"))
+    engine: Engine | AdbcConnection = Field(default=create_engine("sqlite:///:memory:"))
     n_true_entities: int | None = Field(default=None)
     repetition: int = Field(default=0)
 
@@ -109,6 +110,7 @@ class SourceTestkit(BaseModel):
     )
 
     @field_validator("data")
+    @classmethod
     def cast_table(cls, value: pa.Table) -> pa.Table:
         """Ensure that the data matches the query schema."""
         for col in SCHEMA_QUERY.names:

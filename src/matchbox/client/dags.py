@@ -1,12 +1,16 @@
 """Objects to define a DAG which indexes, deduplicates and links data."""
 
 import json
+import tempfile
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Self, TypeAlias
 
 import polars as pl
+from platformdirs import user_cache_path
 
 from matchbox.client import _handler
+from matchbox.client._settings import settings
 from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
@@ -28,8 +32,8 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.logging import logger
-from matchbox.common.transform import truth_int_to_float
+from matchbox.common.logging import log_mem_usage, logger, profile_time
+from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -42,6 +46,8 @@ class DAGNodeExecutionStatus(StrEnum):
 
 DAGExecutionStatus: TypeAlias = dict[str, DAGNodeExecutionStatus]
 
+CACHE_DIR = user_cache_path("matchbox")
+
 
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
@@ -52,6 +58,10 @@ class DAG:
         self._run: RunID | None = None
         self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self._cache_dir = tempfile.TemporaryDirectory(dir=str(CACHE_DIR))
+        self.cache_path = Path(self._cache_dir.name)
 
     def _check_dag(self, dag: Self) -> None:
         """Check that the given DAG is the same as this one."""
@@ -75,12 +85,8 @@ class DAG:
         # These issues are not checked when adding a node for the first time either.
         if step.name in self.nodes:
             if step.config.parents != self.nodes[step.name].config.parents:
-                raise ValueError(
-                    "Cannot re-assign name to model with different inputs."
-                )
-            logger.info(
-                f"Overwriting node '{step.name}' and resetting its descendants."
-            )
+                raise ValueError("Cannot re-assign name to model with different inputs")
+            logger.info(f"Overwriting node '{step.name}'.")
 
         if isinstance(step, Model):
             self._check_dag(step.left_query.dag)
@@ -197,7 +203,7 @@ class DAG:
                 right_query=Query.from_config(resolution.config.right_query, dag=self)
                 if resolution.config.right_query
                 else None,
-                truth=truth_int_to_float(resolution.truth),
+                truth=threshold_int_to_float(resolution.truth),
             )
         else:
             raise ValueError(f"Unknown resolution type {resolution.resolution_type}")
@@ -445,8 +451,23 @@ class DAG:
         self,
         start: str | None = None,
         finish: str | None = None,
+        low_memory: bool = False,
+        batch_size: int | None = None,
+        profile: bool = False,
     ) -> None:
-        """Run entire DAG and send results to server."""
+        """Run entire DAG and send results to server.
+
+        Args:
+            start: Name of first node to run
+            finish: Name of last node to run
+            low_memory: Whether to delete data for each node after it is run
+            batch_size: The size used for internal batching. Overrides environment
+                variable if set.
+            profile: whether to log to INFO level the memory usage
+        """
+        if batch_size is None:
+            batch_size = settings.batch_size
+
         # Determine order of execution steps
         root_nodes = self.final_steps
 
@@ -493,12 +514,23 @@ class DAG:
             status[step_name] = DAGNodeExecutionStatus.DOING
             logger.info("\n" + self.draw(status=status))
             try:
-                node.run()
+                if isinstance(node, Source):
+                    node.run(batch_size=batch_size)
+                else:
+                    node.run()
                 node.sync()
+                if profile:
+                    log_mem_usage()
             except Exception as e:
                 logger.error(f"❌ {node.name} failed: {e}")
                 raise e
             status[step_name] = DAGNodeExecutionStatus.DONE
+
+            if low_memory:
+                node.clear_data()
+                logger.info("Cleared node data")
+                if profile:
+                    log_mem_usage()
         logger.info("\n" + self.draw(status=status))
 
     def set_default(self) -> None:
@@ -518,7 +550,7 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
-        threshold: int | None = None,
+        threshold: float | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
 
@@ -528,7 +560,7 @@ class DAG:
             key: The value to match from the source. Usually a primary key
             threshold (optional): The threshold to use for creating clusters.
                 If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
+                If a float, uses that threshold for the specified resolution, and the
                 resolution's cached thresholds for its ancestors
 
         Returns:
@@ -546,6 +578,10 @@ class DAG:
             )
             ```
         """
+        if threshold:
+            if not isinstance(threshold, float):
+                raise ValueError("If passed, threshold must be a float")
+            threshold = threshold_float_to_int(threshold)
         matches = _handler.match(
             targets=[
                 ResolutionPath(name=target, collection=self.name, run=self.run)
@@ -561,11 +597,13 @@ class DAG:
         # If no matches, _handler will raise
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
+    @profile_time(kwarg="node")
     def resolve(
         self,
         node: ResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
+        threshold: float | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
@@ -574,7 +612,15 @@ class DAG:
                 If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
+            threshold (optional): The threshold to use for creating clusters.
+                If None, uses the resolutions' default threshold
+                If a float, uses that threshold for the specified resolution, and the
+                resolution's cached thresholds for its ancestors
         """
+        if threshold:
+            if not isinstance(threshold, float):
+                raise ValueError("If passed, threshold must be a float")
+            threshold = threshold_float_to_int(threshold)
         point_of_truth = self.nodes[node] if node else self.final_step
 
         available_sources = {
@@ -609,6 +655,7 @@ class DAG:
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
                         return_leaf_id=True,
+                        threshold=threshold,
                     )
                 )
             )

@@ -12,13 +12,13 @@ from respx import MockRouter
 from matchbox.client._handler import create_client
 from matchbox.client._settings import ClientSettings
 from matchbox.client._settings import settings as client_settings
-from matchbox.client.authorisation import (
-    generate_EdDSA_key_pair,
-    generate_json_web_token,
-)
 from matchbox.server.api import app, dependencies
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
 from matchbox.server.uploads import InMemoryUploadTracker
+from test.scripts.authorisation import (
+    generate_EdDSA_key_pair,
+    generate_json_web_token,
+)
 
 
 @pytest.fixture(scope="function")
@@ -43,14 +43,27 @@ def env_setter() -> Generator[Callable[[str, str], None], None, None]:
 
 
 @pytest.fixture(scope="function")
+def api_EdDSA_key_pair() -> tuple[bytes, bytes]:
+    """Return EdDSA key pair for testing."""
+    return generate_EdDSA_key_pair()
+
+
+@pytest.fixture(scope="function")
 def api_client_and_mocks(
+    api_EdDSA_key_pair: tuple[bytes, bytes],
     env_setter: Callable[[str, str], None],
 ) -> Generator[tuple[TestClient, Mock, Mock], None, None]:
     """Return client to testable API and associated mocks."""
     # 1) Prepare keys for authentication
-    private_key, public_key = generate_EdDSA_key_pair()
-    env_setter("MB__CLIENT__PRIVATE_KEY", private_key.decode())
-    token = generate_json_web_token(sub="test.user@email.com")
+    private_key, public_key = api_EdDSA_key_pair
+    user = "test.user@email.com"
+    token = generate_json_web_token(
+        private_key_bytes=private_key,
+        sub=user,
+        api_root=client_settings.api_root,
+    )
+    env_setter("MB__CLIENT__USER", user)
+    env_setter("MB__CLIENT__JWT", token)
     auth_headers = {"Authorization": token}
 
     # 2) Override backend with mock

@@ -16,11 +16,10 @@ from matchbox.client.models.linkers import DeterministicLinker
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES, table_to_buffer
 from matchbox.common.dtos import (
-    BackendResourceType,
     Collection,
     CRUDOperation,
+    ErrorResponse,
     Match,
-    NotFoundError,
     Resolution,
     ResolutionName,
     ResolutionPath,
@@ -680,9 +679,9 @@ def test_lookup_key_404_source(matchbox_api: MockRouter) -> None:
     matchbox_api.get("/match").mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Resolution 42 not found",
-                entity=BackendResourceType.RESOLUTION,
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Resolution 42 not found",
             ).model_dump(),
         )
     )
@@ -794,9 +793,9 @@ def test_dag_creates_new_collection(
         side_effect=[
             Response(
                 404,
-                json=NotFoundError(
-                    details="Collection not found",
-                    entity=BackendResourceType.COLLECTION,
+                json=ErrorResponse(
+                    exception_type="MatchboxCollectionNotFoundError",
+                    message="Collection not found",
                 ).model_dump(),
             ),
             Response(
@@ -1011,9 +1010,9 @@ def test_dag_load_server_run(matchbox_api: MockRouter) -> None:
     matchbox_api.get(f"/collections/{test_dag.name}/runs/1").mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Collection not found",
-                entity=BackendResourceType.COLLECTION,
+            json=ErrorResponse(
+                exception_type="MatchboxCollectionNotFoundError",
+                message="Collection not found",
             ).model_dump(),
         ),
     )

@@ -194,9 +194,9 @@ class MatchboxUserNotFoundError(MatchboxException):
         self.user_name = user_name
 
     def to_details(self) -> dict[str, Any] | None:
-        """Return user_id if set."""
-        if self.user_id is not None:
-            return {"user_id": self.user_id}
+        """Return user_name if set."""
+        if self.user_name is not None:
+            return {"user_name": self.user_name}
         return None
 
 

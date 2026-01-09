@@ -161,7 +161,7 @@ class MatchboxPostgresEvaluationMixin:
             table_name="judgements",
             schema_name="mb",
             column_types={
-                "root": BIGINT,
+                "root": BIGINT(),
             },
             data=referenced_clusters,
         ) as temp_table:

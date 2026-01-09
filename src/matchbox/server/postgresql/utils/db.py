@@ -227,7 +227,7 @@ def ingest_to_temporary_table(
     table_name: str,
     schema_name: str,
     data: ArrowTable,
-    column_types: dict[str, type[TypeEngine]],
+    column_types: dict[str, TypeEngine],
     max_chunksize: int | None = None,
 ) -> Generator[Table, None, None]:
     """Context manager to ingest Arrow data to a temporary table with explicit types.
@@ -236,7 +236,7 @@ def ingest_to_temporary_table(
         table_name: Base name for the temporary table
         schema_name: Schema where the temporary table will be created
         data: PyArrow table containing the data to ingest
-        column_types: Map of column names to SQLAlchemy types
+        column_types: Map of column names to SQLAlchemy type instances
         max_chunksize: Optional maximum chunk size for batches
 
     Returns:
@@ -253,7 +253,7 @@ def ingest_to_temporary_table(
         # Create SQLAlchemy Table from explicit type mapping
         metadata = MetaData(schema=schema_name)
         columns = [
-            Column(column_name, column_type())
+            Column(column_name, column_type)
             for column_name, column_type in column_types.items()
             if column_name in data.column_names
         ]

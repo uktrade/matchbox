@@ -135,8 +135,8 @@ def test_ingest_to_temporary_table(
 
     # Define the column types for the temporary table
     column_types = {
-        "id": BIGINT,
-        "value": TEXT,
+        "id": BIGINT(),
+        "value": TEXT(),
     }
 
     # Use the context manager to create and populate a temporary table

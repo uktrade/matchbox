@@ -4,8 +4,10 @@ from collections.abc import Iterator
 
 import polars as pl
 import pyarrow as pa
-from sqlalchemy import func, join, select
-from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy import func, join, literal, select
+from sqlalchemy.dialects.postgresql import ARRAY, BIGINT, BYTEA, TEXT
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.sql import over
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -50,7 +52,7 @@ def _fetch_existing_clusters(data_hashes: pa.Table, column: str) -> pl.DataFrame
         table_name="hashes",
         schema_name="mb",
         column_types={
-            "cluster_hash": BYTEA,
+            "cluster_hash": BYTEA(),
         },
         data=data_hashes.select([column]).rename_columns(["cluster_hash"]),
     ) as temp_table:
@@ -68,11 +70,9 @@ def _fetch_existing_clusters(data_hashes: pa.Table, column: str) -> pl.DataFrame
 
 
 def insert_hashes(
-    path: SourceResolutionPath,
-    data_hashes: pa.Table,
-    batch_size: int,
+    path: SourceResolutionPath, data_hashes: pa.Table, batch_size: int
 ) -> None:
-    """Indexes hash data for a source within Matchbox.
+    """Indexes hash data for a source.
 
     Args:
         path: The path of the source resolution
@@ -99,6 +99,7 @@ def insert_hashes(
         if resolution.fingerprint != fingerprint:
             raise MatchboxResolutionInvalidData
 
+        # Determine if the resolution already has any keys
         existing_keys = session.execute(
             select(func.count())
             .select_from(
@@ -116,120 +117,145 @@ def insert_hashes(
 
         source_config_id = resolution.source_config.source_config_id
 
-    existing_hash_lookup = _fetch_existing_clusters(data_hashes, "hash")
-
-    data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
-
-    # Don't insert new hashes, but new keys need existing hash IDs
-    if existing_hash_lookup.is_empty():
-        new_hashes = data_hashes.select("hash").unique()
-    else:
-        new_hashes = (
-            data_hashes.select("hash")
-            .unique()
-            .join(
-                other=existing_hash_lookup.select(["cluster_hash"]),
-                left_on="hash",
-                right_on="cluster_hash",
-                how="anti",
-            )
-        )
-
-    if new_hashes.shape[0]:
-        # Create new cluster records with sequential IDs
-        next_cluster_id = PKSpace.reserve_block("clusters", len(new_hashes))
-    else:
-        # The value of next_cluster_id is irrelevant as cluster_records will be empty
-        next_cluster_id = 0
-
-    cluster_records = (
-        new_hashes.with_row_index("cluster_id")
-        .with_columns(
-            [
-                (pl.col("cluster_id") + next_cluster_id)
-                .cast(pl.Int64)
-                .alias("cluster_id")
-            ]
-        )
-        .rename({"hash": "cluster_hash"})
-    )
-
-    # Create a combined lookup with both existing and new mappings
-    lookup = pl.concat([existing_hash_lookup, cluster_records], how="vertical")
-    del existing_hash_lookup
-
-    # Add cluster_id values to data hashes
-    hashes_with_ids = data_hashes.join(lookup, left_on="hash", right_on="cluster_hash")
-    del data_hashes, lookup
-
-    # Explode keys
-    # If we expect large lists of keys, we might want to batch this
-    # Checking the database suggests this is not an issue at the moment
-    keys_records = (
-        hashes_with_ids.select(["cluster_id", "keys"])
-        .explode("keys")
-        .rename({"keys": "key"})
-    )
-    del hashes_with_ids
-
-    if keys_records.shape[0] > 0:
-        next_key_id = PKSpace.reserve_block("cluster_keys", len(keys_records))
-    else:
-        # The next_key_id is irrelevant if we don't write any keys records
-        next_key_id = 0
-
-    # Add required columns
-    keys_records = keys_records.with_row_index("key_id").with_columns(
-        [
-            (pl.col("key_id") + next_key_id).alias("key_id"),
-            pl.lit(source_config_id, dtype=pl.Int64).alias("source_config_id"),
-        ]
-    )
-
-    # Insert new clusters and all source primary keys
-    with MBDB.get_adbc_connection() as adbc_connection:
+    with (
+        ingest_to_temporary_table(
+            table_name="incoming_hashes",
+            schema_name="mb",
+            column_types={"hash": BYTEA(), "keys": ARRAY(TEXT)},
+            data=data_hashes.select(["hash", "keys"]),
+            max_chunksize=batch_size,
+        ) as incoming,
+        MBDB.get_session() as session,
+    ):
         try:
-            # Bulk insert into Clusters table (only new clusters)
-            if not cluster_records.is_empty():
-                large_append(
-                    data=cluster_records.to_arrow(),
-                    table_class=Clusters,
-                    adbc_connection=adbc_connection,
-                    max_chunksize=batch_size,
+            distinct_hashes = (
+                select(incoming.c.hash).distinct().subquery("distinct_hashes")
+            )
+
+            new_hashes = (
+                select(distinct_hashes.c.hash.label("cluster_hash"))
+                .select_from(
+                    distinct_hashes.outerjoin(
+                        Clusters, Clusters.cluster_hash == distinct_hashes.c.hash
+                    )
                 )
+                .where(Clusters.cluster_id.is_(None))
+                .subquery("new_hashes")
+            )
+
+            new_hashes_count = session.execute(
+                select(func.count()).select_from(new_hashes)
+            ).scalar_one()
+
+            if new_hashes_count > 0:
                 logger.info(
-                    f"Added {len(cluster_records):,} objects to Clusters table",
+                    f"Will add {new_hashes_count:,} entries to Clusters table",
                     prefix=log_prefix,
                 )
+                base_cluster_id = PKSpace.reserve_block("clusters", new_hashes_count)
 
-            # Bulk insert into ClusterSourceKey table (all links)
-            if not keys_records.is_empty():
-                large_append(
-                    data=keys_records.to_arrow(),
-                    table_class=ClusterSourceKey,
-                    adbc_connection=adbc_connection,
-                    max_chunksize=batch_size,
+                numbered_clusters = (
+                    select(
+                        (
+                            literal(base_cluster_id - 1, BIGINT)
+                            + over(func.row_number())
+                        ).label("cluster_id"),
+                        new_hashes.c.cluster_hash,
+                    )
+                ).subquery("numbered_clusters")
+
+                # Insert new clusters
+                stmt_insert_clusters = (
+                    pg_insert(Clusters)
+                    .from_select(
+                        ["cluster_id", "cluster_hash"],
+                        select(
+                            numbered_clusters.c.cluster_id,
+                            numbered_clusters.c.cluster_hash,
+                        ),
+                    )
+                    .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
                 )
+                session.execute(stmt_insert_clusters)
+                session.flush()
+            else:
+                logger.info("No new clusters to add", prefix=log_prefix)
+
+            cluster_map = (
+                select(
+                    Clusters.cluster_id,
+                    Clusters.cluster_hash,
+                ).select_from(
+                    join(
+                        Clusters,
+                        distinct_hashes,
+                        Clusters.cluster_hash == distinct_hashes.c.hash,
+                    )
+                )
+            ).subquery("cluster_map")
+
+            exploded = (
+                select(
+                    cluster_map.c.cluster_id,
+                    func.unnest(incoming.c["keys"]).label("key"),
+                )
+                .select_from(
+                    incoming.join(
+                        cluster_map, cluster_map.c.cluster_hash == incoming.c.hash
+                    )
+                )
+                .subquery("exploded")
+            )
+
+            # Count exploded rows
+            new_keys_count = session.execute(
+                select(func.count()).select_from(exploded)
+            ).scalar_one()
+
+            if new_keys_count > 0:
                 logger.info(
-                    f"Added {len(keys_records):,} PKs to ClusterSourceKey table",
+                    f"Will add {new_keys_count:,} entries to ClusterSourceKey table",
                     prefix=log_prefix,
                 )
+                base_key_id = PKSpace.reserve_block("cluster_keys", new_keys_count)
 
-            adbc_connection.commit()
+                numbered_keys = (
+                    select(
+                        (
+                            literal(base_key_id - 1, BIGINT) + over(func.row_number())
+                        ).label("key_id"),
+                        exploded.c.cluster_id,
+                        literal(source_config_id, BIGINT).label("source_config_id"),
+                        exploded.c.key,
+                    )
+                ).subquery("numbered_keys")
 
+                # Unlike for clusters, we don't expect conflicts here:
+                # - resolution should be locked
+                # - earlier we checked that it doesn't have any data
+                stmt_insert_keys = pg_insert(ClusterSourceKey).from_select(
+                    ["key_id", "cluster_id", "source_config_id", "key"],
+                    select(
+                        numbered_keys.c.key_id,
+                        numbered_keys.c.cluster_id,
+                        numbered_keys.c.source_config_id,
+                        numbered_keys.c.key,
+                    ),
+                )
+                session.execute(stmt_insert_keys)
+                session.commit()
+            else:
+                logger.info("No cluster keys to add", prefix=log_prefix)
         except Exception as e:
             # Log the error and rollback
             logger.warning(f"Error, rolling back: {e}", prefix=log_prefix)
-            adbc_connection.rollback()
+            session.rollback()
             raise
 
     MBDB.vacuum_analyze(
         Clusters.__table__.fullname,
         ClusterSourceKey.__table__.fullname,
     )
-
-    if cluster_records.is_empty() and keys_records.is_empty():
-        logger.info("No new records to add", prefix=log_prefix)
 
     logger.info("Finished", prefix=log_prefix)
 

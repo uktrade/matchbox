@@ -26,6 +26,13 @@ class MatchboxException(Exception):
         """Initialise the exception."""
         super().__init__(message or self.__doc__)
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return exception-specific details for serialisation.
+
+        Override in subclasses that have additional constructor arguments.
+        """
+        return None
+
 
 # -- Common data objects exceptions --
 
@@ -186,6 +193,12 @@ class MatchboxUserNotFoundError(MatchboxException):
         super().__init__(message)
         self.user_name = user_name
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return user_name if set."""
+        if self.user_name is not None:
+            return {"user_name": self.user_name}
+        return None
+
 
 class MatchboxResolutionNotFoundError(MatchboxException):
     """Resolution not found."""
@@ -201,6 +214,12 @@ class MatchboxResolutionNotFoundError(MatchboxException):
 
         super().__init__(message)
         self.name = name
+
+    def to_details(self) -> dict[str, Any] | None:
+        """Return name if set."""
+        if self.name is not None:
+            return {"name": str(self.name)}
+        return None
 
 
 class MatchboxCollectionNotFoundError(MatchboxException):
@@ -218,6 +237,12 @@ class MatchboxCollectionNotFoundError(MatchboxException):
         super().__init__(message)
         self.name = name
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return name if set."""
+        if self.name is not None:
+            return {"name": str(self.name)}
+        return None
+
 
 class MatchboxRunNotFoundError(MatchboxException):
     """Run not found."""
@@ -232,6 +257,12 @@ class MatchboxRunNotFoundError(MatchboxException):
         super().__init__(message)
         self.run_id = run_id
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return run_id if set."""
+        if self.run_id is not None:
+            return {"run_id": self.run_id}
+        return None
+
 
 class MatchboxDataNotFound(MatchboxException):
     """Data doesn't exist in the Matchbox source table."""
@@ -240,7 +271,7 @@ class MatchboxDataNotFound(MatchboxException):
         self,
         message: str | None = None,
         table: str | None = None,
-        data: str | dict[str, Any] | list[Any] | set[Any] | None = None,
+        data: list[Any] | None = None,
     ) -> None:
         """Initialise the exception."""
         if message is None:
@@ -253,6 +284,15 @@ class MatchboxDataNotFound(MatchboxException):
         super().__init__(message)
         self.table = table
         self.data = data
+
+    def to_details(self) -> dict[str, Any] | None:
+        """Return table and data if set."""
+        details: dict[str, Any] = {}
+        if self.table is not None:
+            details["table"] = self.table
+        if self.data is not None:
+            details["data"] = self.data
+        return details if details else None
 
 
 # -- Server-side API exceptions --
@@ -287,6 +327,13 @@ class MatchboxDeletionNotConfirmed(MatchboxException):
             )
 
         super().__init__(message)
+        self.children = children
+
+    def to_details(self) -> dict[str, Any] | None:
+        """Return children if set."""
+        if self.children is not None:
+            return {"children": self.children}
+        return None
 
 
 class MatchboxResolutionAlreadyExists(MatchboxException):
@@ -350,3 +397,20 @@ class MatchboxDatabaseWriteError(MatchboxException):
 
 class MatchboxLockError(MatchboxException):
     """Trying to modify locked data."""
+
+
+# -- Exception Registry --
+
+
+def _get_all_subclasses(cls: type) -> list[type]:
+    """Recursively get all subclasses of a class."""
+    subclasses = []
+    for subclass in cls.__subclasses__():
+        subclasses.append(subclass)
+        subclasses.extend(_get_all_subclasses(subclass))
+    return subclasses
+
+
+EXCEPTION_REGISTRY: dict[str, type[MatchboxException]] = {
+    exc.__name__: exc for exc in _get_all_subclasses(MatchboxException)
+}

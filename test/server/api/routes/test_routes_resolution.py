@@ -5,9 +5,8 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
-    NotFoundError,
+    ErrorResponse,
     ResolutionPath,
     ResourceOperationStatus,
     UploadInfo,
@@ -56,7 +55,7 @@ def test_get_resolution_404(
     response = test_client.get("/collections/default/runs/1/resolutions/nonexistent")
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.RESOLUTION
+    assert response.json()["exception_type"] == "MatchboxResolutionNotFoundError"
 
 
 def test_insert_resolution(
@@ -101,8 +100,9 @@ def test_insert_resolution_error(
     )
 
     assert response.status_code == 500
-    assert response.json()["success"] is False
-    assert response.json()["details"] == "Test error"
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxServerError"
+    assert error.message.startswith("An internal server error occurred. Reference:")
 
 
 def test_update_resolution(
@@ -141,8 +141,9 @@ def test_update_resolution(
     )
 
     assert response.status_code == 500
-    assert response.json()["success"] is False
-    assert response.json()["details"] == "Test error"
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxServerError"
+    assert error.message.startswith("An internal server error occurred. Reference:")
 
 
 # We can patch BackgroundTasks, since the api_client_and_mocks fixture
@@ -242,8 +243,8 @@ def test_set_data_404(
 
     # Correct error response
     assert response.status_code == 404
-    error404 = NotFoundError.model_validate(response.json())
-    assert error404.entity == BackendResourceType.RESOLUTION
+    error404 = ErrorResponse.model_validate(response.json())
+    assert error404.exception_type == "MatchboxResolutionNotFoundError"
     # Upload doesn't proceed
     mock_s3_upload.assert_not_called()
     mock_add_task.assert_not_called()
@@ -274,8 +275,9 @@ def test_set_data_file_format(
 
     # Correct error response
     assert response.status_code == 400
-    operation_status = ResourceOperationStatus.model_validate(response.json())
-    assert "invalid parquet" in operation_status.details.lower()
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxServerFileError"
+    assert "invalid parquet" in error.message.lower()
     # Upload doesn't proceed
     mock_s3_upload.assert_not_called()
     mock_add_task.assert_not_called()
@@ -309,9 +311,10 @@ def test_set_data_already_queued(
     )
 
     # Correct error response
-    assert response.status_code == 400
-    operation_status = ResourceOperationStatus.model_validate(response.json())
-    assert "Upload already being processed." in operation_status.details
+    assert response.status_code == 423
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxLockError"
+    assert "Upload already being processed." in error.message
     # Upload doesn't proceed
     mock_s3_upload.assert_not_called()
     mock_add_task.assert_not_called()
@@ -331,8 +334,8 @@ def test_get_upload_status_404(
     )
 
     assert response.status_code == 404
-    error404 = NotFoundError.model_validate(response.json())
-    error404.entity = BackendResourceType.RESOLUTION
+    error404 = ErrorResponse.model_validate(response.json())
+    assert error404.exception_type == "MatchboxResolutionNotFoundError"
 
 
 def test_get_upload_status_gets_errors(
@@ -404,9 +407,9 @@ def test_delete_resolution_needs_confirmation(
     )
 
     assert response.status_code == 409
-    assert response.json()["success"] is False
-    message = response.json()["details"]
-    assert "dedupe1" in message and "dedupe2" in message
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxDeletionNotConfirmed"
+    assert "dedupe1" in error.message and "dedupe2" in error.message
 
 
 @pytest.mark.parametrize("certain", [True, False])
@@ -424,5 +427,5 @@ def test_delete_resolution_404(
     )
 
     assert response.status_code == 404
-    error = NotFoundError.model_validate(response.json())
-    assert error.entity == BackendResourceType.RESOLUTION
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxResolutionNotFoundError"

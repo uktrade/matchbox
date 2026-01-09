@@ -16,9 +16,8 @@ from matchbox.client.sources import (
 )
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
-    NotFoundError,
+    ErrorResponse,
     Resolution,
     ResourceOperationStatus,
     SourceField,
@@ -335,8 +334,9 @@ def test_source_sync(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) ->
     ).mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Source not found", entity=BackendResourceType.RESOLUTION
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Source not found",
             ).model_dump(),
         )
     )

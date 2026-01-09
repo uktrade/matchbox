@@ -12,11 +12,10 @@ from matchbox.client.models.linkers.base import LinkerSettings
 from matchbox.client.queries import Query
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
+    ErrorResponse,
     ModelConfig,
     ModelType,
-    NotFoundError,
     Resolution,
     ResourceOperationStatus,
     UploadInfo,
@@ -114,8 +113,9 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     ).mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Model not found", entity=BackendResourceType.RESOLUTION
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Model not found",
             ).model_dump(),
         )
     )
@@ -330,17 +330,15 @@ def test_delete_resolution_needs_confirmation(matchbox_api: MockRouter) -> None:
     testkit = model_factory()
 
     # Mock the DELETE endpoint with 409 confirmation required response
-    error_details = "Cannot delete model with dependent models: dedupe1, dedupe2"
     route = matchbox_api.delete(
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}"
     ).mock(
         return_value=Response(
             409,
-            json=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {testkit.model.name}",
-                operation=CRUDOperation.DELETE,
-                details=error_details,
+            json=ErrorResponse(
+                exception_type="MatchboxDeletionNotConfirmed",
+                message="Cannot delete model with dependent models: dedupe1, dedupe2",
+                details={"children": ["dedupe1", "dedupe2"]},
             ).model_dump(),
         )
     )

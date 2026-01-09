@@ -91,7 +91,13 @@ def api_client_and_mocks(
     app.dependency_overrides[dependencies.settings] = lambda: test_settings
 
     # 5) Yield authenticated test client and the server-side mocks
-    yield TestClient(app, headers=auth_headers), mock_backend, mock_tracker
+    # raise_server_exceptions=False ensures exception handlers return responses instead
+    # of raising the exception to the test
+    yield (
+        TestClient(app, headers=auth_headers, raise_server_exceptions=False),
+        mock_backend,
+        mock_tracker,
+    )
 
     # 6) Restore API's dependencies
     # The client settings should be reset by env_setter once we exit this context

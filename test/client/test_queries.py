@@ -14,7 +14,7 @@ from matchbox.common.arrow import (
     SCHEMA_QUERY_WITH_LEAVES,
     table_to_buffer,
 )
-from matchbox.common.dtos import BackendResourceType, NotFoundError, QueryConfig
+from matchbox.common.dtos import ErrorResponse, QueryConfig
 from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
@@ -453,9 +453,9 @@ def test_query_404_resolution(
     matchbox_api.get("/query").mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Resolution 42 not found",
-                entity=BackendResourceType.RESOLUTION,
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Resolution 42 not found",
             ).model_dump(),
         )
     )

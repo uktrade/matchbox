@@ -74,11 +74,6 @@ erDiagram
         bigint root PK,FK
         bigint leaf PK,FK
     }
-    PKSpace {
-        bigint id PK
-        bigint next_cluster_id
-        bigint next_cluster_keys_id
-    }
     Probabilities {
         bigint resolution_id PK,FK
         bigint cluster_id PK,FK

@@ -274,6 +274,10 @@ def ingest_to_temporary_table(
             )
             connection.commit()
 
+        MBDB.vacuum_analyze(
+            f"{schema_name}.{temp_table_name}",
+        )
+
         yield temp_table
 
     finally:

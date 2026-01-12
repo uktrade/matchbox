@@ -30,7 +30,6 @@ from matchbox.server.postgresql.orm import (
     ClusterSourceKey,
     Contains,
     EvalJudgements,
-    PKSpace,
     Probabilities,
     Resolutions,
     SourceConfigs,
@@ -69,13 +68,10 @@ class MatchboxPostgresEvaluationMixin:
                     )
                 )
             ):
-                cluster_id = PKSpace.reserve_block(table="clusters", block_size=1)
-                session.add(
-                    Clusters(
-                        cluster_id=cluster_id,
-                        cluster_hash=cluster_hash,
-                    )
-                )
+                new_c = Clusters(cluster_hash=cluster_hash)
+                session.add(new_c)
+                session.flush()
+                cluster_id = new_c.cluster_id
                 for leaf_id in leaves:
                     session.add(Contains(root=cluster_id, leaf=leaf_id))
 
@@ -113,7 +109,6 @@ class MatchboxPostgresEvaluationMixin:
                         timestamp=datetime.now(UTC),
                     )
                 )
-
                 session.commit()
 
     def get_judgements(self, tag: str | None = None) -> tuple[Table, Table]:  # noqa: D102

@@ -1,7 +1,7 @@
 """ORM classes for the Matchbox PostgreSQL database."""
 
 import json
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from sqlalchemy import (
     BIGINT,
@@ -17,9 +17,8 @@ from sqlalchemy import (
     UniqueConstraint,
     select,
     text,
-    update,
 )
-from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
 from matchbox.common.dtos import Collection as CommonCollection
@@ -553,57 +552,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             )
 
 
-class PKSpace(MBDB.MatchboxBase):
-    """Table used to reserve ranges of primary keys."""
-
-    __tablename__ = "pk_space"
-
-    id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    next_cluster_id: Mapped[int] = mapped_column(BIGINT, nullable=False)
-    next_cluster_keys_id: Mapped[int] = mapped_column(BIGINT, nullable=False)
-
-    @classmethod
-    def initialise(cls) -> None:
-        """Create PKSpace tracking row if not exists."""
-        with MBDB.get_session() as session:
-            init_statement = (
-                insert(cls)
-                .values(id=1, next_cluster_id=1, next_cluster_keys_id=1)
-                .on_conflict_do_nothing()
-            )
-
-            session.execute(init_statement)
-            session.commit()
-
-    @classmethod
-    def reserve_block(
-        cls, table: Literal["clusters", "cluster_keys"], block_size: int
-    ) -> int:
-        """Atomically get next available ID for table, and increment it."""
-        if block_size < 1:
-            raise ValueError("Block size must be at least 1.")
-
-        match table:
-            case "clusters":
-                next_id_col = "next_cluster_id"
-            case "cluster_keys":
-                next_id_col = "next_cluster_keys_id"
-
-        with MBDB.get_session() as session:
-            try:
-                next_id = session.execute(
-                    update(cls)
-                    .values(**{next_id_col: getattr(cls, next_id_col) + block_size})
-                    .returning(getattr(cls, next_id_col) - block_size)
-                ).scalar_one()
-                session.commit()
-            except:
-                session.rollback()
-                raise
-
-            return next_id
-
-
 class SourceFields(CountMixin, MBDB.MatchboxBase):
     """Table for storing column details for SourceConfigs."""
 
@@ -884,6 +832,7 @@ class Contains(CountMixin, MBDB.MatchboxBase):
     # Constraints and indices
     __table_args__ = (
         CheckConstraint("root != leaf", name="no_self_containment"),
+        UniqueConstraint("root", "leaf"),
         Index("ix_contains_root_leaf", "root", "leaf"),
         Index("ix_contains_leaf_root", "leaf", "root"),
     )

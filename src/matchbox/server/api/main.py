@@ -40,27 +40,7 @@ from matchbox.common.dtos import (
     SourceResolutionName,
     SourceResolutionPath,
 )
-from matchbox.common.exceptions import (
-    MatchboxCollectionAlreadyExists,
-    MatchboxCollectionNotFoundError,
-    MatchboxDataNotFound,
-    MatchboxDeletionNotConfirmed,
-    MatchboxException,
-    MatchboxLockError,
-    MatchboxNoJudgements,
-    MatchboxResolutionAlreadyExists,
-    MatchboxResolutionExistingData,
-    MatchboxResolutionInvalidData,
-    MatchboxResolutionNotFoundError,
-    MatchboxResolutionNotQueriable,
-    MatchboxResolutionUpdateError,
-    MatchboxRunAlreadyExists,
-    MatchboxRunNotFoundError,
-    MatchboxRunNotWriteable,
-    MatchboxServerFileError,
-    MatchboxTooManySamplesRequested,
-    MatchboxUserNotFoundError,
-)
+from matchbox.common.exceptions import MatchboxHttpException
 from matchbox.common.logging import logger
 from matchbox.server.api.dependencies import (
     BackendDependency,
@@ -95,56 +75,21 @@ async def http_exception_handler(
     )
 
 
-# Status code mapping for Matchbox exceptions
-EXCEPTION_STATUS_CODES: dict[type[MatchboxException], int] = {
-    # 400 - Bad Request
-    MatchboxServerFileError: 400,
-    # 404 - Not Found
-    MatchboxCollectionNotFoundError: 404,
-    MatchboxRunNotFoundError: 404,
-    MatchboxResolutionNotFoundError: 404,
-    MatchboxDataNotFound: 404,
-    MatchboxUserNotFoundError: 404,
-    MatchboxNoJudgements: 404,
-    # 409 - Conflict
-    MatchboxDeletionNotConfirmed: 409,
-    MatchboxCollectionAlreadyExists: 409,
-    MatchboxResolutionAlreadyExists: 409,
-    MatchboxRunAlreadyExists: 409,
-    MatchboxResolutionExistingData: 409,
-    # 422 - Unprocessable Entity
-    MatchboxTooManySamplesRequested: 422,
-    MatchboxResolutionInvalidData: 422,
-    MatchboxResolutionUpdateError: 422,
-    MatchboxResolutionNotQueriable: 422,
-    # 423 - Locked
-    MatchboxRunNotWriteable: 423,
-    MatchboxLockError: 423,
-}
-
-
-@app.exception_handler(MatchboxException)
-async def matchbox_exception_handler(
-    request: Request, exc: MatchboxException
-) -> JSONResponse:
-    """Unified handler for all Matchbox exceptions."""
-    status_code = EXCEPTION_STATUS_CODES.get(type(exc), 500)
-
-    error_response = ErrorResponse(
-        exception_type=type(exc).__name__,
-        message=str(exc),
-        details=exc.to_details(),
-    )
-
-    return JSONResponse(
-        status_code=status_code,
-        content=jsonable_encoder(error_response.model_dump()),
-    )
-
-
 @app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Handler for unexpected exceptions to ensure consistent error responses."""
+async def exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Unified handler for all exceptions."""
+    if isinstance(exc, MatchboxHttpException):
+        error_response = ErrorResponse(
+            exception_type=type(exc).__name__,
+            message=str(exc),
+            details=exc.to_details(),
+        )
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=jsonable_encoder(error_response.model_dump()),
+        )
+
+    # All other exceptions get logged and return generic error
     error_id = str(uuid.uuid4())
     logger.exception("Unhandled exception [%s]: %s", error_id, exc)
 
@@ -153,7 +98,6 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         message=f"An internal server error occurred. Reference: {error_id}",
         details=None,
     )
-
     return JSONResponse(
         status_code=500,
         content=jsonable_encoder(error_response.model_dump()),

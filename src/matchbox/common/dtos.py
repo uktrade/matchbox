@@ -25,7 +25,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 
 from matchbox.common.datatypes import DataTypes
-from matchbox.common.exceptions import MatchboxNameError
+from matchbox.common.exceptions import MatchboxExceptionType, MatchboxNameError
 from matchbox.common.hash import base64_to_hash, hash_to_base64
 
 
@@ -730,7 +730,7 @@ class ErrorResponse(BaseModel):
     type that was raised on the server.
     """
 
-    exception_type: str = Field(
+    exception_type: MatchboxExceptionType = Field(
         description="The name of the exception class raised on the server"
     )
     message: str = Field(description="Human-readable error message")

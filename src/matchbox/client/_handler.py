@@ -50,9 +50,9 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
-    EXCEPTION_REGISTRY,
+    HTTP_EXCEPTION_REGISTRY,
     MatchboxEmptyServerResponse,
-    MatchboxException,
+    MatchboxHttpException,
     MatchboxServerFileError,
     MatchboxUnhandledServerResponse,
 )
@@ -99,8 +99,8 @@ def url_params(
 
 
 def reconstruct_exception(
-    ExceptionClass: type[MatchboxException], error: ErrorResponse
-) -> MatchboxException:
+    ExceptionClass: type[MatchboxHttpException], error: ErrorResponse
+) -> MatchboxHttpException:
     """Reconstruct an exception from ErrorResponse data."""
     # Handle exceptions with special constructor signatures
     if error.details:
@@ -125,7 +125,7 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
 
         if "exception_type" in data:
             error = ErrorResponse.model_validate(data)
-            ExceptionClass = EXCEPTION_REGISTRY.get(error.exception_type)
+            ExceptionClass = HTTP_EXCEPTION_REGISTRY.get(error.exception_type)
 
             if ExceptionClass:
                 raise reconstruct_exception(ExceptionClass, error)

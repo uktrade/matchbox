@@ -4,10 +4,9 @@ from collections.abc import Iterator
 
 import polars as pl
 import pyarrow as pa
-from sqlalchemy import func, join, literal, select
+from sqlalchemy import exists, func, join, literal, select
 from sqlalchemy.dialects.postgresql import ARRAY, BIGINT, BYTEA, TEXT
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.sql import over
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -128,124 +127,49 @@ def insert_hashes(
         MBDB.get_session() as session,
     ):
         try:
-            distinct_hashes = (
-                select(incoming.c.hash).distinct().subquery("distinct_hashes")
-            )
-
+            # Add clusters
             new_hashes = (
-                select(distinct_hashes.c.hash.label("cluster_hash"))
-                .select_from(
-                    distinct_hashes.outerjoin(
-                        Clusters, Clusters.cluster_hash == distinct_hashes.c.hash
-                    )
+                select(incoming.c.hash)
+                .distinct()
+                .where(
+                    ~exists(select(1).where(Clusters.cluster_hash == incoming.c.hash))
                 )
-                .where(Clusters.cluster_id.is_(None))
-                .subquery("new_hashes")
             )
 
-            new_hashes_count = session.execute(
-                select(func.count()).select_from(new_hashes)
-            ).scalar_one()
-
-            if new_hashes_count > 0:
-                logger.info(
-                    f"Will add {new_hashes_count:,} entries to Clusters table",
-                    prefix=log_prefix,
-                )
-                base_cluster_id = PKSpace.reserve_block("clusters", new_hashes_count)
-
-                numbered_clusters = (
-                    select(
-                        (
-                            literal(base_cluster_id - 1, BIGINT)
-                            + over(func.row_number())
-                        ).label("cluster_id"),
-                        new_hashes.c.cluster_hash,
-                    )
-                ).subquery("numbered_clusters")
-
-                # Insert new clusters
-                stmt_insert_clusters = (
-                    pg_insert(Clusters)
-                    .from_select(
-                        ["cluster_id", "cluster_hash"],
-                        select(
-                            numbered_clusters.c.cluster_id,
-                            numbered_clusters.c.cluster_hash,
-                        ),
-                    )
-                    .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
-                )
-                session.execute(stmt_insert_clusters)
-                session.flush()
-            else:
-                logger.info("No new clusters to add", prefix=log_prefix)
-
-            cluster_map = (
-                select(
-                    Clusters.cluster_id,
-                    Clusters.cluster_hash,
-                ).select_from(
-                    join(
-                        Clusters,
-                        distinct_hashes,
-                        Clusters.cluster_hash == distinct_hashes.c.hash,
-                    )
-                )
-            ).subquery("cluster_map")
-
-            exploded = (
-                select(
-                    cluster_map.c.cluster_id,
-                    func.unnest(incoming.c["keys"]).label("key"),
-                )
-                .select_from(
-                    incoming.join(
-                        cluster_map, cluster_map.c.cluster_hash == incoming.c.hash
-                    )
-                )
-                .subquery("exploded")
+            stmt_insert_clusters = (
+                pg_insert(Clusters)
+                .from_select(["cluster_hash"], new_hashes)
+                .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
             )
 
-            # Count exploded rows
-            new_keys_count = session.execute(
-                select(func.count()).select_from(exploded)
-            ).scalar_one()
+            result = session.execute(stmt_insert_clusters)
+            logger.info(
+                f"Will add {result.rowcount:,} entries to Clusters table",
+                prefix=log_prefix,
+            )
+            session.flush()
 
-            if new_keys_count > 0:
-                logger.info(
-                    f"Will add {new_keys_count:,} entries to ClusterSourceKey table",
-                    prefix=log_prefix,
-                )
-                base_key_id = PKSpace.reserve_block("cluster_keys", new_keys_count)
+            # Add source keys
+            exploded = select(
+                Clusters.cluster_id,
+                literal(source_config_id, BIGINT).label("source_config_id"),
+                func.unnest(incoming.c["keys"]).label("key"),
+            ).select_from(
+                incoming.join(Clusters, Clusters.cluster_hash == incoming.c.hash)
+            )
 
-                numbered_keys = (
-                    select(
-                        (
-                            literal(base_key_id - 1, BIGINT) + over(func.row_number())
-                        ).label("key_id"),
-                        exploded.c.cluster_id,
-                        literal(source_config_id, BIGINT).label("source_config_id"),
-                        exploded.c.key,
-                    )
-                ).subquery("numbered_keys")
+            stmt_insert_keys = pg_insert(ClusterSourceKey).from_select(
+                ["cluster_id", "source_config_id", "key"],
+                exploded,
+            )
 
-                # Unlike for clusters, we don't expect conflicts here:
-                # - resolution should be locked
-                # - earlier we checked that it doesn't have any data
-                stmt_insert_keys = pg_insert(ClusterSourceKey).from_select(
-                    ["key_id", "cluster_id", "source_config_id", "key"],
-                    select(
-                        numbered_keys.c.key_id,
-                        numbered_keys.c.cluster_id,
-                        numbered_keys.c.source_config_id,
-                        numbered_keys.c.key,
-                    ),
-                )
-                session.execute(stmt_insert_keys)
-                session.commit()
-            else:
-                logger.info("No cluster keys to add", prefix=log_prefix)
+            result = session.execute(stmt_insert_keys)
+            logger.info(
+                f"Will add {result.rowcount:,} entries to ClusterSourceKey table",
+                prefix=log_prefix,
+            )
+            session.commit()
+
         except Exception as e:
             # Log the error and rollback
             logger.warning(f"Error, rolling back: {e}", prefix=log_prefix)

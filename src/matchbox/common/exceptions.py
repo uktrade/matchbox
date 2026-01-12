@@ -1,5 +1,7 @@
 """Custom exceptions for Matchbox."""
 
+import http
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pyarrow import Schema
@@ -25,6 +27,22 @@ class MatchboxException(Exception):
     def __init__(self, message: str | None = None) -> None:
         """Initialise the exception."""
         super().__init__(message or self.__doc__)
+
+    def to_details(self) -> dict[str, Any] | None:
+        """Return exception-specific details for serialisation.
+
+        Override in subclasses that have additional constructor arguments.
+        """
+        return None
+
+
+class MatchboxHttpException(MatchboxException):
+    """Base class for exceptions that can be transmitted over HTTP.
+
+    Subclasses must define http_status as a class attribute.
+    """
+
+    http_status: http.HTTPStatus
 
 
 # -- Common data objects exceptions --
@@ -157,8 +175,10 @@ class MatchboxSourceTableError(MatchboxException):
         self.table_name = table_name
 
 
-class MatchboxServerFileError(MatchboxException):
+class MatchboxServerFileError(MatchboxHttpException):
     """There was a problem with file upload."""
+
+    http_status = 400
 
     def __init__(self, message: str | None = None) -> None:
         """Initialise the exception."""
@@ -171,8 +191,10 @@ class MatchboxServerFileError(MatchboxException):
 # -- Resource not found on server exceptions --
 
 
-class MatchboxUserNotFoundError(MatchboxException):
+class MatchboxUserNotFoundError(MatchboxHttpException):
     """User not found."""
+
+    http_status = 404
 
     def __init__(
         self, message: str | None = None, user_name: str | None = None
@@ -186,9 +208,17 @@ class MatchboxUserNotFoundError(MatchboxException):
         super().__init__(message)
         self.user_name = user_name
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return user_name if set."""
+        if self.user_name is not None:
+            return {"user_name": self.user_name}
+        return None
 
-class MatchboxResolutionNotFoundError(MatchboxException):
+
+class MatchboxResolutionNotFoundError(MatchboxHttpException):
     """Resolution not found."""
+
+    http_status = 404
 
     def __init__(
         self, message: str | None = None, name: ResolutionName | None = None
@@ -202,9 +232,17 @@ class MatchboxResolutionNotFoundError(MatchboxException):
         super().__init__(message)
         self.name = name
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return name if set."""
+        if self.name is not None:
+            return {"name": str(self.name)}
+        return None
 
-class MatchboxCollectionNotFoundError(MatchboxException):
+
+class MatchboxCollectionNotFoundError(MatchboxHttpException):
     """Collection not found."""
+
+    http_status = 404
 
     def __init__(
         self, message: str | None = None, name: CollectionName | None = None
@@ -218,9 +256,17 @@ class MatchboxCollectionNotFoundError(MatchboxException):
         super().__init__(message)
         self.name = name
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return name if set."""
+        if self.name is not None:
+            return {"name": str(self.name)}
+        return None
 
-class MatchboxRunNotFoundError(MatchboxException):
+
+class MatchboxRunNotFoundError(MatchboxHttpException):
     """Run not found."""
+
+    http_status = 404
 
     def __init__(self, message: str | None = None, run_id: RunID | None = None) -> None:
         """Initialise the exception."""
@@ -232,15 +278,23 @@ class MatchboxRunNotFoundError(MatchboxException):
         super().__init__(message)
         self.run_id = run_id
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return run_id if set."""
+        if self.run_id is not None:
+            return {"run_id": self.run_id}
+        return None
 
-class MatchboxDataNotFound(MatchboxException):
+
+class MatchboxDataNotFound(MatchboxHttpException):
     """Data doesn't exist in the Matchbox source table."""
+
+    http_status = 404
 
     def __init__(
         self,
         message: str | None = None,
         table: str | None = None,
-        data: str | dict[str, Any] | list[Any] | set[Any] | None = None,
+        data: list[Any] | None = None,
     ) -> None:
         """Initialise the exception."""
         if message is None:
@@ -254,6 +308,15 @@ class MatchboxDataNotFound(MatchboxException):
         self.table = table
         self.data = data
 
+    def to_details(self) -> dict[str, Any] | None:
+        """Return table and data if set."""
+        details: dict[str, Any] = {}
+        if self.table is not None:
+            details["table"] = self.table
+        if self.data is not None:
+            details["data"] = self.data
+        return details if details else None
+
 
 # -- Server-side API exceptions --
 
@@ -266,8 +329,10 @@ class MatchboxPermissionDeniedError(MatchboxException):
     """Raised when a user lacks permission for an action."""
 
 
-class MatchboxDeletionNotConfirmed(MatchboxException):
+class MatchboxDeletionNotConfirmed(MatchboxHttpException):
     """Deletion must be confirmed: if certain, rerun with certain=True."""
+
+    http_status = 409
 
     def __init__(
         self, message: str | None = None, children: list[str | int] | None = None
@@ -287,50 +352,79 @@ class MatchboxDeletionNotConfirmed(MatchboxException):
             )
 
         super().__init__(message)
+        self.children = children
+
+    def to_details(self) -> dict[str, Any] | None:
+        """Return children if set."""
+        if self.children is not None:
+            return {"children": self.children}
+        return None
 
 
-class MatchboxResolutionAlreadyExists(MatchboxException):
+class MatchboxResolutionAlreadyExists(MatchboxHttpException):
     """Resolution already exists."""
 
+    http_status = 409
 
-class MatchboxResolutionUpdateError(MatchboxException):
+
+class MatchboxResolutionUpdateError(MatchboxHttpException):
     """Resolution metadata cannot be updated."""
 
+    http_status = 422
 
-class MatchboxResolutionInvalidData(MatchboxException):
+
+class MatchboxResolutionInvalidData(MatchboxHttpException):
     """Resolution data does not match fingerprint."""
 
+    http_status = 422
 
-class MatchboxResolutionExistingData(MatchboxException):
+
+class MatchboxResolutionExistingData(MatchboxHttpException):
     """Data was already set on resolution."""
 
+    http_status = 409
 
-class MatchboxResolutionNotQueriable(MatchboxException):
+
+class MatchboxResolutionNotQueriable(MatchboxHttpException):
     """The resolution is not ready to be queried."""
 
+    http_status = 422
 
-class MatchboxCollectionAlreadyExists(MatchboxException):
+
+class MatchboxCollectionAlreadyExists(MatchboxHttpException):
     """Collection already exists."""
 
+    http_status = 409
 
-class MatchboxRunAlreadyExists(MatchboxException):
+
+class MatchboxRunAlreadyExists(MatchboxHttpException):
     """Run already exists."""
 
+    http_status = 409
 
-class MatchboxRunNotWriteable(MatchboxException):
+
+class MatchboxRunNotWriteable(MatchboxHttpException):
     """Run is not mutable."""
 
+    http_status = 423
 
-class MatchboxTooManySamplesRequested(MatchboxException):
+
+class MatchboxTooManySamplesRequested(MatchboxHttpException):
     """Too many samples have been requested from the server."""
 
+    http_status = 422
 
-class MatchboxGroupNotFoundError(MatchboxException):
+
+class MatchboxGroupNotFoundError(MatchboxHttpException):
     """Raised when a group is not found."""
 
+    http_status = 404
 
-class MatchboxGroupAlreadyExistsError(MatchboxException):
+
+class MatchboxGroupAlreadyExistsError(MatchboxHttpException):
     """Raised when attempting to create a group that already exists."""
+
+    http_status = 409
 
 
 class MatchboxSystemGroupError(MatchboxException):
@@ -340,13 +434,40 @@ class MatchboxSystemGroupError(MatchboxException):
 # -- Adapter DB exceptions --
 
 
-class MatchboxNoJudgements(MatchboxException):
+class MatchboxNoJudgements(MatchboxHttpException):
     """No judgements found in the database when required for operation."""
+
+    http_status = 404
 
 
 class MatchboxDatabaseWriteError(MatchboxException):
     """Could not be written to the backend DB, likely due to a constraint violation."""
 
 
-class MatchboxLockError(MatchboxException):
+class MatchboxLockError(MatchboxHttpException):
     """Trying to modify locked data."""
+
+    http_status = 423
+
+
+# -- Exception Registry --
+
+
+def _get_all_subclasses(cls: type) -> list[type]:
+    """Recursively get all subclasses of a class."""
+    subclasses = []
+    for subclass in cls.__subclasses__():
+        subclasses.append(subclass)
+        subclasses.extend(_get_all_subclasses(subclass))
+    return subclasses
+
+
+HTTP_EXCEPTION_REGISTRY: dict[str, type[MatchboxHttpException]] = {
+    exc.__name__: exc for exc in _get_all_subclasses(MatchboxHttpException)
+}
+
+# Auto-generate enum from registry
+_enum_members = {name: name for name in HTTP_EXCEPTION_REGISTRY}
+_enum_members["MatchboxServerError"] = "MatchboxServerError"  # For generic 500 errors
+
+MatchboxExceptionType = StrEnum("MatchboxExceptionType", _enum_members)

@@ -1,5 +1,6 @@
 """Custom exceptions for Matchbox."""
 
+import http
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +42,7 @@ class MatchboxHttpException(MatchboxException):
     Subclasses must define http_status as a class attribute.
     """
 
-    http_status: int
+    http_status: http.HTTPStatus
 
 
 # -- Common data objects exceptions --

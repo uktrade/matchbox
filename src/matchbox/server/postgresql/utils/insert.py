@@ -4,10 +4,17 @@ from collections.abc import Iterator
 
 import polars as pl
 import pyarrow as pa
-from sqlalchemy import func, join, select
-from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy import exists, func, join, literal, select, update
+from sqlalchemy.dialects.postgresql import (
+    ARRAY,
+    BIGINT,
+    BOOLEAN,
+    BYTEA,
+    SMALLINT,
+    TEXT,
+    insert,
+)
 
-from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     ModelResolutionPath,
     ResolutionType,
@@ -25,54 +32,28 @@ from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
     Contains,
-    PKSpace,
     Probabilities,
     Resolutions,
     Results,
     SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import (
-    compile_sql,
     ingest_to_temporary_table,
-    large_append,
 )
 from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leaves
 
-
-def _fetch_existing_clusters(data_hashes: pa.Table, column: str) -> pl.DataFrame:
-    """Fetch existing clusters from database by joining with temporary table.
-
-    Args:
-        data_hashes: Arrow table with cluster hashes
-        column: Name of the column containing the cluster hashes
-    """
-    with ingest_to_temporary_table(
-        table_name="hashes",
-        schema_name="mb",
-        column_types={
-            "cluster_hash": BYTEA,
-        },
-        data=data_hashes.select([column]).rename_columns(["cluster_hash"]),
-    ) as temp_table:
-        existing_cluster_stmt = select(Clusters.cluster_id, Clusters.cluster_hash).join(
-            temp_table, temp_table.c.cluster_hash == Clusters.cluster_hash
-        )
-
-        with MBDB.get_adbc_connection() as conn:
-            existing_cluster_df: pl.DataFrame = sql_to_df(
-                stmt=compile_sql(existing_cluster_stmt),
-                connection=conn.dbapi_connection,
-                return_type="polars",
-            )
-    return existing_cluster_df
+MODEL_CLUSTERS_SCHEMA = {
+    "cluster_id": pl.Int64,
+    "cluster_hash": pl.Binary,
+    "leaves": pl.List(pl.Int64),
+    "probability": pl.Int8,
+}
 
 
 def insert_hashes(
-    path: SourceResolutionPath,
-    data_hashes: pa.Table,
-    batch_size: int,
+    path: SourceResolutionPath, data_hashes: pa.Table, batch_size: int
 ) -> None:
-    """Indexes hash data for a source within Matchbox.
+    """Indexes hash data for a source.
 
     Args:
         path: The path of the source resolution
@@ -99,6 +80,7 @@ def insert_hashes(
         if resolution.fingerprint != fingerprint:
             raise MatchboxResolutionInvalidData
 
+        # Determine if the resolution already has any keys
         existing_keys = session.execute(
             select(func.count())
             .select_from(
@@ -116,120 +98,70 @@ def insert_hashes(
 
         source_config_id = resolution.source_config.source_config_id
 
-    existing_hash_lookup = _fetch_existing_clusters(data_hashes, "hash")
-
-    data_hashes: pl.DataFrame = pl.from_arrow(data_hashes)
-
-    # Don't insert new hashes, but new keys need existing hash IDs
-    if existing_hash_lookup.is_empty():
-        new_hashes = data_hashes.select("hash").unique()
-    else:
-        new_hashes = (
-            data_hashes.select("hash")
-            .unique()
-            .join(
-                other=existing_hash_lookup.select(["cluster_hash"]),
-                left_on="hash",
-                right_on="cluster_hash",
-                how="anti",
-            )
-        )
-
-    if new_hashes.shape[0]:
-        # Create new cluster records with sequential IDs
-        next_cluster_id = PKSpace.reserve_block("clusters", len(new_hashes))
-    else:
-        # The value of next_cluster_id is irrelevant as cluster_records will be empty
-        next_cluster_id = 0
-
-    cluster_records = (
-        new_hashes.with_row_index("cluster_id")
-        .with_columns(
-            [
-                (pl.col("cluster_id") + next_cluster_id)
-                .cast(pl.Int64)
-                .alias("cluster_id")
-            ]
-        )
-        .rename({"hash": "cluster_hash"})
-    )
-
-    # Create a combined lookup with both existing and new mappings
-    lookup = pl.concat([existing_hash_lookup, cluster_records], how="vertical")
-    del existing_hash_lookup
-
-    # Add cluster_id values to data hashes
-    hashes_with_ids = data_hashes.join(lookup, left_on="hash", right_on="cluster_hash")
-    del data_hashes, lookup
-
-    # Explode keys
-    # If we expect large lists of keys, we might want to batch this
-    # Checking the database suggests this is not an issue at the moment
-    keys_records = (
-        hashes_with_ids.select(["cluster_id", "keys"])
-        .explode("keys")
-        .rename({"keys": "key"})
-    )
-    del hashes_with_ids
-
-    if keys_records.shape[0] > 0:
-        next_key_id = PKSpace.reserve_block("cluster_keys", len(keys_records))
-    else:
-        # The next_key_id is irrelevant if we don't write any keys records
-        next_key_id = 0
-
-    # Add required columns
-    keys_records = keys_records.with_row_index("key_id").with_columns(
-        [
-            (pl.col("key_id") + next_key_id).alias("key_id"),
-            pl.lit(source_config_id, dtype=pl.Int64).alias("source_config_id"),
-        ]
-    )
-
-    # Insert new clusters and all source primary keys
-    with MBDB.get_adbc_connection() as adbc_connection:
+    with (
+        ingest_to_temporary_table(
+            table_name="incoming_hashes",
+            schema_name="mb",
+            column_types={"hash": BYTEA(), "keys": ARRAY(TEXT)},
+            data=data_hashes.select(["hash", "keys"]),
+            max_chunksize=batch_size,
+        ) as incoming,
+        MBDB.get_session() as session,
+    ):
         try:
-            # Bulk insert into Clusters table (only new clusters)
-            if not cluster_records.is_empty():
-                large_append(
-                    data=cluster_records.to_arrow(),
-                    table_class=Clusters,
-                    adbc_connection=adbc_connection,
-                    max_chunksize=batch_size,
+            # Add clusters
+            new_hashes = (
+                select(incoming.c.hash)
+                .distinct()
+                .where(
+                    ~exists(select(1).where(Clusters.cluster_hash == incoming.c.hash))
                 )
-                logger.info(
-                    f"Added {len(cluster_records):,} objects to Clusters table",
-                    prefix=log_prefix,
-                )
+            )
 
-            # Bulk insert into ClusterSourceKey table (all links)
-            if not keys_records.is_empty():
-                large_append(
-                    data=keys_records.to_arrow(),
-                    table_class=ClusterSourceKey,
-                    adbc_connection=adbc_connection,
-                    max_chunksize=batch_size,
-                )
-                logger.info(
-                    f"Added {len(keys_records):,} PKs to ClusterSourceKey table",
-                    prefix=log_prefix,
-                )
+            stmt_insert_clusters = (
+                insert(Clusters)
+                .from_select(["cluster_hash"], new_hashes)
+                .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
+            )
 
-            adbc_connection.commit()
+            result = session.execute(stmt_insert_clusters)
+            logger.info(
+                f"Will add {result.rowcount:,} entries to Clusters table",
+                prefix=log_prefix,
+            )
+            session.flush()
+
+            # Add source keys
+            exploded = select(
+                Clusters.cluster_id,
+                literal(source_config_id, BIGINT).label("source_config_id"),
+                func.unnest(incoming.c["keys"]).label("key"),
+            ).select_from(
+                incoming.join(Clusters, Clusters.cluster_hash == incoming.c.hash)
+            )
+
+            stmt_insert_keys = insert(ClusterSourceKey).from_select(
+                ["cluster_id", "source_config_id", "key"],
+                exploded,
+            )
+
+            result = session.execute(stmt_insert_keys)
+            logger.info(
+                f"Will add {result.rowcount:,} entries to ClusterSourceKey table",
+                prefix=log_prefix,
+            )
+            session.commit()
 
         except Exception as e:
             # Log the error and rollback
             logger.warning(f"Error, rolling back: {e}", prefix=log_prefix)
-            adbc_connection.rollback()
+            session.rollback()
             raise
 
     MBDB.vacuum_analyze(
         Clusters.__table__.fullname,
         ClusterSourceKey.__table__.fullname,
     )
-
-    if cluster_records.is_empty() and keys_records.is_empty():
-        logger.info("No new records to add", prefix=log_prefix)
 
     logger.info("Finished", prefix=log_prefix)
 
@@ -298,7 +230,7 @@ def _results_to_cluster_pairs(
 
 def _build_cluster_hierarchy(
     cluster_lookup: dict[int, Cluster], probabilities: pa.Table
-) -> dict[bytes, Cluster]:
+) -> pl.DataFrame:
     """Build cluster hierarchy using disjoint sets and probability thresholding.
 
     Args:
@@ -306,7 +238,7 @@ def _build_cluster_hierarchy(
         probabilities: Arrow table containing probability data
 
     Returns:
-        Dictionary mapping cluster hashes to Cluster objects
+        DataFrame with MODEL_CLUSTERS_SCHEMA
     """
     logger.debug("Computing hierarchies")
 
@@ -341,166 +273,19 @@ def _build_cluster_hierarchy(
 
     # Process any remaining components
     _process_components(probability)
-
-    return all_clusters
-
-
-def _create_clusters_dataframe(all_clusters: dict[bytes, Cluster]) -> pl.DataFrame:
-    """Create a DataFrame with cluster data and existing/new cluster information.
-
-    Args:
-        all_clusters: Dictionary mapping cluster hashes to Cluster objects
-
-    Returns:
-        Polars DataFrame with columns: cluster_id, cluster_hash, cluster_struct, new
-    """
-    # Convert all clusters to a DataFrame, converting Clusters to Polars structs
-    cluster_data = []
-    for cluster_hash, cluster in all_clusters.items():
-        cluster_struct = {
-            "id": cluster.id,
-            "probability": cluster.probability,
-            "leaves": [leaf.id for leaf in cluster.leaves] if cluster.leaves else [],
-        }
-        cluster_data.append(
-            {"cluster_hash": cluster_hash, "cluster_struct": cluster_struct}
-        )
-
-    all_clusters_df = pl.DataFrame(
-        cluster_data,
-        schema={
-            "cluster_hash": pl.Binary,
-            "cluster_struct": pl.Struct(
-                {"id": pl.Int64, "probability": pl.Int8, "leaves": pl.List(pl.Int64)}
-            ),
-        },
-    )
-
-    existing_cluster_df = _fetch_existing_clusters(
-        all_clusters_df.to_arrow(), "cluster_hash"
-    )
-
-    # Use anti_join to find hashes that don't exist in the lookup
-    new_clusters_df = all_clusters_df.join(
-        existing_cluster_df, on="cluster_hash", how="anti"
-    )
-
-    # Assign new cluster IDs if needed
-    next_cluster_id: int = 0
-    if not new_clusters_df.is_empty():
-        next_cluster_id = PKSpace.reserve_block("clusters", new_clusters_df.shape[0])
-
-    new_clusters_df = new_clusters_df.with_columns(
+    return pl.DataFrame(
         [
-            (
-                pl.arange(0, new_clusters_df.shape[0], dtype=pl.Int64) + next_cluster_id
-            ).alias("cluster_id"),
-            pl.lit(True).alias("new"),
-        ]
-    )
-
-    # Add cluster data to existing and add new flag
-    existing_with_data = all_clusters_df.join(
-        existing_cluster_df, on="cluster_hash", how="inner"
-    ).with_columns(pl.lit(False).alias("new"))
-
-    # Concatenate existing and new clusters
-    return pl.concat([existing_with_data, new_clusters_df]).select(
-        "cluster_id", "cluster_hash", "cluster_struct", "new"
-    )
-
-
-def _results_to_insert_tables(
-    resolution: Resolutions, probabilities: pa.Table
-) -> tuple[pa.Table, pa.Table, pa.Table]:
-    """Takes probabilities and returns three Arrow tables that can be inserted exactly.
-
-    Returns:
-        A tuple containing:
-
-            * A Clusters update Arrow table
-            * A Contains update Arrow table
-            * A Probabilities update Arrow table
-    """
-    log_prefix = f"Model {resolution.name}"
-
-    if probabilities.shape[0] == 0:
-        clusters = pa.table(
-            {"cluster_id": [], "cluster_hash": []},
-            schema=pa.schema(
-                [("cluster_id", pa.uint64()), ("cluster_hash", pa.large_binary())]
-            ),
-        )
-        contains = pa.table(
-            {"root": [], "leaf": []},
-            schema=pa.schema([("root", pa.uint64()), ("leaf", pa.uint64())]),
-        )
-        probabilities = pa.table(
-            {"resolution_id": [], "cluster_id": [], "probability": []},
-            schema=pa.schema(
-                [
-                    ("resolution_id", pa.uint64()),
-                    ("cluster_id", pa.uint64()),
-                    ("probability", pa.uint8()),
-                ]
-            ),
-        )
-        return clusters, contains, probabilities
-
-    logger.info("Wrangling data to insert tables", prefix=log_prefix)
-
-    # Get a cluster lookup dictionary based on the resolution's parents
-    im = IntMap()
-
-    nested_data = get_parent_clusters_and_leaves(resolution=resolution)
-    cluster_lookup: dict[int, Cluster] = _build_cluster_objects(nested_data, im)
-
-    logger.debug("Computing hierarchies", prefix=log_prefix)
-    all_clusters: dict[bytes, Cluster] = _build_cluster_hierarchy(
-        cluster_lookup=cluster_lookup, probabilities=probabilities
-    )
-    del cluster_lookup
-
-    logger.debug("Reconciling clusters against database", prefix=log_prefix)
-    all_clusters_df = _create_clusters_dataframe(all_clusters)
-    del all_clusters
-
-    # Filter to new clusters for Clusters table
-    new_clusters_df = all_clusters_df.filter(pl.col("new")).select(
-        "cluster_id", "cluster_hash"
-    )
-
-    # Filter to new clusters and explode leaves for Contains table
-    new_contains_df = (
-        all_clusters_df.filter(pl.col("new"))
-        .select("cluster_id", "cluster_struct")
-        .rename({"cluster_id": "root"})
-        .with_columns(pl.col("cluster_struct").struct.field("leaves").alias("leaf"))
-        .drop("cluster_struct")
-        .explode("leaf")
-        .select("root", "leaf")
-    )
-
-    # Use all clusters and unnest probabilities for Probabilities table
-    new_probabilities_df = (
-        all_clusters_df.select("cluster_id", "cluster_struct")
-        .with_columns(
-            pl.col("cluster_struct").struct.field("probability").alias("probability")
-        )
-        .drop("cluster_struct")
-        .with_columns(
-            pl.lit(resolution.resolution_id, dtype=pl.Int64).alias("resolution_id")
-        )
-        .select("resolution_id", "cluster_id", "probability")
-        .sort(["cluster_id", "probability"])
-    )
-
-    logger.info("Wrangling complete!", prefix=log_prefix)
-
-    return (
-        new_clusters_df.to_arrow(),
-        new_contains_df.to_arrow(),
-        new_probabilities_df.to_arrow(),
+            {
+                "cluster_hash": cluster.hash,
+                "cluster_id": cluster.id,
+                "probability": cluster.probability,
+                "leaves": [leaf.id for leaf in cluster.leaves]
+                if cluster.leaves
+                else [],
+            }
+            for cluster in all_clusters.values()
+        ],
+        schema=MODEL_CLUSTERS_SCHEMA,
     )
 
 
@@ -550,83 +335,147 @@ def insert_results(
 
         if existing_results > 0:
             raise MatchboxResolutionExistingData
+
     logger.info(
         f"Writing results data with batch size {batch_size:,}", prefix=log_prefix
     )
 
-    clusters, contains, probabilities = _results_to_insert_tables(
-        resolution=resolution, probabilities=results
+    # Get a cluster lookup dictionary based on the resolution's parents
+    im = IntMap()
+    nested_data = get_parent_clusters_and_leaves(resolution=resolution)
+    cluster_lookup: dict[int, Cluster] = _build_cluster_objects(nested_data, im)
+
+    logger.debug("Computing hierarchies", prefix=log_prefix)
+    cluster_df = _build_cluster_hierarchy(
+        cluster_lookup=cluster_lookup, probabilities=results
     )
+    del cluster_lookup
 
-    with MBDB.get_adbc_connection() as adbc_connection:
+    logger.debug("Ingesting clusters dataframe", prefix=log_prefix)
+    with (
+        MBDB.get_session() as session,
+        ingest_to_temporary_table(
+            table_name="model_results",
+            schema_name="mb",
+            column_types={
+                "left_id": BIGINT(),
+                "right_id": BIGINT(),
+                "probability": SMALLINT(),
+            },
+            data=results,
+            max_chunksize=batch_size,
+        ) as new_results,
+        ingest_to_temporary_table(
+            table_name="model_clusters",
+            schema_name="mb",
+            column_types={
+                "cluster_id": BIGINT(),
+                "cluster_hash": BYTEA(),
+                "leaves": ARRAY(BIGINT),
+                "probability": SMALLINT(),
+                "is_new": BOOLEAN(),
+            },
+            data=cluster_df.with_columns(pl.lit(True).alias("is_new")).to_arrow(),
+            max_chunksize=batch_size,
+        ) as new_clusters,
+    ):
         try:
-            logger.info(
-                f"Inserting {clusters.shape[0]:,} results objects", prefix=log_prefix
-            )
-
-            large_append(
-                data=clusters,
-                table_class=Clusters,
-                adbc_connection=adbc_connection,
-                max_chunksize=batch_size,
-            )
-
-            logger.info(
-                f"Successfully inserted {clusters.shape[0]:,} rows into Clusters table",
-                prefix=log_prefix,
-            )
-
-            large_append(
-                data=contains,
-                table_class=Contains,
-                adbc_connection=adbc_connection,
-                max_chunksize=batch_size,
-            )
-
-            logger.info(
-                f"Successfully inserted {contains.shape[0]:,} rows into Contains table",
-                prefix=log_prefix,
-            )
-
-            large_append(
-                data=probabilities,
-                table_class=Probabilities,
-                adbc_connection=adbc_connection,
-                max_chunksize=batch_size,
-            )
-
-            logger.info(
-                f"Successfully inserted "
-                f"{probabilities.shape[0]:,} objects into Probabilities table",
-                prefix=log_prefix,
-            )
-
-            large_append(
-                data=pl.from_arrow(results)
-                .with_columns(
-                    pl.lit(resolution.resolution_id)
-                    .cast(pl.UInt64)
-                    .alias("resolution_id")
+            # Labelling new clusters is technically unnecessary but theory is that
+            # in our case it will be faster than a lot of ignored conflicts
+            session.execute(
+                update(new_clusters).values(
+                    is_new=~exists(
+                        select(1).where(
+                            Clusters.cluster_hash == new_clusters.c.cluster_hash
+                        )
+                    )
                 )
-                .select("resolution_id", "left_id", "right_id", "probability")
-                .to_arrow(),
-                table_class=Results,
-                adbc_connection=adbc_connection,
-                max_chunksize=batch_size,
             )
-
+            session.flush()
+            # Clusters
+            cluster_select = (
+                select(new_clusters.c.cluster_hash)
+                .distinct()
+                .where(new_clusters.c.is_new)
+            )
+            cluster_results = session.execute(
+                insert(Clusters)
+                .from_select(["cluster_hash"], cluster_select)
+                .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
+            )
             logger.info(
-                f"Successfully inserted {results.shape[0]:,} rows into Results table",
+                f"Will add {cluster_results.rowcount:,} entries to Clusters table",
+                prefix=log_prefix,
+            )
+            session.flush()
+
+            # Contains
+            contains_select = (
+                select(
+                    Clusters.cluster_id.label("root"),
+                    func.unnest(new_clusters.c.leaves).label("leaf"),
+                )
+                .select_from(
+                    new_clusters.join(
+                        Clusters, Clusters.cluster_hash == new_clusters.c.cluster_hash
+                    )
+                )
+                .where(new_clusters.c.is_new)
+            )
+            contains_results = session.execute(
+                insert(Contains)
+                .from_select(["root", "leaf"], contains_select)
+                .on_conflict_do_nothing(index_elements=[Contains.root, Contains.leaf])
+            )
+            logger.info(
+                f"Will add {contains_results.rowcount:,} entries to Contains table",
                 prefix=log_prefix,
             )
 
-            adbc_connection.commit()
+            # Probabilities
+            prob_select = select(
+                literal(resolution.resolution_id, BIGINT).label("resolution_id"),
+                Clusters.cluster_id,
+                new_clusters.c.probability,
+            ).select_from(
+                new_clusters.join(
+                    Clusters, Clusters.cluster_hash == new_clusters.c.cluster_hash
+                )
+            )
+            prob_res = session.execute(
+                insert(Probabilities).from_select(
+                    ["resolution_id", "cluster_id", "probability"], prob_select
+                )
+            )
+            logger.info(
+                f"Will add {prob_res.rowcount:,} entries to Probabilities table",
+                prefix=log_prefix,
+            )
+
+            # Results
+            results_select = select(
+                literal(resolution.resolution_id, BIGINT).label("resolution_id"),
+                new_results.c.left_id,
+                new_results.c.right_id,
+                new_results.c.probability,
+            )
+            results_res = session.execute(
+                insert(Results).from_select(
+                    ["resolution_id", "left_id", "right_id", "probability"],
+                    results_select,
+                )
+            )
+            logger.info(
+                f"Will add {results_res.rowcount:,} entries to Results table",
+                prefix=log_prefix,
+            )
+            session.commit()
 
         except Exception as e:
             logger.error(
                 f"Failed to insert data, rolling back: {str(e)}", prefix=log_prefix
             )
-            adbc_connection.rollback()
+            session.rollback()
             raise
 
     MBDB.vacuum_analyze(

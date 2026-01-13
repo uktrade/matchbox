@@ -4,7 +4,7 @@ from itertools import chain, combinations
 from typing import Self, TypeAlias
 
 import polars as pl
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 Pair: TypeAlias = tuple[int, int]
 Pairs: TypeAlias = set[Pair]
@@ -24,17 +24,18 @@ class Judgement(BaseModel):
         description="""Groups of source cluster IDs that user thinks belong together"""
     )
 
-    @field_validator("endorsed", mode="before")
-    @classmethod
-    def check_no_duplicates(cls, value: list[list[int]]) -> list[list[int]]:
+    @model_validator(mode="after")
+    def check_no_duplicates(self) -> Self:
         """Ensure no cluster IDs are repeated in the endorsement."""
-        concat_ids = list(chain(*value))
+        if len(self.shown) != len(set(self.shown)):
+            raise ValueError("One or more cluster IDs were repeated in the shown data")
+        concat_ids = list(chain(*self.endorsed))
         if len(concat_ids) != len(set(concat_ids)):
             raise ValueError(
                 "One or more cluster IDs were repeated in the endorsement data"
             )
 
-        return value
+        return self
 
     @model_validator(mode="after")
     def check_consistency(self) -> Self:

@@ -231,7 +231,7 @@ def get_samples(
     results_by_root: dict[int, EvaluationItem] = {}
     for root in all_results["root"].unique():
         cluster_df = all_results.filter(pl.col("root") == root).drop("root")
-        leaves = cluster_df.select("leaf").to_series().to_list()
+        leaves = cluster_df.select("leaf").to_series().unique().to_list()
         evaluation_item = create_evaluation_item(cluster_df, source_configs, leaves)
         results_by_root[root] = evaluation_item
 

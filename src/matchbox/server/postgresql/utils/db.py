@@ -9,20 +9,13 @@ import uuid
 from collections.abc import Generator
 
 import pyarrow as pa
-from adbc_driver_manager import ProgrammingError as AdbcProgrammingError
-from adbc_driver_postgresql.dbapi import Connection as AdbcConnection
 from pyarrow import Table as ArrowTable
 from sqlalchemy import Column, MetaData, Table, func, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import DeclarativeMeta
-from sqlalchemy.pool import PoolProxiedConnection
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
-from matchbox.common.exceptions import (
-    MatchboxDatabaseWriteError,
-)
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxSnapshot
 from matchbox.server.postgresql.db import MBDB
@@ -164,64 +157,6 @@ def compile_sql(stmt: Select) -> str:
     )
 
 
-def _copy_to_table(
-    table_name: str,
-    schema_name: str,
-    connection: AdbcConnection,
-    data: ArrowTable,
-    max_chunksize: int | None = None,
-) -> None:
-    """Copy data to table using ADBC with isolated connection."""
-    batch_reader = pa.RecordBatchReader.from_batches(
-        data.schema, data.to_batches(max_chunksize=max_chunksize)
-    )
-
-    with connection.cursor() as cursor:
-        cursor.adbc_ingest(
-            table_name=table_name,
-            data=batch_reader,
-            mode="append",
-            db_schema_name=schema_name,
-        )
-
-
-def large_append(
-    data: pa.Table,
-    table_class: DeclarativeMeta,
-    adbc_connection: PoolProxiedConnection,
-    max_chunksize: int | None = None,
-) -> None:
-    """Append a PyArrow table to a PostgreSQL table using ADBC.
-
-    This function does not support upserting and will error if keys clash.
-    This method does not auto-commit, which is the responsibility of the caller.
-
-    Args:
-        data: A PyArrow table to write.
-        table_class: The SQLAlchemy ORM class for the table to write to.
-        adbc_connection: An ADBC connection from the pool.
-            This is returned by MBDB.get_adbc_connection() and needs to be used via a
-            context manager.
-        max_chunksize: Size of data chunks to be read and copied.
-    """
-    table: Table = table_class.__table__
-
-    table_columns = [c.name for c in table.columns]
-    col_diff = set(data.column_names) - set(table_columns)
-    if len(col_diff) > 0:
-        raise ValueError(f"Table {table.name} does not have columns {col_diff}")
-    try:
-        _copy_to_table(
-            table_name=table.name,
-            schema_name=table.schema,
-            connection=adbc_connection,
-            data=data,
-            max_chunksize=max_chunksize,
-        )
-    except AdbcProgrammingError as e:
-        raise MatchboxDatabaseWriteError from e
-
-
 @contextlib.contextmanager
 def ingest_to_temporary_table(
     table_name: str,
@@ -265,13 +200,18 @@ def ingest_to_temporary_table(
 
         # Ingest data into the temporary table
         with MBDB.get_adbc_connection() as connection:
-            _copy_to_table(
-                table_name=temp_table_name,
-                schema_name=schema_name,
-                connection=connection,
-                data=data,
-                max_chunksize=max_chunksize,
+            batch_reader = pa.RecordBatchReader.from_batches(
+                data.schema, data.to_batches(max_chunksize=max_chunksize)
             )
+
+            with connection.cursor() as cursor:
+                cursor.adbc_ingest(
+                    table_name=temp_table_name,
+                    data=batch_reader,
+                    mode="append",
+                    db_schema_name=schema_name,
+                )
+
             connection.commit()
 
         MBDB.vacuum_analyze(

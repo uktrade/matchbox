@@ -1,3 +1,5 @@
+set dotenv-load := true
+
 # Unit testing
 mod test 'test/justfile'
 # PostgreSQL migration

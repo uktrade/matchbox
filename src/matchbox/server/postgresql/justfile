@@ -18,3 +18,11 @@ generate descriptive-message:
 # Reset the DB to the base state
 reset:
     uv run alembic --config "src/matchbox/server/postgresql/alembic.ini" downgrade base
+
+# Drop the DB schema and alembic version altogether
+drop:
+    PGPASSWORD="$MB__SERVER__POSTGRES__PASSWORD" \
+    psql -h localhost -p "$MB__SERVER__POSTGRES__PORT" \
+    -U "$MB__SERVER__POSTGRES__USER" -d "$MB__SERVER__POSTGRES__DATABASE" -v ON_ERROR_STOP=1 \
+    -c "DROP SCHEMA IF EXISTS mb CASCADE; DROP TABLE IF EXISTS alembic_version;"
+

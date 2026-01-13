@@ -38,7 +38,9 @@ def test_init_and_run_model(
 
     # Mock API
     foo = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
+    foo.source.run()
     bar = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
+    bar.source.run()
 
     foo_leafy_data = foo.data.append_column(
         "leaf_id", pa.array(range(len(foo.data)), type=pa.int64())

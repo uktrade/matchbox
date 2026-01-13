@@ -61,6 +61,7 @@ def test_query_single_source(
         name="foo",
         engine=sqla_sqlite_warehouse,
     ).write_to_location()
+    testkit.source.run()
 
     # Mock API
     query_route = matchbox_api.get("/query").mock(
@@ -116,6 +117,7 @@ def test_query_multiple_sources(
         name="foo",
         engine=sqla_sqlite_warehouse,
     ).write_to_location()
+    testkit1.source.run()
 
     testkit2 = source_from_tuple(
         data_tuple=({"c": "val"}, {"c": "val"}),
@@ -124,6 +126,7 @@ def test_query_multiple_sources(
         engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
+    testkit2.source.run()
 
     # Mock API
     query_route = matchbox_api.get("/query").mock(
@@ -193,6 +196,7 @@ def test_query_cleaning(
         .write_to_location()
         .source
     )
+    source.run()
 
     query = source.query(cleaning={"col1": f"upper({source.f('col1')})"})
 
@@ -252,6 +256,7 @@ def test_query_prefetching(
         name="foo",
         engine=sqla_sqlite_warehouse,
     ).write_to_location()
+    testkit.source.run()
 
     # Mock API
     query_route = matchbox_api.get("/query").mock(
@@ -297,6 +302,7 @@ def test_query_combine_type(
         name="foo",
         engine=sqla_sqlite_warehouse,
     ).write_to_location()
+    testkit1.source.run()
 
     testkit2 = source_from_tuple(
         data_tuple=({"col": "val1"}, {"col": "val2"}, {"col": "val3"}),
@@ -305,6 +311,7 @@ def test_query_combine_type(
         engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
+    testkit2.source.run()
 
     # Mock API
     matchbox_api.get("/query").mock(
@@ -378,6 +385,7 @@ def test_query_leaf_ids(
         name="foo",
         engine=sqla_sqlite_warehouse,
     ).write_to_location()
+    testkit1.source.run()
 
     testkit2 = source_from_tuple(
         data_tuple=({"col": "val1"}, {"col": "val2"}, {"col": "val3"}),
@@ -386,6 +394,7 @@ def test_query_leaf_ids(
         engine=sqla_sqlite_warehouse,
         dag=testkit1.source.dag,
     ).write_to_location()
+    testkit2.source.run()
 
     matchbox_api.get("/query").mock(
         side_effect=[

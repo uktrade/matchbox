@@ -176,8 +176,6 @@ class Query:
             # Download sources from warehouse
             lazy_sources = []
             for source in self.sources:
-                source.run()
-
                 lazy_sources.append(
                     pl.scan_parquet(source.cache_path)
                     .select(pl.all().name.prefix(f"{source.name}_"))

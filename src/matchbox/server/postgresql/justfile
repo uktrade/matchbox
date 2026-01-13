@@ -21,6 +21,7 @@ reset:
 
 # Drop the DB schema and alembic version altogether
 drop:
+    source .env && \
     PGPASSWORD="$MB__SERVER__POSTGRES__PASSWORD" \
     psql -h localhost -p "$MB__SERVER__POSTGRES__PORT" \
     -U "$MB__SERVER__POSTGRES__USER" -d "$MB__SERVER__POSTGRES__DATABASE" -v ON_ERROR_STOP=1 \

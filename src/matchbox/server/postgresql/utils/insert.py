@@ -230,7 +230,7 @@ def _results_to_cluster_pairs(
 
 def _build_cluster_hierarchy(
     cluster_lookup: dict[int, Cluster], probabilities: pa.Table
-) -> list[Cluster]:
+) -> pl.DataFrame:
     """Build cluster hierarchy using disjoint sets and probability thresholding.
 
     Args:
@@ -238,7 +238,7 @@ def _build_cluster_hierarchy(
         probabilities: Arrow table containing probability data
 
     Returns:
-        List of Cluster objects
+        DataFrame with MODEL_CLUSTERS_SCHEMA
     """
     logger.debug("Computing hierarchies")
 
@@ -273,8 +273,20 @@ def _build_cluster_hierarchy(
 
     # Process any remaining components
     _process_components(probability)
-
-    return list(all_clusters.values())
+    return pl.DataFrame(
+        [
+            {
+                "cluster_hash": cluster.hash,
+                "cluster_id": cluster.id,
+                "probability": cluster.probability,
+                "leaves": [leaf.id for leaf in cluster.leaves]
+                if cluster.leaves
+                else [],
+            }
+            for cluster in all_clusters.values()
+        ],
+        schema=MODEL_CLUSTERS_SCHEMA,
+    )
 
 
 def insert_results(
@@ -334,23 +346,10 @@ def insert_results(
     cluster_lookup: dict[int, Cluster] = _build_cluster_objects(nested_data, im)
 
     logger.debug("Computing hierarchies", prefix=log_prefix)
-    all_clusters = _build_cluster_hierarchy(
+    cluster_df = _build_cluster_hierarchy(
         cluster_lookup=cluster_lookup, probabilities=results
     )
     del cluster_lookup
-    logger.debug("Forming clusters dataframe", prefix=log_prefix)
-    cluster_data = []
-    for cluster in all_clusters:
-        cluster_data.append(
-            {
-                "cluster_hash": cluster.hash,
-                "cluster_id": cluster.id,
-                "probability": cluster.probability,
-                "leaves": [leaf.id for leaf in cluster.leaves]
-                if cluster.leaves
-                else [],
-            }
-        )
 
     logger.debug("Ingesting clusters dataframe", prefix=log_prefix)
     with (
@@ -376,9 +375,7 @@ def insert_results(
                 "probability": SMALLINT(),
                 "is_new": BOOLEAN(),
             },
-            data=pl.DataFrame(cluster_data, schema=MODEL_CLUSTERS_SCHEMA)
-            .with_columns(pl.lit(True).alias("is_new"))
-            .to_arrow(),
+            data=cluster_df.with_columns(pl.lit(True).alias("is_new")).to_arrow(),
             max_chunksize=batch_size,
         ) as new_clusters,
     ):

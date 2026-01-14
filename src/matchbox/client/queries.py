@@ -1,6 +1,5 @@
 """Definition of model inputs."""
 
-from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Self
@@ -32,14 +31,6 @@ else:
     DAG = Any
     Model = Any
     Source = Any
-
-
-class CacheMode(StrEnum):
-    """Settings determining what query data gets cached."""
-
-    OFF = "off"
-    RAW = "raw"
-    CLEAN = "clean"
 
 
 class Query:
@@ -82,14 +73,12 @@ class Query:
                 expression that will populate a new column.
         """
         self.raw_data: PolarsDataFrame | None = None
-        self.data: PolarsDataFrame | None = None
         self.dag = dag
         self.sources = sources
         self.model = model
         self.combine_type = combine_type
         self.threshold = threshold
         self.cleaning = cleaning
-        self._cache_mode: CacheMode = CacheMode.OFF
 
     @property
     def config(self) -> QueryConfig:
@@ -139,64 +128,24 @@ class Query:
             cleaning=config.cleaning,
         )
 
-    def set_cache_mode(self, mode: CacheMode = CacheMode.OFF) -> Self:
-        """Configures caching behaviour of query operations.
-
-        * If "off" (default), doesn't cache anything
-        * If "raw", caches data as fetched from the source
-        * If "clean", it additionally caches the result of applying the
-            cleaning dict.
-        """
-        self._cache_mode = mode
-        return self
-
-    def _set_cache(
-        self, raw_data: PolarsDataFrame | None, data: PolarsDataFrame | None
-    ) -> None:
-        self.raw_data = None
-        self.data = None
-
-        if self._cache_mode in [CacheMode.RAW, CacheMode.CLEAN]:
-            self.raw_data = raw_data
-
-        if self._cache_mode == CacheMode.CLEAN:
-            self.data = data
-
-    @profile_time()
-    def run(
+    def data_raw(
         self,
         return_type: QueryReturnType = QueryReturnType.POLARS,
         return_leaf_id: bool = False,
-        batch_size: int | None = None,
-        reuse_cache: bool = False,
     ) -> QueryReturnClass:
-        """Runs queries against the selected backend.
+        """Fetches raw query data by joining source data and matchbox matches.
 
         Args:
             return_type (optional): Type of dataframe returned, defaults to "polars".
                 Other options are "pandas" and "arrow".
             return_leaf_id (optional): Whether matchbox IDs for source clusters should
                 be saved as a byproduct in the `leaf_ids` attribute.
-            batch_size (optional): The size of each batch when fetching data from the
-                warehouse, which helps reduce memory usage and load on the database.
-                Default is None.
-            reuse_cache: Whether to re-use raw cached data if available.
 
         Returns: Data in the requested return type
 
         Raises:
             MatchboxEmptyServerResponse: If no data was returned by the server.
         """
-        if reuse_cache:
-            if self.data is not None:
-                result = _convert_df(self.data, return_type=return_type)
-                self._set_cache(self.raw_data, self.data)
-                return result
-            elif self.raw_data is not None:
-                result = self.clean(self.cleaning, return_type=return_type)
-                self._set_cache(self.raw_data, self.data)
-                return result
-
         with TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             mb_ids_path = tmpdir / "mb_ids.parquet"
@@ -227,25 +176,9 @@ class Query:
             # Download sources from warehouse
             lazy_sources = []
             for source in self.sources:
-                source_path = tmpdir / f"{source.name}.parquet"
-                source_batches = source.fetch(
-                    qualify_names=True,
-                    batch_size=batch_size,
-                    return_type=QueryReturnType.ARROW,
-                )
-
-                first_batch = next(source_batches)
-                writer = pq.ParquetWriter(
-                    source_path, first_batch.schema, compression="snappy"
-                )
-                writer.write_table(first_batch)
-
-                for table in source_batches:
-                    writer.write_table(table)
-
-                writer.close()
                 lazy_sources.append(
-                    pl.scan_parquet(source_path)
+                    pl.scan_parquet(source.cache_path)
+                    .select(pl.all().name.prefix(f"{source.name}_"))
                     .with_columns(pl.lit(source.name).alias("source"))
                     .rename({source.qualified_key: "key"})
                 )
@@ -268,44 +201,33 @@ class Query:
                 raw_data = raw_data.group_by("id").agg(pl.all().exclude("id"))
                 raw_data = raw_data.explode(pl.all().exclude("id")).unique()
 
-            raw_data = raw_data.collect()
+            return _convert_df(raw_data.collect(), return_type=return_type)
 
-        clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
-        self._set_cache(raw_data, clean_data)
-
-        return _convert_df(clean_data, return_type=return_type)
-
-    def clean(
+    @profile_time()
+    def data(
         self,
-        cleaning: dict[str, str] | None,
+        raw_data: pl.DataFrame | None = None,
         return_type: QueryReturnType = QueryReturnType.POLARS,
+        return_leaf_id: bool = False,
     ) -> QueryReturnClass:
-        """Change cleaning dictionary and re-apply cleaning, if raw data was cached.
+        """Returns final data from defined query.
 
         Args:
-            cleaning: A dictionary mapping field aliases to SQL expressions.
-                The SQL expressions can reference columns in the data using their names.
-                If None, no cleaning is applied and the original data is returned.
-                `SourceConfig.f()` can be used to help reference qualified fields.
+            raw_data: If passed, will only apply cleaning instead of fetching raw data.
             return_type (optional): Type of dataframe returned, defaults to "polars".
-                    Other options are "pandas" and "arrow".
+                Other options are "pandas" and "arrow".
+            return_leaf_id (optional): Whether matchbox IDs for source clusters should
+                be saved as a byproduct in the `leaf_ids` attribute. If pre-fetched raw
+                data is passed, this argument is ignored.
+
+        Returns: Data in the requested return type
         """
-        if self.raw_data is None:
-            raise RuntimeError("No raw data is stored in this query.")
+        if raw_data is None:
+            raw_data = self.data_raw(return_leaf_id=return_leaf_id)
 
-        clean_data = _convert_df(
-            data=_clean(
-                data=self.raw_data,
-                cleaning_dict=cleaning,
-            ),
-            return_type=return_type,
-        )
+        clean_data = _clean(data=raw_data, cleaning_dict=self.config.cleaning)
 
-        self.cleaning = cleaning
-
-        self._set_cache(self.raw_data, clean_data)
-
-        return clean_data
+        return _convert_df(clean_data, return_type=return_type)
 
     def deduper(
         self,

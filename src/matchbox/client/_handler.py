@@ -32,15 +32,13 @@ from matchbox.common.arrow import (
 from matchbox.common.dtos import (
     AuthStatusResponse,
     BackendCountableType,
-    BackendParameterType,
-    BackendResourceType,
     Collection,
     CollectionName,
+    ErrorResponse,
     GroupName,
     LoginResponse,
     Match,
     ModelResolutionPath,
-    NotFoundError,
     OKMessage,
     PermissionGrant,
     PermissionType,
@@ -56,17 +54,11 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
-    MatchboxCollectionNotFoundError,
-    MatchboxDataNotFound,
-    MatchboxDeletionNotConfirmed,
+    HTTP_EXCEPTION_REGISTRY,
     MatchboxEmptyServerResponse,
-    MatchboxResolutionNotFoundError,
-    MatchboxRunNotFoundError,
+    MatchboxHttpException,
     MatchboxServerFileError,
-    MatchboxTooManySamplesRequested,
     MatchboxUnhandledServerResponse,
-    MatchboxUnparsedClientRequest,
-    MatchboxUserNotFoundError,
 )
 from matchbox.common.hash import hash_to_base64
 from matchbox.common.logging import logger
@@ -110,6 +102,21 @@ def url_params(
     return {k: encode_param_value(v) for k, v in non_null.items()}
 
 
+def reconstruct_exception(
+    ExceptionClass: type[MatchboxHttpException], error: ErrorResponse
+) -> MatchboxHttpException:
+    """Reconstruct an exception from ErrorResponse data."""
+    # Handle exceptions with special constructor signatures
+    if error.details:
+        try:
+            return ExceptionClass(message=error.message, **error.details)
+        except TypeError:
+            pass
+
+    # Default: just pass the message
+    return ExceptionClass(error.message)
+
+
 def handle_http_code(res: httpx.Response) -> httpx.Response:
     """Handle HTTP status codes and raise appropriate exceptions."""
     res.read()
@@ -117,45 +124,24 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
     if 299 >= res.status_code >= 200:
         return res
 
-    if res.status_code == 400:
-        raise RuntimeError(f"Unexpected 400 error: {res.content}")
+    try:
+        data = res.json()
 
-    if res.status_code == 404:
-        try:
-            error = NotFoundError.model_validate(res.json())
-        # Validation will fail if endpoint does not exist
-        except ValidationError as e:
-            raise RuntimeError(f"Error with request {res._request}: {res}") from e
+        if "exception_type" in data:
+            error = ErrorResponse.model_validate(data)
+            ExceptionClass = HTTP_EXCEPTION_REGISTRY.get(error.exception_type)
 
-        match error.entity:
-            case BackendResourceType.COLLECTION:
-                raise MatchboxCollectionNotFoundError(error.details)
-            case BackendResourceType.RUN:
-                raise MatchboxRunNotFoundError(error.details)
-            case BackendResourceType.RESOLUTION:
-                raise MatchboxResolutionNotFoundError(error.details)
-            case BackendResourceType.CLUSTER:
-                raise MatchboxDataNotFound(error.details)
-            case BackendResourceType.USER:
-                raise MatchboxUserNotFoundError(error.details)
-            case _:
-                raise RuntimeError(f"Unexpected 404 error: {error.details}")
+            if ExceptionClass:
+                raise reconstruct_exception(ExceptionClass, error)
+            raise MatchboxUnhandledServerResponse(
+                http_status=res.status_code,
+                details=f"Unknown exception type: {error.exception_type}",
+            )
 
-    if res.status_code == 409:
-        error = ResourceOperationStatus.model_validate(res.json())
-        raise MatchboxDeletionNotConfirmed(message=error.details)
-
-    if res.status_code == 422:
-        match res.json().get("parameter"):
-            case BackendParameterType.SAMPLE_SIZE:
-                raise MatchboxTooManySamplesRequested(res.content)
-            case _:
-                # Not a custom Matchbox exception, most likely a Pydantic error
-                raise MatchboxUnparsedClientRequest(res.content)
-
-    raise MatchboxUnhandledServerResponse(
-        details=res.content, http_status=res.status_code
-    )
+    except ValidationError as e:
+        raise MatchboxUnhandledServerResponse(
+            http_status=res.status_code, details=str(res.content)
+        ) from e
 
 
 def create_client(settings: ClientSettings) -> httpx.Client:

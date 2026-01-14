@@ -8,7 +8,6 @@ from fastapi import (
     BackgroundTasks,
     Body,
     Depends,
-    HTTPException,
     Query,
     UploadFile,
     status,
@@ -21,9 +20,9 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     CRUDOperation,
+    ErrorResponse,
     GroupName,
     ModelResolutionName,
-    NotFoundError,
     PermissionGrant,
     PermissionType,
     Resolution,
@@ -36,13 +35,6 @@ from matchbox.common.dtos import (
     UploadInfo,
 )
 from matchbox.common.exceptions import (
-    MatchboxCollectionAlreadyExists,
-    MatchboxCollectionNotFoundError,
-    MatchboxDeletionNotConfirmed,
-    MatchboxLockError,
-    MatchboxResolutionAlreadyExists,
-    MatchboxResolutionNotFoundError,
-    MatchboxRunNotFoundError,
     MatchboxServerFileError,
 )
 from matchbox.server.api.dependencies import (
@@ -74,7 +66,11 @@ def list_collections(backend: BackendDependency) -> list[CollectionName]:
 
 @router.get(
     "/{collection}",
-    responses={404: {"model": NotFoundError}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
     summary="Get collection details",
     description=(
@@ -93,10 +89,9 @@ def get_collection(
 @router.post(
     "/{collection}",
     responses={
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
     },
     status_code=status.HTTP_201_CREATED,
     summary="Create a new collection",
@@ -108,40 +103,24 @@ def create_collection(
     permissions: list[PermissionGrant],
 ) -> ResourceOperationStatus:
     """Create a new collection."""
-    try:
-        backend.create_collection(
-            name=collection,
-            permissions=permissions,
-        )
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Collection {collection}",
-            operation=CRUDOperation.CREATE,
-        )
-    except MatchboxCollectionAlreadyExists as e:
-        raise HTTPException(
-            status_code=409,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Collection {collection}",
-                operation=CRUDOperation.CREATE,
-                details=str(e),
-            ),
-        ) from e
+    backend.create_collection(
+        name=collection,
+        permissions=permissions,
+    )
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Collection {collection}",
+        operation=CRUDOperation.CREATE,
+    )
 
 
 @router.delete(
     "/{collection}",
     responses={
-        404: {"model": NotFoundError},
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
     },
     dependencies=[Depends(RequireCollectionWrite)],
     summary="Delete a collection",
@@ -155,28 +134,12 @@ def delete_collection(
     ] = False,
 ) -> ResourceOperationStatus:
     """Delete a collection."""
-    try:
-        backend.delete_collection(name=collection, certain=certain)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Collection {collection}",
-            operation=CRUDOperation.DELETE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxDeletionNotConfirmed,
-    ):
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Collection {collection}",
-                operation=CRUDOperation.DELETE,
-                details=str(e),
-            ),
-        ) from e
+    backend.delete_collection(name=collection, certain=certain)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Collection {collection}",
+        operation=CRUDOperation.DELETE,
+    )
 
 
 # Collection permissions endpoints
@@ -184,6 +147,11 @@ def delete_collection(
 
 @router.get(
     "/{collection}/permissions",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionAdmin)],
 )
 def get_permissions(
@@ -196,6 +164,12 @@ def get_permissions(
 
 @router.post(
     "/{collection}/permissions",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionAdmin)],
 )
 def grant_permission(
@@ -214,6 +188,12 @@ def grant_permission(
 
 @router.delete(
     "/{collection}/permissions/{permission}/{group_name}/",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionAdmin)],
 )
 def revoke_permission(
@@ -236,8 +216,12 @@ def revoke_permission(
 
 @router.get(
     "/{collection}/runs/{run_id}",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
-    responses={404: {"model": NotFoundError}},
     summary="Get specific run",
     description="Retrieve details for a specific run within a collection.",
 )
@@ -252,14 +236,12 @@ def get_run(
 
 @router.post(
     "/{collection}/runs",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {"model": NotFoundError},
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     status_code=status.HTTP_201_CREATED,
     summary="Create a new run",
     description="Create a new run within the specified collection.",
@@ -269,30 +251,17 @@ def create_run(
     collection: CollectionName,
 ) -> Run:
     """Create a new run in a collection."""
-    try:
-        return backend.create_run(collection=collection)
-    except MatchboxCollectionNotFoundError as e:
-        raise HTTPException(
-            status_code=409,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Collection {collection}",
-                operation=CRUDOperation.CREATE,
-                details=str(e),
-            ),
-        ) from e
+    return backend.create_run(collection=collection)
 
 
 @router.patch(
     "/{collection}/runs/{run_id}/mutable",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {"model": NotFoundError},
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     summary="Change run mutability",
     description="Set whether a run can be modified.",
 )
@@ -303,40 +272,22 @@ def set_run_mutable(
     mutable: Annotated[bool, Body(description="Mutability setting")],
 ) -> ResourceOperationStatus:
     """Set run mutability."""
-    try:
-        backend.set_run_mutable(collection=collection, run_id=run_id, mutable=mutable)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Run {run_id}",
-            operation=CRUDOperation.UPDATE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-    ):
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Run {run_id}",
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
+    backend.set_run_mutable(collection=collection, run_id=run_id, mutable=mutable)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Run {run_id}",
+        operation=CRUDOperation.UPDATE,
+    )
 
 
 @router.patch(
     "/{collection}/runs/{run_id}/default",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {"model": NotFoundError},
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     summary="Change default run",
     description="Set whether a run is the default for its collection.",
 )
@@ -347,44 +298,23 @@ def set_run_default(
     default: Annotated[bool, Body(description="Default setting")],
 ) -> ResourceOperationStatus:
     """Set run as default."""
-    try:
-        backend.set_run_default(collection=collection, run_id=run_id, default=default)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Run {run_id}",
-            operation=CRUDOperation.UPDATE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-    ):
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Run {run_id}",
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
+    backend.set_run_default(collection=collection, run_id=run_id, default=default)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Run {run_id}",
+        operation=CRUDOperation.UPDATE,
+    )
 
 
 @router.delete(
     "/{collection}/runs/{run_id}",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {"model": NotFoundError},
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     summary="Delete a run",
     description="Delete a run and all its resolutions. Requires confirmation.",
 )
@@ -395,27 +325,10 @@ def delete_run(
     certain: Annotated[bool, Query(description="Confirm deletion of the run")] = False,
 ) -> ResourceOperationStatus:
     """Delete a run."""
-    try:
-        backend.delete_run(collection=collection, run_id=run_id, certain=certain)
-        return ResourceOperationStatus(
-            success=True, target=f"Run {run_id}", operation=CRUDOperation.DELETE
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-        MatchboxDeletionNotConfirmed,
-    ):
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Run {run_id}",
-                operation=CRUDOperation.DELETE,
-                details=str(e),
-            ),
-        ) from e
+    backend.delete_run(collection=collection, run_id=run_id, certain=certain)
+    return ResourceOperationStatus(
+        success=True, target=f"Run {run_id}", operation=CRUDOperation.DELETE
+    )
 
 
 # Resolution management
@@ -423,17 +336,13 @@ def delete_run(
 
 @router.post(
     "/{collection}/runs/{run_id}/resolutions/{resolution_name}",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     status_code=status.HTTP_201_CREATED,
     summary="Create a resolution",
     description="Create a new resolution (model or source) in the specified run.",
@@ -449,47 +358,25 @@ def create_resolution(
     resolution_path = ResolutionPath(
         name=resolution_name, collection=collection, run=run_id
     )
-    try:
-        backend.create_resolution(
-            resolution=resolution,
-            path=resolution_path,
-        )
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Resolution {resolution_path}",
-            operation=CRUDOperation.CREATE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-    ):
-        raise
-    except MatchboxResolutionAlreadyExists as e:
-        raise HTTPException(
-            status_code=409,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details=str(e),
-            ),
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
+    backend.create_resolution(
+        resolution=resolution,
+        path=resolution_path,
+    )
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Resolution {resolution_path}",
+        operation=CRUDOperation.CREATE,
+    )
 
 
 @router.get(
     "/{collection}/runs/{run_id}/resolutions/{resolution}",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
-    responses={404: {"model": NotFoundError}},
     summary="Get a resolution",
     description="Retrieve a specific resolution (model or source) from the backend.",
 )
@@ -507,17 +394,12 @@ def get_resolution(
 
 @router.put(
     "/{collection}/runs/{run_id}/resolutions/{resolution_name}",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     status_code=status.HTTP_200_OK,
     summary="Update a resolution",
     description="Update an existing resolution (model or source) in the specified run.",
@@ -533,56 +415,26 @@ def update_resolution(
     resolution_path = ResolutionPath(
         name=resolution_name, collection=collection, run=run_id
     )
-    try:
-        backend.update_resolution(
-            resolution=resolution,
-            path=resolution_path,
-        )
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Resolution {resolution_path}",
-            operation=CRUDOperation.UPDATE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-        MatchboxResolutionNotFoundError,
-    ) as e:
-        raise HTTPException(
-            status_code=404,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {resolution_path}",
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ),
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {resolution_path}",
-                operation=CRUDOperation.UPDATE,
-                details=str(e),
-            ).model_dump(),
-        ) from e
+    backend.update_resolution(
+        resolution=resolution,
+        path=resolution_path,
+    )
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Resolution {resolution_path}",
+        operation=CRUDOperation.UPDATE,
+    )
 
 
 @router.delete(
     "/{collection}/runs/{run_id}/resolutions/{resolution}",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {"model": NotFoundError},
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     summary="Delete a resolution",
     description="Delete a resolution from the backend. Requires confirmation.",
 )
@@ -597,42 +449,24 @@ def delete_resolution(
 ) -> ResourceOperationStatus:
     """Delete a resolution from the backend."""
     resolution_path = ResolutionPath(collection=collection, run=run_id, name=resolution)
-    try:
-        backend.delete_resolution(path=resolution_path, certain=certain)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Resolution {resolution_path}",
-            operation=CRUDOperation.DELETE,
-        )
-    except (
-        MatchboxCollectionNotFoundError,
-        MatchboxRunNotFoundError,
-        MatchboxDeletionNotConfirmed,
-        MatchboxResolutionNotFoundError,
-    ):
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {resolution_path}",
-                operation=CRUDOperation.DELETE,
-                details=str(e),
-            ),
-        ) from e
+    backend.delete_resolution(path=resolution_path, certain=certain)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Resolution {resolution_path}",
+        operation=CRUDOperation.DELETE,
+    )
 
 
 @router.post(
     "/{collection}/runs/{run_id}/resolutions/{resolution_name}/data",
-    dependencies=[Depends(RequireCollectionWrite)],
     responses={
-        404: {"model": NotFoundError},
-        400: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        423: {"model": ErrorResponse},
     },
+    dependencies=[Depends(RequireCollectionWrite)],
     status_code=status.HTTP_202_ACCEPTED,
     summary="Set resolution data",
     description="Create an upload task for source hashes or model results.",
@@ -652,47 +486,24 @@ def set_data(
         collection=collection, run=run_id, name=resolution_name
     )
 
-    # Check if data is locked, lock it if not
-    try:
-        backend.lock_resolution_data(path=resolution_path)
-    except MatchboxLockError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution data {resolution_path}",
-                operation=CRUDOperation.CREATE,
-                details=str(e),
-            ),
-        ) from e
+    # Check if data is locked, lock it if not (raises MatchboxLockError -> 423)
+    backend.lock_resolution_data(path=resolution_path)
 
     # Try-except to ensure we release the lock
     try:
-        # Validate file
+        # Validate file extension
         if ".parquet" not in file.filename:
             extension = file.filename.split(".")[-1]
-            raise HTTPException(
-                status_code=400,
-                detail=ResourceOperationStatus(
-                    success=False,
-                    target=f"Resolution data {resolution_path}",
-                    operation=CRUDOperation.CREATE,
-                    details=f"Expected .parquet file, got {extension}",
-                ),
+            raise MatchboxServerFileError(
+                message=f"Expected .parquet file, got {extension}"
             )
 
         # pyarrow validates Parquet magic numbers when loading file
         try:
             pq.ParquetFile(file.file)
         except ArrowInvalid as e:
-            raise HTTPException(
-                status_code=400,
-                detail=ResourceOperationStatus(
-                    success=False,
-                    target=f"Resolution data {resolution_path}",
-                    operation=CRUDOperation.CREATE,
-                    details=f"Invalid Parquet file: {str(e)}",
-                ),
+            raise MatchboxServerFileError(
+                message=f"Invalid Parquet file: {str(e)}"
             ) from e
 
         # Get resolution
@@ -720,18 +531,8 @@ def set_data(
                 )
             )
 
-        try:
-            file_to_s3(client=client, bucket=bucket, key=key, file=file)
-        except MatchboxServerFileError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=ResourceOperationStatus(
-                    success=False,
-                    target=f"Resolution data {resolution_path}",
-                    operation=CRUDOperation.CREATE,
-                    details=f"Could not upload file to object storage: {str(e)}",
-                ),
-            ) from e
+        # Upload to object storage (raises MatchboxServerFileError on failure)
+        file_to_s3(client=client, bucket=bucket, key=key, file=file)
 
         match settings.task_runner:
             case "api":
@@ -768,8 +569,12 @@ def set_data(
 
 @router.get(
     "/{collection}/runs/{run_id}/resolutions/{resolution}/data/status",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
-    responses={404: {"model": NotFoundError}},
     status_code=status.HTTP_200_OK,
 )
 def get_upload_status(
@@ -797,8 +602,12 @@ def get_upload_status(
 
 @router.get(
     "/{collection}/runs/{run_id}/resolutions/{resolution}/data",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
-    responses={404: {"model": NotFoundError}},
     summary="Get resolution results",
     description="Download results for a model as a parquet file.",
 )

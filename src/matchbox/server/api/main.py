@@ -1,5 +1,6 @@
 """API routes for the Matchbox server."""
 
+import uuid
 from collections.abc import Awaitable, Callable
 from importlib.metadata import version
 from pathlib import Path
@@ -26,13 +27,12 @@ from starlette.responses import HTMLResponse
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendCountableType,
-    BackendResourceType,
     CollectionName,
     CountResult,
     CRUDOperation,
+    ErrorResponse,
     Match,
     ModelResolutionName,
-    NotFoundError,
     OKMessage,
     ResolutionPath,
     ResourceOperationStatus,
@@ -41,12 +41,9 @@ from matchbox.common.dtos import (
     SourceResolutionPath,
 )
 from matchbox.common.exceptions import (
-    MatchboxCollectionNotFoundError,
-    MatchboxDeletionNotConfirmed,
-    MatchboxGroupNotFoundError,
-    MatchboxResolutionNotFoundError,
-    MatchboxRunNotFoundError,
+    MatchboxHttpException,
 )
+from matchbox.common.logging import logger
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
@@ -82,81 +79,32 @@ async def http_exception_handler(
     )
 
 
-@app.exception_handler(MatchboxCollectionNotFoundError)
-async def collection_not_found_handler(
-    request: Request, exc: MatchboxCollectionNotFoundError
-) -> JSONResponse:
-    """Handle collection not found errors."""
-    detail = NotFoundError(
-        details=str(exc), entity=BackendResourceType.COLLECTION
-    ).model_dump()
-    return JSONResponse(
-        status_code=404,
-        content=jsonable_encoder(detail),
+@app.exception_handler(Exception)
+async def exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Unified handler for all exceptions."""
+    if isinstance(exc, MatchboxHttpException):
+        error_response = ErrorResponse(
+            exception_type=type(exc).__name__,
+            message=str(exc),
+            details=exc.to_details(),
+        )
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=jsonable_encoder(error_response.model_dump()),
+        )
+
+    # All other exceptions get logged and return generic error
+    error_id = str(uuid.uuid4())
+    logger.exception("Unhandled exception [%s]: %s", error_id, exc)
+
+    error_response = ErrorResponse(
+        exception_type="MatchboxServerError",
+        message=f"An internal server error occurred. Reference: {error_id}",
+        details=None,
     )
-
-
-@app.exception_handler(MatchboxRunNotFoundError)
-async def run_not_found_handler(
-    request: Request, exc: MatchboxRunNotFoundError
-) -> JSONResponse:
-    """Handle run not found errors."""
-    detail = NotFoundError(
-        details=str(exc), entity=BackendResourceType.RUN
-    ).model_dump()
     return JSONResponse(
-        status_code=404,
-        content=jsonable_encoder(detail),
-    )
-
-
-@app.exception_handler(MatchboxResolutionNotFoundError)
-async def resolution_not_found_handler(
-    request: Request, exc: MatchboxResolutionNotFoundError
-) -> JSONResponse:
-    """Handle resolution not found errors."""
-    detail = NotFoundError(
-        details=str(exc), entity=BackendResourceType.RESOLUTION
-    ).model_dump()
-    return JSONResponse(
-        status_code=404,
-        content=jsonable_encoder(detail),
-    )
-
-
-@app.exception_handler(MatchboxGroupNotFoundError)
-async def group_not_found_handler(
-    request: Request, exc: MatchboxGroupNotFoundError
-) -> JSONResponse:
-    """Handle group not found errors."""
-    detail = NotFoundError(
-        details=str(exc), entity=BackendResourceType.GROUP
-    ).model_dump()
-    return JSONResponse(
-        status_code=404,
-        content=jsonable_encoder(detail),
-    )
-
-
-@app.exception_handler(MatchboxDeletionNotConfirmed)
-async def deletion_not_confirmed_handler(
-    request: Request, exc: MatchboxDeletionNotConfirmed
-) -> JSONResponse:
-    """Handle deletion not confirmed errors."""
-    # Extract resource name from request
-    path_parts = request.url.path.split("/")
-    resource_name = path_parts[-1] if path_parts else "Unknown"
-
-    detail = ResourceOperationStatus(
-        success=False,
-        target=resource_name,
-        operation=CRUDOperation.DELETE,
-        details=str(exc),
-    ).model_dump()
-
-    return JSONResponse(
-        status_code=409,
-        content=jsonable_encoder(detail),
+        status_code=500,
+        content=jsonable_encoder(error_response.model_dump()),
     )
 
 
@@ -194,7 +142,11 @@ async def healthcheck() -> OKMessage:
 
 @app.get(
     "/query",
-    responses={404: {"model": NotFoundError}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
 )
 def query(
@@ -208,29 +160,21 @@ def query(
     limit: int | None = None,
 ) -> ParquetResponse:
     """Query Matchbox for matches based on a source resolution name."""
-    try:
-        res = backend.query(
-            source=SourceResolutionPath(
-                collection=collection,
-                run=run_id,
-                name=source,
-            ),
-            point_of_truth=ResolutionPath(
-                collection=collection, run=run_id, name=resolution
-            )
-            if resolution
-            else None,
-            threshold=threshold,
-            return_leaf_id=return_leaf_id,
-            limit=limit,
+    res = backend.query(
+        source=SourceResolutionPath(
+            collection=collection,
+            run=run_id,
+            name=source,
+        ),
+        point_of_truth=ResolutionPath(
+            collection=collection, run=run_id, name=resolution
         )
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
+        if resolution
+        else None,
+        threshold=threshold,
+        return_leaf_id=return_leaf_id,
+        limit=limit,
+    )
 
     buffer = table_to_buffer(res)
     return ParquetResponse(buffer.getvalue())
@@ -238,7 +182,11 @@ def query(
 
 @app.get(
     "/match",
-    responses={404: {"model": NotFoundError}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
     dependencies=[Depends(RequireCollectionRead)],
 )
 def match(
@@ -255,31 +203,21 @@ def match(
     targets = [
         SourceResolutionPath(collection=collection, run=run_id, name=t) for t in targets
     ]
-    try:
-        res = backend.match(
-            key=key,
-            source=SourceResolutionPath(
-                collection=collection,
-                run=run_id,
-                name=source,
-            ),
-            targets=targets,
-            point_of_truth=ResolutionPath(
-                collection=collection,
-                run=run_id,
-                name=resolution,
-            ),
-            threshold=threshold,
-        )
-    except MatchboxResolutionNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.RESOLUTION
-            ).model_dump(),
-        ) from e
-
-    return res
+    return backend.match(
+        key=key,
+        source=SourceResolutionPath(
+            collection=collection,
+            run=run_id,
+            name=source,
+        ),
+        targets=targets,
+        point_of_truth=ResolutionPath(
+            collection=collection,
+            run=run_id,
+            name=resolution,
+        ),
+        threshold=threshold,
+    )
 
 
 # Admin
@@ -340,14 +278,8 @@ def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
 @app.delete(
     "/database",
     responses={
-        409: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
-        500: {
-            "model": ResourceOperationStatus,
-            **ResourceOperationStatus.error_examples(),
-        },
+        409: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
     },
     dependencies=[Depends(RequireSysAdmin)],
 )
@@ -363,23 +295,10 @@ def clear_database(
     ] = False,
 ) -> ResourceOperationStatus:
     """Delete all data from the backend whilst retaining tables."""
-    try:
-        backend.clear(certain=certain)
-        return ResourceOperationStatus(
-            success=True, target="Database", operation=CRUDOperation.DELETE
-        )
-    except MatchboxDeletionNotConfirmed:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=ResourceOperationStatus(
-                success=False,
-                target="Database",
-                operation=CRUDOperation.DELETE,
-                details=str(e),
-            ),
-        ) from e
+    backend.clear(certain=certain)
+    return ResourceOperationStatus(
+        success=True, target="Database", operation=CRUDOperation.DELETE
+    )
 
 
 # Swagger UI

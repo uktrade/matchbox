@@ -70,11 +70,11 @@ class EvaluationQueue:
         if not sessions:
             return 0
 
-        existing_ids = {session.item.cluster_id for session in self.sessions}
+        existing_ids = {tuple(sorted(session.item.leaves)) for session in self.sessions}
         unique_items = [
             session
             for session in sessions
-            if session.item.cluster_id not in existing_ids
+            if tuple(sorted(session.item.leaves)) not in existing_ids
         ]
 
         if unique_items:

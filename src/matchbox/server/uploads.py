@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import redis
 from celery import Celery, Task
+from celery.exceptions import MaxRetriesExceededError
+from celery.utils.log import get_task_logger
 from fastapi import UploadFile
 from pyarrow import parquet as pq
 
@@ -17,8 +19,9 @@ from matchbox.common.dtos import (
     ResolutionType,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
-from matchbox.common.logging import logger
+from matchbox.common.logging import log_mem_usage, logger
 from matchbox.server.base import (
+    MatchboxBackends,
     MatchboxDBAdapter,
     MatchboxServerSettings,
     get_backend_settings,
@@ -29,9 +32,6 @@ if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
 else:
     S3Client = Any
-
-from celery.exceptions import MaxRetriesExceededError
-from celery.utils.log import get_task_logger
 
 celery_logger = get_task_logger(__name__)
 
@@ -150,7 +150,9 @@ def s3_to_recordbatch(
 # -- Upload tasks --
 
 
-CELERY_SETTINGS = get_backend_settings(MatchboxServerSettings().backend_type)()
+CELERY_SETTINGS: MatchboxServerSettings = get_backend_settings(
+    MatchboxServerSettings().backend_type
+)()
 CELERY_BACKEND: MatchboxDBAdapter | None = None
 CELERY_TRACKER: UploadTracker | None = None
 
@@ -163,11 +165,14 @@ celery.conf.update(
     # Reduce pre-fetching (workers reserving tasks while they're still busy)
     # as it's not ideal for long-running tasks
     prefetch_multiplier=1,
+    # Limit number of tasks a worker can complete before restarting
+    # This may prevent OOM errors caused by memory not being deallocated properly
+    worker_max_tasks_per_child=5,
 )
 
 
 def initialise_celery_worker() -> None:
-    """Initialise backend and tracker for celery worker."""
+    """Initialise backend and tracker for celery worker and set up logging."""
     global CELERY_SETTINGS
     global CELERY_BACKEND
     global CELERY_TRACKER
@@ -247,9 +252,17 @@ def process_upload_celery(
     initialise_celery_worker()
     resolution_path = ResolutionPath.model_validate_json(resolution_path_json)
 
+    # If using Postgres, we must reset the global database connections
+    # to avoid using inherited C-pointers from the parent process (ADBC).
+    if CELERY_SETTINGS.backend_type == MatchboxBackends.POSTGRES:
+        from matchbox.server.postgresql.db import MBDB  # noqa: PLC0415
+
+        MBDB._disconnect_adbc()
+
     celery_logger.info(
         "Uploading data for resolution %s, ID %s", str(resolution_path), upload_id
     )
+    log_mem_usage()
 
     upload_function = partial(
         process_upload,
@@ -265,6 +278,10 @@ def process_upload_celery(
             bucket=bucket,
             filename=filename,
         )
+        celery_logger.info(
+            "Upload complete for %s, ID %s", str(resolution_path), upload_id
+        )
+
     except Exception as exc:  # noqa: BLE001
         celery_logger.error(
             "Upload failed for resolution %s, ID %s. Retrying...",
@@ -277,4 +294,12 @@ def process_upload_celery(
             CELERY_TRACKER.set(upload_id, f"Max retries exceeded: {exc}")
             raise
 
-    celery_logger.info("Upload complete for %s, ID %s", str(resolution_path), upload_id)
+    finally:
+        log_mem_usage()
+
+        # Cleanup connections
+        if CELERY_SETTINGS.backend_type == MatchboxBackends.POSTGRES:
+            from matchbox.server.postgresql.db import MBDB  # noqa: PLC0415
+
+            MBDB._disconnect()
+            MBDB._disconnect_adbc()

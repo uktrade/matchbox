@@ -15,24 +15,15 @@ from fastapi import (
 
 from matchbox.common.arrow import JudgementsZipFilenames, table_to_buffer
 from matchbox.common.dtos import (
-    BackendParameterType,
-    BackendResourceType,
     CollectionName,
-    InvalidParameterError,
+    ErrorResponse,
     ModelResolutionName,
     ModelResolutionPath,
-    NotFoundError,
     PermissionType,
     RunID,
     User,
 )
 from matchbox.common.eval import Judgement
-from matchbox.common.exceptions import (
-    MatchboxDataNotFound,
-    MatchboxResolutionNotFoundError,
-    MatchboxTooManySamplesRequested,
-    MatchboxUserNotFoundError,
-)
 from matchbox.server.api.dependencies import (
     BackendDependency,
     CurrentUserDependency,  # [Added Import]
@@ -46,7 +37,7 @@ router = APIRouter(prefix="/eval", tags=["eval"])
 
 @router.post(
     "/judgements",
-    responses={404: {"model": NotFoundError}},
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
     status_code=status.HTTP_201_CREATED,
 )
 def insert_judgement(
@@ -60,25 +51,9 @@ def insert_judgement(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         )
-
-    try:
-        judgement.user_name = user.user_name
-        backend.insert_judgement(judgement=judgement)
-        return Response(status_code=status.HTTP_201_CREATED)
-    except MatchboxDataNotFound as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.CLUSTER
-            ).model_dump(),
-        ) from e
-    except MatchboxUserNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.USER
-            ).model_dump(),
-        ) from e
+    judgement.user_name = user.user_name
+    backend.insert_judgement(judgement=judgement)
+    return Response(status_code=status.HTTP_201_CREATED)
 
 
 @router.get(
@@ -109,7 +84,12 @@ def get_judgements(
 
 @router.get(
     "/samples",
-    responses={404: {"model": NotFoundError}, 422: {"model": InvalidParameterError}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
 )
 def sample(
     backend: BackendDependency,
@@ -129,29 +109,10 @@ def sample(
     ],
 ) -> ParquetResponse:
     """Sample n cluster to validate."""
-    try:
-        sample = backend.sample_for_eval(
-            path=ModelResolutionPath(
-                collection=collection, run=run_id, name=resolution
-            ),
-            n=n,
-            user_name=user.user_name,
-        )
-        buffer = table_to_buffer(sample)
-        return ParquetResponse(buffer.getvalue())
-    except MatchboxResolutionNotFoundError:
-        raise
-    except MatchboxUserNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=NotFoundError(
-                details=str(e), entity=BackendResourceType.USER
-            ).model_dump(),
-        ) from e
-    except MatchboxTooManySamplesRequested as e:
-        raise HTTPException(
-            status_code=422,
-            detail=InvalidParameterError(
-                details=str(e), parameter=BackendParameterType.SAMPLE_SIZE
-            ).model_dump(),
-        ) from e
+    sample = backend.sample_for_eval(
+        path=ModelResolutionPath(collection=collection, run=run_id, name=resolution),
+        n=n,
+        user_name=user.user_name,
+    )
+    buffer = table_to_buffer(sample)
+    return ParquetResponse(buffer.getvalue())

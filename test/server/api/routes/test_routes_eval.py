@@ -13,10 +13,6 @@ from matchbox.common.arrow import (
     SCHEMA_JUDGEMENTS,
     JudgementsZipFilenames,
 )
-from matchbox.common.dtos import (
-    BackendParameterType,
-    BackendResourceType,
-)
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
     MatchboxDataNotFound,
@@ -31,7 +27,7 @@ def test_insert_judgement_ok(
 ) -> None:
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
-    judgement = Judgement(shown=10, endorsed=[[1]])
+    judgement = Judgement(shown=[1, 2], endorsed=[[1], [2]])
     response = test_client.post("/eval/judgements", json=judgement.model_dump())
     assert response.status_code == 201
     assert (
@@ -49,17 +45,19 @@ def test_insert_judgement_error(
 ) -> None:
     """Test that judgement insertion bubbles up errors."""
     test_client, mock_backend, _ = api_client_and_mocks
-    fake_judgement = Judgement(user_name="alice", shown=10, endorsed=[[1]]).model_dump()
+    fake_judgement = Judgement(
+        user_name="alice", shown=[1, 2], endorsed=[[1], [2]]
+    ).model_dump()
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxDataNotFound)
     response = test_client.post("/eval/judgements", json=fake_judgement)
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.CLUSTER
+    assert response.json()["exception_type"] == "MatchboxDataNotFound"
 
     mock_backend.insert_judgement = Mock(side_effect=MatchboxUserNotFoundError)
     response = test_client.post("/eval/judgements", json=fake_judgement)
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.USER
+    assert response.json()["exception_type"] == "MatchboxUserNotFoundError"
 
 
 def test_get_judgements(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -138,23 +136,23 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
 
 
 @pytest.mark.parametrize(
-    ("exception", "entity"),
+    ("exception", "expected_exception_name"),
     [
         pytest.param(
             MatchboxUserNotFoundError,
-            BackendResourceType.USER,
+            "MatchboxUserNotFoundError",
             id="user_not_found",
         ),
         pytest.param(
             MatchboxResolutionNotFoundError,
-            BackendResourceType.RESOLUTION,
+            "MatchboxResolutionNotFoundError",
             id="resolution_not_found",
         ),
     ],
 )
 def test_get_samples_404(
-    exception: BaseException,
-    entity: BackendResourceType,
+    exception: type[Exception],
+    expected_exception_name: str,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ) -> None:
     """Test errors in requesting samples."""
@@ -173,7 +171,7 @@ def test_get_samples_404(
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == entity
+    assert response.json()["exception_type"] == expected_exception_name
 
 
 def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -193,4 +191,4 @@ def test_get_samples_422(api_client_and_mocks: tuple[TestClient, Mock, Mock]) ->
     )
 
     assert response.status_code == 422
-    assert response.json()["parameter"] == BackendParameterType.SAMPLE_SIZE
+    assert response.json()["exception_type"] == "MatchboxTooManySamplesRequested"

@@ -25,7 +25,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 
 from matchbox.common.datatypes import DataTypes
-from matchbox.common.exceptions import MatchboxNameError
+from matchbox.common.exceptions import MatchboxExceptionType, MatchboxNameError
 from matchbox.common.hash import base64_to_hash, hash_to_base64
 
 
@@ -733,3 +733,19 @@ class InvalidParameterError(BaseModel):
 
     details: str
     parameter: BackendParameterType | None
+
+
+class ErrorResponse(BaseModel):
+    """Unified error response for all HTTP error status codes.
+
+    This DTO enables the client to reconstruct the exact exception
+    type that was raised on the server.
+    """
+
+    exception_type: MatchboxExceptionType = Field(
+        description="The name of the exception class raised on the server"
+    )
+    message: str = Field(description="Human-readable error message")
+    details: dict[str, Any] | None = Field(
+        default=None, description="Exception-specific data for reconstruction"
+    )

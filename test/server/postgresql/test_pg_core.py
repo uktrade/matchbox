@@ -1,120 +1,11 @@
 import pyarrow as pa
 import pytest
-from sqlalchemy import Column, MetaData, func, select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import BIGINT, TEXT
-from sqlalchemy.orm import declarative_base
 
-from matchbox.common.exceptions import MatchboxDatabaseWriteError
 from matchbox.server.postgresql import MatchboxPostgres
 from matchbox.server.postgresql.db import MBDB
-from matchbox.server.postgresql.mixin import CountMixin
-from matchbox.server.postgresql.orm import PKSpace
-from matchbox.server.postgresql.utils.db import (
-    ingest_to_temporary_table,
-    large_append,
-)
-
-
-@pytest.mark.docker
-def test_reserve_id_block(
-    matchbox_postgres: MatchboxPostgres,  # Reset DB
-) -> None:
-    """Test that we can atomically reserve ID blocks."""
-    first_cluster_id = PKSpace.reserve_block("clusters", 42)
-    second_cluster_id = PKSpace.reserve_block("clusters", 42)
-
-    assert first_cluster_id == second_cluster_id - 42
-
-    first_cluster_keys_id = PKSpace.reserve_block("cluster_keys", 42)
-    second_cluster_keys_id = PKSpace.reserve_block("cluster_keys", 42)
-
-    assert first_cluster_keys_id == second_cluster_keys_id - 42
-
-    with pytest.raises(ValueError):
-        PKSpace.reserve_block("clusters", 0)
-
-
-@pytest.mark.docker
-def test_large_append(
-    matchbox_postgres: MatchboxPostgres,  # will drop dummy table
-) -> None:
-    """Test appending large data to a table."""
-    engine = MBDB.get_engine()
-    metadata = MetaData(schema=MBDB.MatchboxBase.metadata.schema)
-
-    # Initialise DummyTable to which we'll ingest
-    class DummyTable(CountMixin, declarative_base(metadata=metadata)):
-        __tablename__ = "dummytable"
-        key = Column(BIGINT, primary_key=True)
-        foo = Column(TEXT, nullable=False)
-
-    metadata.create_all(engine, tables=[DummyTable.__table__])
-    metadata.reflect(engine)
-    original_tables = len(metadata.tables)
-
-    # No auto-commit
-    with MBDB.get_adbc_connection() as adbc_connection:
-        large_append(
-            data=pa.Table.from_pylist([{"foo": "val"}]),
-            table_class=DummyTable,
-            adbc_connection=adbc_connection,
-        )
-    assert DummyTable.count() == 0
-
-    # Ingest data with manual keys and chunking
-    with MBDB.get_adbc_connection() as adbc_connection:
-        large_append(
-            data=pa.Table.from_pylist(
-                [{"key": 0, "foo": "val1"}],
-            ),
-            table_class=DummyTable,
-            adbc_connection=adbc_connection,
-            max_chunksize=100,
-        )
-        adbc_connection.commit()
-
-    # Ingest data without keys and no chunking
-    with MBDB.get_adbc_connection() as adbc_connection:
-        large_append(
-            data=pa.Table.from_pylist([{"foo": "val2"}]),
-            table_class=DummyTable,
-            adbc_connection=adbc_connection,
-        )
-        adbc_connection.commit()
-
-    # Both rows were fine
-    assert DummyTable.count() == 2
-    with MBDB.get_session() as session:
-        second_id = (
-            session.query(DummyTable.key).filter(DummyTable.foo == "val2").scalar()
-        )
-    assert second_id > 0
-
-    # Upserting not allowed
-    with (
-        pytest.raises(MatchboxDatabaseWriteError),
-        MBDB.get_adbc_connection() as adbc_connection,
-    ):
-        large_append(
-            data=pa.Table.from_pylist([{"key": 0, "foo": "val3"}]),
-            table_class=DummyTable,
-            adbc_connection=adbc_connection,
-        )
-
-    # Failed ingestion has no effect
-    assert DummyTable.count() == 2
-    assert len(metadata.tables) == original_tables
-
-    # Columns not available in the target table are rejected
-    with (
-        pytest.raises(ValueError, match="does not have columns"),
-        MBDB.get_adbc_connection() as adbc_connection,
-    ):
-        large_append(
-            data=pa.Table.from_pylist([{"key": 10, "bar": "val3"}]),
-            table_class=DummyTable,
-            adbc_connection=adbc_connection,
-        )
+from matchbox.server.postgresql.utils.db import ingest_to_temporary_table
 
 
 @pytest.mark.docker
@@ -135,8 +26,8 @@ def test_ingest_to_temporary_table(
 
     # Define the column types for the temporary table
     column_types = {
-        "id": BIGINT,
-        "value": TEXT,
+        "id": BIGINT(),
+        "value": TEXT(),
     }
 
     # Use the context manager to create and populate a temporary table

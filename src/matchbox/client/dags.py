@@ -1,10 +1,13 @@
 """Objects to define a DAG which indexes, deduplicates and links data."""
 
 import json
+import tempfile
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Self, TypeAlias
 
 import polars as pl
+from platformdirs import user_cache_path
 
 from matchbox.client import _handler
 from matchbox.client._settings import settings
@@ -43,6 +46,8 @@ class DAGNodeExecutionStatus(StrEnum):
 
 DAGExecutionStatus: TypeAlias = dict[str, DAGNodeExecutionStatus]
 
+CACHE_DIR = user_cache_path("matchbox")
+
 
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
@@ -53,6 +58,10 @@ class DAG:
         self._run: RunID | None = None
         self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self._cache_dir = tempfile.TemporaryDirectory(dir=str(CACHE_DIR))
+        self.cache_path = Path(self._cache_dir.name)
 
     def _check_dag(self, dag: Self) -> None:
         """Check that the given DAG is the same as this one."""
@@ -76,12 +85,8 @@ class DAG:
         # These issues are not checked when adding a node for the first time either.
         if step.name in self.nodes:
             if step.config.parents != self.nodes[step.name].config.parents:
-                raise ValueError(
-                    "Cannot re-assign name to model with different inputs."
-                )
-            logger.info(
-                f"Overwriting node '{step.name}' and resetting its descendants."
-            )
+                raise ValueError("Cannot re-assign name to model with different inputs")
+            logger.info(f"Overwriting node '{step.name}'.")
 
         if isinstance(step, Model):
             self._check_dag(step.left_query.dag)
@@ -509,7 +514,10 @@ class DAG:
             status[step_name] = DAGNodeExecutionStatus.DOING
             logger.info("\n" + self.draw(status=status))
             try:
-                node.run(batch_size=batch_size)
+                if isinstance(node, Source):
+                    node.run(batch_size=batch_size)
+                else:
+                    node.run()
                 node.sync()
                 if profile:
                     log_mem_usage()

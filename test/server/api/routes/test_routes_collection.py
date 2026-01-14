@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from matchbox.common.dtos import (
-    BackendResourceType,
     Collection,
     GroupName,
     PermissionGrant,
@@ -123,7 +122,7 @@ def test_collection_not_found_404(
     response = test_client.request(method, endpoint, params=extra_params)
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.COLLECTION
+    assert response.json()["exception_type"] == "MatchboxCollectionNotFoundError"
 
 
 def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -220,9 +219,8 @@ def test_create_collection_already_exists(
     )
 
     assert response.status_code == 409
-    assert response.json()["success"] is False
-    assert response.json()["operation"] == "create"
-    assert response.json()["details"] == "Collection already exists."
+    assert response.json()["exception_type"] == "MatchboxCollectionAlreadyExists"
+    assert response.json()["message"] == "Collection already exists."
 
 
 def test_delete_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -254,10 +252,9 @@ def test_delete_collection_needs_confirmation(
     response = test_client.delete("/collections/test_collection")
 
     assert response.status_code == 409
-    assert response.json()["success"] is False
-    assert response.json()["operation"] == "delete"
-    assert str(1) in response.json()["details"]
-    assert str(2) in response.json()["details"]
+    assert response.json()["exception_type"] == "MatchboxDeletionNotConfirmed"
+    assert "1" in response.json()["message"]
+    assert "2" in response.json()["message"]
 
 
 # Collection permissions
@@ -319,7 +316,7 @@ def test_permission_collection_not_found(
     response = test_client.get("/collections/missing/permissions")
 
     assert response.status_code == 404
-    assert response.json()["entity"] == BackendResourceType.COLLECTION
+    assert response.json()["exception_type"] == "MatchboxCollectionNotFoundError"
 
 
 # Run management tests
@@ -349,7 +346,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
 @pytest.mark.parametrize(
     [
         "exception_type",
-        "expected_entity",
+        "expected_exception_name",
         "method",
         "endpoint",
         "backend_method",
@@ -358,7 +355,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     [
         pytest.param(
             MatchboxCollectionNotFoundError,
-            BackendResourceType.COLLECTION,
+            "MatchboxCollectionNotFoundError",
             "GET",
             "/collections/nonexistent/runs/1",
             "get_run",
@@ -367,7 +364,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
         ),
         pytest.param(
             MatchboxRunNotFoundError,
-            BackendResourceType.RUN,
+            "MatchboxRunNotFoundError",
             "GET",
             "/collections/test_collection/runs/13",
             "get_run",
@@ -376,7 +373,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
         ),
         pytest.param(
             MatchboxCollectionNotFoundError,
-            BackendResourceType.COLLECTION,
+            "MatchboxCollectionNotFoundError",
             "DELETE",
             "/collections/nonexistent/runs/1",
             "delete_run",
@@ -385,7 +382,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
         ),
         pytest.param(
             MatchboxRunNotFoundError,
-            BackendResourceType.RUN,
+            "MatchboxRunNotFoundError",
             "DELETE",
             "/collections/test_collection/runs/13",
             "delete_run",
@@ -396,7 +393,7 @@ def test_get_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
 )
 def test_run_endpoints_404(
     exception_type: type[Exception],
-    expected_entity: BackendResourceType,
+    expected_exception_name: str,
     method: str,
     endpoint: str,
     backend_method: str,
@@ -414,7 +411,7 @@ def test_run_endpoints_404(
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == expected_entity
+    assert response.json()["exception_type"] == expected_exception_name
 
 
 def test_create_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -499,25 +496,25 @@ def test_set_run_default_missing_flag(
 
 
 @pytest.mark.parametrize(
-    ["endpoint", "payload", "exception_type", "expected_entity"],
+    ["endpoint", "payload", "exception_type", "expected_exception_name"],
     [
         pytest.param(
             "mutable",
             True,
             MatchboxCollectionNotFoundError,
-            BackendResourceType.COLLECTION,
+            "MatchboxCollectionNotFoundError",
         ),
         pytest.param(
-            "mutable", True, MatchboxRunNotFoundError, BackendResourceType.RUN
+            "mutable", True, MatchboxRunNotFoundError, "MatchboxRunNotFoundError"
         ),
         pytest.param(
             "default",
             False,
             MatchboxCollectionNotFoundError,
-            BackendResourceType.COLLECTION,
+            "MatchboxCollectionNotFoundError",
         ),
         pytest.param(
-            "default", False, MatchboxRunNotFoundError, BackendResourceType.RUN
+            "default", False, MatchboxRunNotFoundError, "MatchboxRunNotFoundError"
         ),
     ],
 )
@@ -525,7 +522,7 @@ def test_run_patch_endpoints_404(
     endpoint: str,
     payload: bool,
     exception_type: type[Exception],
-    expected_entity: BackendResourceType,
+    expected_exception_name: str,
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ) -> None:
     """Test 404 responses for run PATCH endpoints when resource doesn't exist."""
@@ -539,7 +536,7 @@ def test_run_patch_endpoints_404(
     )
 
     assert response.status_code == 404
-    assert response.json()["entity"] == expected_entity
+    assert response.json()["exception_type"] == expected_exception_name
 
 
 def test_delete_run(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -571,7 +568,6 @@ def test_delete_run_needs_confirmation(
     response = test_client.delete("/collections/test_collection/runs/1")
 
     assert response.status_code == 409
-    assert response.json()["success"] is False
-    assert response.json()["operation"] == "delete"
-    assert str(1) in response.json()["details"]
-    assert str(2) in response.json()["details"]
+    assert response.json()["exception_type"] == "MatchboxDeletionNotConfirmed"
+    assert "1" in response.json()["message"]
+    assert "2" in response.json()["message"]

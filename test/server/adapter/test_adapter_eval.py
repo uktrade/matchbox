@@ -71,7 +71,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_name=bob.user_name,
-                    shown=unique_ids[0],
+                    shown=clust1_leaves,
                     endorsed=[clust1_leaves],
                 ),
             )
@@ -79,7 +79,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_name=bob.user_name,
-                    shown=unique_ids[0],
+                    shown=clust1_leaves,
                     endorsed=[clust1_leaves],
                 ),
             )
@@ -89,7 +89,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_name=bob.user_name,
-                    shown=unique_ids[0],
+                    shown=clust1_leaves,
                     endorsed=[clust1_leaves],
                     tag="eval_session1",
                 ),
@@ -100,12 +100,23 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_name=bob.user_name,
-                    shown=unique_ids[1],
+                    shown=clust2_leaves,
                     endorsed=[clust2_leaves[:1], clust2_leaves[1:]],
                 ),
             )
             # Now, two new clusters should have been created
             assert self.backend.model_clusters.count() == original_cluster_num + 2
+
+            # Insert a judgement with a "shown" that doesn't exist on the server
+            self.backend.insert_judgement(
+                judgement=Judgement(
+                    user_name=bob.user_name,
+                    shown=clust1_leaves + clust2_leaves,
+                    endorsed=[clust1_leaves + clust2_leaves],
+                ),
+            )
+            # A single extra cluster is created
+            assert self.backend.model_clusters.count() == original_cluster_num + 3
 
             # Let's check failures
             # First, confirm that the following leaves don't exist
@@ -117,7 +128,7 @@ class TestMatchboxEvaluationBackend:
                 self.backend.insert_judgement(
                     judgement=Judgement(
                         user_name=bob.user_name,
-                        shown=unique_ids[0],
+                        shown=fake_leaves,
                         endorsed=[fake_leaves],
                     ),
                 )
@@ -129,41 +140,42 @@ class TestMatchboxEvaluationBackend:
             assert expansion.schema.equals(SCHEMA_CLUSTER_EXPANSION)
             # Only one user ID was used
             assert judgements["user_name"].unique().to_pylist() == [bob.user_name]
-            # The first shown cluster is repeated because we judged it three times
-            # The second shown cluster is repeated because we split it (see above)
-            assert sorted(judgements["shown"].to_pylist()) == sorted(
-                [
-                    unique_ids[0],
-                    unique_ids[0],
-                    unique_ids[0],
-                    unique_ids[1],
-                    unique_ids[1],
-                ]
-            )
+            # The set of shown judgements has the two IDs we know, plus a new one
+            assert set(judgements["shown"].to_pylist()) > {unique_ids[0], unique_ids[1]}
+
             # On the other hand, the root-leaf mapping table has no duplicates
-            assert len(expansion) == 4  # 2 shown clusters + 2 new endorsed clusters
+            # 2 shown clusters + 2 new endorsed clusters + 1 new shown cluster
+            assert len(expansion) == 5
 
             # We can use tag to filter judgements
             judgements_tag, expansion_tag = self.backend.get_judgements("eval_session1")
             assert judgements_tag.num_rows == 1
             assert expansion_tag.num_rows == 1
 
-            # Let's massage tables into a root-leaf dict for all endorsed clusters
-            endorsed_dict = dict(
-                pl.from_arrow(judgements)
-                .join(pl.from_arrow(expansion), left_on="endorsed", right_on="root")
-                .select(["endorsed", "leaves"])
-                .rows()
-            )
+            # We now ensure the expansion has all we need
+            # We get expansion for two known shown cluster IDs
+            expansion_df = pl.from_arrow(expansion)
+            assert sorted(
+                expansion_df.filter(pl.col("root") == unique_ids[0])
+                .select("leaves")
+                .to_series()
+                .to_list()[0]
+            ) == sorted(clust1_leaves)
 
-            # The root we know about has the leaves we expect
-            assert set(endorsed_dict[unique_ids[0]]) == set(clust1_leaves)
-            # Other than the root we know about, there are two new ones
-            assert len(set(endorsed_dict.keys())) == 3
-            # The other two sets of leaves are there too
-            assert set(map(frozenset, endorsed_dict.values())) == set(
-                map(frozenset, [clust1_leaves, clust2_leaves[:1], clust2_leaves[1:]])
-            )
+            assert sorted(
+                expansion_df.filter(pl.col("root") == unique_ids[1])
+                .select("leaves")
+                .to_series()
+                .to_list()[0]
+            ) == sorted(clust2_leaves)
+
+            # We get expansions of new clusters whose IDs are unknown
+            expansion_leaf_sets = [
+                sorted(ls[0]) for ls in pl.from_arrow(expansion).select("leaves").rows()
+            ]
+            assert sorted(clust2_leaves[:1]) in expansion_leaf_sets
+            assert sorted(clust2_leaves[1:]) in expansion_leaf_sets
+            assert sorted(clust1_leaves + clust2_leaves) in expansion_leaf_sets
 
     def test_sample_for_eval(self) -> None:
         """Can extract samples for a user and a resolution."""
@@ -253,7 +265,7 @@ class TestMatchboxEvaluationBackend:
             self.backend.insert_judgement(
                 judgement=Judgement(
                     user_name=bob.user_name,
-                    shown=first_cluster_id,
+                    shown=first_cluster_leaves,
                     endorsed=[first_cluster_leaves],
                 ),
             )
@@ -283,7 +295,7 @@ class TestMatchboxEvaluationBackend:
                 self.backend.insert_judgement(
                     judgement=Judgement(
                         user_name=bob.user_name,
-                        shown=cluster_id,
+                        shown=cluster_leaves,
                         endorsed=[cluster_leaves],
                     ),
                 )

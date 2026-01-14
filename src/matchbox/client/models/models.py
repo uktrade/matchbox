@@ -12,7 +12,7 @@ from matchbox.client import _handler
 from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
-from matchbox.client.queries import CacheMode, Query
+from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
 from matchbox.common.dtos import (
     ModelConfig,
@@ -251,36 +251,36 @@ class Model:
 
     def run(
         self,
+        left_data: DataFrame | None = None,
+        right_data: DataFrame | None = None,
         for_validation: bool = False,
-        cache_queries: bool = False,
-        batch_size: int | None = None,
     ) -> ModelResults:
         """Execute the model pipeline and return results.
 
         Args:
+            left_data (optional): Pre-fetched query data to deduplicate if the model is
+                a deduper, or link on the left if the model is a linker.
+            right_data (optional): Pre-fetched query data to link on the right, if the
+                model is a linker. If the model is a deduper, this argument is ignored.
             for_validation: Whether to download and store extra data to explore and
                 score results.
-            cache_queries: Whether to cache query results on first run and re-use them
-                subsequently.
-            batch_size: The size used for internal batching. Overrides environment
-                variable if set.
         """
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)
-        cache_mode = CacheMode.CLEAN if cache_queries else CacheMode.OFF
-        left_df = self.left_query.set_cache_mode(cache_mode).run(
-            return_leaf_id=for_validation,
-            batch_size=batch_size,
-            reuse_cache=cache_queries,
+
+        left_df = (
+            left_data
+            if left_data is not None
+            else self.left_query.data(return_leaf_id=for_validation)
         )
         right_df = None
 
         if self.config.type == ModelType.LINKER:
             logger.info("Executing right query", prefix=log_prefix)
-            right_df = self.right_query.set_cache_mode(cache_mode).run(
-                return_leaf_id=for_validation,
-                batch_size=batch_size,
-                reuse_cache=cache_queries,
+            right_df = (
+                right_data
+                if right_data is not None
+                else self.right_query.data(return_leaf_id=for_validation)
             )
 
         logger.info("Running model logic", prefix=log_prefix)
@@ -356,6 +356,3 @@ class Model:
     def clear_data(self) -> None:
         """Deletes data computed for node."""
         self.results = None
-        self.left_query._set_cache(None, None)
-        if self.right_query:
-            self.right_query._set_cache(None, None)

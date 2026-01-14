@@ -45,7 +45,7 @@ class EvaluationItem(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    cluster_id: int
+    leaves: list[int]
     records: pl.DataFrame
     fields: list[EvaluationFieldMetadata]
 
@@ -95,13 +95,11 @@ def create_judgement(
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
-    return Judgement(
-        user_name=user_name, shown=item.cluster_id, endorsed=endorsed, tag=tag
-    )
+    return Judgement(user_name=user_name, shown=item.leaves, endorsed=endorsed, tag=tag)
 
 
 def create_evaluation_item(
-    df: pl.DataFrame, source_configs: list[tuple[str, SourceConfig]], cluster_id: int
+    df: pl.DataFrame, source_configs: list[tuple[str, SourceConfig]], leaves: list[int]
 ) -> EvaluationItem:
     """Create EvaluationItem with structured metadata."""
     # Get all data columns (exclude metadata columns)
@@ -134,7 +132,7 @@ def create_evaluation_item(
     # Keep ALL data columns in records
     records = df.select(["leaf"] + data_cols)
 
-    return EvaluationItem(cluster_id=cluster_id, records=records, fields=fields)
+    return EvaluationItem(leaves=leaves, records=records, fields=fields)
 
 
 def _read_sample_file(sample_file: str, n: int) -> pl.DataFrame:
@@ -233,7 +231,8 @@ def get_samples(
     results_by_root: dict[int, EvaluationItem] = {}
     for root in all_results["root"].unique():
         cluster_df = all_results.filter(pl.col("root") == root).drop("root")
-        evaluation_item = create_evaluation_item(cluster_df, source_configs, root)
+        leaves = cluster_df.select("leaf").to_series().unique().to_list()
+        evaluation_item = create_evaluation_item(cluster_df, source_configs, leaves)
         results_by_root[root] = evaluation_item
 
     return results_by_root

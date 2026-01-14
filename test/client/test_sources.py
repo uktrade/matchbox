@@ -5,6 +5,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 from httpx import Response
+from polars.testing import assert_frame_equal
 from respx import MockRouter
 from sqlalchemy import Engine
 
@@ -15,9 +16,8 @@ from matchbox.client.sources import (
 )
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
-    NotFoundError,
+    ErrorResponse,
     Resolution,
     ResourceOperationStatus,
     SourceField,
@@ -112,8 +112,8 @@ def test_source_sampling_preserves_original_sql(sqla_sqlite_warehouse: Engine) -
     assert len(df) == 3
 
 
-def test_source_fetch(sqla_sqlite_warehouse: Engine) -> None:
-    """Test the query method with default parameters."""
+def test_source_fetch_and_sample(sqla_sqlite_warehouse: Engine) -> None:
+    """Test reading source with default parameters."""
     # Create test data
     source_testkit = source_factory(
         n_true_entities=5,
@@ -136,7 +136,8 @@ def test_source_fetch(sqla_sqlite_warehouse: Engine) -> None:
     )
 
     # Execute query
-    result = next(source.fetch())
+    result = next(source.fetch(batch_size=10))
+    assert_frame_equal(result, source.sample(n=10), check_row_order=False)
 
     # Verify result
     assert isinstance(result, pl.DataFrame)
@@ -310,7 +311,7 @@ def test_source_run_null_identifier(
     )
 
     # Mock query to return data with null keys
-    mock_df = pl.DataFrame({"key": ["1", None], "name": ["a", "b"]})
+    mock_df = pa.Table.from_pydict({"key": ["1", None], "name": ["a", "b"]})
     mock_fetch.return_value = (x for x in [mock_df])
 
     # Hashing data should raise ValueErrors for null keys
@@ -333,8 +334,9 @@ def test_source_sync(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) ->
     ).mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Source not found", entity=BackendResourceType.RESOLUTION
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Source not found",
             ).model_dump(),
         )
     )

@@ -12,11 +12,10 @@ from matchbox.client.models.linkers.base import LinkerSettings
 from matchbox.client.queries import Query
 from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
+    ErrorResponse,
     ModelConfig,
     ModelType,
-    NotFoundError,
     Resolution,
     ResourceOperationStatus,
     UploadInfo,
@@ -39,7 +38,9 @@ def test_init_and_run_model(
 
     # Mock API
     foo = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
+    foo.source.run()
     bar = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
+    bar.source.run()
 
     foo_leafy_data = foo.data.append_column(
         "leaf_id", pa.array(range(len(foo.data)), type=pa.int64())
@@ -58,7 +59,7 @@ def test_init_and_run_model(
             # First query
             Response(200, content=table_to_buffer(foo.data).read()),
             Response(200, content=table_to_buffer(bar.data).read()),
-            # Second query (cached)
+            # Second query (for pre-fetching)
             Response(200, content=table_to_buffer(foo.data).read()),
             Response(200, content=table_to_buffer(bar.data).read()),
             # Third query (for validation)
@@ -92,13 +93,10 @@ def test_init_and_run_model(
     assert model.results.left_root_leaf is None
     assert model.results.right_root_leaf is None
 
-    # When caching queries, the first ones still have to go through
+    # Can use pre-fetched query data
+    left_df, right_df = foo_query.data(), bar_query.data()
     old_query_count = query_endpoint.call_count
-    model.run(cache_queries=True)
-    assert query_endpoint.call_count > old_query_count
-    # Subsequent queries are cached
-    old_query_count = query_endpoint.call_count
-    model.run(cache_queries=True)
+    model.run(left_df, right_df)
     assert query_endpoint.call_count == old_query_count
 
     model.run(for_validation=True)
@@ -117,8 +115,9 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     ).mock(
         return_value=Response(
             404,
-            json=NotFoundError(
-                details="Model not found", entity=BackendResourceType.RESOLUTION
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Model not found",
             ).model_dump(),
         )
     )
@@ -333,17 +332,15 @@ def test_delete_resolution_needs_confirmation(matchbox_api: MockRouter) -> None:
     testkit = model_factory()
 
     # Mock the DELETE endpoint with 409 confirmation required response
-    error_details = "Cannot delete model with dependent models: dedupe1, dedupe2"
     route = matchbox_api.delete(
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}"
     ).mock(
         return_value=Response(
             409,
-            json=ResourceOperationStatus(
-                success=False,
-                target=f"Resolution {testkit.model.name}",
-                operation=CRUDOperation.DELETE,
-                details=error_details,
+            json=ErrorResponse(
+                exception_type="MatchboxDeletionNotConfirmed",
+                message="Cannot delete model with dependent models: dedupe1, dedupe2",
+                details={"children": ["dedupe1", "dedupe2"]},
             ).model_dump(),
         )
     )

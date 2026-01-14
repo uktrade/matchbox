@@ -197,7 +197,7 @@ PROBABILISTIC_LINKERS = [
 
 
 @pytest.mark.parametrize(("Linker", "configure_linker"), PROBABILISTIC_LINKERS)
-@patch.object(Query, "run")
+@patch.object(Query, "data")
 def test_probabilistic_scores_generation(
     mock_query_run: Mock, Linker: Linker, configure_linker: LinkerConfigurator
 ) -> None:

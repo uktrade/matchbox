@@ -54,13 +54,16 @@ class TestE2EMethodologyIntegration:
         self, Deduper: type[Deduper], configure_deduper: DeduperConfigurator
     ) -> None:
         """Test that dedupers work end-to-end."""
-        with setup_scenario(self.backend, "index", self.warehouse) as dag_testkit:
+        with setup_scenario(self.backend, "bare", self.warehouse) as dag_testkit:
             # Get the DAG from the testkit
             dag = dag_testkit.dag
 
             # Get a source that has duplicates (CRN has repetition in the scenario)
             source_testkit = dag_testkit.sources.get("crn")
             source = dag.get_source("crn")
+
+            source.run()
+            source.sync()
 
             # Create settings and deduper
             settings = configure_deduper(source_testkit)
@@ -110,7 +113,7 @@ class TestE2EMethodologyIntegration:
         self, Linker: type[Linker], configure_linker: LinkerConfigurator
     ) -> None:
         """Test that linkers work end-to-end."""
-        with setup_scenario(self.backend, "index", self.warehouse) as dag_testkit:
+        with setup_scenario(self.backend, "bare", self.warehouse) as dag_testkit:
             # Get the DAG from the testkit
             dag = dag_testkit.dag
 
@@ -119,6 +122,11 @@ class TestE2EMethodologyIntegration:
             dh_testkit = dag_testkit.sources.get("dh")
             crn_source = dag.get_source("crn")
             dh_source = dag.get_source("dh")
+
+            crn_source.run()
+            crn_source.sync()
+            dh_source.run()
+            dh_source.sync()
 
             # Create settings and linker
             settings = configure_linker(crn_testkit, dh_testkit)

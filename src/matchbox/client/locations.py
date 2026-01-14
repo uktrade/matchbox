@@ -199,9 +199,11 @@ class RelationalDBLocation(Location):
     @contextmanager
     def _get_connection(self) -> Generator[Connection | AdbcConnection, None, None]:
         """Context manager for getting database connections with proper cleanup."""
-        # ADBC connections are already connected
         if self.client_type == ClientType.ADBC:
-            yield self.client
+            # To prevent memory corruption in the ADBC driver when reusing a single
+            # connection for multiple queries, we clone the connection
+            with self.client.adbc_clone() as connection:
+                yield connection
         else:  # SQLAlchemy Engine
             connection = self.client.connect()
             try:

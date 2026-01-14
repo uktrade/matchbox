@@ -32,7 +32,6 @@ from matchbox.server.postgresql.orm import (
     EvalJudgements,
     Groups,
     Permissions,
-    PKSpace,
     Probabilities,
     Results,
     UserGroups,
@@ -506,7 +505,6 @@ class MatchboxPostgresAdminMixin:
     def drop(self, certain: bool) -> None:  # noqa: D102
         if certain:
             MBDB.drop_database()
-            PKSpace.initialise()
         else:
             raise MatchboxDeletionNotConfirmed(
                 "This operation will drop the entire database and recreate it."
@@ -517,7 +515,6 @@ class MatchboxPostgresAdminMixin:
     def clear(self, certain: bool) -> None:  # noqa: D102
         if certain:
             MBDB.clear_database()
-            PKSpace.initialise()
         else:
             raise MatchboxDeletionNotConfirmed(
                 "This operation will drop all rows in the database but not the "

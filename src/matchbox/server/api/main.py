@@ -50,6 +50,7 @@ from matchbox.common.exceptions import (
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
+    RequireCollectionRead,
     RequireSysAdmin,
     lifespan,
 )
@@ -194,6 +195,7 @@ async def healthcheck() -> OKMessage:
 @app.get(
     "/query",
     responses={404: {"model": NotFoundError}},
+    dependencies=[Depends(RequireCollectionRead)],
 )
 def query(
     backend: BackendDependency,
@@ -237,6 +239,7 @@ def query(
 @app.get(
     "/match",
     responses={404: {"model": NotFoundError}},
+    dependencies=[Depends(RequireCollectionRead)],
 )
 def match(
     backend: BackendDependency,
@@ -282,7 +285,10 @@ def match(
 # Admin
 
 
-@app.get("/database/count")
+@app.get(
+    "/database/count",
+    dependencies=[Depends(RequireSysAdmin)],
+)
 def count_backend_items(
     backend: BackendDependency,
     entity: BackendCountableType | None = None,

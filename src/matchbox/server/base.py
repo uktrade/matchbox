@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 import boto3
 from botocore.exceptions import ClientError
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from pyarrow import Table
 from pydantic import (
     BaseModel,
@@ -156,6 +157,31 @@ class MatchboxServerSettings(BaseSettings):
     authorisation: bool = True
     public_key: SecretBytes | None = Field(default=None)
     log_level: LogLevelType = "INFO"
+
+    @field_validator("public_key", mode="before")
+    @classmethod
+    def validate_public_key(cls, v: str | bytes | None) -> bytes | None:
+        """Validate and normalise PEM public key format."""
+        if v is None:
+            return v
+
+        # Convert to string if bytes
+        key_str: str
+        if isinstance(v, bytes):
+            key_str = v.decode("ascii")
+        elif isinstance(v, SecretBytes):
+            key_str = v.get_secret_value().decode("ascii")
+        else:
+            key_str = v
+
+        # Replace literal \n with actual newlines
+        key_str = key_str.replace("\\n", "\n")
+        key_bytes = key_str.encode("ascii")
+
+        # Validate by attempting to load
+        _ = load_pem_public_key(key_bytes)
+
+        return key_bytes
 
     @model_validator(mode="after")
     def check_settings(self) -> Self:

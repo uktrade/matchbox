@@ -31,11 +31,16 @@ def test_insert_judgement_ok(
 ) -> None:
     """Test that a judgement is passed on to backend."""
     test_client, mock_backend, _ = api_client_and_mocks
-    judgement = Judgement(user_name="alice", shown=10, endorsed=[[1]])
+    judgement = Judgement(shown=10, endorsed=[[1]])
     response = test_client.post("/eval/judgements", json=judgement.model_dump())
     assert response.status_code == 201
     assert (
-        mock_backend.insert_judgement.call_args_list[0].kwargs["judgement"] == judgement
+        mock_backend.insert_judgement.call_args_list[0].kwargs["judgement"].shown
+        == judgement.shown
+    )
+    assert (
+        mock_backend.insert_judgement.call_args_list[0].kwargs["judgement"].endorsed
+        == judgement.endorsed
     )
 
 
@@ -123,7 +128,6 @@ def test_get_samples(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
             "run_id": 1,
             "resolution": "a",
             "n": 10,
-            "user_name": "alice",
         },
     )
     assert response.status_code == 200

@@ -48,27 +48,15 @@ from matchbox.common.exceptions import (
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
-    RequiresPermission,
+    RequireCollectionAdmin,
+    RequireCollectionRead,
+    RequireCollectionWrite,
     SettingsDependency,
     UploadTrackerDependency,
 )
 from matchbox.server.uploads import file_to_s3, process_upload, process_upload_celery
 
 router = APIRouter(prefix="/collections", tags=["collection"])
-
-
-RequireCollectionAdmin = RequiresPermission(
-    PermissionType.ADMIN,
-    resource_from_path="collection",
-)
-RequireCollectionWrite = RequiresPermission(
-    PermissionType.WRITE,
-    resource_from_path="collection",
-)
-RequireCollectionRead = RequiresPermission(
-    PermissionType.READ,
-    resource_from_path="collection",
-)
 
 
 # Collection management endpoints

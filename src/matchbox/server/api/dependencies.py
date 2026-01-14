@@ -182,10 +182,10 @@ def get_current_user(
     settings: SettingsDependency,
     backend: BackendDependency,
     client_token: str = Security(JWT_HEADER),
-) -> User | None:
+) -> User:
     """Get current user from JWT, or None if auth disabled."""
     if not settings.authorisation:
-        return None
+        return User(user_name="_public", email=None)
 
     # No token provided: public user
     if not client_token:
@@ -194,7 +194,7 @@ def get_current_user(
     user = validate_jwt(settings, client_token)
 
     # Sync user to DB (Upsert)
-    return backend.login(user)
+    return backend.login(user).user
 
 
 CurrentUserDependency: TypeAlias = Annotated[User | None, Depends(get_current_user)]
@@ -209,7 +209,8 @@ class RequiresPermission:
         permission: PermissionType,
         *,
         resource: str,
-        resource_from_path: None = None,
+        resource_from_param: None = None,
+        allow_public: bool = True,
     ) -> None: ...
 
     @overload
@@ -218,7 +219,8 @@ class RequiresPermission:
         permission: PermissionType,
         *,
         resource: None = None,
-        resource_from_path: str,
+        resource_from_param: str,
+        allow_public: bool = True,
     ) -> None: ...
 
     def __init__(
@@ -226,19 +228,28 @@ class RequiresPermission:
         permission: PermissionType,
         *,
         resource: str | None = None,
-        resource_from_path: str | None = None,
+        resource_from_param: str | None = None,
+        allow_public: bool = True,
     ) -> None:
-        """Initialise the permission check."""
-        if resource is None and resource_from_path is None:
+        """Initialise the permission check.
+
+        Args:
+            permission: The required permission level.
+            resource: A static resource name (e.g. BackendResourceType.SYSTEM).
+            resource_from_param: The name of a parameter to look up in either
+                the path or query string.
+            allow_public: If False, raises an error when auth is disabled or user
+                is not authenticated, rather than allowing through.
+        """
+        if (resource is None) == (resource_from_param is None):
             raise ValueError(
-                "Either 'resource' or 'resource_from_path' must be provided"
+                "Exactly one of 'resource' or 'resource_from_param' must be provided."
             )
-        if resource is not None and resource_from_path is not None:
-            raise ValueError("Cannot specify both 'resource' and 'resource_from_path'")
 
         self.permission = permission
         self.static_resource = resource
-        self.path_param_key = resource_from_path
+        self.param_key = resource_from_param
+        self.allow_public = allow_public
 
     def __call__(
         self,
@@ -246,24 +257,46 @@ class RequiresPermission:
         backend: BackendDependency,
         settings: SettingsDependency,
         user: CurrentUserDependency,
-    ) -> None:
-        """Authenticate and authorise the user."""
+    ) -> User:
+        """Authenticate and authorise the user, returning the User object."""
+        # Check if authentication is required
+        if not self.allow_public:
+            if not settings.authorisation:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        "This endpoint requires authentication, "
+                        "but authentication is disabled"
+                    ),
+                )
+
+            if user is None or user.user_name == "_public":
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+
         # Short-circuit if authorisation is disabled
         if not settings.authorisation:
-            return
+            return user
 
         # 1. Determine the target resource
         if self.static_resource:
             target_resource = self.static_resource
-        elif self.path_param_key:
-            target_resource = request.path_params.get(self.path_param_key)
-            if not target_resource:
-                # Verify path param exists to prevent dev errors
-                raise ValueError(
-                    f"Path parameter '{self.path_param_key}' not found in request"
-                )
         else:
-            raise ValueError("Must provide either resource or resource_from_path")
+            # Check path first, then query parameters
+            target_resource = request.path_params.get(
+                self.param_key
+            ) or request.query_params.get(self.param_key)
+
+        if not target_resource:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Authorisation failed: Resource parameter '{self.param_key}' "
+                    "not found.",
+                ),
+            )
 
         # 2. Check authentication
         if user is None:
@@ -284,8 +317,22 @@ class RequiresPermission:
                 ),
             )
 
+        return user
+
 
 # Pre-configured helpers for common cases
 RequireSysAdmin = RequiresPermission(
     PermissionType.ADMIN, resource=BackendResourceType.SYSTEM
+)
+RequireCollectionAdmin = RequiresPermission(
+    PermissionType.ADMIN,
+    resource_from_param="collection",
+)
+RequireCollectionWrite = RequiresPermission(
+    PermissionType.WRITE,
+    resource_from_param="collection",
+)
+RequireCollectionRead = RequiresPermission(
+    PermissionType.READ,
+    resource_from_param="collection",
 )

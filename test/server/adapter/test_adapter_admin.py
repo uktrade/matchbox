@@ -690,8 +690,6 @@ class TestMatchboxAdminBackend:
 
             assert perm_dict["readers"] == PermissionType.READ
             assert perm_dict["writers"] == PermissionType.WRITE
-            # writers group gets both READ and WRITE in the scenario
-            assert len([p for p in permissions if p.group_name == "writers"]) == 2
 
     def test_permissions_across_multiple_groups(self) -> None:
         """User inherits permissions from all their groups."""

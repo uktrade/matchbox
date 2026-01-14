@@ -22,7 +22,7 @@ from matchbox.common.logging import logger
 
 
 @http_retry
-def sample_for_eval(n: int, resolution: ModelResolutionPath, user_name: str) -> Table:
+def sample_for_eval(n: int, resolution: ModelResolutionPath) -> Table:
     """Sample model results for evaluation."""
     res = CLIENT.get(
         "/eval/samples",
@@ -32,7 +32,6 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath, user_name: str) -> 
                 "collection": resolution.collection,
                 "run_id": resolution.run,
                 "resolution": resolution.name,
-                "user_name": user_name,
             }
         ),
     )

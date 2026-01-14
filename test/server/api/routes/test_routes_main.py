@@ -11,6 +11,7 @@ from matchbox.common.dtos import (
     BackendResourceType,
     Match,
     OKMessage,
+    PermissionType,
     SourceResolutionPath,
 )
 from matchbox.common.exceptions import (
@@ -113,6 +114,35 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
 
     assert response.status_code == 404
     assert response.json()["entity"] == BackendResourceType.RESOLUTION
+
+
+def test_query_anonymous_forbidden(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that anonymous access to a restricted collection returns 403."""
+    test_client, mock_backend, mock_settings = api_client_and_mocks
+    mock_settings.authorisation = True
+
+    # Public group has had permission removed
+    mock_backend.check_permission = Mock(return_value=False)
+
+    # Pop the auth header to simulate an anonymous user
+    test_client.headers.pop("Authorization", None)
+
+    response = test_client.get(
+        "/query",
+        params={
+            "collection": "restricted",
+            "run_id": 1,
+            "source": "foo",
+            "return_leaf_id": False,
+        },
+    )
+
+    assert response.status_code == 403
+    mock_backend.check_permission.assert_called_with(
+        "_public", PermissionType.READ, "restricted"
+    )
 
 
 def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -242,6 +272,19 @@ def test_count_backend_item(
     response = test_client.get("/database/count", params={"entity": "models"})
     assert response.status_code == 200
     assert response.json() == {"entities": {"models": 20}}
+
+
+def test_count_forbidden_for_non_admin(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test that 403 is returned for count if the user is not a SysAdmin."""
+    test_client, mock_backend, mock_settings = api_client_and_mocks
+    mock_settings.authorisation = True
+
+    mock_backend.check_permission = Mock(return_value=False)
+
+    response = test_client.get("/database/count")
+    assert response.status_code == 403
 
 
 def test_clear_backend_ok(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

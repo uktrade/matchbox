@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
     Query,
     Response,
@@ -21,7 +22,9 @@ from matchbox.common.dtos import (
     ModelResolutionName,
     ModelResolutionPath,
     NotFoundError,
+    PermissionType,
     RunID,
+    User,
 )
 from matchbox.common.eval import Judgement
 from matchbox.common.exceptions import (
@@ -32,7 +35,9 @@ from matchbox.common.exceptions import (
 )
 from matchbox.server.api.dependencies import (
     BackendDependency,
+    CurrentUserDependency,  # [Added Import]
     ParquetResponse,
+    RequiresPermission,
     ZipResponse,
 )
 
@@ -47,9 +52,17 @@ router = APIRouter(prefix="/eval", tags=["eval"])
 def insert_judgement(
     backend: BackendDependency,
     judgement: Judgement,
+    user: CurrentUserDependency,
 ) -> Response:
     """Submit judgement from human evaluator."""
+    if not user or user.user_name == "_public":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
     try:
+        judgement.user_name = user.user_name
         backend.insert_judgement(judgement=judgement)
         return Response(status_code=status.HTTP_201_CREATED)
     except MatchboxDataNotFound as e:
@@ -104,7 +117,16 @@ def sample(
     run_id: RunID,
     resolution: ModelResolutionName,
     n: int,
-    user_name: str,
+    user: Annotated[
+        User,
+        Depends(
+            RequiresPermission(
+                PermissionType.READ,
+                resource_from_param="collection",
+                allow_public=False,
+            )
+        ),
+    ],
 ) -> ParquetResponse:
     """Sample n cluster to validate."""
     try:
@@ -113,7 +135,7 @@ def sample(
                 collection=collection, run=run_id, name=resolution
             ),
             n=n,
-            user_name=user_name,
+            user_name=user.user_name,
         )
         buffer = table_to_buffer(sample)
         return ParquetResponse(buffer.getvalue())

@@ -9,6 +9,7 @@ import pyarrow as pa
 import redis
 from celery import Celery, Task
 from celery.exceptions import MaxRetriesExceededError
+from celery.signals import setup_logging
 from celery.utils.log import get_task_logger
 from fastapi import UploadFile
 from pyarrow import parquet as pq
@@ -19,7 +20,7 @@ from matchbox.common.dtos import (
     ResolutionType,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
-from matchbox.common.logging import log_mem_usage, logger
+from matchbox.common.logging import configure_celery_logging, log_mem_usage, logger
 from matchbox.server.base import (
     MatchboxBackends,
     MatchboxDBAdapter,
@@ -164,11 +165,19 @@ celery.conf.update(
     task_acks_late=True,
     # Reduce pre-fetching (workers reserving tasks while they're still busy)
     # as it's not ideal for long-running tasks
-    prefetch_multiplier=1,
+    worker_prefetch_multiplier=1,
     # Limit number of tasks a worker can complete before restarting
     # This may prevent OOM errors caused by memory not being deallocated properly
     worker_max_tasks_per_child=5,
+    # Prevent Celery from hijacking the root logger
+    worker_hijack_root_logger=False,
 )
+
+
+@setup_logging.connect
+def on_celery_setup_logging(**kwargs):  # noqa
+    # If this signal is connected, Celery won't configure logging at all.
+    configure_celery_logging()
 
 
 def initialise_celery_worker() -> None:

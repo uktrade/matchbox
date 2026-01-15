@@ -19,6 +19,10 @@ from matchbox.common.dtos import (
     PermissionType,
     User,
 )
+from matchbox.common.exceptions import (
+    MatchboxAuthenticationError,
+    MatchboxPermissionDenied,
+)
 from matchbox.common.logging import get_formatter, logger
 from matchbox.server.base import (
     MatchboxDBAdapter,
@@ -132,18 +136,12 @@ def validate_jwt(
 ) -> User:
     """Validate client JWT with server API Key."""
     if not settings.public_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Public Key missing in server configuration.",
-            headers={"WWW-Authenticate": "Authorization"},
+        raise MatchboxAuthenticationError(
+            message="Public key missing in server configuration."
         )
 
     if not client_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT required but not provided.",
-            headers={"WWW-Authenticate": "Authorization"},
-        )
+        raise MatchboxAuthenticationError(message="JWT required but not provided.")
 
     try:
         parts = client_token.encode().split(b".")
@@ -158,22 +156,14 @@ def validate_jwt(
         public_key.verify(b64_decode(signature_b64), header_b64 + b"." + payload_b64)
 
         if payload["exp"] <= time.time():
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="JWT expired.",
-                headers={"WWW-Authenticate": "Authorization"},
-            )
+            raise MatchboxAuthenticationError(message="JWT expired.")
 
-    except HTTPException:
-        raise  # Re-raise HTTPExceptions as-is
+    except MatchboxAuthenticationError:
+        raise  # Re-raise MatchboxAuthenticationErrors as-is
     except Exception as e:
         logger.exception(f"Invalid JWT. Token: {client_token}")
         # Anything else is an invalid token -> 401
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT invalid.",
-            headers={"WWW-Authenticate": "Authorization"},
-        ) from e
+        raise MatchboxAuthenticationError(message="JWT invalid.") from e
 
     return User(user_name=payload["sub"], email=payload.get("email"))
 
@@ -208,7 +198,7 @@ class RequiresPermission:
         self,
         permission: PermissionType,
         *,
-        resource: str,
+        resource: BackendResourceType,
         resource_from_param: None = None,
         allow_public: bool = True,
     ) -> None: ...
@@ -219,7 +209,7 @@ class RequiresPermission:
         permission: PermissionType,
         *,
         resource: None = None,
-        resource_from_param: str,
+        resource_from_param: BackendResourceType,
         allow_public: bool = True,
     ) -> None: ...
 
@@ -227,8 +217,8 @@ class RequiresPermission:
         self,
         permission: PermissionType,
         *,
-        resource: str | None = None,
-        resource_from_param: str | None = None,
+        resource: BackendResourceType | None = None,
+        resource_from_param: BackendResourceType | None = None,
         allow_public: bool = True,
     ) -> None:
         """Initialise the permission check.
@@ -262,19 +252,15 @@ class RequiresPermission:
         # Check if authentication is required
         if not self.allow_public:
             if not settings.authorisation:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=(
+                raise MatchboxAuthenticationError(
+                    message=(
                         "This endpoint requires authentication, "
                         "but authentication is disabled"
                     ),
                 )
 
             if user is None or user.user_name == "_public":
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                )
+                raise MatchboxAuthenticationError
 
         # Short-circuit if authorisation is disabled
         if not settings.authorisation:
@@ -290,6 +276,7 @@ class RequiresPermission:
             ) or request.query_params.get(self.param_key)
 
         if not target_resource:
+            # Developer-facing error -- should never happen in production
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=(
@@ -300,21 +287,16 @@ class RequiresPermission:
 
         # 2. Check authentication
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
-            )
+            raise MatchboxAuthenticationError
 
         # 3. Check authorisation
         if not backend.check_permission(
             user.user_name, self.permission, target_resource
         ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    f"Permission denied: requires {self.permission} "
-                    f"access on '{target_resource}'",
-                ),
+            raise MatchboxPermissionDenied(
+                permission=self.permission,
+                resource_type=self.static_resource,
+                resource_name=target_resource,
             )
 
         return user
@@ -326,13 +308,13 @@ RequireSysAdmin = RequiresPermission(
 )
 RequireCollectionAdmin = RequiresPermission(
     PermissionType.ADMIN,
-    resource_from_param="collection",
+    resource_from_param=BackendResourceType.COLLECTION,
 )
 RequireCollectionWrite = RequiresPermission(
     PermissionType.WRITE,
-    resource_from_param="collection",
+    resource_from_param=BackendResourceType.COLLECTION,
 )
 RequireCollectionRead = RequiresPermission(
     PermissionType.READ,
-    resource_from_param="collection",
+    resource_from_param=BackendResourceType.COLLECTION,
 )

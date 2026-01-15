@@ -21,7 +21,6 @@ from fastapi.openapi.docs import (
 )
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse
 
 from matchbox.common.arrow import table_to_buffer
@@ -69,31 +68,25 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(
-    request: Request, exc: StarletteHTTPException
+@app.exception_handler(MatchboxHttpException)
+async def matchbox_exception_handler(
+    request: Request, exc: MatchboxHttpException
 ) -> JSONResponse:
-    """Overwrite the default JSON schema for an `HTTPException`."""
+    """Handler for Matchbox HTTP exceptions."""
+    error_response = ErrorResponse(
+        exception_type=type(exc).__name__,
+        message=str(exc),
+        details=exc.to_details(),
+    )
     return JSONResponse(
-        content=jsonable_encoder(exc.detail), status_code=exc.status_code
+        status_code=exc.http_status,
+        content=jsonable_encoder(error_response.model_dump()),
     )
 
 
 @app.exception_handler(Exception)
-async def exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Unified handler for all exceptions."""
-    if isinstance(exc, MatchboxHttpException):
-        error_response = ErrorResponse(
-            exception_type=type(exc).__name__,
-            message=str(exc),
-            details=exc.to_details(),
-        )
-        return JSONResponse(
-            status_code=exc.http_status,
-            content=jsonable_encoder(error_response.model_dump()),
-        )
-
-    # All other exceptions get logged and return generic error
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handler for unexpected exceptions to ensure consistent error responses."""
     error_id = str(uuid.uuid4())
     logger.exception("Unhandled exception [%s]: %s", error_id, exc)
 

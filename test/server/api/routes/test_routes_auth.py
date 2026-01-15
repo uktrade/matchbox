@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from matchbox.client._settings import settings
 from matchbox.common.dtos import (
     AuthStatusResponse,
+    ErrorResponse,
     LoginResponse,
     User,
 )
@@ -209,7 +210,9 @@ def test_incorrect_signature(
     response = method(url)
 
     assert response.status_code == 401
-    assert response.content == b'"JWT invalid."'
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxAuthenticationError"
+    assert error.message == "JWT invalid."
 
 
 @pytest.mark.parametrize(("method_name", "url"), PROTECTED_ROUTES)
@@ -234,7 +237,9 @@ def test_expired_token(
     response = method(url)
 
     assert response.status_code == 401
-    assert response.content == b'"JWT expired."'
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxAuthenticationError"
+    assert error.message == "JWT expired."
 
 
 @pytest.mark.parametrize(("method_name", "url"), PROTECTED_ROUTES)
@@ -259,4 +264,6 @@ def test_missing_authorisation_header(
     response = method(url)
 
     assert response.status_code == 403
-    assert "Permission denied: requires " in str(response.content, encoding="utf-8")
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxPermissionDenied"
+    assert "Permission denied: requires" in error.message

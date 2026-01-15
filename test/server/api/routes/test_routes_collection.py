@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.dtos import (
     Collection,
+    ErrorResponse,
     GroupName,
     PermissionGrant,
     PermissionType,
@@ -57,7 +58,9 @@ def test_collection_routes_forbidden(
     response = test_client.request(method, endpoint)
 
     assert response.status_code == 403
-    assert "Permission denied" in response.json()[0]
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxPermissionDenied"
+    assert "Permission denied" in error.message
     mock_backend.check_permission.assert_called()
 
 

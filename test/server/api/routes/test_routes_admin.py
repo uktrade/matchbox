@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
+    ErrorResponse,
     Group,
     PermissionGrant,
     PermissionType,
@@ -51,7 +52,9 @@ def test_admin_routes_forbidden(
     response = test_client.request(method, endpoint)
 
     assert response.status_code == 403
-    assert "Permission denied" in response.json()[0]
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxPermissionDenied"
+    assert "Permission denied" in error.message
 
 
 # Group management
@@ -97,7 +100,9 @@ def test_create_group_conflict(
     response = test_client.post("/admin/groups", json={"name": "exists"})
 
     assert response.status_code == 409
-    assert "Exists" in response.json()
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxGroupAlreadyExistsError"
+    assert "Exists" in error.message
 
 
 def test_get_group(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

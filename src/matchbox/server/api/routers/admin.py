@@ -2,22 +2,18 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from matchbox.common.dtos import (
     BackendResourceType,
     CRUDOperation,
+    ErrorResponse,
     Group,
     GroupName,
     PermissionGrant,
     PermissionType,
     ResourceOperationStatus,
     User,
-)
-from matchbox.common.exceptions import (
-    MatchboxDeletionNotConfirmed,
-    MatchboxGroupAlreadyExistsError,
-    MatchboxSystemGroupError,
 )
 from matchbox.server.api.dependencies import BackendDependency, RequireSysAdmin
 
@@ -34,18 +30,23 @@ def list_groups(backend: BackendDependency) -> list[Group]:
     return backend.list_groups()
 
 
-@router.post("/groups", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/groups",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+    status_code=status.HTTP_201_CREATED,
+)
 def create_group(backend: BackendDependency, group: Group) -> ResourceOperationStatus:
     """Create a new group."""
-    try:
-        backend.create_group(group)
-        return ResourceOperationStatus(
-            success=True,
-            target=f"Group {group.name}",
-            operation=CRUDOperation.CREATE,
-        )
-    except MatchboxGroupAlreadyExistsError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+    backend.create_group(group)
+    return ResourceOperationStatus(
+        success=True,
+        target=f"Group {group.name}",
+        operation=CRUDOperation.CREATE,
+    )
 
 
 @router.get("/groups/{group_name}")
@@ -54,26 +55,39 @@ def get_group(backend: BackendDependency, group_name: GroupName) -> Group:
     return backend.get_group(group_name)
 
 
-@router.delete("/groups/{group_name}")
+@router.delete(
+    "/groups/{group_name}",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+)
 def delete_group(
     backend: BackendDependency,
     group_name: GroupName,
     certain: Annotated[bool, Query()] = False,
 ) -> ResourceOperationStatus:
     """Delete a group."""
-    try:
-        backend.delete_group(group_name, certain=certain)
-        return ResourceOperationStatus(
-            success=True, target=f"Group {group_name}", operation=CRUDOperation.DELETE
-        )
-    except (MatchboxSystemGroupError, MatchboxDeletionNotConfirmed) as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+    backend.delete_group(group_name, certain=certain)
+    return ResourceOperationStatus(
+        success=True, target=f"Group {group_name}", operation=CRUDOperation.DELETE
+    )
 
 
 # Membership management endpoints
 
 
-@router.post("/groups/{group_name}/members", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/groups/{group_name}/members",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    status_code=status.HTTP_201_CREATED,
+)
 def add_member(
     backend: BackendDependency,
     group_name: GroupName,
@@ -88,7 +102,14 @@ def add_member(
     )
 
 
-@router.delete("/groups/{group_name}/members/{user_name}")
+@router.delete(
+    "/groups/{group_name}/members/{user_name}",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+)
 def remove_member(
     backend: BackendDependency,
     group_name: GroupName,
@@ -106,7 +127,13 @@ def remove_member(
 # System permission management endpoints
 
 
-@router.get("/system/permissions")
+@router.get(
+    "/system/permissions",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+    },
+)
 def get_permissions(
     backend: BackendDependency,
 ) -> list[PermissionGrant]:
@@ -114,7 +141,13 @@ def get_permissions(
     return backend.get_permissions(BackendResourceType.SYSTEM)
 
 
-@router.post("/system/permissions")
+@router.post(
+    "/system/permissions",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+    },
+)
 def grant_permission(
     backend: BackendDependency,
     grant: PermissionGrant,
@@ -130,7 +163,13 @@ def grant_permission(
     )
 
 
-@router.delete("/system/permissions/{permission}/{group_name}/")
+@router.delete(
+    "/system/permissions/{permission}/{group_name}/",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+    },
+)
 def revoke_permission(
     backend: BackendDependency,
     permission: PermissionType,

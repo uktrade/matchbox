@@ -26,7 +26,7 @@ from matchbox.common.dtos import (
 from matchbox.common.eval import Judgement
 from matchbox.server.api.dependencies import (
     BackendDependency,
-    CurrentUserDependency,  # [Added Import]
+    CurrentUserDependency,
     ParquetResponse,
     RequiresPermission,
     ZipResponse,

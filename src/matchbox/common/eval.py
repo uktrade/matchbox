@@ -15,7 +15,6 @@ PrecisionRecall: TypeAlias = tuple[float, float]
 class Judgement(BaseModel):
     """User determination on how to group source clusters from a model cluster."""
 
-    user_name: str | None = None
     tag: str | None = None
     shown: list[int] = Field(
         description="IDs of the source clusters shown to user at once"

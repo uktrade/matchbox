@@ -69,16 +69,16 @@ class TestMatchboxEvaluationBackend:
             # Can endorse the same cluster that is shown
             clust1_leaves = get_leaf_ids(unique_ids[0])
             self.backend.insert_judgement(
+                user_name=bob.user_name,
                 judgement=Judgement(
-                    user_name=bob.user_name,
                     shown=clust1_leaves,
                     endorsed=[clust1_leaves],
                 ),
             )
             # Can send redundant data
             self.backend.insert_judgement(
+                user_name=bob.user_name,
                 judgement=Judgement(
-                    user_name=bob.user_name,
                     shown=clust1_leaves,
                     endorsed=[clust1_leaves],
                 ),
@@ -87,8 +87,8 @@ class TestMatchboxEvaluationBackend:
 
             # Can tag judgement
             self.backend.insert_judgement(
+                user_name=bob.user_name,
                 judgement=Judgement(
-                    user_name=bob.user_name,
                     shown=clust1_leaves,
                     endorsed=[clust1_leaves],
                     tag="eval_session1",
@@ -98,8 +98,8 @@ class TestMatchboxEvaluationBackend:
             # Now split a cluster
             clust2_leaves = get_leaf_ids(unique_ids[1])
             self.backend.insert_judgement(
+                user_name=bob.user_name,
                 judgement=Judgement(
-                    user_name=bob.user_name,
                     shown=clust2_leaves,
                     endorsed=[clust2_leaves[:1], clust2_leaves[1:]],
                 ),
@@ -109,8 +109,8 @@ class TestMatchboxEvaluationBackend:
 
             # Insert a judgement with a "shown" that doesn't exist on the server
             self.backend.insert_judgement(
+                user_name=bob.user_name,
                 judgement=Judgement(
-                    user_name=bob.user_name,
                     shown=clust1_leaves + clust2_leaves,
                     endorsed=[clust1_leaves + clust2_leaves],
                 ),
@@ -126,8 +126,8 @@ class TestMatchboxEvaluationBackend:
             # Now, let's test an exception is raised
             with pytest.raises(MatchboxDataNotFound):
                 self.backend.insert_judgement(
+                    user_name=bob.user_name,
                     judgement=Judgement(
-                        user_name=bob.user_name,
                         shown=fake_leaves,
                         endorsed=[fake_leaves],
                     ),
@@ -263,8 +263,8 @@ class TestMatchboxEvaluationBackend:
             )
 
             self.backend.insert_judgement(
+                user_name=bob.user_name,
                 judgement=Judgement(
-                    user_name=bob.user_name,
                     shown=first_cluster_leaves,
                     endorsed=[first_cluster_leaves],
                 ),
@@ -293,8 +293,8 @@ class TestMatchboxEvaluationBackend:
                 )
 
                 self.backend.insert_judgement(
+                    user_name=bob.user_name,
                     judgement=Judgement(
-                        user_name=bob.user_name,
                         shown=cluster_leaves,
                         endorsed=[cluster_leaves],
                     ),

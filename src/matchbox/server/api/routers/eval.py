@@ -51,8 +51,7 @@ def insert_judgement(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
         )
-    judgement.user_name = user.user_name
-    backend.insert_judgement(judgement=judgement)
+    backend.insert_judgement(user_name=user.user_name, judgement=judgement)
     return Response(status_code=status.HTTP_201_CREATED)
 
 

@@ -42,10 +42,7 @@ def sample_for_eval(n: int, resolution: ModelResolutionPath) -> Table:
 @http_retry
 def send_eval_judgement(judgement: Judgement) -> None:
     """Send judgements to the server."""
-    logger.debug(
-        f"Submitting judgement {judgement.shown}:{judgement.endorsed} "
-        f"for {judgement.user_name}"
-    )
+    logger.debug(f"Submitting judgement {judgement.shown}:{judgement.endorsed} ")
     CLIENT.post("/eval/judgements", json=judgement.model_dump())
 
 

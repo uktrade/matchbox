@@ -808,11 +808,12 @@ class MatchboxDBAdapter(ABC):
     # Evaluation management
 
     @abstractmethod
-    def insert_judgement(self, judgement: Judgement) -> None:
+    def insert_judgement(self, user_name: str, judgement: Judgement) -> None:
         """Adds an evaluation judgement to the database.
 
         Args:
-            judgement: representation of the proposed clusters.
+            user_name: Name of user inserting the judgement
+            judgement: Representation of the proposed clusters.
         """
         ...
 

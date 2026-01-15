@@ -188,6 +188,29 @@ class MatchboxServerFileError(MatchboxHttpException):
         super().__init__(message)
 
 
+# -- Authentication exceptions --
+
+
+class MatchboxAuthenticationError(MatchboxHttpException):
+    """Authentication failed."""
+
+    http_status = 401
+
+    def __init__(self, message: str | None = None, reason: str | None = None) -> None:
+        """Initialise the exception."""
+        if message is None:
+            message = "Authentication failed."
+
+        super().__init__(message)
+        self.reason = reason
+
+    def to_details(self) -> dict[str, Any] | None:
+        """Return reason if set."""
+        if self.reason is not None:
+            return {"reason": self.reason}
+        return None
+
+
 # -- Resource not found on server exceptions --
 
 

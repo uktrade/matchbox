@@ -4,9 +4,9 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Security
-from fastapi.exceptions import HTTPException
 
 from matchbox.common.dtos import AuthStatusResponse, User
+from matchbox.common.exceptions import MatchboxAuthenticationError
 from matchbox.server.api.dependencies import (
     JWT_HEADER,
     BackendDependency,
@@ -78,7 +78,7 @@ async def authentication_status(
             username=username,
             token=token,
         )
-    except HTTPException:
+    except MatchboxAuthenticationError:
         # JWT validation failed
         return AuthStatusResponse(
             authenticated=False,

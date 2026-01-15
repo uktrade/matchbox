@@ -86,7 +86,7 @@ build-backend = "setuptools.build_meta"
 
 # Presence enables setuptools-scm
 [tool.setuptools_scm]
-
+fallback_version = "0.0.0"
 
 [tool.uv]
 default-groups = ["dev", "typing"]
@@ -96,7 +96,8 @@ constraint-dependencies = [
     "urllib3>=2.6.3",
     "werkzeug>=3.1.5",
     "setuptools-scm>=9.2.0",
-    "filelock>=3.20.1"
+    "filelock>=3.20.3",
+    "virtualenv>=20.36.1",
 ]
 
 [tool.ruff]

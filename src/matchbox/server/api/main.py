@@ -21,7 +21,6 @@ from fastapi.openapi.docs import (
 )
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse
 
 from matchbox.common.arrow import table_to_buffer
@@ -81,7 +80,7 @@ async def matchbox_exception_handler(
     )
 
 
-@app.exception_handler(StarletteHTTPException)
+@app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handler for unexpected exceptions to ensure consistent error responses."""
     error_id = str(uuid.uuid4())

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from matchbox.client._settings import settings
 from matchbox.common.dtos import (
     AuthStatusResponse,
+    ErrorResponse,
     User,
 )
 from test.scripts.authorisation import generate_json_web_token
@@ -116,7 +117,10 @@ def test_incorrect_signature(
     response = method(url)
 
     assert response.status_code == 401
-    assert response.content == b'"JWT invalid."'
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxAuthenticationError"
+    assert error.message == "JWT invalid."
+    assert error.details == {"reason": "invalid_token"}
 
 
 @pytest.mark.parametrize(("method_name", "url"), PROTECTED_ROUTES)
@@ -141,7 +145,10 @@ def test_expired_token(
     response = method(url)
 
     assert response.status_code == 401
-    assert response.content == b'"JWT expired."'
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxAuthenticationError"
+    assert error.message == "JWT expired."
+    assert error.details == {"reason": "expired_token"}
 
 
 @pytest.mark.parametrize(("method_name", "url"), PROTECTED_ROUTES)
@@ -159,4 +166,7 @@ def test_missing_authorisation_header(
     response = method(url)
 
     assert response.status_code == 401
-    assert response.content == b'"JWT required but not provided."'
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxAuthenticationError"
+    assert error.message == "JWT required but not provided."
+    assert error.details == {"reason": "missing_token"}

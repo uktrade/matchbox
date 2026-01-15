@@ -13,13 +13,12 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import (
     Depends,
     FastAPI,
-    HTTPException,
     Security,
-    status,
 )
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
 
+from matchbox.common.exceptions import MatchboxAuthenticationError
 from matchbox.common.logging import get_formatter, logger
 from matchbox.server.base import (
     MatchboxDBAdapter,
@@ -134,17 +133,15 @@ def validate_jwt(
 ) -> None:
     """Validate client JWT with server API Key."""
     if not settings.public_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Public Key missing in server configuration.",
-            headers={"WWW-Authenticate": "Authorization"},
+        raise MatchboxAuthenticationError(
+            message="Public key missing in server configuration.",
+            reason="missing_public_key",
         )
 
     if not client_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT required but not provided.",
-            headers={"WWW-Authenticate": "Authorization"},
+        raise MatchboxAuthenticationError(
+            message="JWT required but not provided.",
+            reason="missing_token",
         )
 
     try:
@@ -167,21 +164,19 @@ def validate_jwt(
         public_key.verify(b64_decode(signature_b64), header_b64 + b"." + payload_b64)
 
         if payload["exp"] <= time.time():
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="JWT expired.",
-                headers={"WWW-Authenticate": "Authorization"},
+            raise MatchboxAuthenticationError(
+                message="JWT expired.",
+                reason="expired_token",
             )
 
-    except HTTPException:
-        raise  # Re-raise HTTPExceptions as-is
+    except MatchboxAuthenticationError:
+        raise  # Re-raise MatchboxAuthenticationErrors as-is
     except Exception as e:
         logger.exception(f"Invalid JWT. Token: {client_token}")
         # Anything else is an invalid token -> 401
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT invalid.",
-            headers={"WWW-Authenticate": "Authorization"},
+        raise MatchboxAuthenticationError(
+            message="JWT invalid.",
+            reason="invalid_token",
         ) from e
 
 

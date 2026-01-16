@@ -11,6 +11,23 @@ This document describes how you can get started with developing Matchbox.
 
 Set up environment variables by creating a `.env` file under project directory. See [`/environments/development.env`](https://github.com/uktrade/matchbox/blob/main/environments/development.env) for sensible defaults, which should work as is with the Docker Compose set-up and the tests.
 
+Generate dummy public/private keys and a JWT for local testing. The below will add the required variables to the bottom of your `.env` file.
+
+```shell
+uv run test/scripts/authorisation.py keygen > /tmp/keys.json
+
+echo "MB__DEV__PRIVATE_KEY=\"$(jq -r '.private_key' /tmp/keys.json)\"" >> .env
+
+echo "MB__SERVER__PUBLIC_KEY=\"$(jq -r '.public_key' /tmp/keys.json)\"" >> .env
+echo "MB__CLIENT__JWT=$(jq -r .private_key /tmp/keys.json | \
+    uv run test/scripts/authorisation.py jwt \
+        --sub e9ba93b3-e4d5-4dee-868c-d011116142bd \
+        --email test@example.org \
+        --api-root https://localhost:8000/ \
+        --expiry 999999 | \
+    tr -d '\n')" >> .env
+```
+
 This project is managed by [uv](https://docs.astral.sh/uv/), linted and formated with [ruff](https://docs.astral.sh/ruff/), and tested with [pytest](https://docs.pytest.org/en/stable/). [Docker](https://www.docker.com) is used for local development. Documentation is build using [mkdocs](https://www.mkdocs.org).
 
 To install all dependencies for this project, run:

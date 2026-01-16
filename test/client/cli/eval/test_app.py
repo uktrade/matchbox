@@ -160,7 +160,6 @@ class TestScenarioIntegration:
             app = EntityResolutionApp(
                 resolution=loaded_dag.get_model(model_name),
                 num_samples=3,
-                user="test_user",
                 dag=loaded_dag,
                 scroll_debounce_delay=None,
             )
@@ -171,7 +170,6 @@ class TestScenarioIntegration:
 
                 # 1. Verify app initialisation and sample loading
                 assert app.is_running
-                assert app.user_name == "test_user"
                 assert pilot.app.query("Footer")
                 assert app.queue.total_count > 0
                 assert app.queue.current is not None
@@ -303,7 +301,6 @@ class TestScenarioIntegration:
             app = EntityResolutionApp(
                 resolution=loaded_dag.get_model(model_name),
                 num_samples=3,
-                user="test_user",
                 dag=loaded_dag,
             )
 

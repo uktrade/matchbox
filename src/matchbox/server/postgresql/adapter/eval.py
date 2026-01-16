@@ -49,7 +49,7 @@ else:
 class MatchboxPostgresEvaluationMixin:
     """Evaluation mixin for the PostgreSQL adapter for Matchbox."""
 
-    def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
+    def insert_judgement(self, user_name: str, judgement: CommonJudgement) -> None:  # noqa: D102
         def get_or_create_cluster(leaves: list[int], session: Session) -> int:
             # Compute hash corresponding to set of source clusters (leaves)
             leaf_hashes = [
@@ -83,13 +83,9 @@ class MatchboxPostgresEvaluationMixin:
 
         # Check that the user exists
         with MBDB.get_session() as session:
-            user = session.scalar(
-                select(Users).where(Users.name == judgement.user_name)
-            )
+            user = session.scalar(select(Users).where(Users.name == user_name))
             if not user:
-                raise MatchboxUserNotFoundError(
-                    f"User '{judgement.user_name}' not found"
-                )
+                raise MatchboxUserNotFoundError(f"User '{user_name}' not found")
 
         with MBDB.get_session() as session:
             shown_id = get_or_create_cluster(judgement.shown, session)

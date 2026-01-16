@@ -4,6 +4,7 @@ from matchbox.client._handler.main import CLIENT, http_retry, url_params
 from matchbox.common.dtos import (
     AuthStatusResponse,
     BackendCountableType,
+    LoginResponse,
     ResourceOperationStatus,
     User,
 )
@@ -11,11 +12,11 @@ from matchbox.common.logging import logger
 
 
 @http_retry
-def login(user_name: str) -> int:
-    """Log into Matchbox and return the user ID."""
+def login(user_name: str) -> str:
+    """Log into Matchbox and return the user name."""
     logger.debug(f"Log in attempt for {user_name}")
     response = CLIENT.post("/auth/login", json=User(user_name=user_name).model_dump())
-    return User.model_validate(response.json()).user_name
+    return LoginResponse.model_validate(response.json()).user.user_name
 
 
 @http_retry

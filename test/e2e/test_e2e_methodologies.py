@@ -54,7 +54,7 @@ class TestE2EMethodologyIntegration:
         self, Deduper: type[Deduper], configure_deduper: DeduperConfigurator
     ) -> None:
         """Test that dedupers work end-to-end."""
-        with setup_scenario(self.backend, "bare", self.warehouse) as dag_testkit:
+        with setup_scenario(self.backend, "preindex", self.warehouse) as dag_testkit:
             # Get the DAG from the testkit
             dag = dag_testkit.dag
 
@@ -113,7 +113,7 @@ class TestE2EMethodologyIntegration:
         self, Linker: type[Linker], configure_linker: LinkerConfigurator
     ) -> None:
         """Test that linkers work end-to-end."""
-        with setup_scenario(self.backend, "bare", self.warehouse) as dag_testkit:
+        with setup_scenario(self.backend, "preindex", self.warehouse) as dag_testkit:
             # Get the DAG from the testkit
             dag = dag_testkit.dag
 

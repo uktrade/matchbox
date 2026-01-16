@@ -73,7 +73,6 @@ class EvaluationItem(BaseModel):
 def create_judgement(
     item: EvaluationItem,
     assignments: dict[int, str],
-    user_name: str,
     tag: str | None = None,
 ) -> Judgement:
     """Convert item assignments to Judgement - no default group assignment.
@@ -81,7 +80,6 @@ def create_judgement(
     Args:
         item: evaluation item
         assignments: column assignments (group_idx -> group_letter)
-        user_name: user name for the judgement
         tag: string by which to tag the judgement
 
     Returns:
@@ -95,7 +93,7 @@ def create_judgement(
         groups.setdefault(group, []).extend(leaf_ids)
 
     endorsed = [sorted(set(leaf_ids)) for leaf_ids in groups.values()]
-    return Judgement(user_name=user_name, shown=item.leaves, endorsed=endorsed, tag=tag)
+    return Judgement(shown=item.leaves, endorsed=endorsed, tag=tag)
 
 
 def create_evaluation_item(
@@ -144,21 +142,18 @@ def _read_sample_file(sample_file: str, n: int) -> pl.DataFrame:
 
 
 def _get_samples_from_server(
-    dag: DAG, user_name: str, n: int, resolution: ModelResolutionName | None = None
+    dag: DAG, n: int, resolution: ModelResolutionName | None = None
 ) -> pl.DataFrame:
     if resolution:
         resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
     else:
         resolution_path: ModelResolutionPath = dag.final_step.resolution_path
-    return pl.from_arrow(
-        _handler.sample_for_eval(n=n, resolution=resolution_path, user_name=user_name)
-    )
+    return pl.from_arrow(_handler.sample_for_eval(n=n, resolution=resolution_path))
 
 
 def get_samples(
     n: int,
     dag: DAG,
-    user_name: str,
     resolution: ModelResolutionName | None = None,
     sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
@@ -167,11 +162,10 @@ def get_samples(
     Args:
         n: Number of clusters to sample
         dag: DAG for which to retrieve samples
-        user_name: Name of the user requesting the samples
         resolution: The optional resolution from which to sample. If not set, the final
             step in the DAG is used. If sample_file is set, resolution is ignored
         sample_file: path to parquet file output by ResolvedMatches. If specified,
-            won't sample from server, ignoring the user_name and resolution arguments
+            won't sample from server, ignoring the resolution argument
 
     Returns:
         Dictionary of cluster ID to EvaluationItems describing the cluster
@@ -183,9 +177,7 @@ def get_samples(
     if sample_file:
         samples = _read_sample_file(sample_file=sample_file, n=n)
     else:
-        samples = _get_samples_from_server(
-            dag=dag, user_name=user_name, n=n, resolution=resolution
-        )
+        samples = _get_samples_from_server(dag=dag, n=n, resolution=resolution)
 
     if not len(samples):
         return {}

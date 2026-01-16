@@ -49,7 +49,21 @@ def generate_json_web_token(
     email: str | None = None,
 ) -> str:
     """Generate JWT with private key bytes."""
-    private_key = load_pem_private_key(private_key_bytes, password=None)
+    # Decode and clean the key
+    key_str = private_key_bytes.decode("ascii")
+
+    # Strip quotes and comments
+    key_str = key_str.strip().strip('"').strip("'")
+    if "#" in key_str:
+        key_str = key_str.split("#")[0].strip().strip('"').strip("'")
+
+    # Replace literal \n with actual newlines
+    key_str = key_str.replace("\\n", "\n")
+
+    private_key = load_pem_private_key(
+        key_str.encode("ascii"),
+        password=None,
+    )
 
     header = {
         "typ": "JWT",

@@ -12,7 +12,6 @@ from textual.timer import Timer
 from textual.widgets import Footer, Label
 
 from matchbox.client import _handler
-from matchbox.client._settings import settings
 from matchbox.client.cli.eval.modals import HelpModal, NoSamplesModal
 from matchbox.client.cli.eval.widgets.assignment import AssignmentBar
 from matchbox.client.cli.eval.widgets.styling import get_group_style
@@ -20,7 +19,6 @@ from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
 from matchbox.client.eval import EvaluationItem, create_judgement, get_samples
 from matchbox.common.dtos import ModelResolutionPath
-from matchbox.common.exceptions import MatchboxClientSettingsException
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +106,6 @@ class EntityResolutionApp(App):
 
     sample_limit: int
     resolution: ModelResolutionPath
-    user_name: str
     dag: DAG
     session_tag: str | None
     sample_file: str | None
@@ -119,7 +116,6 @@ class EntityResolutionApp(App):
 
     def __init__(
         self,
-        user: str,
         num_samples: int = 5,
         resolution: ModelResolutionPath | None = None,
         dag: DAG | None = None,
@@ -133,7 +129,6 @@ class EntityResolutionApp(App):
         Args:
             resolution: The model resolution to evaluate
             num_samples: Number of clusters to sample for evaluation
-            user: Username for authentication (overrides settings)
             dag: Pre-loaded DAG with warehouse location attached
             session_tag: String to use for tagging judgements
             sample_file: Path to pre-compiled sample file.
@@ -148,7 +143,6 @@ class EntityResolutionApp(App):
             raise ValueError("Either a resolution or a sample file must be set")
 
         self.resolution = resolution
-        self.user_name = user
         self.sample_limit = num_samples
         self.dag = dag
         self.session_tag = session_tag
@@ -179,8 +173,6 @@ class EntityResolutionApp(App):
 
     async def on_mount(self) -> None:
         """Initialise the application."""
-        await self.authenticate()
-
         if self.dag is None:
             raise RuntimeError(
                 "DAG not loaded. EntityResolutionApp requires a pre-loaded DAG."
@@ -311,14 +303,6 @@ class EntityResolutionApp(App):
             )
 
     # Public methods
-    async def authenticate(self) -> None:
-        """Authenticate with the server."""
-        user_name = self.user_name or settings.user
-        if not user_name:
-            raise MatchboxClientSettingsException("User name is unset.")
-
-        self.user_name = _handler.login(user_name=user_name)
-
     async def load_samples(self) -> None:
         """Load evaluation samples from the server."""
         needed = max(0, self.sample_limit - self.queue.total_count)
@@ -338,7 +322,6 @@ class EntityResolutionApp(App):
             new_samples_dict = get_samples(
                 n=needed,
                 resolution=self.resolution.name if self.resolution else None,
-                user_name=self.user_name,
                 dag=self.dag,
                 sample_file=self.sample_file,
             )
@@ -383,12 +366,9 @@ class EntityResolutionApp(App):
             return
 
         try:
-            if self.user_name is None:
-                raise RuntimeError("User name is not set")
             judgement = create_judgement(
                 item=current.item,
                 assignments=current.assignments,
-                user_name=self.user_name,
                 tag=self.session_tag,
             )
             _handler.send_eval_judgement(judgement)

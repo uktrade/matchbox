@@ -18,7 +18,7 @@ from matchbox.common.arrow import (
     SCHEMA_QUERY_WITH_LEAVES,
     table_to_buffer,
 )
-from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run, User
+from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
@@ -91,9 +91,7 @@ def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
         rm.as_dump().write_parquet(tmp_file.name)
 
         # Use the temporary file in get_samples
-        samples = get_samples(
-            n=2, dag=dag, user_name="alice", sample_file=tmp_file.name
-        )
+        samples = get_samples(n=2, dag=dag, sample_file=tmp_file.name)
         assert len(samples) == 2
         possible_clusters = set(foo_query_data["id"]) | set(bar_query_data["id"])
         assert set(samples.keys()) <= possible_clusters
@@ -106,9 +104,6 @@ def test_get_samples_remote(
     env_setter: Callable[[str, str], None],
 ) -> None:
     """We can sample from a resolution on the server."""
-    # Make dummmy data
-    user = User(user_name="alice", email="alice@example.com")
-
     # Foo has two identical rows
     foo_testkit = source_from_tuple(
         data_tuple=({"col": 1}, {"col": 1}, {"col": 2}, {"col": 3}, {"col": 4}),
@@ -223,7 +218,6 @@ def test_get_samples_remote(
     samples_all = get_samples(
         n=10,
         resolution=dag.final_step.resolution_path.name,
-        user_name=user.user_name,
         dag=loaded_dag,
     )
 
@@ -253,7 +247,6 @@ def test_get_samples_remote(
     samples = get_samples(
         n=10,
         resolution=dag.final_step.resolution_path.name,
-        user_name=user.user_name,
         dag=loaded_dag,
     )
 
@@ -304,7 +297,6 @@ def test_get_samples_remote(
     no_samples = get_samples(
         n=10,
         resolution=dag.final_step.resolution_path.name,
-        user_name=user.user_name,
         dag=loaded_dag,
     )
     assert no_samples == {}
@@ -323,6 +315,5 @@ def test_get_samples_remote(
         get_samples(
             n=10,
             resolution=dag.final_step.resolution_path.name,
-            user_name=user.user_name,
             dag=bad_dag,
         )

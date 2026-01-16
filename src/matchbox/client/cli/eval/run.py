@@ -30,12 +30,6 @@ def evaluate(
             help="Whether to evaluate the pending DAG, instead of the default",
         ),
     ] = False,
-    user: Annotated[
-        str | None,
-        typer.Option(
-            "--user", "-u", help="Username for authentication (overrides settings)"
-        ),
-    ] = None,
     warehouse: Annotated[
         str | None,
         typer.Option(
@@ -109,7 +103,6 @@ def evaluate(
         # Create app with loaded DAG (not warehouse string)
         app = EntityResolutionApp(
             resolution=resolution,
-            user=user,
             dag=dag,
             session_tag=session_tag,
             sample_file=sample_file,

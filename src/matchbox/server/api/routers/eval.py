@@ -7,7 +7,6 @@ from typing import Annotated
 from fastapi import (
     APIRouter,
     Depends,
-    HTTPException,
     Query,
     Response,
     status,
@@ -24,6 +23,7 @@ from matchbox.common.dtos import (
     User,
 )
 from matchbox.common.eval import Judgement
+from matchbox.common.exceptions import MatchboxAuthenticationError
 from matchbox.server.api.dependencies import (
     BackendDependency,
     CurrentUserDependency,
@@ -47,10 +47,7 @@ def insert_judgement(
 ) -> Response:
     """Submit judgement from human evaluator."""
     if not user or user.user_name == "_public":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
+        raise MatchboxAuthenticationError
     backend.insert_judgement(user_name=user.user_name, judgement=judgement)
     return Response(status_code=status.HTTP_201_CREATED)
 

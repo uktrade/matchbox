@@ -6,12 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
     ErrorResponse,
     Group,
-    PermissionGrant,
-    PermissionType,
 )
 from matchbox.common.exceptions import (
     MatchboxGroupAlreadyExistsError,
@@ -32,10 +29,6 @@ from matchbox.common.exceptions import (
         # Membership
         pytest.param("POST", "/admin/groups/g/members", id="add_member"),
         pytest.param("DELETE", "/admin/groups/g/members/u", id="rm_member"),
-        # Permissions
-        pytest.param("GET", "/admin/system/permissions", id="get_perms"),
-        pytest.param("POST", "/admin/system/permissions", id="grant_perm"),
-        pytest.param("DELETE", "/admin/system/permissions/read/g/", id="revoke_perm"),
     ],
 )
 def test_admin_routes_forbidden(
@@ -198,54 +191,3 @@ def test_remove_member_errors(
     response = test_client.delete("/admin/groups/g/members/u")
 
     assert response.status_code == 404
-
-
-# Permissions
-
-
-def test_get_system_permissions(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Test getting system permissions."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.check_permission.return_value = True
-    mock_backend.get_permissions.return_value = [
-        PermissionGrant(group_name="admins", permission=PermissionType.ADMIN)
-    ]
-
-    response = test_client.get("/admin/system/permissions")
-
-    assert response.status_code == 200
-    assert response.json()[0]["permission"] == "admin"
-    mock_backend.get_permissions.assert_called_with(BackendResourceType.SYSTEM)
-
-
-def test_grant_system_permission(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Test granting system permission."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.check_permission.return_value = True
-
-    payload = {"group_name": "g", "permission": "read"}
-    response = test_client.post("/admin/system/permissions", json=payload)
-
-    assert response.status_code == 200
-    mock_backend.grant_permission.assert_called_with(
-        "g", PermissionType.READ, BackendResourceType.SYSTEM
-    )
-
-
-def test_revoke_system_permission(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Test revoking system permission."""
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.check_permission.return_value = True
-
-    response = test_client.delete("/admin/system/permissions/write/g/")
-
-    assert response.status_code == 200
-    mock_backend.revoke_permission.assert_called_with(
-        "g", PermissionType.WRITE, BackendResourceType.SYSTEM
-    )

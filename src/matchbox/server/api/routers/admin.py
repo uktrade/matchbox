@@ -5,13 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from matchbox.common.dtos import (
-    BackendResourceType,
     CRUDOperation,
     ErrorResponse,
     Group,
     GroupName,
-    PermissionGrant,
-    PermissionType,
     ResourceOperationStatus,
     User,
 )
@@ -120,65 +117,5 @@ def remove_member(
     return ResourceOperationStatus(
         success=True,
         target=f"User {user_name} in {group_name}",
-        operation=CRUDOperation.DELETE,
-    )
-
-
-# System permission management endpoints
-
-
-@router.get(
-    "/system/permissions",
-    responses={
-        401: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-    },
-)
-def get_permissions(
-    backend: BackendDependency,
-) -> list[PermissionGrant]:
-    """Get permissions for the system resource."""
-    return backend.get_permissions(BackendResourceType.SYSTEM)
-
-
-@router.post(
-    "/system/permissions",
-    responses={
-        401: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-    },
-)
-def grant_permission(
-    backend: BackendDependency,
-    grant: PermissionGrant,
-) -> ResourceOperationStatus:
-    """Grant a permission on the system resource."""
-    backend.grant_permission(
-        grant.group_name, grant.permission, BackendResourceType.SYSTEM
-    )
-    return ResourceOperationStatus(
-        success=True,
-        target=f"{grant.permission} on system for {grant.group_name}",
-        operation=CRUDOperation.CREATE,
-    )
-
-
-@router.delete(
-    "/system/permissions/{permission}/{group_name}/",
-    responses={
-        401: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-    },
-)
-def revoke_permission(
-    backend: BackendDependency,
-    permission: PermissionType,
-    group_name: GroupName,
-) -> ResourceOperationStatus:
-    """Revoke a permission on the system resource."""
-    backend.revoke_permission(group_name, permission, BackendResourceType.SYSTEM)
-    return ResourceOperationStatus(
-        success=True,
-        target=f"{permission} on system for {group_name}",
         operation=CRUDOperation.DELETE,
     )

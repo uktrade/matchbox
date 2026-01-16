@@ -175,8 +175,8 @@ celery.conf.update(
 
 
 @setup_logging.connect
-def on_celery_setup_logging(**kwargs):  # noqa
-    # If this signal is connected, Celery won't configure logging at all.
+def on_celery_setup_logging(**kwargs: Any) -> None:
+    """Override Celery logging configuration."""
     configure_celery_logging()
 
 

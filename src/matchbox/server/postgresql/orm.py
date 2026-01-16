@@ -21,8 +21,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
-from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import (
+    BackendResourceType,
     CollectionName,
     LocationConfig,
     ModelType,
@@ -32,6 +32,7 @@ from matchbox.common.dtos import (
     RunID,
     UploadStage,
 )
+from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
 from matchbox.common.dtos import Resolution as CommonResolution
 from matchbox.common.dtos import Run as CommonRun
@@ -39,9 +40,14 @@ from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.dtos import SourceField as CommonSourceField
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
+    MatchboxGroupNotFoundError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
+)
+from matchbox.server.base import (
+    DEFAULT_GROUPS,
+    DEFAULT_PERMISSIONS,
 )
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
@@ -941,37 +947,77 @@ class Groups(CountMixin, MBDB.MatchboxBase):
 
     @classmethod
     def initialise(cls) -> None:
-        """Create standard groups and permissions.
-
-        * admins group, with system admin permissions
-        * public group, with a single _public user
-        """
+        """Create standard users, groups, and permissions."""
         with MBDB.get_session() as session:
-            # Create public group with _public user
-            if not session.execute(
-                select(cls).where(cls.name == "public")
-            ).scalar_one_or_none():
-                public_user = Users(name="_public", email=None)
-                public_group = cls(
-                    name="public",
-                    description="Unauthenticated users.",
-                    is_system=True,
-                    members=[public_user],
+            # Create groups and their members
+            for group_dto in DEFAULT_GROUPS:
+                # Create or get group
+                group_obj = session.scalar(
+                    select(cls).where(cls.name == group_dto.name)
                 )
-                session.add(public_group)
+                if not group_obj:
+                    group_obj = cls(
+                        name=group_dto.name,
+                        description=group_dto.description,
+                        is_system=group_dto.is_system,
+                    )
+                    session.add(group_obj)
+                    session.flush()
 
-            # Create admins group with permissions
-            if not session.execute(
-                select(cls).where(cls.name == "admins")
-            ).scalar_one_or_none():
-                admin_perm = Permissions(permission="admin", is_system=True)
-                admins_group = cls(
-                    name="admins",
-                    description="System administrators.",
-                    is_system=True,
-                    permissions=[admin_perm],
+                # Create members
+                for user_dto in group_dto.members:
+                    user_obj = session.scalar(
+                        select(Users).where(Users.name == user_dto.user_name)
+                    )
+                    if not user_obj:
+                        user_obj = Users(name=user_dto.user_name, email=user_dto.email)
+                        session.add(user_obj)
+                        session.flush()
+
+                    if user_obj not in group_obj.members:
+                        group_obj.members.append(user_obj)
+
+            session.commit()
+
+            # Create permissions
+            for grant, resource_type, resource_name in DEFAULT_PERMISSIONS:
+                # Look up the group
+                group_obj = session.scalar(
+                    select(cls).where(cls.name == grant.group_name)
                 )
-                session.add(admins_group)
+                if not group_obj:
+                    raise MatchboxGroupNotFoundError
+
+                # Determine collection_id if applicable
+                collection_id = None
+                if resource_name and resource_type == BackendResourceType.COLLECTION:
+                    collection = session.scalar(
+                        select(Collections).where(Collections.name == resource_name)
+                    )
+                    if not collection:
+                        raise MatchboxCollectionNotFoundError(name=resource_name)
+                    collection_id = collection.collection_id
+
+                # Check if permission already exists
+                existing = session.scalar(
+                    select(Permissions).where(
+                        Permissions.group_id == group_obj.group_id,
+                        Permissions.permission == grant.permission,
+                        Permissions.is_system
+                        == (resource_type == BackendResourceType.SYSTEM),
+                        Permissions.collection_id == collection_id,
+                    )
+                )
+
+                if not existing:
+                    session.add(
+                        Permissions(
+                            group=group_obj,
+                            permission=grant.permission,
+                            is_system=(resource_type == BackendResourceType.SYSTEM),
+                            collection_id=collection_id,
+                        )
+                    )
 
             session.commit()
 

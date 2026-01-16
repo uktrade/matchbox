@@ -66,6 +66,41 @@ but any permission implies `PermissionType.READ`.
 """
 
 
+DEFAULT_GROUPS: list[Group] = [
+    Group(
+        name="public",
+        description="Unauthenticated users.",
+        is_system=True,
+        members=[User(user_name="_public", email=None)],
+    ),
+    Group(
+        name="admins",
+        description="System administrators.",
+        is_system=True,
+    ),
+]
+"""The default groups and users that should be in any fresh Matchbox backend."""
+
+DEFAULT_PERMISSIONS: list[tuple[PermissionGrant, BackendResourceType, str | None]] = [
+    (
+        PermissionGrant(
+            group_name="admins",
+            permission=PermissionType.ADMIN,
+        ),
+        BackendResourceType.SYSTEM,
+        None,
+    ),
+]
+"""The default permissions that should be granted in any fresh Matchbox backend.
+
+A list of tuples in the form:
+
+* The permission to grant
+* The resource type to grant it on
+* The resource name to grant it on, if applicable
+"""
+
+
 class MatchboxBackends(StrEnum):
     """The available backends for Matchbox."""
 
@@ -291,11 +326,8 @@ class ListableAndCountable(Countable, Listable):
 class MatchboxDBAdapter(ABC):
     """An abstract base class for Matchbox database adapters.
 
-    By default the database should contain:
-
-    * A single user, _public
-    * Two groups, public and admins
-    * A single permission for the admins group: system admin
+    By default the database should contain the users, groups and permissions found in
+    DEFAULT_GROUPS and DEFAULT_PERMISSIONS.
     """
 
     settings: "MatchboxServerSettings"

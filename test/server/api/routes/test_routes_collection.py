@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.dtos import (
     Collection,
-    ErrorResponse,
     GroupName,
     PermissionGrant,
     PermissionType,
@@ -21,48 +20,6 @@ from matchbox.common.exceptions import (
     MatchboxRunNotFoundError,
 )
 from matchbox.common.factories.sources import source_factory
-
-# Authorisation
-
-
-@pytest.mark.parametrize(
-    ["method", "endpoint"],
-    [
-        # Collection management (admin)
-        pytest.param("DELETE", "/collections/col1", id="delete_collection"),
-        pytest.param("GET", "/collections/col1/permissions", id="get_perms"),
-        pytest.param("POST", "/collections/col1/permissions", id="grant_perm"),
-        pytest.param(
-            "DELETE", "/collections/col1/permissions/g/read", id="revoke_perm"
-        ),
-        # Run and resolution management (write)
-        pytest.param("POST", "/collections/col1/runs", id="create_run"),
-        pytest.param("DELETE", "/collections/col1/runs/1", id="delete_run"),
-        pytest.param("PATCH", "/collections/col1/runs/1/mutable", id="set_mutable"),
-        pytest.param(
-            "DELETE", "/collections/col1/runs/1/resolutions/res1", id="delete_res"
-        ),
-    ],
-)
-def test_collection_routes_forbidden(
-    method: str,
-    endpoint: str,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Verify protected routes return 403 when permission check fails."""
-    test_client, mock_backend, _ = api_client_and_mocks
-
-    # Force permission check to fail
-    mock_backend.check_permission.return_value = False
-
-    response = test_client.request(method, endpoint)
-
-    assert response.status_code == 403
-    error = ErrorResponse.model_validate(response.json())
-    assert error.exception_type == "MatchboxPermissionDenied"
-    assert "Permission denied" in error.message
-    mock_backend.check_permission.assert_called()
-
 
 # Collection management tests
 

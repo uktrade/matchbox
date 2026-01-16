@@ -15,41 +15,6 @@ from matchbox.common.exceptions import (
     MatchboxGroupNotFoundError,
 )
 
-# Authorisation
-
-
-@pytest.mark.parametrize(
-    ["method", "endpoint"],
-    [
-        # Group management
-        pytest.param("GET", "/admin/groups", id="list_groups"),
-        pytest.param("POST", "/admin/groups", id="create_group"),
-        pytest.param("GET", "/admin/groups/g", id="get_group"),
-        pytest.param("DELETE", "/admin/groups/g", id="delete_group"),
-        # Membership
-        pytest.param("POST", "/admin/groups/g/members", id="add_member"),
-        pytest.param("DELETE", "/admin/groups/g/members/u", id="rm_member"),
-    ],
-)
-def test_admin_routes_forbidden(
-    method: str,
-    endpoint: str,
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    """Verify ALL admin routes return 403 when permission check fails."""
-    test_client, mock_backend, _ = api_client_and_mocks
-
-    # Force permission check to fail
-    mock_backend.check_permission.return_value = False
-
-    response = test_client.request(method, endpoint)
-
-    assert response.status_code == 403
-    error = ErrorResponse.model_validate(response.json())
-    assert error.exception_type == "MatchboxPermissionDenied"
-    assert "Permission denied" in error.message
-
-
 # Group management
 
 

@@ -102,6 +102,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Remove any existing handlers to avoid duplicates
         if logger.handlers:
             logger.handlers.clear()
+        logger.propagate = False
         logger.addHandler(handler)
 
     # Set SQLAlchemy loggers

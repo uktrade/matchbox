@@ -21,24 +21,6 @@ from rich.progress import (
 
 _PLUGINS = None
 
-
-def get_formatter() -> logging.Formatter:
-    """Retrieve plugin registered in 'matchbox.logging' entry point, or fallback."""
-    global _PLUGINS
-    if _PLUGINS is None:
-        _PLUGINS = []
-        for ep in importlib.metadata.entry_points(group="matchbox.logging"):
-            try:
-                _PLUGINS.append(ep.load()())
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"Failed to load logging plugin: {e}")
-
-    if _PLUGINS:
-        return _PLUGINS[0]
-
-    return logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-
 LogLevelType = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 """Type for all Python log levels."""
 
@@ -184,3 +166,51 @@ def log_mem_usage(
     usage = proc.memory_info().rss / (1024**2)
     msg = f"Current memory used by process (MiB): {usage}"
     logger.log(level, msg, prefix=prefix)
+
+
+def get_formatter() -> logging.Formatter:
+    """Retrieve plugin registered in 'matchbox.logging' entry point, or fallback."""
+    global _PLUGINS
+    if _PLUGINS is None:
+        _PLUGINS = []
+        for ep in importlib.metadata.entry_points(group="matchbox.logging"):
+            try:
+                _PLUGINS.append(ep.load()())
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Failed to load logging plugin: {e}")
+
+    if _PLUGINS:
+        return _PLUGINS[0]
+
+    return logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+
+def configure_celery_logging(level: int = logging.INFO) -> None:
+    """Configure root and celery loggers to use matchbox formatting.
+
+    This should also get logging from matchbox code running in forked processes.
+    """
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    # Create handler
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    handler.setFormatter(get_formatter())
+
+    # Clear handlers and add our formatted handler to root
+    root.handlers.clear()
+    root.addHandler(handler)
+
+    # Propagate celery loggers to root so they use our handler/formatter
+    for name in ("celery", "celery.app.trace", "celery.worker", "celery.task"):
+        log = logging.getLogger(name)
+        log.handlers.clear()
+        log.propagate = True
+        log.setLevel(level)
+
+    # Propagate matchbox loggers to root too
+    mb = logging.getLogger("matchbox")
+    mb.handlers.clear()
+    mb.propagate = True
+    mb.setLevel(level)

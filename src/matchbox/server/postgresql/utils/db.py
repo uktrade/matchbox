@@ -7,18 +7,31 @@ import io
 import pstats
 import uuid
 from collections.abc import Generator
+from typing import Literal
 
 import pyarrow as pa
 from pyarrow import Table as ArrowTable
 from sqlalchemy import Column, MetaData, Table, func, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
+from matchbox.common.dtos import (
+    BackendResourceType,
+    CollectionName,
+    GroupName,
+    PermissionType,
+)
+from matchbox.common.exceptions import (
+    MatchboxCollectionNotFoundError,
+    MatchboxGroupNotFoundError,
+)
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxSnapshot
 from matchbox.server.postgresql.db import MBDB
+from matchbox.server.postgresql.orm import Collections, Groups, Permissions
 
 # Data management
 
@@ -114,6 +127,61 @@ def restore(snapshot: MatchboxSnapshot, batch_size: int) -> None:
                 session.execute(sync_statement)
 
         session.commit()
+
+
+# Permissions
+
+
+def grant_permission(
+    session: Session,
+    group_name: GroupName,
+    permission: PermissionType,
+    resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
+) -> None:
+    """Grant permission within a session.
+
+    Committing (or otherwise) left to the caller.
+    """
+    # Get group
+    group = session.scalar(select(Groups).where(Groups.name == group_name))
+    if not group:
+        raise MatchboxGroupNotFoundError(f"Group '{group_name}' not found")
+
+    if resource == BackendResourceType.SYSTEM:
+        stmt = (
+            insert(Permissions)
+            .values(
+                group_id=group.group_id,
+                permission=permission,
+                is_system=True,
+                collection_id=None,
+            )
+            .on_conflict_do_nothing(constraint="unique_permission_grant")
+        )
+        session.execute(stmt)
+    else:
+        # Grant collection permission
+        collection = session.scalar(
+            select(Collections).where(Collections.name == resource)
+        )
+        if not collection:
+            raise MatchboxCollectionNotFoundError(name=resource)
+
+        stmt = (
+            insert(Permissions)
+            .values(
+                group_id=group.group_id,
+                permission=permission,
+                collection_id=collection.collection_id,
+                is_system=None,
+            )
+            .on_conflict_do_nothing(constraint="unique_permission_grant")
+        )
+        session.execute(stmt)
+    logger.info(
+        f"Granted {permission} permission on '{resource}' to group '{group_name}'",
+        prefix="Grant permission",
+    )
 
 
 # SQLAlchemy profiling

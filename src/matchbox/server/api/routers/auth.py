@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Security
 
-from matchbox.common.dtos import AuthStatusResponse, User
+from matchbox.common.dtos import AuthStatusResponse, LoginResponse, User
 from matchbox.common.exceptions import MatchboxAuthenticationError
 from matchbox.server.api.dependencies import (
     JWT_HEADER,
@@ -45,10 +45,13 @@ def get_username_from_token(token: str | None) -> str | None:
 @router.post("/login")
 def login(
     backend: BackendDependency,
-    credentials: User,
-) -> User:
-    """Receive a User with a username and returns it with a user ID."""
-    return backend.login(credentials)
+    user: User,
+) -> LoginResponse:
+    """Receive a User with a username and returns it with a user ID.
+
+    If in setup mode, will add the user to the admins group.
+    """
+    return backend.login(user=user)
 
 
 @router.get("/status")

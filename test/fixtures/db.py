@@ -9,7 +9,9 @@ import pytest
 import redis
 from _pytest.fixtures import FixtureRequest
 from adbc_driver_sqlite import dbapi as adbc_sqlite
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from moto import mock_aws
+from pydantic import Field, SecretBytes, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine, MetaData, create_engine
 
@@ -33,6 +35,7 @@ class DevelopmentSettings(BaseSettings):
     warehouse_port: int = 7654
     postgres_backend_port: int = 9876
     redis_url: str = "redis://localhost:6379/0"
+    private_key: SecretBytes | None = Field(default=None)
 
     model_config = SettingsConfigDict(
         extra="ignore",
@@ -41,6 +44,31 @@ class DevelopmentSettings(BaseSettings):
         env_file=Path(".env"),
         env_file_encoding="utf-8",
     )
+
+    @field_validator("private_key", mode="before")
+    @classmethod
+    def validate_private_key(cls, v: str | bytes | None) -> bytes | None:
+        """Validate and normalise PEM private key format."""
+        if v is None:
+            return v
+
+        # Convert to string if bytes
+        key_str: str
+        if isinstance(v, bytes):
+            key_str = v.decode("ascii")
+        elif isinstance(v, SecretBytes):
+            key_str = v.get_secret_value().decode("ascii")
+        else:
+            key_str = v
+
+        # Replace literal \n with actual newlines
+        key_str = key_str.replace("\\n", "\n")
+        key_bytes = key_str.encode("ascii")
+
+        # Validate by attempting to load (assumes unencrypted key)
+        _ = load_pem_private_key(key_bytes, password=None)
+
+        return key_bytes
 
 
 @pytest.fixture(scope="session")

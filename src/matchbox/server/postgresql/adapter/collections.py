@@ -9,6 +9,7 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     ModelResolutionPath,
+    PermissionGrant,
     Resolution,
     ResolutionPath,
     ResolutionType,
@@ -37,7 +38,7 @@ from matchbox.server.postgresql.orm import (
     SourceConfigs,
     SourceFields,
 )
-from matchbox.server.postgresql.utils.db import compile_sql
+from matchbox.server.postgresql.utils.db import compile_sql, grant_permission
 from matchbox.server.postgresql.utils.insert import insert_hashes, insert_results
 
 
@@ -46,15 +47,29 @@ class MatchboxPostgresCollectionsMixin:
 
     # Collection management
 
-    def create_collection(self, name: CollectionName) -> Collection:  # noqa: D102
+    def create_collection(  # noqa: D102
+        self, name: CollectionName, permissions: list[PermissionGrant]
+    ) -> Collection:
         with MBDB.get_session() as session:
-            if (session.query(Collections).filter_by(name=name).first()) is None:
-                new_collection = Collections(name=name)
-                session.add(new_collection)
-                session.commit()
-                return new_collection.to_dto()
-            else:
+            # Check if collection already exists
+            if (session.query(Collections).filter_by(name=name).first()) is not None:
                 raise MatchboxCollectionAlreadyExists
+
+            new_collection = Collections(name=name)
+            session.add(new_collection)
+            session.flush()
+
+            # Grant initial permissions
+            for permission_grant in permissions:
+                grant_permission(
+                    session=session,
+                    group_name=permission_grant.group_name,
+                    permission=permission_grant.permission,
+                    resource=name,
+                )
+
+            session.commit()
+            return new_collection.to_dto()
 
     def get_collection(  # noqa: D102
         self, name: CollectionName

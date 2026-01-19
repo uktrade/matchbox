@@ -9,6 +9,14 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
+from matchbox.common.dtos import (
+    DefaultGroup,
+    Group,
+    GroupName,
+    PermissionGrant,
+    PermissionType,
+    User,
+)
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -81,11 +89,136 @@ def create_bare_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a bare TestkitDAG scenario."""
+    """Create a bare TestkitDAG scenario.
+
+    The warehouse and backend are empty, no users.
+    """
     dag_testkit = TestkitDAG()
 
+    return dag_testkit
+
+
+@register_scenario("admin")
+def create_admin_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create an admin TestkitDAG scenario.
+
+    The warehouse and backend are empty except for a single admin user, alice.
+    """
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # First user is admin
+    response = backend.login(User(sub="alice", email="alice@example.org"))
+    assert response.setup_mode_admin
+
+    return dag_testkit
+
+
+@register_scenario("closed_collection")
+def create_closed_collection_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create a closed collection scenario for permission testing.
+
+    Users:
+    - alice: admin (from setup_mode_admin)
+    - bob: member of 'readers' group (has READ)
+    - charlie: member of 'writers' group (has READ + WRITE)
+    - dave: no permissions (public group only)
+
+    Collection 'restricted' has:
+    - READ permission granted to 'readers' group
+    - WRITE permission granted to 'writers' group
+    - No public permissions
+    """
+    # Start with admin scenario
+    dag_testkit = create_admin_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # Create additional test users
+    backend.login(User(sub="bob", email="bob@example.org"))
+    backend.login(User(sub="charlie", email="charlie@example.org"))
+    backend.login(User(sub="dave", email="dave@example.org"))
+
+    # Create groups
+    backend.create_group(
+        Group(name=GroupName("readers"), description="Read-only access")
+    )
+    backend.create_group(
+        Group(name=GroupName("writers"), description="Read-write access")
+    )
+
+    # Assign users to groups
+    backend.add_user_to_group("bob", GroupName("readers"))
+    backend.add_user_to_group("charlie", GroupName("writers"))
+    # dave remains in public group only
+
+    # Create closed collection with restricted permissions
+    restricted_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.ADMINS), permission=PermissionType.ADMIN
+        ),
+        PermissionGrant(
+            group_name=GroupName("readers"), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName("writers"), permission=PermissionType.WRITE
+        ),
+    ]
+
+    backend.create_collection(name="restricted", permissions=restricted_permissions)
+    dag_testkit.dag.run = backend.create_run(collection="restricted").run_id
+
+    return dag_testkit
+
+
+@register_scenario("preindex")
+def create_preindex_scenario(
+    backend: MatchboxDBAdapter,
+    warehouse_engine: Engine,
+    n_entities: int = 10,
+    seed: int = 42,
+    **kwargs: Any,
+) -> TestkitDAG:
+    """Create a preindex TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios, but are not yet indexed.
+    """
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
+        ),
+    ]
+
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
@@ -111,9 +244,15 @@ def create_index_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create an index TestkitDAG scenario."""
-    # First create the bare scenario
-    dag_testkit = create_bare_scenario(
+    """Create an index TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed in the backend.
+    """
+    # First create the preindex scenario
+    dag_testkit = create_preindex_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
@@ -139,7 +278,13 @@ def create_dedupe_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a dedupe TestkitDAG scenario."""
+    """Create a dedupe TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed and deduplicated in the backend.
+    """
     # First create the index scenario
     dag_testkit = create_index_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -189,7 +334,14 @@ def create_probabilistic_dedupe_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a probabilistic dedupe TestkitDAG scenario."""
+    """Create a probabilistic dedupe TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed and deduplicated in the backend using
+    probabilistic methodologies.
+    """
     # First create the index scenario
     dag_testkit = create_index_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -241,7 +393,13 @@ def create_link_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a link TestkitDAG scenario."""
+    """Create a link TestkitDAG scenario.
+
+    One admin user, alice.
+
+    The warehouse contains three interlinked tables that cover common linkage
+    problem scenarios. They are indexed, deduplicated and linked in the backend.
+    """
     # First create the dedupe scenario
     dag_testkit = create_dedupe_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -403,11 +561,32 @@ def create_alt_dedupe_scenario(
     seed: int = 42,
     **kwargs: Any,
 ) -> TestkitDAG:
-    """Create a TestkitDAG scenario with two alternative dedupers."""
-    dag_testkit = TestkitDAG()
+    """Create a TestkitDAG scenario with two alternative dedupers.
+
+    One admin user, alice.
+
+    The warehouse contains a single table, indexed in the backend. It has
+    been deduplicated twice, by two rival proabilistic models.
+    """
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
+        ),
+    ]
 
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
@@ -506,14 +685,31 @@ def create_convergent_partial_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with convergent sources.
 
-    This is where two sources index almost identically. TestkitDAG contains two
-    indexed sources with repetition, and two naive dedupe models that haven't yet
-    had their results inserted.
+    One admin user, alice.
+
+    Two sources index almost identically. TestkitDAG contains two indexed sources
+    with repetition, and two naive dedupe models that haven't yet had their
+    results inserted.
     """
-    dag_testkit = TestkitDAG()
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
+        ),
+    ]
 
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
@@ -587,6 +783,8 @@ def create_convergent_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with convergent sources, deduped.
 
+    One admin user, alice.
+
     This is where two sources index almost identically. TestkitDAG contains two
     indexed sources with repetition, and two naive dedupe models, all inserted.
     """
@@ -616,23 +814,33 @@ def create_mega_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario that produces large clusters.
 
+    One admin user, alice.
+
+    Two tables with many features are in the warehouse. They are indexed and linked
+    in the backend.
+
     Aims to produce "mega" clusters with more features than the CLI has screen rows,
     and more variations than the CLI has screen columns.
-
-    Args:
-        backend: MatchboxDBAdapter instance
-        warehouse_engine: SQLAlchemy engine for data warehouse
-        n_entities: Number of true product entities to generate
-        seed: Random seed for reproducibility
-        **kwargs: Additional arguments
-
-    Returns:
-        TestkitDAG with extensive product data and linking model
     """
-    dag_testkit = TestkitDAG()
+    # First create the admin scenario
+    dag_testkit = create_admin_scenario(
+        backend, warehouse_engine, n_entities, seed, **kwargs
+    )
+
+    # Set default public permissions
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
+        ),
+    ]
 
     # Create collection and run
-    backend.create_collection(name=dag_testkit.dag.name)
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
     dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # ===== FEATURES WITH VARIATIONS (4 string features, 1 variation each) =====
@@ -911,6 +1119,9 @@ def setup_scenario(
     backend: MatchboxDBAdapter,
     scenario_type: Literal[
         "bare",
+        "admin",
+        "closed_collection",
+        "preindex",
         "index",
         "dedupe",
         "link",

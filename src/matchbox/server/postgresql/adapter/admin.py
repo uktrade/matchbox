@@ -7,8 +7,11 @@ from sqlalchemy import and_, bindparam, delete, select, union_all
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
+    DefaultGroup,
+    DefaultUser,
     Group,
     GroupName,
+    LoginResponse,
     PermissionGrant,
     PermissionType,
     User,
@@ -23,7 +26,10 @@ from matchbox.common.exceptions import (
     MatchboxUserNotFoundError,
 )
 from matchbox.common.logging import logger
-from matchbox.server.base import PERMISSION_GRANTS, MatchboxSnapshot
+from matchbox.server.base import (
+    PERMISSION_GRANTS,
+    MatchboxSnapshot,
+)
 from matchbox.server.postgresql.db import MBDB, MatchboxBackends
 from matchbox.server.postgresql.orm import (
     Clusters,
@@ -37,7 +43,7 @@ from matchbox.server.postgresql.orm import (
     UserGroups,
     Users,
 )
-from matchbox.server.postgresql.utils.db import dump, restore
+from matchbox.server.postgresql.utils.db import dump, grant_permission, restore
 
 
 class MatchboxPostgresAdminMixin:
@@ -45,7 +51,7 @@ class MatchboxPostgresAdminMixin:
 
     # User management
 
-    def login(self, user: User) -> User:  # noqa: D102
+    def login(self, user: User) -> LoginResponse:  # noqa: D102
         with MBDB.get_session() as session:
             # Try to find existing user
             existing_user = session.scalar(
@@ -57,20 +63,71 @@ class MatchboxPostgresAdminMixin:
                 if user.email and existing_user.email != user.email:
                     existing_user.email = user.email
                     session.commit()
-
-                return User(
-                    user_name=existing_user.name,
-                    email=existing_user.email,
+                return LoginResponse(
+                    user=User(
+                        user_name=existing_user.name,
+                        email=existing_user.email,
+                    ),
+                    setup_mode_admin=False,
                 )
 
+            # Get public group
+            public_group = session.scalar(
+                select(Groups).where(Groups.name == DefaultGroup.PUBLIC)
+            )
+
             # Create new user
-            new_user = Users(name=user.user_name, email=user.email)
+            new_user = Users(
+                name=user.user_name,
+                email=user.email,
+                groups=[public_group],
+            )
             session.add(new_user)
             session.commit()
 
-            return User(
-                user_name=new_user.name,
-                email=new_user.email,
+            # Store the user_id before session closes
+            new_user_id = new_user.user_id
+            new_user_name = new_user.name
+            new_user_email = new_user.email
+
+        # Check if this is the first user
+        with MBDB.get_session() as session:
+            # Check for any other non-public user
+            other_user_exists = (
+                session.scalar(
+                    select(Users.user_id)
+                    .where(Users.name != DefaultUser.PUBLIC)
+                    .where(Users.user_id != new_user_id)
+                    .limit(1)
+                )
+                is not None
+            )
+
+            setup_mode_admin = not other_user_exists
+
+            # If first user, add to admins group
+            if setup_mode_admin:
+                admins_group = session.scalar(
+                    select(Groups).where(Groups.name == GroupName(DefaultGroup.ADMINS))
+                )
+                membership = UserGroups(
+                    user_id=new_user_id,
+                    group_id=admins_group.group_id,
+                )
+                session.add(membership)
+                logger.info(
+                    f"Added first user '{new_user_name}' to {DefaultGroup.ADMINS} "
+                    "group",
+                    prefix="Login",
+                )
+                session.commit()
+
+            return LoginResponse(
+                user=User(
+                    user_name=new_user_name,
+                    email=new_user_email,
+                ),
+                setup_mode_admin=setup_mode_admin,
             )
 
     # Group management
@@ -353,65 +410,13 @@ class MatchboxPostgresAdminMixin:
         resource: Literal[BackendResourceType.SYSTEM] | CollectionName,
     ) -> None:
         with MBDB.get_session() as session:
-            # Get group
-            group = session.scalar(select(Groups).where(Groups.name == group_name))
-            if not group:
-                raise MatchboxGroupNotFoundError(f"Group '{group_name}' not found")
-
-            if resource == BackendResourceType.SYSTEM:
-                # Grant system permission
-                # Check if already exists
-                existing = session.scalar(
-                    select(Permissions).where(
-                        and_(
-                            Permissions.group_id == group.group_id,
-                            Permissions.permission == permission,
-                            Permissions.is_system == True,  # noqa: E712
-                        )
-                    )
-                )
-
-                if not existing:
-                    new_permission = Permissions(
-                        group_id=group.group_id,
-                        permission=permission,
-                        is_system=True,
-                    )
-                    session.add(new_permission)
-            else:
-                # Grant collection permission
-                collection = session.scalar(
-                    select(Collections).where(Collections.name == resource)
-                )
-                if not collection:
-                    raise MatchboxCollectionNotFoundError(name=resource)
-
-                # Check if already exists
-                existing = session.scalar(
-                    select(Permissions).where(
-                        and_(
-                            Permissions.group_id == group.group_id,
-                            Permissions.permission == permission,
-                            Permissions.collection_id == collection.collection_id,
-                        )
-                    )
-                )
-
-                if not existing:
-                    new_permission = Permissions(
-                        group_id=group.group_id,
-                        permission=permission,
-                        collection_id=collection.collection_id,
-                    )
-                    session.add(new_permission)
-
-            session.commit()
-
-            logger.info(
-                f"Granted {permission} permission on '{resource}' "
-                f"to group '{group_name}'",
-                prefix="Grant permission",
+            grant_permission(
+                session=session,
+                group_name=group_name,
+                permission=permission,
+                resource=resource,
             )
+            session.commit()
 
     def revoke_permission(  # noqa: D102
         self,
@@ -505,6 +510,7 @@ class MatchboxPostgresAdminMixin:
     def drop(self, certain: bool) -> None:  # noqa: D102
         if certain:
             MBDB.drop_database()
+            Groups.initialise()
         else:
             raise MatchboxDeletionNotConfirmed(
                 "This operation will drop the entire database and recreate it."
@@ -515,6 +521,7 @@ class MatchboxPostgresAdminMixin:
     def clear(self, certain: bool) -> None:  # noqa: D102
         if certain:
             MBDB.clear_database()
+            Groups.initialise()
         else:
             raise MatchboxDeletionNotConfirmed(
                 "This operation will drop all rows in the database but not the "

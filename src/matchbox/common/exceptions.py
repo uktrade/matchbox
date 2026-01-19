@@ -8,12 +8,16 @@ from pyarrow import Schema
 
 if TYPE_CHECKING:
     from matchbox.common.dtos import (
+        BackendResourceType,
         CollectionName,
+        PermissionType,
         ResolutionName,
         RunID,
     )
 else:
+    BackendResourceType = Any
     CollectionName = Any
+    PermissionType = Any
     ResolutionName = Any
     RunID = Any
 
@@ -196,19 +200,50 @@ class MatchboxAuthenticationError(MatchboxHttpException):
 
     http_status = 401
 
-    def __init__(self, message: str | None = None, reason: str | None = None) -> None:
+    def __init__(self, message: str | None = None) -> None:
         """Initialise the exception."""
         if message is None:
             message = "Authentication failed."
 
         super().__init__(message)
-        self.reason = reason
+
+
+class MatchboxPermissionDenied(MatchboxHttpException):
+    """User lacks required permission for the requested resource."""
+
+    http_status = 403
+
+    def __init__(
+        self,
+        message: str | None = None,
+        permission: PermissionType | None = None,
+        resource_type: BackendResourceType | None = None,
+        resource_name: str | None = None,
+    ) -> None:
+        """Initialise the exception."""
+        if message is None:
+            message = "Permission denied."
+            if permission is not None and resource_name is not None:
+                message = (
+                    f"Permission denied: requires {permission} "
+                    f"access on '{resource_name}'."
+                )
+
+        super().__init__(message)
+        self.permission = permission
+        self.resource_type = resource_type
+        self.resource_name = resource_name
 
     def to_details(self) -> dict[str, Any] | None:
-        """Return reason if set."""
-        if self.reason is not None:
-            return {"reason": self.reason}
-        return None
+        """Return permission, resource_type and resource_name if set."""
+        details: dict[str, Any] = {}
+        if self.permission is not None:
+            details["permission"] = str(self.permission)
+        if self.resource_type is not None:
+            details["resource_type"] = str(self.resource_type)
+        if self.resource_name is not None:
+            details["resource_name"] = self.resource_name
+        return details if details else None
 
 
 # -- Resource not found on server exceptions --

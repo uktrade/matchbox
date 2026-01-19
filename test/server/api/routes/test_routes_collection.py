@@ -8,6 +8,10 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.dtos import (
     Collection,
+    DefaultGroup,
+    GroupName,
+    PermissionGrant,
+    PermissionType,
     Run,
 )
 from matchbox.common.exceptions import (
@@ -88,11 +92,79 @@ def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) 
 
     mock_backend.create_collection = Mock()
 
-    response = test_client.post("/collections/new_collection")
+    permissions_payload = [
+        {"group_name": DefaultGroup.PUBLIC, "permission": "read"},
+        {"group_name": DefaultGroup.PUBLIC, "permission": "write"},
+    ]
+
+    response = test_client.post("/collections/new_collection", json=permissions_payload)
 
     assert response.status_code == 201
     assert response.json()["success"] is True
-    mock_backend.create_collection.assert_called_once_with(name="new_collection")
+    mock_backend.create_collection.assert_called_once_with(
+        name="new_collection",
+        permissions=[
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.READ,
+            ),
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.WRITE,
+            ),
+        ],
+    )
+
+
+def test_create_collection_with_custom_permissions(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test creating a collection with custom permissions."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    mock_backend.create_collection = Mock()
+
+    permissions_payload = [
+        {"group_name": DefaultGroup.ADMINS, "permission": "admin"},
+        {"group_name": "viewers", "permission": "read"},
+    ]
+
+    response = test_client.post(
+        "/collections/custom_collection", json=permissions_payload
+    )
+
+    assert response.status_code == 201
+    assert response.json()["success"] is True
+    mock_backend.create_collection.assert_called_once_with(
+        name="custom_collection",
+        permissions=[
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.ADMINS),
+                permission=PermissionType.ADMIN,
+            ),
+            PermissionGrant(
+                group_name=GroupName("viewers"), permission=PermissionType.READ
+            ),
+        ],
+    )
+
+
+def test_create_collection_with_empty_permissions(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test creating a collection with no permissions."""
+    test_client, mock_backend, _ = api_client_and_mocks
+
+    mock_backend.create_collection = Mock()
+
+    response = test_client.post("/collections/no_perms_collection", json=[])
+
+    assert response.status_code == 201
+    assert response.json()["success"] is True
+    mock_backend.create_collection.assert_called_once_with(
+        name="no_perms_collection",
+        permissions=[],
+    )
 
 
 def test_create_collection_already_exists(
@@ -102,7 +174,13 @@ def test_create_collection_already_exists(
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.create_collection = Mock(side_effect=MatchboxCollectionAlreadyExists())
 
-    response = test_client.post("/collections/existing_collection")
+    permissions_payload = [
+        {"group_name": DefaultGroup.PUBLIC, "permission": "read"},
+    ]
+
+    response = test_client.post(
+        "/collections/existing_collection", json=permissions_payload
+    )
 
     assert response.status_code == 409
     assert response.json()["exception_type"] == "MatchboxCollectionAlreadyExists"
@@ -141,6 +219,68 @@ def test_delete_collection_needs_confirmation(
     assert response.json()["exception_type"] == "MatchboxDeletionNotConfirmed"
     assert "1" in response.json()["message"]
     assert "2" in response.json()["message"]
+
+
+# Collection permissions
+
+
+def test_get_collection_permissions(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test getting permissions for a specific collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.check_permission.return_value = True
+    mock_backend.get_permissions.return_value = [
+        PermissionGrant(group_name="viewers", permission=PermissionType.READ)
+    ]
+
+    response = test_client.get("/collections/col1/permissions")
+
+    assert response.status_code == 200
+    assert response.json()[0]["permission"] == "read"
+    mock_backend.get_permissions.assert_called_with("col1")
+
+
+def test_grant_collection_permission(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test granting permission on a collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.check_permission.return_value = True
+
+    payload = {"group_name": "g", "permission": "write"}
+    response = test_client.post("/collections/col1/permissions", json=payload)
+
+    assert response.status_code == 200
+    mock_backend.grant_permission.assert_called_with("g", PermissionType.WRITE, "col1")
+
+
+def test_revoke_collection_permission(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test revoking permission from a collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.check_permission.return_value = True
+
+    response = test_client.delete("/collections/col1/permissions/write/g")
+
+    assert response.status_code == 200
+    mock_backend.revoke_permission.assert_called_with("g", PermissionType.WRITE, "col1")
+
+
+def test_permission_collection_not_found(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    """Test 404 when operating on missing collection."""
+    test_client, mock_backend, _ = api_client_and_mocks
+    # Auth passes, but resource check fails inside service
+    mock_backend.check_permission.return_value = True
+    mock_backend.get_permissions.side_effect = MatchboxCollectionNotFoundError()
+
+    response = test_client.get("/collections/missing/permissions")
+
+    assert response.status_code == 404
+    assert response.json()["exception_type"] == "MatchboxCollectionNotFoundError"
 
 
 # Run management tests

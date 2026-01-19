@@ -19,6 +19,7 @@ uv run test/scripts/authorisation.py keygen > /tmp/keys.json
 echo "MB__DEV__PRIVATE_KEY=\"$(jq -r '.private_key' /tmp/keys.json)\"" >> .env
 
 echo "MB__SERVER__PUBLIC_KEY=\"$(jq -r '.public_key' /tmp/keys.json)\"" >> .env
+
 echo "MB__CLIENT__JWT=$(jq -r .private_key /tmp/keys.json | \
     uv run test/scripts/authorisation.py jwt \
         --sub e9ba93b3-e4d5-4dee-868c-d011116142bd \

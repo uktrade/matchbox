@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
+    Depends,
     Query,
     Response,
     status,
@@ -14,15 +15,21 @@ from fastapi import (
 from matchbox.common.arrow import JudgementsZipFilenames, table_to_buffer
 from matchbox.common.dtos import (
     CollectionName,
+    DefaultUser,
     ErrorResponse,
     ModelResolutionName,
     ModelResolutionPath,
+    PermissionType,
     RunID,
+    User,
 )
 from matchbox.common.eval import Judgement
+from matchbox.common.exceptions import MatchboxAuthenticationError
 from matchbox.server.api.dependencies import (
     BackendDependency,
+    CurrentUserDependency,
     ParquetResponse,
+    RequiresPermission,
     ZipResponse,
 )
 
@@ -31,15 +38,18 @@ router = APIRouter(prefix="/eval", tags=["eval"])
 
 @router.post(
     "/judgements",
-    responses={404: {"model": ErrorResponse}},
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
     status_code=status.HTTP_201_CREATED,
 )
 def insert_judgement(
     backend: BackendDependency,
     judgement: Judgement,
+    user: CurrentUserDependency,
 ) -> Response:
     """Submit judgement from human evaluator."""
-    backend.insert_judgement(judgement=judgement)
+    if not user or user.user_name == DefaultUser.PUBLIC:
+        raise MatchboxAuthenticationError
+    backend.insert_judgement(user_name=user.user_name, judgement=judgement)
     return Response(status_code=status.HTTP_201_CREATED)
 
 
@@ -71,7 +81,12 @@ def get_judgements(
 
 @router.get(
     "/samples",
-    responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
 )
 def sample(
     backend: BackendDependency,
@@ -79,13 +94,22 @@ def sample(
     run_id: RunID,
     resolution: ModelResolutionName,
     n: int,
-    user_name: str,
+    user: Annotated[
+        User,
+        Depends(
+            RequiresPermission(
+                PermissionType.READ,
+                resource_from_param="collection",
+                allow_public=False,
+            )
+        ),
+    ],
 ) -> ParquetResponse:
     """Sample n cluster to validate."""
     sample = backend.sample_for_eval(
         path=ModelResolutionPath(collection=collection, run=run_id, name=resolution),
         n=n,
-        user_name=user_name,
+        user_name=user.user_name,
     )
     buffer = table_to_buffer(sample)
     return ParquetResponse(buffer.getvalue())

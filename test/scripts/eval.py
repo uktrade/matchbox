@@ -139,7 +139,6 @@ def main(
                     resolution=cli_params["resolution"],
                     pending=cli_params["pending"],
                     warehouse=cli_params["warehouse"],
-                    user=None,
                     log_file=log_file if log_file and log_file.strip() else None,
                 )
             except KeyboardInterrupt as e:

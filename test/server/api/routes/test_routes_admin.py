@@ -5,11 +5,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from matchbox.common.dtos import (
-    CRUDOperation,
-    ErrorResponse,
-    Group,
-)
+from matchbox.common.dtos import CRUDOperation, DefaultGroup, ErrorResponse, Group
 from matchbox.common.exceptions import (
     MatchboxGroupAlreadyExistsError,
     MatchboxGroupNotFoundError,
@@ -23,7 +19,7 @@ def test_list_groups(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.check_permission.return_value = True
     mock_backend.list_groups.return_value = [
-        Group(name="admins", is_system=True),
+        Group(name=DefaultGroup.ADMINS, is_system=True),
         Group(name="analysts"),
     ]
 
@@ -31,7 +27,7 @@ def test_list_groups(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> Non
 
     assert response.status_code == 200
     assert len(response.json()) == 2
-    assert response.json()[0]["name"] == "admins"
+    assert response.json()[0]["name"] == DefaultGroup.ADMINS
 
 
 def test_create_group(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

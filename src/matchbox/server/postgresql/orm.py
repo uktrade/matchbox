@@ -18,7 +18,7 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
 from matchbox.common.dtos import (
@@ -40,7 +40,6 @@ from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.dtos import SourceField as CommonSourceField
 from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
-    MatchboxGroupNotFoundError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
@@ -949,46 +948,50 @@ class Groups(CountMixin, MBDB.MatchboxBase):
     def initialise(cls) -> None:
         """Create standard users, groups, and permissions."""
         with MBDB.get_session() as session:
-            # Create groups and their members
+            # Upsert groups
             for group_dto in DEFAULT_GROUPS:
-                # Create or get group
-                group_obj = session.scalar(
-                    select(cls).where(cls.name == group_dto.name)
-                )
-                if not group_obj:
-                    group_obj = cls(
+                session.execute(
+                    insert(cls)
+                    .values(
                         name=group_dto.name,
                         description=group_dto.description,
                         is_system=group_dto.is_system,
                     )
-                    session.add(group_obj)
-                    session.flush()
-
-                # Create members
-                for user_dto in group_dto.members:
-                    user_obj = session.scalar(
-                        select(Users).where(Users.name == user_dto.user_name)
-                    )
-                    if not user_obj:
-                        user_obj = Users(name=user_dto.user_name, email=user_dto.email)
-                        session.add(user_obj)
-                        session.flush()
-
-                    if user_obj not in group_obj.members:
-                        group_obj.members.append(user_obj)
-
-            session.commit()
-
-            # Create permissions
-            for grant, resource_type, resource_name in DEFAULT_PERMISSIONS:
-                # Look up the group
-                group_obj = session.scalar(
-                    select(cls).where(cls.name == grant.group_name)
+                    .on_conflict_do_nothing(index_elements=["name"])
                 )
-                if not group_obj:
-                    raise MatchboxGroupNotFoundError
 
-                # Determine collection_id if applicable
+            # Collect and upsert all users
+            all_users = {
+                user_dto.user_name: user_dto
+                for group_dto in DEFAULT_GROUPS
+                for user_dto in (group_dto.members or [])
+            }
+            for user_dto in all_users.values():
+                session.execute(
+                    insert(Users)
+                    .values(name=user_dto.user_name, email=user_dto.email)
+                    .on_conflict_do_nothing(index_elements=["name"])
+                )
+
+            session.flush()
+
+            # Cache lookups
+            groups = {g.name: g for g in session.execute(select(cls)).scalars()}
+            users = {u.name: u for u in session.execute(select(Users)).scalars()}
+
+            # Upsert user-group memberships
+            for group_dto in DEFAULT_GROUPS:
+                group_obj = groups[group_dto.name]
+                for user_dto in group_dto.members or []:
+                    user_obj = users[user_dto.user_name]
+                    session.execute(
+                        insert(UserGroups)
+                        .values(user_id=user_obj.user_id, group_id=group_obj.group_id)
+                        .on_conflict_do_nothing()
+                    )
+
+            # Upsert permissions
+            for grant, resource_type, resource_name in DEFAULT_PERMISSIONS:
                 collection_id = None
                 if resource_name and resource_type == BackendResourceType.COLLECTION:
                     collection = session.scalar(
@@ -998,26 +1001,18 @@ class Groups(CountMixin, MBDB.MatchboxBase):
                         raise MatchboxCollectionNotFoundError(name=resource_name)
                     collection_id = collection.collection_id
 
-                # Check if permission already exists
-                existing = session.scalar(
-                    select(Permissions).where(
-                        Permissions.group_id == group_obj.group_id,
-                        Permissions.permission == grant.permission,
-                        Permissions.is_system
-                        == (resource_type == BackendResourceType.SYSTEM),
-                        Permissions.collection_id == collection_id,
+                session.execute(
+                    insert(Permissions)
+                    .values(
+                        group_id=groups[grant.group_name].group_id,
+                        permission=grant.permission,
+                        is_system=True
+                        if resource_type == BackendResourceType.SYSTEM
+                        else None,
+                        collection_id=collection_id,
                     )
+                    .on_conflict_do_nothing(constraint="unique_permission_grant")
                 )
-
-                if not existing:
-                    session.add(
-                        Permissions(
-                            group=group_obj,
-                            permission=grant.permission,
-                            is_system=(resource_type == BackendResourceType.SYSTEM),
-                            collection_id=collection_id,
-                        )
-                    )
 
             session.commit()
 
@@ -1075,6 +1070,7 @@ class Permissions(CountMixin, MBDB.MatchboxBase):
             "collection_id",
             "is_system",
             name="unique_permission_grant",
+            postgresql_nulls_not_distinct=True,
         ),
     )
 

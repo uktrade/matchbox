@@ -23,6 +23,8 @@ from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
     CollectionName,
+    DefaultGroup,
+    DefaultUser,
     Group,
     GroupName,
     LoginResponse,
@@ -68,10 +70,10 @@ but any permission implies `PermissionType.READ`.
 
 DEFAULT_GROUPS: list[Group] = [
     Group(
-        name="public",
+        name=DefaultGroup.PUBLIC,
         description="Unauthenticated users.",
         is_system=True,
-        members=[User(user_name="_public", email=None)],
+        members=[User(user_name=DefaultUser.PUBLIC, email=None)],
     ),
     Group(
         name="admins",
@@ -84,7 +86,7 @@ DEFAULT_GROUPS: list[Group] = [
 DEFAULT_PERMISSIONS: list[tuple[PermissionGrant, BackendResourceType, str | None]] = [
     (
         PermissionGrant(
-            group_name="admins",
+            group_name=DefaultGroup.ADMINS,
             permission=PermissionType.ADMIN,
         ),
         BackendResourceType.SYSTEM,

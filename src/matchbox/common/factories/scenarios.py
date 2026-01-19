@@ -9,7 +9,14 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
-from matchbox.common.dtos import Group, GroupName, PermissionGrant, PermissionType, User
+from matchbox.common.dtos import (
+    DefaultGroup,
+    Group,
+    GroupName,
+    PermissionGrant,
+    PermissionType,
+    User,
+)
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -162,7 +169,7 @@ def create_closed_collection_scenario(
     # Create closed collection with restricted permissions
     restricted_permissions: list[PermissionGrant] = [
         PermissionGrant(
-            group_name=GroupName("admins"), permission=PermissionType.ADMIN
+            group_name=GroupName(DefaultGroup.ADMINS), permission=PermissionType.ADMIN
         ),
         PermissionGrant(
             group_name=GroupName("readers"), permission=PermissionType.READ
@@ -200,9 +207,11 @@ def create_preindex_scenario(
 
     # Set default public permissions
     default_permissions: list[PermissionGrant] = [
-        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
         PermissionGrant(
-            group_name=GroupName("public"), permission=PermissionType.WRITE
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
         ),
     ]
 
@@ -566,9 +575,11 @@ def create_alt_dedupe_scenario(
 
     # Set default public permissions
     default_permissions: list[PermissionGrant] = [
-        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
         PermissionGrant(
-            group_name=GroupName("public"), permission=PermissionType.WRITE
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
         ),
     ]
 
@@ -687,9 +698,11 @@ def create_convergent_partial_scenario(
 
     # Set default public permissions
     default_permissions: list[PermissionGrant] = [
-        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
         PermissionGrant(
-            group_name=GroupName("public"), permission=PermissionType.WRITE
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
         ),
     ]
 
@@ -816,9 +829,11 @@ def create_mega_scenario(
 
     # Set default public permissions
     default_permissions: list[PermissionGrant] = [
-        PermissionGrant(group_name=GroupName("public"), permission=PermissionType.READ),
         PermissionGrant(
-            group_name=GroupName("public"), permission=PermissionType.WRITE
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
         ),
     ]
 

@@ -17,6 +17,7 @@ from matchbox.client._settings import settings
 from matchbox.common.dtos import (
     AuthStatusResponse,
     BackendResourceType,
+    DefaultUser,
     ErrorResponse,
     LoginResponse,
     PermissionType,
@@ -410,7 +411,7 @@ class TestRequiresPermission:
         """Test error when allow_public=False and user is not authenticated."""
         _, mock_backend, mock_settings = api_client_and_mocks
         mock_settings.authorisation = True
-        public_user = User(user_name="_public")
+        public_user = User(user_name=DefaultUser.PUBLIC)
 
         dependency = RequiresPermission(
             PermissionType.READ,

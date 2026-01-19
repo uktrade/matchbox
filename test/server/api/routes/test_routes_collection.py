@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from matchbox.common.dtos import (
     Collection,
+    DefaultGroup,
     GroupName,
     PermissionGrant,
     PermissionType,
@@ -92,8 +93,8 @@ def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) 
     mock_backend.create_collection = Mock()
 
     permissions_payload = [
-        {"group_name": "public", "permission": "read"},
-        {"group_name": "public", "permission": "write"},
+        {"group_name": DefaultGroup.PUBLIC, "permission": "read"},
+        {"group_name": DefaultGroup.PUBLIC, "permission": "write"},
     ]
 
     response = test_client.post("/collections/new_collection", json=permissions_payload)
@@ -104,10 +105,12 @@ def test_create_collection(api_client_and_mocks: tuple[TestClient, Mock, Mock]) 
         name="new_collection",
         permissions=[
             PermissionGrant(
-                group_name=GroupName("public"), permission=PermissionType.READ
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.READ,
             ),
             PermissionGrant(
-                group_name=GroupName("public"), permission=PermissionType.WRITE
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.WRITE,
             ),
         ],
     )
@@ -122,7 +125,7 @@ def test_create_collection_with_custom_permissions(
     mock_backend.create_collection = Mock()
 
     permissions_payload = [
-        {"group_name": "admins", "permission": "admin"},
+        {"group_name": DefaultGroup.ADMINS, "permission": "admin"},
         {"group_name": "viewers", "permission": "read"},
     ]
 
@@ -136,7 +139,8 @@ def test_create_collection_with_custom_permissions(
         name="custom_collection",
         permissions=[
             PermissionGrant(
-                group_name=GroupName("admins"), permission=PermissionType.ADMIN
+                group_name=GroupName(DefaultGroup.ADMINS),
+                permission=PermissionType.ADMIN,
             ),
             PermissionGrant(
                 group_name=GroupName("viewers"), permission=PermissionType.READ
@@ -171,7 +175,7 @@ def test_create_collection_already_exists(
     mock_backend.create_collection = Mock(side_effect=MatchboxCollectionAlreadyExists())
 
     permissions_payload = [
-        {"group_name": "public", "permission": "read"},
+        {"group_name": DefaultGroup.PUBLIC, "permission": "read"},
     ]
 
     response = test_client.post(

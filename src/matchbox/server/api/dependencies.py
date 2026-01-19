@@ -16,6 +16,7 @@ from fastapi.security import APIKeyHeader
 
 from matchbox.common.dtos import (
     BackendResourceType,
+    DefaultUser,
     PermissionType,
     User,
 )
@@ -175,11 +176,11 @@ def get_current_user(
 ) -> User:
     """Get current user from JWT, or None if auth disabled."""
     if not settings.authorisation:
-        return User(user_name="_public", email=None)
+        return User(user_name=DefaultUser.PUBLIC, email=None)
 
     # No token provided: public user
     if not client_token:
-        return User(user_name="_public", email=None)
+        return User(user_name=DefaultUser.PUBLIC, email=None)
 
     user = validate_jwt(settings, client_token)
 
@@ -259,7 +260,7 @@ class RequiresPermission:
                     ),
                 )
 
-            if user is None or user.user_name == "_public":
+            if user is None or user.user_name == DefaultUser.PUBLIC:
                 raise MatchboxAuthenticationError
 
         # Short-circuit if authorisation is disabled

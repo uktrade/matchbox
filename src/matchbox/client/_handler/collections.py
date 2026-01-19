@@ -15,6 +15,7 @@ from matchbox.common.arrow import (
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
+    DefaultGroup,
     ModelResolutionPath,
     PermissionGrant,
     PermissionType,
@@ -61,7 +62,7 @@ def create_collection(name: CollectionName) -> ResourceOperationStatus:
 
     # All collections are public r/w for now
     permission_grant = PermissionGrant(
-        group_name="public",
+        group_name=DefaultGroup.PUBLIC,
         permission=PermissionType.WRITE,
     )
 

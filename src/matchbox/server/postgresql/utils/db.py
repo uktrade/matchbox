@@ -11,7 +11,7 @@ from typing import Literal
 
 import pyarrow as pa
 from pyarrow import Table as ArrowTable
-from sqlalchemy import Column, MetaData, Table, and_, func, select, text
+from sqlalchemy import Column, MetaData, Table, func, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -148,24 +148,17 @@ def grant_permission(
         raise MatchboxGroupNotFoundError(f"Group '{group_name}' not found")
 
     if resource == BackendResourceType.SYSTEM:
-        # Grant system permission
-        existing = session.scalar(
-            select(Permissions).where(
-                and_(
-                    Permissions.group_id == group.group_id,
-                    Permissions.permission == permission,
-                    Permissions.is_system == True,  # noqa: E712
-                )
-            )
-        )
-
-        if not existing:
-            new_permission = Permissions(
+        stmt = (
+            insert(Permissions)
+            .values(
                 group_id=group.group_id,
                 permission=permission,
                 is_system=True,
+                collection_id=None,
             )
-            session.add(new_permission)
+            .on_conflict_do_nothing(constraint="unique_permission_grant")
+        )
+        session.execute(stmt)
     else:
         # Grant collection permission
         collection = session.scalar(
@@ -174,24 +167,17 @@ def grant_permission(
         if not collection:
             raise MatchboxCollectionNotFoundError(name=resource)
 
-        existing = session.scalar(
-            select(Permissions).where(
-                and_(
-                    Permissions.group_id == group.group_id,
-                    Permissions.permission == permission,
-                    Permissions.collection_id == collection.collection_id,
-                )
-            )
-        )
-
-        if not existing:
-            new_permission = Permissions(
+        stmt = (
+            insert(Permissions)
+            .values(
                 group_id=group.group_id,
                 permission=permission,
                 collection_id=collection.collection_id,
+                is_system=None,
             )
-            session.add(new_permission)
-
+            .on_conflict_do_nothing(constraint="unique_permission_grant")
+        )
+        session.execute(stmt)
     logger.info(
         f"Granted {permission} permission on '{resource}' to group '{group_name}'",
         prefix="Grant permission",

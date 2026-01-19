@@ -9,6 +9,7 @@ from test.fixtures.db import BACKENDS
 
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
+    DefaultGroup,
     GroupName,
     ModelConfig,
     PermissionGrant,
@@ -57,10 +58,12 @@ class TestMatchboxCollectionsBackend:
             # Create new collection and verify its initial properties
             default_permissions = [
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.READ
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
                 ),
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.WRITE
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
                 ),
             ]
             test_collection_created = self.backend.create_collection(
@@ -121,10 +124,12 @@ class TestMatchboxCollectionsBackend:
             # Create collection with default permissions
             default_permissions = [
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.READ
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
                 ),
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.WRITE
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
                 ),
             ]
             self.backend.create_collection(
@@ -138,13 +143,15 @@ class TestMatchboxCollectionsBackend:
             assert len(grants) == 2
             assert (
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.READ
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
                 )
                 in grants
             )
             assert (
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.WRITE
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
                 )
                 in grants
             )
@@ -182,10 +189,12 @@ class TestMatchboxCollectionsBackend:
             # Create parent collection with no runs initially
             default_permissions = [
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.READ
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
                 ),
                 PermissionGrant(
-                    group_name=GroupName("public"), permission=PermissionType.WRITE
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
                 ),
             ]
             test_collection_pre = self.backend.create_collection(

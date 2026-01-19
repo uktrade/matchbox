@@ -7,6 +7,8 @@ from sqlalchemy import and_, bindparam, delete, select, union_all
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
+    DefaultGroup,
+    DefaultUser,
     Group,
     GroupName,
     LoginResponse,
@@ -24,7 +26,10 @@ from matchbox.common.exceptions import (
     MatchboxUserNotFoundError,
 )
 from matchbox.common.logging import logger
-from matchbox.server.base import PERMISSION_GRANTS, MatchboxSnapshot
+from matchbox.server.base import (
+    PERMISSION_GRANTS,
+    MatchboxSnapshot,
+)
 from matchbox.server.postgresql.db import MBDB, MatchboxBackends
 from matchbox.server.postgresql.orm import (
     Clusters,
@@ -67,7 +72,9 @@ class MatchboxPostgresAdminMixin:
                 )
 
             # Get public group
-            public_group = session.scalar(select(Groups).where(Groups.name == "public"))
+            public_group = session.scalar(
+                select(Groups).where(Groups.name == DefaultGroup.PUBLIC)
+            )
 
             # Create new user
             new_user = Users(
@@ -85,11 +92,11 @@ class MatchboxPostgresAdminMixin:
 
         # Check if this is the first user
         with MBDB.get_session() as session:
-            # Check for any other non-_public user
+            # Check for any other non-public user
             other_user_exists = (
                 session.scalar(
                     select(Users.user_id)
-                    .where(Users.name != "_public")
+                    .where(Users.name != DefaultUser.PUBLIC)
                     .where(Users.user_id != new_user_id)
                     .limit(1)
                 )
@@ -101,7 +108,7 @@ class MatchboxPostgresAdminMixin:
             # If first user, add to admins group
             if setup_mode_admin:
                 admins_group = session.scalar(
-                    select(Groups).where(Groups.name == GroupName("admins"))
+                    select(Groups).where(Groups.name == GroupName(DefaultGroup.ADMINS))
                 )
                 membership = UserGroups(
                     user_id=new_user_id,
@@ -109,7 +116,8 @@ class MatchboxPostgresAdminMixin:
                 )
                 session.add(membership)
                 logger.info(
-                    f"Added first user '{new_user_name}' to admins group",
+                    f"Added first user '{new_user_name}' to {DefaultGroup.ADMINS} "
+                    "group",
                     prefix="Login",
                 )
                 session.commit()

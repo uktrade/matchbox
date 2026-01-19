@@ -749,3 +749,16 @@ class ErrorResponse(BaseModel):
     details: dict[str, Any] | None = Field(
         default=None, description="Exception-specific data for reconstruction"
     )
+
+
+class DefaultUser(StrEnum):
+    """Default user identities."""
+
+    PUBLIC = "_public"
+
+
+class DefaultGroup(StrEnum):
+    """Default group names."""
+
+    PUBLIC = "public"
+    ADMINS = "admins"

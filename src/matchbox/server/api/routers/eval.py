@@ -15,6 +15,7 @@ from fastapi import (
 from matchbox.common.arrow import JudgementsZipFilenames, table_to_buffer
 from matchbox.common.dtos import (
     CollectionName,
+    DefaultUser,
     ErrorResponse,
     ModelResolutionName,
     ModelResolutionPath,
@@ -46,7 +47,7 @@ def insert_judgement(
     user: CurrentUserDependency,
 ) -> Response:
     """Submit judgement from human evaluator."""
-    if not user or user.user_name == "_public":
+    if not user or user.user_name == DefaultUser.PUBLIC:
         raise MatchboxAuthenticationError
     backend.insert_judgement(user_name=user.user_name, judgement=judgement)
     return Response(status_code=status.HTTP_201_CREATED)

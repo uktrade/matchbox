@@ -19,6 +19,8 @@ from matchbox.client.sources import Source
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
+    DefaultGroup,
+    GroupName,
     ModelResolutionName,
     Resolution,
     ResolutionName,
@@ -52,9 +54,18 @@ CACHE_DIR = user_cache_path("matchbox")
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
 
-    def __init__(self, name: str) -> None:
-        """Initialises empty DAG."""
+    def __init__(
+        self, name: CollectionName, admin_group: GroupName = DefaultGroup.PUBLIC
+    ) -> None:
+        """Initialises empty DAG.
+
+        Args:
+            name: The name of the DAG, and therefore the collection it will connect to
+            admin_group: The name of the group that will be given admin permission over
+                the DAG. Defaults to public, where anyone can modify, delete or run it
+        """
         self.name: CollectionName = CollectionName(name)
+        self.admin_group: GroupName = GroupName(admin_group)
         self._run: RunID | None = None
         self.nodes: dict[ResolutionName, Source | Model] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
@@ -356,7 +367,7 @@ class DAG:
         try:
             collection = _handler.get_collection(self.name)
         except MatchboxCollectionNotFoundError:
-            _handler.create_collection(self.name)
+            _ = _handler.create_collection(self.name, admin_group=self.admin_group)
             collection = _handler.get_collection(self.name)
 
         # Delete non-default runs

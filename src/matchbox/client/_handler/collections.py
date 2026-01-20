@@ -68,7 +68,7 @@ def create_collection(
             or write to the collection.
     """
     log_prefix = f"Collection {name}"
-    logger.debug("Creating", prefix=log_prefix)
+    logger.debug(f"Creating with admin group {admin_group}", prefix=log_prefix)
 
     permission_grant = PermissionGrant(
         group_name=admin_group,

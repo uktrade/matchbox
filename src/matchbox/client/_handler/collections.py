@@ -16,6 +16,7 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     DefaultGroup,
+    GroupName,
     ModelResolutionPath,
     PermissionGrant,
     PermissionType,
@@ -55,15 +56,23 @@ def get_collection(name: CollectionName) -> Collection:
 
 
 @http_retry
-def create_collection(name: CollectionName) -> ResourceOperationStatus:
-    """Create a new collection."""
+def create_collection(
+    name: CollectionName, admin_group: GroupName = DefaultGroup.PUBLIC
+) -> ResourceOperationStatus:
+    """Create a new collection.
+
+    Args:
+        name: Name of the collection to create
+        admin_group: The group that will get admin permissions on this collection by
+            default. The default options is the public group, meaning anyone can read
+            or write to the collection.
+    """
     log_prefix = f"Collection {name}"
     logger.debug("Creating", prefix=log_prefix)
 
-    # All collections are public r/w for now
     permission_grant = PermissionGrant(
-        group_name=DefaultGroup.PUBLIC,
-        permission=PermissionType.WRITE,
+        group_name=admin_group,
+        permission=PermissionType.ADMIN,
     )
 
     res = CLIENT.post(
@@ -72,6 +81,43 @@ def create_collection(name: CollectionName) -> ResourceOperationStatus:
     )
 
     return ResourceOperationStatus.model_validate(res.json())
+
+
+# Collection permissions
+
+
+@http_retry
+def get_collection_permissions(collection: CollectionName) -> list[PermissionGrant]:
+    """Get permissions for a collection."""
+    response = CLIENT.get(f"/collections/{collection}/permissions")
+    return [PermissionGrant(**p) for p in response.json()]
+
+
+@http_retry
+def grant_collection_permission(
+    collection: CollectionName,
+    group_name: GroupName,
+    permission: PermissionType,
+) -> ResourceOperationStatus:
+    """Grant a permission on a collection."""
+    response = CLIENT.post(
+        f"/collections/{collection}/permissions",
+        json={"group_name": group_name, "permission": permission},
+    )
+    return ResourceOperationStatus(**response.json())
+
+
+@http_retry
+def revoke_collection_permission(
+    collection: CollectionName,
+    group_name: GroupName,
+    permission: PermissionType,
+) -> ResourceOperationStatus:
+    """Revoke a permission on a collection."""
+    response = CLIENT.delete(
+        f"/collections/{collection}/permissions/{group_name}/{permission}"
+    )
+    return ResourceOperationStatus(**response.json())
 
 
 # Run management

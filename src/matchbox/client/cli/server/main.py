@@ -1,4 +1,4 @@
-"""Server management commands for Matchbox CLI."""
+"""General server commands for Matchbox CLI."""
 
 import typer
 from rich import print

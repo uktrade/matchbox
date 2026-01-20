@@ -4,7 +4,7 @@ import typer
 from rich import print
 
 from matchbox import __version__
-from matchbox.client.cli import auth, server
+from matchbox.client.cli import auth, collection, server
 from matchbox.client.cli.eval.run import evaluate
 
 app = typer.Typer(
@@ -21,6 +21,7 @@ def version() -> None:
 # Add subcommands
 app.add_typer(server.app, name="server")
 app.add_typer(auth.app, name="auth")
+app.add_typer(collection.app, name="collection")
 app.command(name="eval")(evaluate)
 
 if __name__ == "__main__":

@@ -6,14 +6,13 @@ from typing import Annotated
 import typer
 from sqlalchemy import create_engine
 
+from matchbox.client.cli.annotations import CollectionOpt
 from matchbox.client.cli.eval.app import EntityResolutionApp
 from matchbox.client.dags import DAG
 
 
 def evaluate(
-    collection: Annotated[
-        str, typer.Option("--collection", "-c", help="Collection name (required)")
-    ],
+    collection: CollectionOpt,
     resolution: Annotated[
         str | None,
         typer.Option(

@@ -9,8 +9,8 @@ from matchbox.common.logging import logger
 
 
 @http_retry
-def login() -> str:
-    """Log into Matchbox and return the user name."""
+def login() -> LoginResponse:
+    """Log into Matchbox."""
     logger.debug("Login attempt using JWT")
     response = CLIENT.post("/auth/login")
     return LoginResponse.model_validate(response.json())
@@ -18,7 +18,7 @@ def login() -> str:
 
 @http_retry
 def auth_status() -> AuthStatusResponse:
-    """Check authentication status and return user details."""
+    """Check authentication status."""
     logger.debug("Checking authentication status")
     response = CLIENT.get("/auth/status")
     return AuthStatusResponse.model_validate(response.json())

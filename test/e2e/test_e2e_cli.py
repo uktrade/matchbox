@@ -115,17 +115,17 @@ class TestE2ECLI:
         # Setup: Create a group to grant permissions to
         runner.invoke(app, ["groups", "create", "-g", group_name])
 
-        # 1. Create Collection
+        # 1. Create collection
         result = runner.invoke(app, ["collections", "create", "-c", collection_name])
         assert result.exit_code == 0
         assert f"Created collection {collection_name}" in result.stdout
 
-        # 2. List Collections
+        # 2. List collections
         result = runner.invoke(app, ["collections"])
         assert result.exit_code == 0
         assert collection_name in result.stdout
 
-        # 3. Grant Permission
+        # 3. Grant permission
         result = runner.invoke(
             app,
             [
@@ -142,7 +142,7 @@ class TestE2ECLI:
         assert result.exit_code == 0
         assert f"Granted {PermissionType.READ} on {collection_name}" in result.stdout
 
-        # 4. List Permissions
+        # 4. List permissions
         result = runner.invoke(
             app, ["collections", "permissions", "-c", collection_name]
         )
@@ -150,7 +150,7 @@ class TestE2ECLI:
         assert group_name in result.stdout
         assert PermissionType.READ in result.stdout
 
-        # 5. Revoke Permission
+        # 5. Revoke permission
         result = runner.invoke(
             app,
             [

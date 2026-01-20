@@ -102,7 +102,12 @@ def evaluate(
         resolution = None
     else:
         # Get resolution name from --resolution or DAG's final_step
-        model = dag.get_model(resolution) if resolution is not None else dag.final_step
+        if resolution is not None:
+            model = dag.get_model(resolution)
+        elif dag.root is not None:
+            model = dag.root
+        else:
+            raise RuntimeError("No single root in DAG: a resolution name is needed.")
         resolution = model.resolution_path
 
     try:

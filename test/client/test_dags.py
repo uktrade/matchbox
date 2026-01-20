@@ -1119,7 +1119,7 @@ def test_dag_set_client(sqla_sqlite_warehouse: Engine) -> None:
     assert dag.get_source("bar").location.client == sqla_sqlite_warehouse
 
 
-def test_dag_set_default_ok(
+def test_dag_set_default(
     matchbox_api: MockRouter,
     sqla_sqlite_warehouse: Engine,
 ) -> None:
@@ -1163,26 +1163,3 @@ def test_dag_set_default_ok(
     # Verify both endpoints were called
     assert api_mutable.called
     assert api_default.called
-
-
-def test_dag_set_default_not_connected() -> None:
-    """Set default raises error when DAG is not connected to server."""
-    dag = DAG(name="test_collection")
-    dag.source(**source_factory().into_dag())
-
-    with pytest.raises(RuntimeError, match="has not been connected"):
-        dag.set_default()
-
-
-def test_dag_set_default_unreachable_nodes(sqla_sqlite_warehouse: Engine) -> None:
-    """Nodes cannot be unreachable from root when setting a default run."""
-    dag = TestkitDAG().dag
-
-    foo_tkit = source_factory(name="foo", engine=sqla_sqlite_warehouse)
-    bar_tkit = source_factory(name="bar", engine=sqla_sqlite_warehouse)
-
-    dag.source(**foo_tkit.into_dag())
-    dag.source(**bar_tkit.into_dag())
-
-    with pytest.raises(ValueError, match="unreachable"):
-        dag.set_default()

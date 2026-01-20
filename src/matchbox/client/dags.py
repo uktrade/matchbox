@@ -144,23 +144,18 @@ class DAG:
         return [self.nodes[name] for name in apex_node_names]
 
     @property
-    def final_step(self) -> Source | Model:
-        """Returns the root node in the DAG.
+    def root(self) -> Source | Model | None:
+        """Looks for single root node in the DAG.
 
         Returns:
-            The root node in the DAG
-
-        Raises:
-            ValueError: If the DAG does not have exactly one final step
+            The node corresponding to the root if there is one, otherwise None.
         """
         steps = self.final_steps
 
-        if len(steps) == 0:
-            raise ValueError("No root node found, DAG might contain cycles")
-        elif len(steps) > 1:
-            raise ValueError("Some models or sources are unreachable")
-        else:
-            return steps[0]
+        if len(steps) != 1:
+            return None
+
+        return steps[0]
 
     def source(self, *args: Any, **kwargs: Any) -> Source:
         """Create Source and add it to the DAG."""
@@ -538,9 +533,6 @@ class DAG:
 
         Makes it immutable, then moves the default pointer to it.
         """
-        # Trigger error if there isn't a single root
-        _ = self.final_step
-
         # tries to get apex, error if it doesn't exist
         _handler.set_run_mutable(collection=self.name, run_id=self.run, mutable=False)
         _handler.set_run_default(collection=self.name, run_id=self.run, default=True)
@@ -550,6 +542,7 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
+        node: str | None = None,
         threshold: float | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
@@ -558,6 +551,8 @@ class DAG:
             from_source: Name of source the provided key belongs to
             to_sources: Names of sources to find keys in
             key: The value to match from the source. Usually a primary key
+            node: Name of node to use as point of truth. If None, will look for a
+                single root in the DAG.
             threshold (optional): The threshold to use for creating clusters.
                 If None, uses the resolutions' default threshold
                 If a float, uses that threshold for the specified resolution, and the
@@ -582,6 +577,8 @@ class DAG:
             if not isinstance(threshold, float):
                 raise ValueError("If passed, threshold must be a float")
             threshold = threshold_float_to_int(threshold)
+        if not node and not self.root:
+            raise ValueError("No single root in DAG: a node to query from must be set.")
         matches = _handler.match(
             targets=[
                 ResolutionPath(name=target, collection=self.name, run=self.run)
@@ -589,7 +586,7 @@ class DAG:
             ],
             source=ResolutionPath(name=from_source, collection=self.name, run=self.run),
             key=key,
-            resolution=self.final_step.resolution_path,
+            resolution=node or self.root.resolution_path,
             threshold=threshold,
         )
 
@@ -621,7 +618,9 @@ class DAG:
             if not isinstance(threshold, float):
                 raise ValueError("If passed, threshold must be a float")
             threshold = threshold_float_to_int(threshold)
-        point_of_truth = self.nodes[node] if node else self.final_step
+        if not node and not self.root:
+            raise ValueError("No single root in DAG: a node to query from must be set.")
+        point_of_truth = self.nodes[node] if node else self.root
 
         available_sources = {
             node_name: self.get_source(node_name)

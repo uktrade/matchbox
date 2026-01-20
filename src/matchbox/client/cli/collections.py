@@ -11,14 +11,14 @@ from matchbox.client.cli.annotations import CollectionOpt, GroupOpt, PermissionO
 from matchbox.common.dtos import DefaultGroup
 
 app = typer.Typer(help="Manage collections")
-permissions_app = typer.Typer(help="Manage collection permissions")
-
-app.add_typer(permissions_app, name="permissions")
 
 
-@app.command("list")
-def list_collections() -> None:
+@app.callback(invoke_without_command=True)
+def list_collections(ctx: typer.Context) -> None:
     """List all collections."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     collections = _handler.list_collections()
     for collection in collections:
         print(collection)
@@ -46,7 +46,7 @@ def create_collection(
 # Collection permissions
 
 
-@permissions_app.command("list")
+@app.command("permissions")
 def list_permissions(collection: CollectionOpt) -> None:
     """List permissions for a collection."""
     permissions = _handler.get_collection_permissions(collection)
@@ -64,7 +64,7 @@ def list_permissions(collection: CollectionOpt) -> None:
         print(table)
 
 
-@permissions_app.command("grant")
+@app.command("grant")
 def grant_permission(
     collection: CollectionOpt,
     group: GroupOpt,
@@ -79,7 +79,7 @@ def grant_permission(
     print(f"✓ Granted {permission} on '{collection}' to '{group}'")
 
 
-@permissions_app.command("revoke")
+@app.command("revoke")
 def revoke_permission(
     collection: CollectionOpt,
     group: GroupOpt,

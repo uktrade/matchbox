@@ -26,7 +26,7 @@ class TestCollectionCLI:
         """Test listing collections."""
         mock_list.return_value = [CollectionName("coll-1"), CollectionName("coll-2")]
 
-        result = self.runner.invoke(app, ["collection", "list"])
+        result = self.runner.invoke(app, ["collections"])
 
         assert result.exit_code == 0
         assert "coll-1" in result.output
@@ -42,14 +42,14 @@ class TestCollectionCLI:
         )
 
         # Default (public)
-        result = self.runner.invoke(app, ["collection", "create", "-c", "new-coll"])
+        result = self.runner.invoke(app, ["collections", "create", "-c", "new-coll"])
         assert result.exit_code == 0
         assert "✓ Created collection 'new-coll'" in result.output
         mock_create.assert_called_with("new-coll", admin_group="public")
 
         # With admin group
         result = self.runner.invoke(
-            app, ["collection", "create", "-c", "secure-coll", "--group", "admins"]
+            app, ["collections", "create", "-c", "secure-coll", "--group", "admins"]
         )
         assert result.exit_code == 0
         assert "✓ Created collection 'secure-coll'" in result.output
@@ -64,7 +64,7 @@ class TestCollectionCLI:
         ]
 
         result = self.runner.invoke(
-            app, ["collection", "permissions", "list", "-c", "my-coll"]
+            app, ["collections", "permissions", "-c", "my-coll"]
         )
 
         assert result.exit_code == 0
@@ -83,8 +83,7 @@ class TestCollectionCLI:
         result = self.runner.invoke(
             app,
             [
-                "collection",
-                "permissions",
+                "collections",
                 "grant",
                 "-c",
                 "my-coll",
@@ -115,8 +114,7 @@ class TestCollectionCLI:
         result = self.runner.invoke(
             app,
             [
-                "collection",
-                "permissions",
+                "collections",
                 "revoke",
                 "-cmy-coll",
                 "-g",

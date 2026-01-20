@@ -50,7 +50,7 @@ from matchbox.server.api.dependencies import (
     RequireSysAdmin,
     lifespan,
 )
-from matchbox.server.api.routers import admin, auth, collection, eval
+from matchbox.server.api.routers import auth, collections, eval, groups
 
 app = FastAPI(
     title="matchbox API",
@@ -59,10 +59,10 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
-app.include_router(collection.router)
+app.include_router(collections.router)
 app.include_router(eval.router)
 app.include_router(auth.router)
-app.include_router(admin.router)
+app.include_router(groups.router)
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")

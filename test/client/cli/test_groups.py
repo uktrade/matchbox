@@ -1,22 +1,20 @@
-"""Tests for server CLI commands."""
+"""Tests for group CLI commands."""
 
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from matchbox.client.cli.server import app
+from matchbox.client.cli.main import app
 from matchbox.common.dtos import (
     CRUDOperation,
     Group,
-    PermissionGrant,
-    PermissionType,
     ResourceOperationStatus,
     User,
 )
 
 
-class TestAdminCLI:
-    """Test the admin CLI commands."""
+class TestGroupsCLI:
+    """Test the groups CLI commands."""
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
@@ -30,7 +28,7 @@ class TestAdminCLI:
             Group(name="devs", description="Developers", is_system=False),
         ]
 
-        result = self.runner.invoke(app, ["admin", "groups", "list"])
+        result = self.runner.invoke(app, ["groups"])
 
         assert result.exit_code == 0
         assert "admins" in result.output
@@ -48,7 +46,7 @@ class TestAdminCLI:
         )
 
         result = self.runner.invoke(
-            app, ["admin", "groups", "create", "-g", "new-group", "-d", "A new group"]
+            app, ["groups", "create", "-g", "new-group", "-d", "A new group"]
         )
 
         assert result.exit_code == 0
@@ -65,7 +63,7 @@ class TestAdminCLI:
         )
 
         result = self.runner.invoke(
-            app, ["admin", "groups", "delete", "-g", "old-group", "--certain"]
+            app, ["groups", "delete", "-g", "old-group", "--certain"]
         )
 
         assert result.exit_code == 0
@@ -81,7 +79,7 @@ class TestAdminCLI:
             members=[User(sub="alice", email=None)],
         )
 
-        result = self.runner.invoke(app, ["admin", "groups", "show", "-g", "team-a"])
+        result = self.runner.invoke(app, ["groups", "show", "-g", "team-a"])
 
         assert result.exit_code == 0
         assert "team-a" in result.output
@@ -91,9 +89,7 @@ class TestAdminCLI:
     @patch("matchbox.client._handler.add_user_to_group")
     def test_add_member(self, mock_add: MagicMock) -> None:
         """Test adding a member."""
-        result = self.runner.invoke(
-            app, ["admin", "groups", "add", "-g", "team-a", "-u", "bob"]
-        )
+        result = self.runner.invoke(app, ["groups", "add", "-g", "team-a", "-u", "bob"])
 
         assert result.exit_code == 0
         assert "✓ Added bob to team-a" in result.output
@@ -103,22 +99,9 @@ class TestAdminCLI:
     def test_remove_member(self, mock_remove: MagicMock) -> None:
         """Test removing a member."""
         result = self.runner.invoke(
-            app, ["admin", "groups", "remove", "-g", "team-a", "-u", "bob"]
+            app, ["groups", "remove", "-g", "team-a", "-u", "bob"]
         )
 
         assert result.exit_code == 0
         assert "✓ Removed bob from team-a" in result.output
         mock_remove.assert_called_with(group_name="team-a", user_name="bob")
-
-    @patch("matchbox.client._handler.get_system_permissions")
-    def test_list_system_permissions(self, mock_list: MagicMock) -> None:
-        """Test listing system permissions."""
-        mock_list.return_value = [
-            PermissionGrant(group_name="admins", permission=PermissionType.ADMIN)
-        ]
-
-        result = self.runner.invoke(app, ["admin", "system", "list"])
-
-        assert result.exit_code == 0
-        assert "admins" in result.output
-        assert "admin" in result.output

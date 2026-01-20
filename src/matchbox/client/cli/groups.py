@@ -1,4 +1,4 @@
-"""Admin commands for Matchbox CLI."""
+"""Group management commands for Matchbox CLI."""
 
 from typing import Annotated
 
@@ -9,21 +9,15 @@ from rich.table import Table
 from matchbox.client import _handler
 from matchbox.client.cli.annotations import DeletionOpt, GroupOpt, UsernameOpt
 
-app = typer.Typer(help="Admin commands (requires admin privileges)")
-
-groups_app = typer.Typer(help="Manage groups")
-system_app = typer.Typer(help="Manage system permissions")
-
-app.add_typer(groups_app, name="groups")
-app.add_typer(system_app, name="system")
+app = typer.Typer(help="Group management")
 
 
-# Groups
-
-
-@groups_app.command("list")
-def list_groups() -> None:
+@app.callback(invoke_without_command=True)
+def list_groups(ctx: typer.Context) -> None:
     """List all groups."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     groups = _handler.list_groups()
 
     table = Table(title="Groups")
@@ -41,7 +35,7 @@ def list_groups() -> None:
     print(table)
 
 
-@groups_app.command("create")
+@app.command("create")
 def create_group(
     name: GroupOpt,
     description: Annotated[
@@ -54,17 +48,7 @@ def create_group(
     print(f"✓ {result.target}")
 
 
-@groups_app.command("delete")
-def delete_group(
-    name: GroupOpt,
-    certain: DeletionOpt,
-) -> None:
-    """Delete a group."""
-    result = _handler.delete_group(name=name, certain=certain)
-    print(f"✓ {result.target}")
-
-
-@groups_app.command("show")
+@app.command("show")
 def show_group(
     name: GroupOpt,
 ) -> None:
@@ -93,17 +77,17 @@ def show_group(
         print("  [dim]No members[/dim]")
 
 
-@groups_app.command("add")
-def add_member(
-    group: GroupOpt,
-    user: UsernameOpt,
+@app.command("delete")
+def delete_group(
+    name: GroupOpt,
+    certain: DeletionOpt,
 ) -> None:
-    """Add a user to a group."""
-    _handler.add_user_to_group(group_name=group, user_name=user)
-    print(f"✓ Added {user} to {group}")
+    """Delete a group."""
+    result = _handler.delete_group(name=name, certain=certain)
+    print(f"✓ {result.target}")
 
 
-@groups_app.command("remove")
+@app.command("remove")
 def remove_member(
     group: GroupOpt,
     user: UsernameOpt,
@@ -113,22 +97,11 @@ def remove_member(
     print(f"✓ Removed {user} from {group}")
 
 
-# System permissions
-
-
-@system_app.command("list")
-def list_system_permissions() -> None:
-    """List system permissions."""
-    permissions = _handler.get_system_permissions()
-
-    table = Table(title="System permissions")
-    table.add_column("Group", style="cyan")
-    table.add_column("Permission", style="green")
-
-    for perm in permissions:
-        table.add_row(perm.group_name, perm.permission)
-
-    if not permissions:
-        print("[dim]No system permissions granted[/dim]")
-    else:
-        print(table)
+@app.command("add")
+def add_member(
+    group: GroupOpt,
+    user: UsernameOpt,
+) -> None:
+    """Add a user to a group."""
+    _handler.add_user_to_group(group_name=group, user_name=user)
+    print(f"✓ Added {user} to {group}")

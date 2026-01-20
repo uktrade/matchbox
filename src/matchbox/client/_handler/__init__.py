@@ -1,15 +1,8 @@
 """Functions abstracting the interaction with the server API."""
 
 from matchbox.client._handler.admin import (
-    add_user_to_group,
     count_backend_items,
-    create_group,
-    delete_group,
     delete_orphans,
-    get_group,
-    get_system_permissions,
-    list_groups,
-    remove_user_from_group,
 )
 from matchbox.client._handler.auth import auth_status, login
 from matchbox.client._handler.collections import (
@@ -37,6 +30,14 @@ from matchbox.client._handler.eval import (
     sample_for_eval,
     send_eval_judgement,
 )
+from matchbox.client._handler.groups import (
+    add_user_to_group,
+    create_group,
+    delete_group,
+    get_group,
+    list_groups,
+    remove_user_from_group,
+)
 from matchbox.client._handler.main import healthcheck
 from matchbox.client._handler.query import match, query
 
@@ -45,13 +46,13 @@ __all__ = [
     "auth_status",
     "login",
     # admin
-    "add_user_to_group",
     "count_backend_items",
+    "delete_orphans",
+    # groups
+    "add_user_to_group",
     "create_group",
     "delete_group",
-    "delete_orphans",
     "get_group",
-    "get_system_permissions",
     "list_groups",
     "remove_user_from_group",
     # main

@@ -10,6 +10,7 @@ from matchbox.server.postgresql.adapter.collections import (
     MatchboxPostgresCollectionsMixin,
 )
 from matchbox.server.postgresql.adapter.eval import MatchboxPostgresEvaluationMixin
+from matchbox.server.postgresql.adapter.groups import MatchboxPostgresGroupsMixin
 from matchbox.server.postgresql.adapter.query import MatchboxPostgresQueryMixin
 from matchbox.server.postgresql.db import MBDB, MatchboxPostgresSettings
 from matchbox.server.postgresql.orm import (
@@ -117,6 +118,7 @@ class MatchboxPostgres(
     MatchboxPostgresEvaluationMixin,
     MatchboxPostgresCollectionsMixin,
     MatchboxPostgresAdminMixin,
+    MatchboxPostgresGroupsMixin,
     MatchboxDBAdapter,
 ):
     """A PostgreSQL adapter for Matchbox."""

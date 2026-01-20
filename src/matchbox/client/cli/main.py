@@ -7,6 +7,7 @@ from matchbox import __version__
 from matchbox.client import _handler
 from matchbox.client.cli import admin, auth, collections, groups
 from matchbox.client.cli.eval.run import evaluate
+from matchbox.common.dtos import OKMessage
 
 app = typer.Typer(
     name="matchbox", help="Matchbox: Entity resolution and data linking framework"
@@ -22,8 +23,8 @@ def version() -> None:
 @app.command()
 def health() -> None:
     """Checks the health of the Matchbox server."""
-    response = _handler.healthcheck()
-    print(response)
+    response: OKMessage = _handler.healthcheck()
+    print(response.model_dump_json(indent=2))
 
 
 # Add subcommands

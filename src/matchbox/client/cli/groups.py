@@ -8,6 +8,7 @@ from rich.table import Table
 
 from matchbox.client import _handler
 from matchbox.client.cli.annotations import DeletionOpt, GroupOpt, UsernameOpt
+from matchbox.common.dtos import Group, ResourceOperationStatus
 
 app = typer.Typer(help="Group management")
 
@@ -18,7 +19,7 @@ def list_groups(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
 
-    groups = _handler.list_groups()
+    groups: list[Group] = _handler.list_groups()
 
     table = Table(title="Groups")
     table.add_column("Name", style="cyan")
@@ -44,8 +45,16 @@ def create_group(
     ] = None,
 ) -> None:
     """Create a new group."""
-    result = _handler.create_group(name=name, description=description)
-    print(f"✓ {result.target}")
+    result: ResourceOperationStatus = _handler.create_group(
+        name=name, description=description
+    )
+    if result.success:
+        print(f"✓ Created group {name}")
+    else:
+        print(f"✗ Failed to create group {name}")
+        if result.details:
+            print(f"  {result.details}")
+        raise typer.Exit(code=1)
 
 
 @app.command("show")
@@ -53,7 +62,7 @@ def show_group(
     name: GroupOpt,
 ) -> None:
     """Show group details and members."""
-    group = _handler.get_group(name)
+    group: Group = _handler.get_group(name)
 
     print(f"[bold cyan]{group.name}[/bold cyan]")
     if group.description:
@@ -83,8 +92,14 @@ def delete_group(
     certain: DeletionOpt,
 ) -> None:
     """Delete a group."""
-    result = _handler.delete_group(name=name, certain=certain)
-    print(f"✓ {result.target}")
+    result: ResourceOperationStatus = _handler.delete_group(name=name, certain=certain)
+    if result.success:
+        print(f"✓ Deleted group {name}")
+    else:
+        print(f"✗ Failed to delete group {name}")
+        if result.details:
+            print(f"  {result.details}")
+        raise typer.Exit(code=1)
 
 
 @app.command("remove")
@@ -93,8 +108,16 @@ def remove_member(
     user: UsernameOpt,
 ) -> None:
     """Remove a user from a group."""
-    _handler.remove_user_from_group(group_name=group, user_name=user)
-    print(f"✓ Removed {user} from {group}")
+    result: ResourceOperationStatus = _handler.remove_user_from_group(
+        group_name=group, user_name=user
+    )
+    if result.success:
+        print(f"✓ Removed {user} from {group}")
+    else:
+        print(f"✗ Failed to remove {user} from {group}")
+        if result.details:
+            print(f"  {result.details}")
+        raise typer.Exit(code=1)
 
 
 @app.command("add")
@@ -103,5 +126,13 @@ def add_member(
     user: UsernameOpt,
 ) -> None:
     """Add a user to a group."""
-    _handler.add_user_to_group(group_name=group, user_name=user)
-    print(f"✓ Added {user} to {group}")
+    result: ResourceOperationStatus = _handler.add_user_to_group(
+        group_name=group, user_name=user
+    )
+    if result.success:
+        print(f"✓ Added {user} to {group}")
+    else:
+        print(f"✗ Failed to add {user} to {group}")
+        if result.details:
+            print(f"  {result.details}")
+        raise typer.Exit(code=1)

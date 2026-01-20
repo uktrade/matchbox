@@ -8,7 +8,7 @@ from rich.table import Table
 
 from matchbox.client import _handler
 from matchbox.client.cli.annotations import CollectionOpt, GroupOpt, PermissionOpt
-from matchbox.common.dtos import DefaultGroup
+from matchbox.common.dtos import DefaultGroup, PermissionGrant, ResourceOperationStatus
 
 app = typer.Typer(help="Manage collections")
 
@@ -37,10 +37,18 @@ def create_collection(
     ] = DefaultGroup.PUBLIC,
 ) -> None:
     """Create a new collection."""
-    _ = _handler.create_collection(name, admin_group=admin_group)
-    print(f"✓ Created collection '{name}'")
-    if admin_group != DefaultGroup.PUBLIC:
-        print(f"  Admin permission granted to group '{admin_group}'")
+    response: ResourceOperationStatus = _handler.create_collection(
+        name, admin_group=admin_group
+    )
+    if response.success:
+        print(f"✓ Created collection {name}")
+        if admin_group != DefaultGroup.PUBLIC:
+            print(f"  Admin permission granted to group {admin_group}")
+    else:
+        print(f"✗ Failed to create collection {name}")
+        if response.details:
+            print(f"  {response.details}")
+        raise typer.Exit(code=1)
 
 
 # Collection permissions
@@ -49,9 +57,9 @@ def create_collection(
 @app.command("permissions")
 def list_permissions(collection: CollectionOpt) -> None:
     """List permissions for a collection."""
-    permissions = _handler.get_collection_permissions(collection)
+    permissions: list[PermissionGrant] = _handler.get_collection_permissions(collection)
 
-    table = Table(title=f"Permissions for '{collection}'")
+    table = Table(title=f"Permissions for {collection}")
     table.add_column("Group", style="cyan")
     table.add_column("Permission", style="green")
 
@@ -71,12 +79,18 @@ def grant_permission(
     permission: PermissionOpt,
 ) -> None:
     """Grant a permission to a group on a collection."""
-    _handler.grant_collection_permission(
+    response: ResourceOperationStatus = _handler.grant_collection_permission(
         collection=collection,
         group_name=group,
         permission=permission,
     )
-    print(f"✓ Granted {permission} on '{collection}' to '{group}'")
+    if response.success:
+        print(f"✓ Granted {permission} on {collection} to {group}")
+    else:
+        print(f"✗ Failed to grant {permission} on {collection} to {group}")
+        if response.details:
+            print(f"  {response.details}")
+        raise typer.Exit(code=1)
 
 
 @app.command("revoke")
@@ -86,9 +100,15 @@ def revoke_permission(
     permission: PermissionOpt,
 ) -> None:
     """Revoke a permission from a group on a collection."""
-    _handler.revoke_collection_permission(
+    response: ResourceOperationStatus = _handler.revoke_collection_permission(
         collection=collection,
         group_name=group,
         permission=permission,
     )
-    print(f"✓ Revoked {permission} on '{collection}' from '{group}'")
+    if response.success:
+        print(f"✓ Revoked {permission} on {collection} from {group}")
+    else:
+        print(f"✗ Failed to revoke {permission} on {collection} from {group}")
+        if response.details:
+            print(f"  {response.details}")
+        raise typer.Exit(code=1)

@@ -44,7 +44,7 @@ class TestCollectionCLI:
         # Default (public)
         result = self.runner.invoke(app, ["collections", "create", "-c", "new-coll"])
         assert result.exit_code == 0
-        assert "✓ Created collection 'new-coll'" in result.output
+        assert "✓ Created collection new-coll" in result.output
         mock_create.assert_called_with("new-coll", admin_group="public")
 
         # With admin group
@@ -52,8 +52,8 @@ class TestCollectionCLI:
             app, ["collections", "create", "-c", "secure-coll", "--group", "admins"]
         )
         assert result.exit_code == 0
-        assert "✓ Created collection 'secure-coll'" in result.output
-        assert "Admin permission granted to group 'admins'" in result.output
+        assert "✓ Created collection secure-coll" in result.output
+        assert "Admin permission granted to group admins" in result.output
         mock_create.assert_called_with("secure-coll", admin_group="admins")
 
     @patch("matchbox.client._handler.get_collection_permissions")
@@ -95,7 +95,7 @@ class TestCollectionCLI:
         )
 
         assert result.exit_code == 0
-        assert "✓ Granted read on 'my-coll' to 'team-a'" in result.output
+        assert "✓ Granted read on my-coll to team-a" in result.output
         mock_grant.assert_called_with(
             collection="my-coll",
             group_name="team-a",
@@ -125,7 +125,7 @@ class TestCollectionCLI:
         )
 
         assert result.exit_code == 0
-        assert "✓ Revoked read on 'my-coll' from 'team-a'" in result.output
+        assert "✓ Revoked read on my-coll from team-a" in result.output
         mock_revoke.assert_called_with(
             collection="my-coll",
             group_name="team-a",

@@ -50,7 +50,7 @@ class TestGroupsCLI:
         )
 
         assert result.exit_code == 0
-        assert "✓ Group new-group" in result.output
+        assert "✓ Created group new-group" in result.output
         mock_create.assert_called_with(name="new-group", description="A new group")
 
     @patch("matchbox.client._handler.delete_group")
@@ -67,7 +67,7 @@ class TestGroupsCLI:
         )
 
         assert result.exit_code == 0
-        assert "✓ Group old-group" in result.output
+        assert "✓ Deleted group old-group" in result.output
         mock_delete.assert_called_with(name="old-group", certain=True)
 
     @patch("matchbox.client._handler.get_group")

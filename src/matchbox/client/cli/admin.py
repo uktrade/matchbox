@@ -4,6 +4,7 @@ import typer
 from rich import print
 
 from matchbox.client import _handler
+from matchbox.common.dtos import ResourceOperationStatus
 
 app = typer.Typer(help="System administration and maintenance")
 
@@ -18,5 +19,5 @@ def delete_orphans() -> None:
     have become isolated as a result of the change or removal of resolutions.
     This command will remove them from the database.
     """
-    response = _handler.delete_orphans()
-    print(response)
+    response: ResourceOperationStatus = _handler.delete_orphans()
+    print(response.model_dump_json(indent=2))

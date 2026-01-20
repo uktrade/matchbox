@@ -187,7 +187,7 @@ def grant_permission(
 
 
 @router.delete(
-    "/{collection}/permissions/{permission}/{group_name}/",
+    "/{collection}/permissions/{permission}/{group_name}",
     responses={
         401: {"model": ErrorResponse},
         403: {"model": ErrorResponse},

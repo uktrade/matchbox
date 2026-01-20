@@ -115,7 +115,7 @@ def revoke_collection_permission(
 ) -> ResourceOperationStatus:
     """Revoke a permission on a collection."""
     response = CLIENT.delete(
-        f"/collections/{collection}/permissions/{group_name}/{permission}"
+        f"/collections/{collection}/permissions/{permission}/{group_name}"
     )
     return ResourceOperationStatus(**response.json())
 

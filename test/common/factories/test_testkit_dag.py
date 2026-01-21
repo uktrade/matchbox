@@ -1,7 +1,5 @@
 """Unit tests for TestkitDAG."""
 
-import pytest
-
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.models import model_factory
@@ -177,6 +175,5 @@ def test_empty_dag_properties() -> None:
     # DAG should be empty but valid
     assert len(dag_testkit.dag.nodes) == 0
 
-    # Final_step should raise on empty DAG
-    with pytest.raises(ValueError):
-        _ = dag_testkit.dag.final_step
+    # final_step should return nothing
+    assert dag_testkit.dag.root is None

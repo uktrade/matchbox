@@ -149,7 +149,9 @@ def _get_samples_from_server(
     if resolution:
         resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
     else:
-        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+        if not dag.root:
+            raise ValueError("Must set a resolution if DAG does not have single root.")
+        resolution_path: ModelResolutionPath = dag.root.resolution_path
     return pl.from_arrow(
         _handler.sample_for_eval(n=n, resolution=resolution_path, user_name=user_name)
     )

@@ -200,7 +200,7 @@ class TestE2EModelEvaluation:
 
         # Create app and verify it can load samples from real data
         app = EntityResolutionApp(
-            resolution=dag.final_step.resolution_path,
+            resolution=dag.root.resolution_path,
             num_samples=2,
             session_tag="eval_session1",
             user="alice",

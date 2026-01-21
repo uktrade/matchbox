@@ -99,7 +99,7 @@ class Source:
         description: str | None = None,
         infer_types: bool = False,
         validate_etl: bool = True,
-    ):
+    ) -> None:
         """Initialise source.
 
         Args:

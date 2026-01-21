@@ -20,7 +20,7 @@ mbx login
 Bootstrap as soon as the server is deployed. If you boostrap and aren't made admin, either:
 
 * Delete the database and try again
-* Contact whoever became the admin user is to add you to the admind group
+* Contact whoever became the admin user is to add you to the admin group
 
 ## Defaults
 

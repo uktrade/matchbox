@@ -86,21 +86,23 @@ class MatchboxPostgresGroupsMixin:
 
     def create_group(self, group: Group) -> None:  # noqa: D102
         with MBDB.get_session() as session:
-            # Check if group already exists
-            existing = session.scalar(select(Groups).where(Groups.name == group.name))
+            # Attempt to insert the group
+            result: CursorResult = session.execute(
+                insert(Groups)
+                .values(
+                    name=group.name,
+                    description=group.description,
+                    is_system=group.is_system,
+                )
+                .on_conflict_do_nothing(constraint="groups_name_key")
+                .returning(Groups.group_id)
+            )
 
-            if existing:
+            if result.scalar_one_or_none() is None:
                 raise MatchboxGroupAlreadyExistsError(
                     f"Group '{group.name}' already exists"
                 )
 
-            # Create the group
-            new_group = Groups(
-                name=group.name,
-                description=group.description,
-                is_system=group.is_system,
-            )
-            session.add(new_group)
             session.commit()
 
             logger.info(f"Created group '{group.name}'", prefix="Create group")

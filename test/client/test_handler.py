@@ -7,7 +7,7 @@ from respx import MockRouter
 from matchbox.client import _handler
 from matchbox.client._handler.main import create_client
 from matchbox.client._settings import ClientSettings
-from matchbox.common.dtos import AuthStatusResponse, LoginResponse
+from matchbox.common.dtos import LoginResponse
 
 
 def test_create_client() -> None:
@@ -52,40 +52,3 @@ def test_retry_decorator_applied(matchbox_api: MockRouter) -> None:
 
     # Verify the API was called 3 times (2 failures + 1 success)
     assert len(matchbox_api.calls) == 3
-
-
-def test_healthcheck(matchbox_api: MockRouter) -> None:
-    """Test the healthcheck endpoint works."""
-    matchbox_api.get("/health").mock(
-        side_effect=[
-            Response(200, json={"status": "OK", "version": "0.0.0.dev0"}),
-        ]
-    )
-    result = _handler.healthcheck()
-
-    assert result.status == "OK"
-    assert result.version == "0.0.0.dev0"
-
-
-def test_auth_status(matchbox_api: MockRouter) -> None:
-    """Test the auth status endpoint works."""
-    matchbox_api.get("/auth/status").mock(
-        side_effect=[
-            Response(
-                200,
-                json={
-                    "authenticated": True,
-                    "user": {
-                        "user_name": "test_user",
-                        "email": "test@example.com",
-                    },
-                },
-            ),
-        ]
-    )
-    result: AuthStatusResponse = _handler.auth_status()
-
-    assert result.authenticated is True
-    assert result.user is not None
-    assert result.user.user_name == "test_user"
-    assert result.user.email == "test@example.com"

@@ -1,7 +1,6 @@
 """Integration tests for the CLI."""
 
 from collections.abc import Generator
-from unittest.mock import patch
 
 import pytest
 from httpx import Client
@@ -23,16 +22,6 @@ class TestE2ECLI:
         # Clear database before starting to ensure clean state
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200
-
-        # Patch the global CLIENT used by _handler functions
-        with (
-            patch("matchbox.client._handler.main.CLIENT", new=matchbox_client),
-            patch("matchbox.client._handler.admin.CLIENT", new=matchbox_client),
-            patch("matchbox.client._handler.auth.CLIENT", new=matchbox_client),
-            patch("matchbox.client._handler.collections.CLIENT", new=matchbox_client),
-            patch("matchbox.client._handler.groups.CLIENT", new=matchbox_client),
-        ):
-            yield
 
     def test_basic_commands(self) -> None:
         """Test version, health, and auth status commands."""

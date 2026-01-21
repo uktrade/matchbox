@@ -1,6 +1,7 @@
 """Groups PostgreSQL mixin for Matchbox server."""
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import CursorResult, and_, delete, select
+from sqlalchemy.dialects.postgresql import insert
 
 from matchbox.common.dtos import (
     Group,
@@ -140,25 +141,19 @@ class MatchboxPostgresGroupsMixin:
             if not group:
                 raise MatchboxGroupNotFoundError(f"Group '{group_name}' not found")
 
-            # Check if already a member
-            existing_membership = session.scalar(
-                select(UserGroups).where(
-                    and_(
-                        UserGroups.user_id == user.user_id,
-                        UserGroups.group_id == group.group_id,
-                    )
-                )
-            )
-
-            if not existing_membership:
-                membership = UserGroups(
+            # Upsert membership
+            result: CursorResult = session.execute(
+                insert(UserGroups)
+                .values(
                     user_id=user.user_id,
                     group_id=group.group_id,
                 )
-                session.add(membership)
+                .on_conflict_do_nothing()
+            )
 
-                session.commit()
+            session.commit()
 
+            if result.rowcount > 0:
                 logger.info(
                     f"Added user '{user_name}' to group '{group_name}'",
                     prefix="Add user to group",

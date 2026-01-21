@@ -6,11 +6,6 @@ import typer
 
 from matchbox.common.dtos import PermissionType
 
-app = typer.Typer(help="Manage collections")
-permissions_app = typer.Typer(help="Manage collection permissions")
-
-app.add_typer(permissions_app, name="permissions")
-
 CollectionOpt = Annotated[
     str,
     typer.Option("--collection", "-c", help="Collection name"),

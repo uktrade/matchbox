@@ -383,8 +383,10 @@ class MatchboxConnectionError(MatchboxException):
     """Connection to Matchbox's backend database failed."""
 
 
-class MatchboxPermissionDeniedError(MatchboxException):
+class MatchboxPermissionDeniedError(MatchboxHttpException):
     """Raised when a user lacks permission for an action."""
+
+    http_status = 403
 
 
 class MatchboxDeletionNotConfirmed(MatchboxHttpException):
@@ -485,8 +487,10 @@ class MatchboxGroupAlreadyExistsError(MatchboxHttpException):
     http_status = 409
 
 
-class MatchboxSystemGroupError(MatchboxException):
+class MatchboxSystemGroupError(MatchboxHttpException):
     """Raised when attempting to modify or delete a system group."""
+
+    http_status = 422
 
 
 # -- Adapter DB exceptions --

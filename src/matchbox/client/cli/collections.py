@@ -7,7 +7,12 @@ from rich import print
 from rich.table import Table
 
 from matchbox.client import _handler
-from matchbox.client.cli.annotations import CollectionOpt, GroupOpt, PermissionOpt
+from matchbox.client.cli.annotations import (
+    CollectionOpt,
+    DeletionOpt,
+    GroupOpt,
+    PermissionOpt,
+)
 from matchbox.common.dtos import DefaultGroup, PermissionGrant, ResourceOperationStatus
 
 app = typer.Typer(help="Manage collections")
@@ -46,6 +51,24 @@ def create_collection(
             print(f"  Admin permission granted to group {admin_group}")
     else:
         print(f"✗ Failed to create collection {name}")
+        if response.details:
+            print(f"  {response.details}")
+        raise typer.Exit(code=1)
+
+
+@app.command("delete")
+def delete_collection(
+    name: CollectionOpt,
+    certain: DeletionOpt,
+) -> None:
+    """Delete a collection."""
+    response: ResourceOperationStatus = _handler.delete_collection(
+        name, certain=certain
+    )
+    if response.success:
+        print(f"✓ Deleted collection {name}")
+    else:
+        print(f"✗ Failed to delete collection {name}")
         if response.details:
             print(f"  {response.details}")
         raise typer.Exit(code=1)

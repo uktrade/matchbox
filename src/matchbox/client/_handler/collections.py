@@ -83,6 +83,26 @@ def create_collection(
     return ResourceOperationStatus.model_validate(res.json())
 
 
+@http_retry
+def delete_collection(
+    name: CollectionName, certain: bool = False
+) -> ResourceOperationStatus:
+    """Delete a collection.
+
+    Args:
+        name: Name of the collection to delete.
+        certain: Confirmation flag.
+    """
+    log_prefix = f"Collection {name}"
+    logger.debug("Deleting", prefix=log_prefix)
+
+    res = CLIENT.delete(
+        f"/collections/{name}",
+        params={"certain": certain},
+    )
+    return ResourceOperationStatus.model_validate(res.json())
+
+
 # Collection permissions
 
 

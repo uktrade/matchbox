@@ -56,6 +56,23 @@ class TestCollectionCLI:
         assert "Admin permission granted to group admins" in result.output
         mock_create.assert_called_with("secure-coll", admin_group="admins")
 
+    @patch("matchbox.client._handler.delete_collection")
+    def test_delete_collection(self, mock_delete: MagicMock) -> None:
+        """Test the delete collection command."""
+        mock_delete.return_value = ResourceOperationStatus(
+            success=True,
+            target="Collection test_col",
+            operation=CRUDOperation.DELETE,
+        )
+
+        result = self.runner.invoke(
+            app, ["collections", "delete", "-c", "test_col", "--certain"]
+        )
+
+        assert result.exit_code == 0
+        assert "Deleted collection test_col" in result.stdout
+        mock_delete.assert_called_once_with("test_col", certain=True)
+
     @patch("matchbox.client._handler.get_collection_permissions")
     def test_list_permissions(self, mock_list: MagicMock) -> None:
         """Test listing collection permissions."""

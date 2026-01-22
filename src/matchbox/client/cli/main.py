@@ -1,5 +1,7 @@
 """Main CLI entry point for Matchbox."""
 
+import sys
+
 import typer
 from rich import print
 
@@ -8,6 +10,7 @@ from matchbox.client import _handler
 from matchbox.client.cli import admin, auth, collections, groups
 from matchbox.client.cli.eval.run import evaluate
 from matchbox.common.dtos import OKMessage
+from matchbox.common.exceptions import MatchboxHttpException
 
 app = typer.Typer(
     name="matchbox", help="Matchbox: Entity resolution and data linking framework"
@@ -35,5 +38,17 @@ app.add_typer(admin.app, name="admin")
 app.command(name="eval")(evaluate)
 
 
+def run() -> None:
+    """Run the Typer app with global HTTP error handling."""
+    try:
+        app()
+    except MatchboxHttpException as e:
+        print(f"[bold red]Error:[/bold red] {e}", file=sys.stderr)
+        details = e.to_details()
+        if details:
+            print(details, file=sys.stderr)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    app()
+    run()

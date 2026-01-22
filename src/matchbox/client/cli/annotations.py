@@ -20,7 +20,12 @@ PermissionOpt = Annotated[
 ]
 DeletionOpt = Annotated[
     bool,
-    typer.Option("--certain", "-y", help="Confirm deletion"),
+    typer.Option(
+        "--certain",
+        "-y",
+        help="Confirm deletion",
+        prompt="Are you sure you want to delete this resource?",
+    ),
 ]
 UsernameOpt = Annotated[
     str,

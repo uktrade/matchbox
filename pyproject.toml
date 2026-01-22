@@ -74,7 +74,8 @@ typing = [
 ]
 
 [project.scripts]
-matchbox = "matchbox.client.cli.main:app"
+matchbox = "matchbox.client.cli.main:run"
+mbx = "matchbox.client.cli.main:run"
 
 [project.urls]
 "Documentation" = "https://uktrade.github.io/matchbox/"

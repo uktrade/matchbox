@@ -7,16 +7,27 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 import boto3
 from botocore.exceptions import ClientError
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from pyarrow import Table
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretBytes,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
     CollectionName,
+    DefaultGroup,
+    DefaultUser,
     Group,
     GroupName,
+    LoginResponse,
     Match,
     ModelResolutionPath,
     PermissionGrant,
@@ -54,6 +65,41 @@ grant the permission.
 
 For example, only `PermissionType.ADMIN` can grant `PermissionType.ADMIN`,
 but any permission implies `PermissionType.READ`.
+"""
+
+
+DEFAULT_GROUPS: list[Group] = [
+    Group(
+        name=DefaultGroup.PUBLIC,
+        description="Unauthenticated users.",
+        is_system=True,
+        members=[User(user_name=DefaultUser.PUBLIC, email=None)],
+    ),
+    Group(
+        name="admins",
+        description="System administrators.",
+        is_system=True,
+    ),
+]
+"""The default groups and users that should be in any fresh Matchbox backend."""
+
+DEFAULT_PERMISSIONS: list[tuple[PermissionGrant, BackendResourceType, str | None]] = [
+    (
+        PermissionGrant(
+            group_name=DefaultGroup.ADMINS,
+            permission=PermissionType.ADMIN,
+        ),
+        BackendResourceType.SYSTEM,
+        None,
+    ),
+]
+"""The default permissions that should be granted in any fresh Matchbox backend.
+
+A list of tuples in the form:
+
+* The permission to grant
+* The resource type to grant it on
+* The resource name to grant it on, if applicable
 """
 
 
@@ -146,8 +192,33 @@ class MatchboxServerSettings(BaseSettings):
     redis_uri: str | None
     uploads_expiry_minutes: int | None
     authorisation: bool = True
-    public_key: SecretStr | None = Field(default=None)
+    public_key: SecretBytes | None = Field(default=None)
     log_level: LogLevelType = "INFO"
+
+    @field_validator("public_key", mode="before")
+    @classmethod
+    def validate_public_key(cls, v: str | bytes | None) -> bytes | None:
+        """Validate and normalise PEM public key format."""
+        if v is None:
+            return v
+
+        # Convert to string if bytes
+        key_str: str
+        if isinstance(v, bytes):
+            key_str = v.decode("ascii")
+        elif isinstance(v, SecretBytes):
+            key_str = v.get_secret_value().decode("ascii")
+        else:
+            key_str = v
+
+        # Replace literal \n with actual newlines
+        key_str = key_str.replace("\\n", "\n")
+        key_bytes = key_str.encode("ascii")
+
+        # Validate by attempting to load
+        _ = load_pem_public_key(key_bytes)
+
+        return key_bytes
 
     @model_validator(mode="after")
     def check_settings(self) -> Self:
@@ -255,7 +326,11 @@ class ListableAndCountable(Countable, Listable):
 
 
 class MatchboxDBAdapter(ABC):
-    """An abstract base class for Matchbox database adapters."""
+    """An abstract base class for Matchbox database adapters.
+
+    By default the database should contain the users, groups and permissions found in
+    DEFAULT_GROUPS and DEFAULT_PERMISSIONS.
+    """
 
     settings: "MatchboxServerSettings"
 
@@ -268,6 +343,7 @@ class MatchboxDBAdapter(ABC):
     merges: Countable
     proposes: Countable
     source_resolutions: Countable
+    users: Countable
 
     # Retrieval
 
@@ -325,11 +401,14 @@ class MatchboxDBAdapter(ABC):
     # Collection management
 
     @abstractmethod
-    def create_collection(self, name: CollectionName) -> Collection:
+    def create_collection(
+        self, name: CollectionName, permissions: list[PermissionGrant]
+    ) -> Collection:
         """Create a new collection.
 
         Args:
-            name: The name of the collection to create.
+            name: The collection name
+            permissions: A list of permissions to grant
 
         Returns:
             A Collection object containing its metadata, versions, and resolutions.
@@ -614,8 +693,11 @@ class MatchboxDBAdapter(ABC):
     # User, group and permissions management
 
     @abstractmethod
-    def login(self, user: User) -> User:
+    def login(self, user: User) -> LoginResponse:
         """Upserts the user to the database.
+
+        * If it's the first user, will add them to the admins group
+        * For all new users, are added to the public group
 
         Args:
             user: A User with a username and optionally an email
@@ -760,11 +842,12 @@ class MatchboxDBAdapter(ABC):
     # Evaluation management
 
     @abstractmethod
-    def insert_judgement(self, judgement: Judgement) -> None:
+    def insert_judgement(self, user_name: str, judgement: Judgement) -> None:
         """Adds an evaluation judgement to the database.
 
         Args:
-            judgement: representation of the proposed clusters.
+            user_name: Name of user inserting the judgement
+            judgement: Representation of the proposed clusters.
         """
         ...
 

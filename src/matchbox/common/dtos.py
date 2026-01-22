@@ -112,6 +112,7 @@ class BackendResourceType(StrEnum):
     RESOLUTION = "resolution"
     CLUSTER = "cluster"
     USER = "user"
+    GROUP = "group"
     JUDGEMENT = "judgement"
     SYSTEM = "system"
 
@@ -154,6 +155,22 @@ class User(BaseModel):
     email: EmailStr | None = None
 
 
+class LoginResponse(BaseModel):
+    """Response from login endpoint."""
+
+    user: User
+    setup_mode_admin: bool = Field(
+        default=False, description="Whether user was added to admins during setup mode."
+    )
+
+
+class AuthStatusResponse(BaseModel):
+    """Response model for authentication status."""
+
+    authenticated: bool
+    user: User | None = None
+
+
 GroupName: TypeAlias = MatchboxName
 """Type alias for group names."""
 
@@ -173,16 +190,10 @@ class PermissionGrant(BaseModel):
     Resource context should always be supplied.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     group_name: GroupName
     permission: PermissionType
-
-
-class AuthStatusResponse(BaseModel):
-    """Response model for authentication status."""
-
-    authenticated: bool
-    username: str | None = None
-    token: str | None = None
 
 
 CollectionName: TypeAlias = MatchboxName
@@ -737,3 +748,16 @@ class ErrorResponse(BaseModel):
     details: dict[str, Any] | None = Field(
         default=None, description="Exception-specific data for reconstruction"
     )
+
+
+class DefaultUser(StrEnum):
+    """Default user identities."""
+
+    PUBLIC = "_public"
+
+
+class DefaultGroup(StrEnum):
+    """Default group names."""
+
+    PUBLIC = "public"
+    ADMINS = "admins"

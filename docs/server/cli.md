@@ -1,50 +1,59 @@
-# Command Line Interface
+# Command line interface
 
-Matchbox comes with a Command Line Interface (CLI) that allows users to perform certain management tasks.
+Matchbox comes with a command line interface (CLI) that allows users to perform certain management tasks.
 
 To run the CLI:
+
 ```shell
-matchbox [OPTIONS] COMMAND [ARGS]
+mbx [OPTIONS] COMMAND [ARGS]
 ```
 
 To get help:
+
 ```shell
-matchbox --help
+mbx --help
 ```
 
 To get help on specific commands:
+
 ```shell
-matchbox COMMAND --help
+mbx COMMAND --help
 ```
 
-## Information commands
+## How do I?
 
-### Version
-To get the Matchbox client version, run:
-```shell
-matchbox version
+### Bootstrap Matchbox
+
+The first user is always the system admin. As soon as you run the server for the first time, log in to automatically be added to the admins group.
+
+```
+mbx login
 ```
 
-### Server status
-To get the status of the server and the Matchbox server version, run:
+### Manage permissions
+
+Permissions are defined between groups and resources. To manage groups:
+
 ```shell
-matchbox server health
+mbx groups
 ```
 
-### Auth status
-To get the authentication status of the client, run:
+For example, to manage permissions on a collection resource, see its related commands:
+
 ```shell
-matchbox auth status
+mbx collections -c COLLECTION permissions
+mbx collections -c COLLECTION grant -g GROUP -p PERMISSION
+mbx collections -c COLLECTION revoke -g GROUP -p PERMISSION
 ```
 
-## Database maintenance commands
+See [permissions](permissions.md) for more information.
 
 ### Delete orphans
+
 When resolutions are modified or deleted, it is possible that the database ends up having clusters which are not related to any table containing sources, models or evaluations. These clusters are considered orphaned, and they should be deleted regularly to reduce bloat.
 
-To do this, run:
 ```shell
-matchbox server delete-orphans
+mbx admin prune
 ```
 
 This command will print the number of orphaned clusters deleted.

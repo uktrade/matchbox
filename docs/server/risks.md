@@ -2,8 +2,8 @@ This page contains a list of known data and security caveats determined by the c
 
 ## Sensitive data sources
 
-!!! danger
-    Matchbox allows **any user** to view all identifier values in an indexed dataset. There is no authorisation model for reading data. Anyone can query any source.
+!!! warning
+    Matchbox allows users with **read** permission on a collection to view all identifier values in that collection's indexed datasets.
 
 ### What's usually safe
 
@@ -26,12 +26,10 @@ Problems arise when:
 !!! tip
     Do not use Matchbox to index sources where the key fields are sensitive data.
 
-Future versions of Matchbox will address this limitation by introducing an authorisation mechanism.
-
 ## Table metadata
 
-!!! danger
-    Matchbox allows any user see the **list of fields** and extract-transform logic of an indexed source.
+!!! warning
+    Matchbox allows users with **read** permission to see the **list of fields** and extract-transform logic of an indexed source.
 
 !!! tip
     Avoid indexing sources where the **field names** or **structure** are considered sensitive.
@@ -44,7 +42,7 @@ Future versions of Matchbox will address this limitation by introducing an autho
 **Example**:
 
 * A source from `RelationalDBLocation` stores SQL queries used during indexing.
-* If an automated pipeline reuses these queries, a malicious user could inject harmful SQL (e.g., `DROP DATABASE`).
+* If an automated pipeline reuses these queries, a malicious user with **write** permission could inject harmful SQL (e.g., `DROP DATABASE`).
 
 Matchbox performs **basic validation**, but **cannot guarantee query safety**.
 

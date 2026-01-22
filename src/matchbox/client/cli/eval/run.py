@@ -6,14 +6,13 @@ from typing import Annotated
 import typer
 from sqlalchemy import create_engine
 
+from matchbox.client.cli.annotations import CollectionOpt
 from matchbox.client.cli.eval.app import EntityResolutionApp
 from matchbox.client.dags import DAG
 
 
 def evaluate(
-    collection: Annotated[
-        str, typer.Option("--collection", "-c", help="Collection name (required)")
-    ],
+    collection: CollectionOpt,
     resolution: Annotated[
         str | None,
         typer.Option(
@@ -30,12 +29,6 @@ def evaluate(
             help="Whether to evaluate the pending DAG, instead of the default",
         ),
     ] = False,
-    user: Annotated[
-        str | None,
-        typer.Option(
-            "--user", "-u", help="Username for authentication (overrides settings)"
-        ),
-    ] = None,
     warehouse: Annotated[
         str | None,
         typer.Option(
@@ -109,7 +102,6 @@ def evaluate(
         # Create app with loaded DAG (not warehouse string)
         app = EntityResolutionApp(
             resolution=resolution,
-            user=user,
             dag=dag,
             session_tag=session_tag,
             sample_file=sample_file,

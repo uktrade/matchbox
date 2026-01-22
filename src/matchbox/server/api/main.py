@@ -39,15 +39,18 @@ from matchbox.common.dtos import (
     SourceResolutionName,
     SourceResolutionPath,
 )
-from matchbox.common.exceptions import MatchboxHttpException
+from matchbox.common.exceptions import (
+    MatchboxHttpException,
+)
 from matchbox.common.logging import logger
 from matchbox.server.api.dependencies import (
     BackendDependency,
     ParquetResponse,
-    authorisation_dependencies,
+    RequireCollectionRead,
+    RequireSysAdmin,
     lifespan,
 )
-from matchbox.server.api.routers import auth, collection, eval
+from matchbox.server.api.routers import auth, collections, eval, groups
 
 app = FastAPI(
     title="matchbox API",
@@ -56,9 +59,10 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
-app.include_router(collection.router)
+app.include_router(collections.router)
 app.include_router(eval.router)
 app.include_router(auth.router)
+app.include_router(groups.router)
 
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -131,7 +135,12 @@ async def healthcheck() -> OKMessage:
 
 @app.get(
     "/query",
-    responses={404: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    dependencies=[Depends(RequireCollectionRead)],
 )
 def query(
     backend: BackendDependency,
@@ -166,7 +175,12 @@ def query(
 
 @app.get(
     "/match",
-    responses={404: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    dependencies=[Depends(RequireCollectionRead)],
 )
 def match(
     backend: BackendDependency,
@@ -202,7 +216,10 @@ def match(
 # Admin
 
 
-@app.get("/database/count")
+@app.get(
+    "/database/count",
+    dependencies=[Depends(RequireSysAdmin)],
+)
 def count_backend_items(
     backend: BackendDependency,
     entity: BackendCountableType | None = None,
@@ -227,7 +244,7 @@ def count_backend_items(
             **ResourceOperationStatus.error_examples(),
         },
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireSysAdmin)],
 )
 def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
     """Delete orphans."""
@@ -257,7 +274,7 @@ def delete_orphans(backend: BackendDependency) -> ResourceOperationStatus:
         409: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
-    dependencies=[Depends(authorisation_dependencies)],
+    dependencies=[Depends(RequireSysAdmin)],
 )
 def clear_database(
     backend: BackendDependency,

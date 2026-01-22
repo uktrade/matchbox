@@ -19,6 +19,7 @@ nav:
 - Server:
   - Matchbox concepts: server/concepts.md
   - Installation: server/install.md
+  - Access control and permissions: server/permissions.md
   - CLI: server/cli.md
   - Data and security risks: server/risks.md
   - API: 

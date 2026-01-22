@@ -1,94 +1,142 @@
-"""Tests for CLI main entry point."""
+"""Smoke test for CLI entry point."""
 
-import re
+from io import StringIO
+from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
-from matchbox.client.cli.main import app
+from matchbox.client.cli.main import app, run
+from matchbox.common.dtos import AuthStatusResponse, OKMessage, User
+from matchbox.common.exceptions import (
+    MatchboxSystemGroupError,
+    MatchboxUnhandledServerResponse,
+)
 
 
 class TestMainCLI:
-    """Test the main CLI entry point."""
+    """Test core and miscellanious CLI commands."""
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
         self.runner = CliRunner()
 
-    def test_help_command(self) -> None:
-        """Test that help command works."""
-        result = self.runner.invoke(app, ["--help"])
-        assert result.exit_code == 0
-        # With a single command, Typer shows that command's help directly
-        assert "interactive entity resolution" in result.output.lower()
-
-    def test_version_command(self) -> None:
-        """Test that version command works."""
+    def test_entry_point_loads(self) -> None:
+        """Ensure the app can at least start and show version."""
         result = self.runner.invoke(app, ["version"])
         assert result.exit_code == 0
+        assert "matchbox" in result.stdout.lower()
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-
-        assert "matchbox version:" in clean_output.lower()
-
-    def test_version_help(self) -> None:
-        """Test that version help works."""
-        result = self.runner.invoke(app, ["version", "--help"])
+    @patch("matchbox.client._handler.healthcheck")
+    def test_healthcheck(self, mock_healthcheck: MagicMock) -> None:
+        """Test the healthcheck command works."""
+        test_value = OKMessage(status="OK", version="0.0.0.dev0")
+        mock_healthcheck.return_value = test_value
+        result = self.runner.invoke(app, ["health"])
         assert result.exit_code == 0
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert OKMessage.model_validate_json(result.stdout) == test_value
 
-        assert "shows the local matchbox version" in clean_output.lower()
+    @patch("matchbox.client._handler.auth_status")
+    def test_auth_status(self, mock_auth: MagicMock) -> None:
+        """Test the auth status command works."""
+        test_value = AuthStatusResponse(
+            authenticated=True,
+            user=User(
+                sub="alice",
+                email="test@example.com",
+            ),
+        )
+        mock_auth.return_value = test_value
 
-    def test_server_help(self) -> None:
-        """Test that server help works."""
-        result = self.runner.invoke(app, ["server", "--help"])
+        result = self.runner.invoke(app, ["auth", "status"])
         assert result.exit_code == 0
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert AuthStatusResponse.model_validate_json(result.stdout) == test_value
 
-        assert "manage matchbox server" in clean_output.lower()
+    @patch("matchbox.client._handler.delete_group")
+    @patch("sys.stderr", new_callable=StringIO)
+    def test_graceful_error_handling(
+        self, mock_stderr: StringIO, mock_delete: MagicMock
+    ) -> None:
+        """Ensure MatchboxHttpExceptions are displayed without stack traces.
 
-    def test_server_health_help(self) -> None:
-        """Test that server health help works."""
-        result = self.runner.invoke(app, ["server", "health", "--help"])
-        assert result.exit_code == 0
+        This test uses the run() wrapper rather than invoking the typer app directly,
+        because run() is the actual entry point used by the installed console script.
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        The sys.argv patch simulates command-line arguments. When a user runs:
 
-        assert "checks the health" in clean_output.lower()
+            mbx groups delete -g public --certain
 
-    def test_auth_help(self) -> None:
-        """Test that auth help works."""
-        result = self.runner.invoke(app, ["auth", "--help"])
-        assert result.exit_code == 0
+        Python sets sys.argv to ['mbx', 'groups', 'delete', '-g', 'public',
+        '--certain'].
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        By patching sys.argv, we simulate this command without actually running it
+        from the command line, allowing the Typer app to parse these arguments normally.
+        """
+        mock_delete.side_effect = MatchboxSystemGroupError(
+            message="Cannot delete system group 'public'"
+        )
 
-        assert "manage matchbox authentication" in clean_output.lower()
+        # Mock sys.argv to simulate CLI arguments
+        with (
+            patch("sys.argv", ["mbx", "groups", "delete", "-g", "public", "--certain"]),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            run()
 
-    def test_auth_status_help(self) -> None:
-        """Test that auth status help works."""
-        result = self.runner.invoke(app, ["auth", "status", "--help"])
-        assert result.exit_code == 0
+        assert exc_info.value.code == 1
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        stderr_output = mock_stderr.getvalue()
 
-        assert "checks the authentication status" in clean_output.lower()
+        # 1. Ensure clean message
+        assert "Error:" in stderr_output
+        assert "Cannot delete system group 'public'" in stderr_output
 
-    def test_eval_start_help(self) -> None:
-        """Test that eval help works."""
-        result = self.runner.invoke(app, ["eval", "--help"])
-        assert result.exit_code == 0
+        # 2. Ensure no Python traceback
+        assert "Traceback (most recent call last)" not in stderr_output
 
-        # Strip ANSI codes for reliable text matching
-        clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    @patch("matchbox.client._handler.delete_group")
+    @patch("sys.stderr", new_callable=StringIO)
+    def test_non_http_exceptions_show_traceback(
+        self, mock_stderr: StringIO, mock_delete: MagicMock
+    ) -> None:
+        """Ensure non-HTTP exceptions still show full tracebacks.
 
-        assert "interactive entity resolution" in clean_output.lower()
-        assert "--collection" in clean_output
-        assert "--resolution" in clean_output
+        Only MatchboxHttpException and its subclasses should be caught and
+        displayed cleanly. Other exceptions should propagate normally with
+        full tracebacks for debugging purposes.
+        """
+        # Raise a non-HTTP exception
+        mock_delete.side_effect = ValueError("Something went wrong internally")
+
+        with (
+            patch("sys.argv", ["mbx", "groups", "delete", "-g", "public", "--certain"]),
+            pytest.raises(ValueError, match="Something went wrong internally"),
+        ):
+            # This should raise ValueError, not SystemExit
+            run()
+
+    @patch("matchbox.client._handler.delete_group")
+    def test_server_error_shows_traceback(self, mock_delete: MagicMock) -> None:
+        """Ensure unhandled server errors (500s) show a full traceback.
+
+        If the server returns a 500 or an exception not in the HTTP registry (like
+        MatchboxConnectionError), the client raises MatchboxUnhandledServerResponse.
+
+        This is NOT a MatchboxHttpException, so it should bypass the clean error
+        handling and show a traceback.
+        """
+        # Simulate a 500 Internal Server Error from the API
+        # The client handler converts unknown server errors into this exception
+        mock_delete.side_effect = MatchboxUnhandledServerResponse(
+            http_status=500, details="MatchboxConnectionError: Database unavailable"
+        )
+
+        with (
+            patch("sys.argv", ["mbx", "groups", "delete", "-g", "public", "--certain"]),
+            pytest.raises(MatchboxUnhandledServerResponse) as exc_info,
+        ):
+            run()
+
+        assert "MatchboxConnectionError" in str(exc_info.value)

@@ -9,7 +9,11 @@ from test.fixtures.db import BACKENDS
 
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
+    DefaultGroup,
+    GroupName,
     ModelConfig,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionPath,
     SourceConfig,
@@ -52,7 +56,20 @@ class TestMatchboxCollectionsBackend:
             assert "test_collection" not in collections_pre
 
             # Create new collection and verify its initial properties
-            test_collection_created = self.backend.create_collection("test_collection")
+            default_permissions = [
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
+                ),
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
+                ),
+            ]
+            test_collection_created = self.backend.create_collection(
+                name="test_collection",
+                permissions=default_permissions,
+            )
 
             assert test_collection_created.runs == []  # No versions yet
 
@@ -61,7 +78,10 @@ class TestMatchboxCollectionsBackend:
 
             # Verify duplicate creation is rejected
             with pytest.raises(MatchboxCollectionAlreadyExists):
-                self.backend.create_collection("test_collection")
+                self.backend.create_collection(
+                    name="test_collection",
+                    permissions=default_permissions,
+                )
 
             test_collection = self.backend.get_collection("test_collection")
 
@@ -76,6 +96,88 @@ class TestMatchboxCollectionsBackend:
             with pytest.raises(MatchboxCollectionNotFoundError):
                 self.backend.delete_collection("test_collection", certain=False)
 
+    def test_collection_with_custom_permissions(self) -> None:
+        """Test creating a collection with custom permissions."""
+        with self.scenario(self.backend, "closed_collection") as _:
+            # The 'restricted' collection already has custom permissions
+            # Verify permissions were set correctly
+            grants = self.backend.get_permissions("restricted")
+
+            # Should have READ for readers, WRITE for writers
+            assert len(grants) == 3
+            assert (
+                PermissionGrant(
+                    group_name=GroupName("readers"), permission=PermissionType.READ
+                )
+                in grants
+            )
+            assert (
+                PermissionGrant(
+                    group_name=GroupName("writers"), permission=PermissionType.WRITE
+                )
+                in grants
+            )
+
+    def test_collection_default_permissions(self) -> None:
+        """Test that collections get default public read/write permissions."""
+        with self.scenario(self.backend, "bare") as _:
+            # Create collection with default permissions
+            default_permissions = [
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
+                ),
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
+                ),
+            ]
+            self.backend.create_collection(
+                name="default_perms_collection",
+                permissions=default_permissions,
+            )
+
+            # Verify default permissions were set
+            grants = self.backend.get_permissions("default_perms_collection")
+
+            assert len(grants) == 2
+            assert (
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
+                )
+                in grants
+            )
+            assert (
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
+                )
+                in grants
+            )
+
+            self.backend.delete_collection("default_perms_collection", certain=True)
+
+    def test_collection_empty_permissions(self) -> None:
+        """Test creating a collection with no permissions."""
+        with self.scenario(self.backend, "closed_collection") as _:
+            # Create collection with explicitly empty permissions
+            self.backend.create_collection(
+                name="no_perms_collection",
+                permissions=[],
+            )
+
+            # Verify no permissions were set
+            grants = self.backend.get_permissions("no_perms_collection")
+            assert len(grants) == 0
+
+            # Verify that dave (who is only in public group) cannot access it
+            assert not self.backend.check_permission(
+                "dave", PermissionType.READ, "no_perms_collection"
+            )
+
+            self.backend.delete_collection("no_perms_collection", certain=True)
+
     # Run management
 
     def test_runs(self) -> None:
@@ -85,7 +187,20 @@ class TestMatchboxCollectionsBackend:
             assert "test_collection" not in collections_pre
 
             # Create parent collection with no runs initially
-            test_collection_pre = self.backend.create_collection("test_collection")
+            default_permissions = [
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.READ,
+                ),
+                PermissionGrant(
+                    group_name=GroupName(DefaultGroup.PUBLIC),
+                    permission=PermissionType.WRITE,
+                ),
+            ]
+            test_collection_pre = self.backend.create_collection(
+                name="test_collection",
+                permissions=default_permissions,
+            )
             assert len(test_collection_pre.runs) == 0  # No runs yet
 
             # Create first run and check default properties
@@ -236,7 +351,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_index_new_source(self) -> None:
         """Test that indexing a new source works."""
-        with self.scenario(self.backend, "bare") as dag_testkit:
+        with self.scenario(self.backend, "preindex") as dag_testkit:
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
 
             assert self.backend.model_clusters.count() == 0
@@ -338,7 +453,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_index_empty_source(self) -> None:
         """Can insert and retrieve empty source data"""
-        with self.scenario(self.backend, "bare") as dag_testkit:
+        with self.scenario(self.backend, "preindex") as dag_testkit:
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn")
             crn_testkit.data_hashes = crn_testkit.data_hashes.slice(length=0)
             crn_testkit.fake_run()
@@ -358,7 +473,7 @@ class TestMatchboxCollectionsBackend:
 
     def test_index_different_resolution_same_hashes(self) -> None:
         """Test that indexing data with the same hashes but different sources works."""
-        with self.scenario(self.backend, "bare") as dag_testkit:
+        with self.scenario(self.backend, "preindex") as dag_testkit:
             # Prepare original source
             crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
             # Create new source with same hashes

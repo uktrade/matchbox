@@ -18,11 +18,11 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
-from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import (
+    BackendResourceType,
     CollectionName,
     LocationConfig,
     ModelType,
@@ -32,6 +32,7 @@ from matchbox.common.dtos import (
     RunID,
     UploadStage,
 )
+from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
 from matchbox.common.dtos import Resolution as CommonResolution
 from matchbox.common.dtos import Run as CommonRun
@@ -42,6 +43,10 @@ from matchbox.common.exceptions import (
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
+)
+from matchbox.server.base import (
+    DEFAULT_GROUPS,
+    DEFAULT_PERMISSIONS,
 )
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
@@ -451,25 +456,29 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         if not run_obj:
             raise MatchboxRunNotFoundError(run_id=path.run)
 
-        # Check if resolution already exists within run
-        existing_resolutions: Resolutions = run_obj.resolutions
-        for res in existing_resolutions:
-            if res.name == path.name:
-                raise MatchboxResolutionAlreadyExists(
-                    f"Resolution {path.name} already exists"
-                )
-
-        # Create new resolution
-        resolution_orm = cls(
-            run_id=run_obj.run_id,
-            name=path.name,
-            description=resolution.description,
-            type=resolution.resolution_type.value,
-            truth=resolution.truth,
-            fingerprint=resolution.fingerprint,
+        # Attempt to insert new resolution
+        result = session.execute(
+            insert(cls)
+            .values(
+                run_id=run_obj.run_id,
+                name=path.name,
+                description=resolution.description,
+                type=resolution.resolution_type.value,
+                truth=resolution.truth,
+                fingerprint=resolution.fingerprint,
+            )
+            .on_conflict_do_nothing(constraint="resolutions_name_key")
+            .returning(cls.resolution_id)
         )
-        session.add(resolution_orm)
-        session.flush()  # Get resolution_id
+
+        resolution_id = result.scalar_one_or_none()
+        if resolution_id is None:
+            raise MatchboxResolutionAlreadyExists(
+                f"Resolution {path.name} already exists"
+            )
+
+        # Fetch the newly created resolution
+        resolution_orm = session.get(cls, resolution_id)
 
         if resolution.resolution_type == ResolutionType.SOURCE:
             resolution_orm.source_config = SourceConfigs.from_dto(resolution.config)
@@ -939,6 +948,78 @@ class Groups(CountMixin, MBDB.MatchboxBase):
     # Constraints and indices
     __table_args__ = (UniqueConstraint("name", name="groups_name_key"),)
 
+    @classmethod
+    def initialise(cls) -> None:
+        """Create standard users, groups, and permissions."""
+        with MBDB.get_session() as session:
+            # Upsert groups
+            for group_dto in DEFAULT_GROUPS:
+                session.execute(
+                    insert(cls)
+                    .values(
+                        name=group_dto.name,
+                        description=group_dto.description,
+                        is_system=group_dto.is_system,
+                    )
+                    .on_conflict_do_nothing(index_elements=["name"])
+                )
+
+            # Collect and upsert all users
+            all_users = {
+                user_dto.user_name: user_dto
+                for group_dto in DEFAULT_GROUPS
+                for user_dto in (group_dto.members or [])
+            }
+            for user_dto in all_users.values():
+                session.execute(
+                    insert(Users)
+                    .values(name=user_dto.user_name, email=user_dto.email)
+                    .on_conflict_do_nothing(index_elements=["name"])
+                )
+
+            session.flush()
+
+            # Cache lookups
+            groups = {g.name: g for g in session.execute(select(cls)).scalars()}
+            users = {u.name: u for u in session.execute(select(Users)).scalars()}
+
+            # Upsert user-group memberships
+            for group_dto in DEFAULT_GROUPS:
+                group_obj = groups[group_dto.name]
+                for user_dto in group_dto.members or []:
+                    user_obj = users[user_dto.user_name]
+                    session.execute(
+                        insert(UserGroups)
+                        .values(user_id=user_obj.user_id, group_id=group_obj.group_id)
+                        .on_conflict_do_nothing()
+                    )
+
+            # Upsert permissions
+            for grant, resource_type, resource_name in DEFAULT_PERMISSIONS:
+                collection_id = None
+                if resource_name and resource_type == BackendResourceType.COLLECTION:
+                    collection = session.scalar(
+                        select(Collections).where(Collections.name == resource_name)
+                    )
+                    if not collection:
+                        raise MatchboxCollectionNotFoundError(name=resource_name)
+                    collection_id = collection.collection_id
+
+                session.execute(
+                    insert(Permissions)
+                    .values(
+                        group_id=groups[grant.group_name].group_id,
+                        permission=grant.permission,
+                        is_system=True
+                        if resource_type == BackendResourceType.SYSTEM
+                        else None,
+                        collection_id=collection_id,
+                    )
+                    .on_conflict_do_nothing(constraint="unique_permission_grant")
+                )
+
+            session.commit()
+
 
 class Permissions(CountMixin, MBDB.MatchboxBase):
     """Permissions granted to groups on resources.
@@ -993,6 +1074,7 @@ class Permissions(CountMixin, MBDB.MatchboxBase):
             "collection_id",
             "is_system",
             name="unique_permission_grant",
+            postgresql_nulls_not_distinct=True,
         ),
     )
 

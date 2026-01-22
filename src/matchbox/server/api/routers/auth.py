@@ -1,87 +1,45 @@
 """Authentication routes for the Matchbox server."""
 
-import json
-from typing import Annotated
-
 from fastapi import APIRouter, Security
 
-from matchbox.common.dtos import AuthStatusResponse, User
-from matchbox.common.exceptions import MatchboxAuthenticationError
+from matchbox.common.dtos import AuthStatusResponse, DefaultUser, LoginResponse
 from matchbox.server.api.dependencies import (
     JWT_HEADER,
     BackendDependency,
+    CurrentUserDependency,
     SettingsDependency,
-    b64_decode,
     validate_jwt,
 )
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
-def get_username_from_token(token: str | None) -> str | None:
-    """Extract username from JWT token payload.
-
-    Args:
-        token: The JWT token string.
-
-    Returns:
-        The username from the 'sub' claim, or None if token is invalid.
-    """
-    if not token:
-        return None
-
-    try:
-        parts = token.encode().split(b".")
-        if len(parts) != 3:
-            return None
-
-        _, payload_b64, _ = parts
-        payload = json.loads(b64_decode(payload_b64))
-        return payload.get("sub")
-    except Exception as _:  # noqa: BLE001
-        return None
-
-
 @router.post("/login")
 def login(
     backend: BackendDependency,
-    credentials: User,
-) -> User:
-    """Receive a User with a username and returns it with a user ID."""
-    return backend.login(credentials)
+    settings: SettingsDependency,
+    client_token: str = Security(JWT_HEADER),
+) -> LoginResponse:
+    """Upsert the user found in the JWT.
+
+    If in setup mode, will add the user to the admins group.
+    """
+    user = validate_jwt(settings=settings, client_token=client_token)
+    return backend.login(user=user)
 
 
 @router.get("/status")
 async def authentication_status(
     settings: SettingsDependency,
-    token: Annotated[str | None, Security(JWT_HEADER)] = None,
+    user: CurrentUserDependency,
 ) -> AuthStatusResponse:
     """Check authentication status and return user details.
 
-    Returns the current authentication status, including the username
-    and JWT token if the user is authenticated.
+    Returns the current authentication status and user.
     """
     if not settings.authorisation:
-        return AuthStatusResponse(
-            authenticated=False,
-            username=None,
-            token=None,
-        )
+        return AuthStatusResponse(authenticated=False)
 
-    # Try to validate the JWT
-    try:
-        validate_jwt(settings, token)
-        username = get_username_from_token(token)
+    is_authenticated = user is not None and user.user_name != DefaultUser.PUBLIC
 
-        return AuthStatusResponse(
-            authenticated=True,
-            username=username,
-            token=token,
-        )
-    except MatchboxAuthenticationError:
-        # JWT validation failed
-        return AuthStatusResponse(
-            authenticated=False,
-            username=None,
-            token=token,
-        )
+    return AuthStatusResponse(authenticated=is_authenticated, user=user)

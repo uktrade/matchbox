@@ -32,3 +32,4 @@ class TestMatchboxMainBackend:
             assert isinstance(self.backend.creates.count(), int)
             assert isinstance(self.backend.merges.count(), int)
             assert isinstance(self.backend.proposes.count(), int)
+            assert isinstance(self.backend.users.count(), int)

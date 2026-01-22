@@ -1,5 +1,8 @@
+"""Integration tests for evaluation workflows."""
+
 import tempfile
 from collections.abc import Generator
+from unittest.mock import patch
 
 import pytest
 from httpx import Client
@@ -47,6 +50,7 @@ class TestE2EModelEvaluation:
         final_resolution_1_name = "final_1"
         final_resolution_2_name = "final_2"
         self.warehouse_engine = sqla_postgres_warehouse
+        self.client = matchbox_client
 
         # Create a SINGLE source with duplicates
         source_parameters = (
@@ -154,7 +158,9 @@ class TestE2EModelEvaluation:
 
         self.dag2 = dag2
 
-        yield
+        # Patch the global client with the fixture client
+        with patch("matchbox.client._handler.main.CLIENT", new=self.client):
+            yield
 
         # Teardown
         response = matchbox_client.delete("/database", params={"certain": "true"})
@@ -165,7 +171,6 @@ class TestE2EModelEvaluation:
             await pilot.pause()
 
             # Verify app authenticated and loaded samples from real warehouse data
-            assert app.user_name is not None
             assert len(app.queue.sessions) > 0, "Should load samples from warehouse"
 
             # Submit one judgement to verify data flow
@@ -203,7 +208,6 @@ class TestE2EModelEvaluation:
             resolution=dag.final_step.resolution_path,
             num_samples=2,
             session_tag="eval_session1",
-            user="alice",
             dag=dag,
         )
 
@@ -237,7 +241,6 @@ class TestE2EModelEvaluation:
             app = EntityResolutionApp(
                 num_samples=2,
                 session_tag="eval_session1",
-                user="alice",
                 dag=dag,
                 sample_file=tmp_file.name,
             )

@@ -8,7 +8,8 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 from pyarrow import Table
-from sqlalchemy import BIGINT, func, select
+from sqlalchemy import BIGINT, CursorResult, func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from matchbox.common.arrow import (
@@ -49,7 +50,7 @@ else:
 class MatchboxPostgresEvaluationMixin:
     """Evaluation mixin for the PostgreSQL adapter for Matchbox."""
 
-    def insert_judgement(self, judgement: CommonJudgement) -> None:  # noqa: D102
+    def insert_judgement(self, user_name: str, judgement: CommonJudgement) -> None:  # noqa: D102
         def get_or_create_cluster(leaves: list[int], session: Session) -> int:
             # Compute hash corresponding to set of source clusters (leaves)
             leaf_hashes = [
@@ -60,20 +61,32 @@ class MatchboxPostgresEvaluationMixin:
             ]
             cluster_hash = hash_cluster_leaves(leaf_hashes)
 
-            # Add new cluster to session, if it doesn't exist already
-            if not (
-                cluster_id := session.scalar(
+            # Upsert cluster
+            result: CursorResult = session.execute(
+                insert(Clusters)
+                .values(cluster_hash=cluster_hash)
+                .on_conflict_do_nothing(index_elements=["cluster_hash"])
+                .returning(Clusters.cluster_id)
+            )
+
+            # Get cluster_id
+            newly_created = (cluster_id := result.scalar_one_or_none()) is not None
+
+            if not newly_created:
+                cluster_id = session.scalar(
                     select(Clusters.cluster_id).where(
                         Clusters.cluster_hash == cluster_hash
                     )
                 )
-            ):
-                new_c = Clusters(cluster_hash=cluster_hash)
-                session.add(new_c)
-                session.flush()
-                cluster_id = new_c.cluster_id
+
+            # Only insert Contains relationships if we created a new cluster
+            if newly_created:
                 for leaf_id in leaves:
-                    session.add(Contains(root=cluster_id, leaf=leaf_id))
+                    session.execute(
+                        insert(Contains)
+                        .values(root=cluster_id, leaf=leaf_id)
+                        .on_conflict_do_nothing()
+                    )
 
             return cluster_id
 
@@ -81,35 +94,29 @@ class MatchboxPostgresEvaluationMixin:
         ids = list(chain(*judgement.endorsed)) + judgement.shown
         self.validate_ids(ids)
 
-        # Check that the user exists
         with MBDB.get_session() as session:
-            user = session.scalar(
-                select(Users).where(Users.name == judgement.user_name)
-            )
+            # Check that the user exists
+            user = session.scalar(select(Users).where(Users.name == user_name))
             if not user:
-                raise MatchboxUserNotFoundError(
-                    f"User '{judgement.user_name}' not found"
-                )
+                raise MatchboxUserNotFoundError(f"User '{user_name}' not found")
 
-        with MBDB.get_session() as session:
+            # Get or create shown cluster
             shown_id = get_or_create_cluster(judgement.shown, session)
-            session.commit()
 
+            # Insert all judgements
             for leaves in judgement.endorsed:
-                # If cluster with this hash does not exist, create it.
-                # Note that only endorsed clusters might be new. The cluster shown to
-                # the user is guaranteed to exist in the backend; we have checked above.
-
-                session.add(
-                    EvalJudgements(
+                endorsed_id = get_or_create_cluster(leaves, session)
+                session.execute(
+                    insert(EvalJudgements).values(
                         user_id=user.user_id,
                         tag=judgement.tag,
                         shown_cluster_id=shown_id,
-                        endorsed_cluster_id=get_or_create_cluster(leaves, session),
+                        endorsed_cluster_id=endorsed_id,
                         timestamp=datetime.now(UTC),
                     )
                 )
-                session.commit()
+
+            session.commit()
 
     def get_judgements(self, tag: str | None = None) -> tuple[Table, Table]:  # noqa: D102
         def _cast_tables(

@@ -2,13 +2,14 @@
 
 from psycopg.errors import LockNotAvailable
 from pyarrow import Table
-from sqlalchemy import delete, select, update
+from sqlalchemy import CursorResult, delete, select, update
 
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
     ModelResolutionPath,
+    PermissionGrant,
     Resolution,
     ResolutionPath,
     ResolutionType,
@@ -36,8 +37,9 @@ from matchbox.server.postgresql.orm import (
     Runs,
     SourceConfigs,
     SourceFields,
+    insert,
 )
-from matchbox.server.postgresql.utils.db import compile_sql
+from matchbox.server.postgresql.utils.db import compile_sql, grant_permission
 from matchbox.server.postgresql.utils.insert import insert_hashes, insert_results
 
 
@@ -46,15 +48,36 @@ class MatchboxPostgresCollectionsMixin:
 
     # Collection management
 
-    def create_collection(self, name: CollectionName) -> Collection:  # noqa: D102
+    def create_collection(  # noqa: D102
+        self, name: CollectionName, permissions: list[PermissionGrant]
+    ) -> Collection:
         with MBDB.get_session() as session:
-            if (session.query(Collections).filter_by(name=name).first()) is None:
-                new_collection = Collections(name=name)
-                session.add(new_collection)
-                session.commit()
-                return new_collection.to_dto()
-            else:
+            # Attempt to insert the collection
+            result: CursorResult = session.execute(
+                insert(Collections)
+                .values(name=name)
+                .on_conflict_do_nothing(constraint="collections_name_key")
+                .returning(Collections.collection_id)
+            )
+
+            collection_id = result.scalar_one_or_none()
+            if collection_id is None:
                 raise MatchboxCollectionAlreadyExists
+
+            # Get the newly created collection
+            new_collection = session.get(Collections, collection_id)
+
+            # Grant initial permissions
+            for permission_grant in permissions:
+                grant_permission(
+                    session=session,
+                    group_name=permission_grant.group_name,
+                    permission=permission_grant.permission,
+                    resource=name,
+                )
+
+            session.commit()
+            return new_collection.to_dto()
 
     def get_collection(  # noqa: D102
         self, name: CollectionName

@@ -10,6 +10,7 @@ from matchbox.server.postgresql.adapter.collections import (
     MatchboxPostgresCollectionsMixin,
 )
 from matchbox.server.postgresql.adapter.eval import MatchboxPostgresEvaluationMixin
+from matchbox.server.postgresql.adapter.groups import MatchboxPostgresGroupsMixin
 from matchbox.server.postgresql.adapter.query import MatchboxPostgresQueryMixin
 from matchbox.server.postgresql.db import MBDB, MatchboxPostgresSettings
 from matchbox.server.postgresql.orm import (
@@ -17,9 +18,11 @@ from matchbox.server.postgresql.orm import (
     ClusterSourceKey,
     Contains,
     EvalJudgements,
+    Groups,
     Probabilities,
     Resolutions,
     SourceConfigs,
+    Users,
 )
 
 
@@ -115,6 +118,7 @@ class MatchboxPostgres(
     MatchboxPostgresEvaluationMixin,
     MatchboxPostgresCollectionsMixin,
     MatchboxPostgresAdminMixin,
+    MatchboxPostgresGroupsMixin,
     MatchboxDBAdapter,
 ):
     """A PostgreSQL adapter for Matchbox."""
@@ -125,6 +129,7 @@ class MatchboxPostgres(
         MBDB.settings = settings
         MBDB.run_migrations()
 
+        Groups.initialise()
         self.sources = SourceConfigs
         self.models = FilteredResolutions(sources=False, models=True)
         self.source_clusters = FilteredClusters(has_source=True)
@@ -134,3 +139,4 @@ class MatchboxPostgres(
         self.merges = Contains
         self.proposes = FilteredProbabilities()
         self.source_resolutions = FilteredResolutions(sources=True, models=False)
+        self.users = Users

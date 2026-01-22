@@ -133,16 +133,22 @@ def test_auth_status(
     expected_authenticated: bool,
 ) -> None:
     """Test auth status with and without valid JWT token."""
-    test_client, _, mock_settings = api_client_and_mocks
+    test_client, mock_backend, mock_settings = api_client_and_mocks
     private_key, _ = api_EdDSA_key_pair
     mock_settings.authorisation = True
 
-    username = "test.user@email.com"
+    user = User(user_name="alice", email="alice@example.com")
+    mock_backend.login = Mock(
+        return_value=LoginResponse(
+            user=user,
+            setup_mode_admin=False,
+        )
+    )
 
     if has_token:
         token = generate_json_web_token(
             private_key_bytes=private_key,
-            sub=username,
+            sub=user.user_name,
             api_root=settings.api_root,
         )
         test_client.headers["Authorization"] = token
@@ -155,7 +161,10 @@ def test_auth_status(
     result = AuthStatusResponse.model_validate(response.json())
     assert result.authenticated is expected_authenticated
     if expected_authenticated:
-        assert result.username == username
+        assert result.user is not None
+        assert result.user.user_name == user.user_name
+    else:
+        assert result.user.user_name == DefaultUser.PUBLIC
 
 
 PROTECTED_ROUTES: list[ParameterSet] = [

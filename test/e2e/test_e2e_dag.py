@@ -1,3 +1,5 @@
+"""Integration tests for building pipelines with DAGs."""
+
 import logging
 from collections.abc import Generator
 

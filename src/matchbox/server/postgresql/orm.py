@@ -456,25 +456,29 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         if not run_obj:
             raise MatchboxRunNotFoundError(run_id=path.run)
 
-        # Check if resolution already exists within run
-        existing_resolutions: Resolutions = run_obj.resolutions
-        for res in existing_resolutions:
-            if res.name == path.name:
-                raise MatchboxResolutionAlreadyExists(
-                    f"Resolution {path.name} already exists"
-                )
-
-        # Create new resolution
-        resolution_orm = cls(
-            run_id=run_obj.run_id,
-            name=path.name,
-            description=resolution.description,
-            type=resolution.resolution_type.value,
-            truth=resolution.truth,
-            fingerprint=resolution.fingerprint,
+        # Attempt to insert new resolution
+        result = session.execute(
+            insert(cls)
+            .values(
+                run_id=run_obj.run_id,
+                name=path.name,
+                description=resolution.description,
+                type=resolution.resolution_type.value,
+                truth=resolution.truth,
+                fingerprint=resolution.fingerprint,
+            )
+            .on_conflict_do_nothing(constraint="resolutions_name_key")
+            .returning(cls.resolution_id)
         )
-        session.add(resolution_orm)
-        session.flush()  # Get resolution_id
+
+        resolution_id = result.scalar_one_or_none()
+        if resolution_id is None:
+            raise MatchboxResolutionAlreadyExists(
+                f"Resolution {path.name} already exists"
+            )
+
+        # Fetch the newly created resolution
+        resolution_orm = session.get(cls, resolution_id)
 
         if resolution.resolution_type == ResolutionType.SOURCE:
             resolution_orm.source_config = SourceConfigs.from_dto(resolution.config)

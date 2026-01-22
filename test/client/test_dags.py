@@ -18,8 +18,11 @@ from matchbox.common.arrow import SCHEMA_QUERY_WITH_LEAVES, table_to_buffer
 from matchbox.common.dtos import (
     Collection,
     CRUDOperation,
+    DefaultGroup,
     ErrorResponse,
     Match,
+    PermissionGrant,
+    PermissionType,
     Resolution,
     ResolutionName,
     ResolutionPath,
@@ -781,10 +784,7 @@ def test_from_resolution() -> None:
         )
 
 
-def test_dag_creates_new_collection(
-    matchbox_api: MockRouter,
-    sqla_sqlite_warehouse: Engine,
-) -> None:
+def test_dag_creates_new_collection(matchbox_api: MockRouter) -> None:
     """Connect creates a new collection when it doesn't exist."""
     dag = DAG(name="test_collection")
 
@@ -810,7 +810,7 @@ def test_dag_creates_new_collection(
     )
 
     # Mock collection creation
-    matchbox_api.post("/collections/test_collection").mock(
+    create_route = matchbox_api.post("/collections/test_collection").mock(
         return_value=Response(
             200,
             json=ResourceOperationStatus(
@@ -835,6 +835,70 @@ def test_dag_creates_new_collection(
     # Verify
     assert result == dag
     assert dag.run == 1
+
+    assert create_route.called
+    assert json.loads(create_route.calls.last.request.content) == [
+        PermissionGrant(
+            group_name=DefaultGroup.PUBLIC, permission=PermissionType.ADMIN
+        ).model_dump()
+    ]
+
+
+def test_dag_creates_new_collection_with_custom_admin(
+    matchbox_api: MockRouter,
+) -> None:
+    """DAG can be configured with a custom admin group."""
+    dag = DAG(name="test_collection", admin_group="custom_admins")
+
+    # Mock collection not found, then found after creation
+    matchbox_api.get("/collections/test_collection").mock(
+        side_effect=[
+            Response(
+                404,
+                json=ErrorResponse(
+                    exception_type="MatchboxCollectionNotFoundError",
+                    message="Collection not found",
+                ).model_dump(),
+            ),
+            Response(
+                200,
+                json=Collection(
+                    name="test_collection",
+                    runs=[],
+                    default_run=None,
+                ).model_dump(),
+            ),
+        ]
+    )
+
+    # Mock collection creation
+    create_route = matchbox_api.post("/collections/test_collection").mock(
+        return_value=Response(
+            200,
+            json=ResourceOperationStatus(
+                success=True,
+                target="Collection test_collection",
+                operation=CRUDOperation.CREATE,
+            ).model_dump(),
+        )
+    )
+
+    # Mock run creation
+    matchbox_api.post("/collections/test_collection/runs").mock(
+        return_value=Response(
+            200,
+            json=Run(run_id=1, resolutions={}).model_dump(),
+        )
+    )
+
+    dag.new_run()
+
+    assert create_route.called
+    assert json.loads(create_route.calls.last.request.content) == [
+        PermissionGrant(
+            group_name="custom_admins", permission=PermissionType.ADMIN
+        ).model_dump()
+    ]
 
 
 @pytest.mark.parametrize(

@@ -1,21 +1,17 @@
-"""Server management commands for Matchbox CLI."""
+"""Admin commands for Matchbox CLI."""
 
 import typer
 from rich import print
 
 from matchbox.client import _handler
+from matchbox.common.dtos import ResourceOperationStatus
 
-app = typer.Typer(help="Manage Matchbox server")
+app = typer.Typer(help="System administration and maintenance")
 
-
-@app.command()
-def health() -> None:
-    """Checks the health of the Matchbox server."""
-    response = _handler.healthcheck()
-    print(response)
+# Maintainance
 
 
-@app.command()
+@app.command("prune")
 def delete_orphans() -> None:
     """Deletes orphans from Matchbox database.
 
@@ -23,5 +19,5 @@ def delete_orphans() -> None:
     have become isolated as a result of the change or removal of resolutions.
     This command will remove them from the database.
     """
-    response = _handler.delete_orphans()
-    print(response)
+    response: ResourceOperationStatus = _handler.delete_orphans()
+    print(response.model_dump_json(indent=2))

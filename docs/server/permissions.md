@@ -1,12 +1,26 @@
+!!! warning
+    Permissions are an experimental feature in Matchbox. Disable them with `MB__SERVER__AUTHORISATION=False`.
+
+    They currently assume an external identity provider uses a public, private and JWT generated elsewhere, and places them into the Matchbox client and server environments.
+
 Matchbox uses a Role-Based Access Control (RBAC) system to manage security. Permissions are granted to **Groups**, and **Users** are assigned membership in those groups.
 
 ## Bootstrapping
 
 When a Matchbox server is first deployed, it has no admins. To bootstrap setup:
 
+```shell
+mbx login
+```
+
 * The **first user** to log in is automatically assigned to the **admins** group
-* This user becomes the initial System Administrator
+* This user becomes the initial system administrator
 * All subsequent users are treated as standard users
+
+Bootstrap as soon as the server is deployed. If you boostrap and aren't made admin, either:
+
+* Delete the database and try again
+* Contact whoever became the admin user is to add you to the admin group
 
 ## Defaults
 

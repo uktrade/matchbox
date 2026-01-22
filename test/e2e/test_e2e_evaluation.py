@@ -1,3 +1,5 @@
+"""Integration tests for evaluation workflows."""
+
 import tempfile
 from collections.abc import Generator
 from unittest.mock import patch

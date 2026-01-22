@@ -164,6 +164,13 @@ class LoginResponse(BaseModel):
     )
 
 
+class AuthStatusResponse(BaseModel):
+    """Response model for authentication status."""
+
+    authenticated: bool
+    user: User | None = None
+
+
 GroupName: TypeAlias = MatchboxName
 """Type alias for group names."""
 
@@ -187,14 +194,6 @@ class PermissionGrant(BaseModel):
 
     group_name: GroupName
     permission: PermissionType
-
-
-class AuthStatusResponse(BaseModel):
-    """Response model for authentication status."""
-
-    authenticated: bool
-    username: str | None = None
-    token: str | None = None
 
 
 CollectionName: TypeAlias = MatchboxName

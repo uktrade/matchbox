@@ -1377,7 +1377,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], marker = "extra == 'server'", specifier = ">=0.116.0" },
     { name = "frozendict", specifier = ">=2.4.6" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "pandas", specifier = ">=2.2.3" },
+    { name = "pandas", specifier = ">=2.2.3,<3" },
     { name = "platformdirs", specifier = ">=4.5.0" },
     { name = "polars", specifier = ">=1.32.3" },
     { name = "polars-hash", specifier = ">=0.5.3" },

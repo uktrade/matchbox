@@ -103,7 +103,7 @@ def test_add_member(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.check_permission.return_value = True
 
-    response = test_client.post("/admin/groups/g/members", json={"sub": "user1"})
+    response = test_client.post("/admin/groups/g/members", json={"user_name": "user1"})
 
     assert response.status_code == 201
     mock_backend.add_user_to_group.assert_called_with("user1", "g")
@@ -117,7 +117,9 @@ def test_add_member_group_not_found(
     mock_backend.check_permission.return_value = True
     mock_backend.add_user_to_group.side_effect = MatchboxGroupNotFoundError()
 
-    response = test_client.post("/admin/groups/missing/members", json={"sub": "user1"})
+    response = test_client.post(
+        "/admin/groups/missing/members", json={"user_name": "user1"}
+    )
 
     assert response.status_code == 404
 

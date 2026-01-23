@@ -151,7 +151,7 @@ class User(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    user_name: str = Field(alias="sub")
+    user_name: str = Field(description="Used as the subject claim in JWTs.")
     email: EmailStr | None = None
 
 

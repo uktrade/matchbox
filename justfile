@@ -24,6 +24,10 @@ format:
     uvx ruff@latest check . --fix
     uvx uv-sort pyproject.toml
 
+# Run type checking
+check:
+    uvx ty@latest check --output-format concise
+
 # Scan for secrets
 scan:
     bash -c "docker run -v "$(pwd):/repo" -i \

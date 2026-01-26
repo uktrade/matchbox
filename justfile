@@ -25,8 +25,8 @@ format:
     uvx uv-sort pyproject.toml
 
 # Run type checking
-check:
-    uvx ty@latest check --output-format concise
+check *ARGS:
+    uvx ty@latest check --output-format concise {{ARGS}}
 
 # Scan for secrets
 scan:

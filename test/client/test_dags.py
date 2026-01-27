@@ -562,7 +562,7 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     assert uri_filter_resolved.sources[0].name == "foo"
 
     # With source filter
-    source_filter_resolved = dag.resolve(source_filter="foo")
+    source_filter_resolved = dag.resolve(source_filter=["foo"])
 
     assert len(source_filter_resolved.sources) == 1
     assert source_filter_resolved.sources[0].name == "foo"

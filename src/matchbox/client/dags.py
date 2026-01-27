@@ -8,6 +8,7 @@ from typing import Any, Self, TypeAlias
 
 import polars as pl
 from platformdirs import user_cache_path
+from pydantic import validate_call
 
 from matchbox.client import _handler
 from matchbox.client._settings import settings
@@ -54,6 +55,7 @@ CACHE_DIR = user_cache_path("matchbox")
 class DAG:
     """Self-sufficient pipeline of indexing, deduping and linking steps."""
 
+    @validate_call
     def __init__(
         self, name: CollectionName, admin_group: GroupName = DefaultGroup.PUBLIC
     ) -> None:
@@ -187,6 +189,7 @@ class DAG:
 
         return model
 
+    @validate_call
     def add_resolution(
         self,
         name: ResolutionName,
@@ -219,6 +222,7 @@ class DAG:
         else:
             raise ValueError(f"Unknown resolution type {resolution.resolution_type}")
 
+    @validate_call
     def get_source(self, name: ResolutionName) -> Source:
         """Get a source by name from the DAG.
 
@@ -242,6 +246,7 @@ class DAG:
 
         return node
 
+    @validate_call
     def get_model(self, name: ResolutionName) -> Model:
         """Get a model by name from the DAG.
 
@@ -608,6 +613,7 @@ class DAG:
         # If no matches, _handler will raise
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
+    @validate_call
     @profile_time(kwarg="node")
     def resolve(
         self,

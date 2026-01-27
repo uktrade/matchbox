@@ -9,72 +9,64 @@ from importlib.metadata import version
 from typing import Annotated, Any, Self, TypeAlias
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     EmailStr,
     Field,
-    GetCoreSchemaHandler,
-    GetJsonSchemaHandler,
     PlainSerializer,
     PlainValidator,
+    StringConstraints,
     field_serializer,
     field_validator,
     model_validator,
 )
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import core_schema
 
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.exceptions import MatchboxExceptionType, MatchboxNameError
 from matchbox.common.hash import base64_to_hash, hash_to_base64
 
 
-class MatchboxName(str):
-    """Sub-class of string which validates names for the Matchbox DB."""
+def validate_matchbox_name(value: str) -> str:
+    """Validate matchbox name format.
 
-    PATTERN = r"^[a-zA-Z0-9_.-]+$"
+    Args:
+        value: The name to validate
 
-    def __new__(cls, value: str) -> Self:
-        """Creates new instance of validated name."""
-        if not isinstance(value, str):
-            raise MatchboxNameError("Name must be a string")
-        if not re.match(cls.PATTERN, value):
-            raise MatchboxNameError(
-                f"Name '{value}' is invalid. It can only include "
-                "alphanumeric characters, underscores, dots or hyphens."
-            )
+    Returns:
+        The validated name
 
-        return super().__new__(cls, value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        source_type: Any,  # noqa: ANN401
-        handler: GetCoreSchemaHandler,
-    ) -> core_schema.CoreSchema:
-        """Generate core schema for Pydantic compatibility."""
-        return core_schema.no_info_plain_validator_function(
-            cls,
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda x: x, return_schema=core_schema.str_schema()
-            ),
+    Raises:
+        MatchboxNameError: If the name contains invalid characters
+    """
+    pattern = r"^[a-zA-Z0-9_.-]+$"
+    if not re.match(pattern, value):
+        raise MatchboxNameError(
+            f"Name '{value}' is invalid. It can only include "
+            "alphanumeric characters, underscores, dots or hyphens."
         )
+    return value
 
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls,
-        schema: core_schema.CoreSchema,
-        handler: GetJsonSchemaHandler,
-    ) -> JsonSchemaValue:
-        """Generate JSON schema for OpenAPI documentation."""
-        json_schema = handler(core_schema.str_schema())
-        json_schema.update(
-            {
-                "type": "string",
-                "pattern": cls.PATTERN,
-            }
-        )
-        return json_schema
+
+MatchboxName: TypeAlias = Annotated[
+    str,
+    StringConstraints(
+        pattern=r"^[a-zA-Z0-9_.-]+$",
+        min_length=1,
+        strip_whitespace=True,
+    ),
+    AfterValidator(validate_matchbox_name),
+    Field(
+        description=(
+            "Valid name for Matchbox database objects. "
+            "Must contain only alphanumeric characters, underscores, dots, or hyphens."
+        ),
+        examples=["my-dataset", "user_data.v2", "experiment_001"],
+        json_schema_extra={
+            "pattern": r"^[a-zA-Z0-9_.-]+$",
+        },
+    ),
+]
 
 
 class OKMessage(BaseModel):

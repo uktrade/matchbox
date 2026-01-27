@@ -2,10 +2,21 @@
 
 import json
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+
+from matchbox.common.exceptions import MatchboxRuntimeError
+
+T = TypeVar("T")
+
+
+def require(val: T | None, msg: str = "Unexpected None") -> T:
+    """Raises if None, otherwise returns value. Safe replacement for assert."""
+    if val is None:
+        raise MatchboxRuntimeError(msg)
+    return val
 
 
 class _TypeNames(StrEnum):

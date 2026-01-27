@@ -2662,7 +2662,7 @@ wheels = [
 
 [[package]]
 name = "splink"
-version = "4.0.10"
+version = "4.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "altair" },
@@ -2673,9 +2673,9 @@ dependencies = [
     { name = "pandas" },
     { name = "sqlglot" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/cf/85cd7e843d13d5971966435726a56d16fdbb882503aa2d41c208f5bb59a3/splink-4.0.10.tar.gz", hash = "sha256:229f931e6ed863877c6fc3785c75dde9629700e28539d42b2a400e5727805d0b", size = 18673357, upload-time = "2025-11-03T09:21:34.323Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/5f/99942822c76a5672cef2a43bbff2bcf1dab3cf4b0721245670ff4417ed15/splink-4.0.12.tar.gz", hash = "sha256:66a7a08e354d174cc9f126a74f3811080804fbc774506952fe618dad80f1900a", size = 2079637, upload-time = "2025-12-22T17:09:03.101Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/3a/958e29c3f057a3346233782f93924534c3c5a1806835b889f51bb6b525e2/splink-4.0.10-py3-none-any.whl", hash = "sha256:9dc93cbd6f1931dfd97da9cfb9ae8640a3fba4e6e5e36ea151ad2a14d1a2a0c1", size = 4928039, upload-time = "2025-11-03T09:21:31.579Z" },
+    { url = "https://files.pythonhosted.org/packages/30/b3/131726f43cbbc563fc592096f2625565db8247117e03e7b64e63e206804b/splink-4.0.12-py3-none-any.whl", hash = "sha256:7d415e532596e5a696b7b622701e86a6ec6cc3b8d406b725c0aefc9479a7b118", size = 2150504, upload-time = "2025-12-22T17:09:01.507Z" },
 ]
 
 [[package]]

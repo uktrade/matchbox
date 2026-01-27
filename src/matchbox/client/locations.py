@@ -2,27 +2,24 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from matchbox.common.datatypes import DataTypes
-
-if TYPE_CHECKING:
-    from adbc_driver_manager.dbapi import Connection as AdbcConnection
-
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from enum import StrEnum
 from functools import wraps
-from typing import Any, ParamSpec, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Self, TypeVar, overload
 
 import polars as pl
 import sqlglot
+from pandas import DataFrame as PandasDataFrame
+from polars import DataFrame as PolarsDataFrame
+from pyarrow import Table as ArrowTable
 from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import OperationalError
 from sqlglot.errors import ParseError
 
+from matchbox.common.datatypes import DataTypes
 from matchbox.common.db import (
     QueryReturnClass,
     QueryReturnType,
@@ -34,6 +31,9 @@ from matchbox.common.exceptions import (
     MatchboxSourceExtractTransformError,
 )
 from matchbox.common.logging import logger
+
+if TYPE_CHECKING:
+    from adbc_driver_manager.dbapi import Connection as AdbcConnection
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -318,6 +318,39 @@ class RelationalDBLocation(Location):
                 inferred_types[col] = DataTypes.NULL
 
         return inferred_types
+
+    @overload
+    def execute(
+        self,
+        extract_transform: str,
+        batch_size: int | None = None,
+        rename: dict[str, str] | Callable | None = None,
+        return_type: Literal[QueryReturnType.POLARS] = ...,
+        keys: tuple[str, list[str]] | None = None,
+        schema_overrides: dict[str, pl.DataType] | None = None,
+    ) -> Generator[PolarsDataFrame, None, None]: ...
+
+    @overload
+    def execute(
+        self,
+        extract_transform: str,
+        batch_size: int | None = None,
+        rename: dict[str, str] | Callable | None = None,
+        return_type: Literal[QueryReturnType.PANDAS] = ...,
+        keys: tuple[str, list[str]] | None = None,
+        schema_overrides: dict[str, pl.DataType] | None = None,
+    ) -> Generator[PandasDataFrame, None, None]: ...
+
+    @overload
+    def execute(
+        self,
+        extract_transform: str,
+        batch_size: int | None = None,
+        rename: dict[str, str] | Callable | None = None,
+        return_type: Literal[QueryReturnType.ARROW] = ...,
+        keys: tuple[str, list[str]] | None = None,
+        schema_overrides: dict[str, pl.DataType] | None = None,
+    ) -> Generator[ArrowTable, None, None]: ...
 
     @requires_client
     def execute(  # noqa: D102

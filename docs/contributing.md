@@ -29,7 +29,7 @@ echo "MB__CLIENT__JWT=$(jq -r .private_key /tmp/keys.json | \
     tr -d '\n')" >> .env
 ```
 
-This project is managed by [uv](https://docs.astral.sh/uv/), linted and formated with [ruff](https://docs.astral.sh/ruff/), and tested with [pytest](https://docs.pytest.org/en/stable/). [Docker](https://www.docker.com) is used for local development. Documentation is build using [mkdocs](https://www.mkdocs.org).
+This project is managed by [uv](https://docs.astral.sh/uv/), linted and formated with [ruff](https://docs.astral.sh/ruff/), type checked with [ty](https://docs.astral.sh/ty/), and tested with [pytest](https://docs.pytest.org/en/stable/). [Docker](https://www.docker.com) is used for local development. Documentation is build using [mkdocs](https://www.mkdocs.org).
 
 To install all dependencies for this project, run:
 
@@ -167,7 +167,7 @@ When contributing to the main matchbox repository and its associated repos, we t
 * Unit tested, and pass new and existing tests
 * Documented via docstrings, in the [Google style](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html)
 * Linted and auto-formatted (`just format`)
-* Type hinted (within reason)
+* Type hinted and checked (`just check`)
 * Using env files and dotenv for setting environment variables
 * Structured as a Python package with `pyprojects.toml`
 * Using dependencies managed automatically by uv

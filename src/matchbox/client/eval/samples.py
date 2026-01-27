@@ -1,7 +1,7 @@
 """Client-side helpers for retrieving and preparing evaluation samples."""
 
 import polars as pl
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, validate_call
 from sqlalchemy.exc import OperationalError
 
 from matchbox.client import _handler
@@ -151,6 +151,7 @@ def _get_samples_from_server(
     return pl.from_arrow(_handler.sample_for_eval(n=n, resolution=resolution_path))
 
 
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def get_samples(
     n: int,
     dag: DAG,

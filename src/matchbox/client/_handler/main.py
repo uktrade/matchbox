@@ -25,7 +25,7 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.hash import hash_to_base64
 
-URLEncodeHandledType = str | int | float | bytes | StrEnum
+URLEncodeHandledType = str | int | float | bytes | StrEnum | None
 
 
 # Retry configuration for HTTP operations
@@ -42,7 +42,9 @@ http_retry = retry(
 
 def encode_param_value(
     v: URLEncodeHandledType | Iterable[URLEncodeHandledType],
-) -> str | list[str]:
+) -> str | list[str] | None:
+    if v is None:
+        return None
     if isinstance(v, str):
         return v
     # Also covers bool (subclass of int)
@@ -52,16 +54,27 @@ def encode_param_value(
         return hash_to_base64(v)
     # Needs to be at the end, so we don't apply it to e.g. strings
     if isinstance(v, Iterable):
-        return [encode_param_value(item) for item in v]
+        return [
+            str(encoded)
+            for item in v
+            if (encoded := encode_param_value(item)) is not None
+        ]
     raise ValueError(f"It was not possible to parse {v} as an URL parameter")
 
 
 def url_params(
     params: dict[str, URLEncodeHandledType | Iterable[URLEncodeHandledType]],
 ) -> dict[str, str | list[str]]:
-    """Prepares a dictionary of parameters to be encoded in a URL."""
-    non_null = {k: v for k, v in params.items() if v is not None}
-    return {k: encode_param_value(v) for k, v in non_null.items()}
+    """Prepares a dictionary of parameters to be encoded in a URL.
+
+    Removes None values.
+    """
+    encoded_params = {}
+    for k, v in params.items():
+        encoded_v = encode_param_value(v)
+        if encoded_v is not None:
+            encoded_params[k] = encoded_v
+    return encoded_params
 
 
 def reconstruct_exception(
@@ -99,6 +112,10 @@ def handle_http_code(res: httpx.Response) -> httpx.Response:
                 http_status=res.status_code,
                 details=f"Unknown exception type: {error.exception_type}",
             )
+
+        raise MatchboxUnhandledServerResponse(
+            http_status=res.status_code, details=str(res.content)
+        )
 
     except ValidationError as e:
         raise MatchboxUnhandledServerResponse(

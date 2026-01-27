@@ -164,6 +164,7 @@ def test_auth_status(
         assert result.user is not None
         assert result.user.user_name == user.user_name
     else:
+        assert result.user is not None
         assert result.user.user_name == DefaultUser.PUBLIC
 
 
@@ -473,7 +474,7 @@ def has_auth_defence(route: APIRoute) -> bool:
 
     def check_dependant(dependant: Dependant) -> bool:
         # Check the callable for this specific dependency
-        if is_auth_mechanism(dependant.call):
+        if dependant.call is not None and is_auth_mechanism(dependant.call):
             return True
 
         # Recursively check sub-dependencies

@@ -16,6 +16,7 @@ from pyarrow import ArrowInvalid
 from pyarrow import parquet as pq
 
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS, table_to_buffer
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
@@ -492,8 +493,9 @@ def set_data(
     # Try-except to ensure we release the lock
     try:
         # Validate file extension
-        if ".parquet" not in file.filename:
-            extension = file.filename.split(".")[-1]
+        filename = require(file.filename, "File name required")
+        if ".parquet" not in filename:
+            extension = filename.split(".")[-1]
             raise MatchboxServerFileError(
                 message=f"Expected .parquet file, got {extension}"
             )

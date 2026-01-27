@@ -247,7 +247,7 @@ class Cluster:
         elif self.leaves is None:
             raise ValueError("Leaf nodes must have id specified")
         else:
-            self.id = intmap.index(leaf.id for leaf in self.leaves)
+            self.id = intmap.index(*(leaf.id for leaf in self.leaves))
 
     def __hash__(self) -> int:
         """Return a hash of the cluster based on its hash bytes."""

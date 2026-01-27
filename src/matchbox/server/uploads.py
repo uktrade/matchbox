@@ -15,6 +15,7 @@ from fastapi import UploadFile
 from pyarrow import parquet as pq
 
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     ResolutionPath,
     ResolutionType,
@@ -99,8 +100,13 @@ def settings_to_upload_tracker(settings: MatchboxServerSettings) -> UploadTracke
             return _IN_MEMORY_TRACKER
         case "celery":
             return RedisUploadTracker(
-                redis_url=settings.redis_uri,
-                expiry_minutes=settings.uploads_expiry_minutes,
+                redis_url=require(
+                    settings.redis_uri, "redis_uri required for celery task runner"
+                ),
+                expiry_minutes=require(
+                    settings.uploads_expiry_minutes,
+                    "uploads_expiry_minutes required for celery task runner",
+                ),
             )
         case _:
             raise RuntimeError("Unsupported task runner.")
@@ -273,11 +279,14 @@ def process_upload_celery(
     )
     log_mem_usage()
 
+    backend = require(CELERY_BACKEND, "CELERY_BACKEND not initialized")
+    tracker = require(CELERY_TRACKER, "CELERY_TRACKER not initialized")
+
     upload_function = partial(
         process_upload,
-        backend=CELERY_BACKEND,
-        tracker=CELERY_TRACKER,
-        s3_client=CELERY_BACKEND.settings.datastore.get_client(),
+        backend=backend,
+        tracker=tracker,
+        s3_client=backend.settings.datastore.get_client(),
     )
 
     try:
@@ -300,7 +309,7 @@ def process_upload_celery(
         try:
             raise self.retry(exc=exc) from None
         except MaxRetriesExceededError:
-            CELERY_TRACKER.set(upload_id, f"Max retries exceeded: {exc}")
+            tracker.set(upload_id, f"Max retries exceeded: {exc}")
             raise
 
     finally:

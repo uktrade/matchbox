@@ -19,7 +19,7 @@ from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import OperationalError
 from sqlglot.errors import ParseError
 
-from matchbox.common.datatypes import DataTypes
+from matchbox.common.datatypes import DataTypes, require
 from matchbox.common.db import (
     QueryReturnClass,
     QueryReturnType,
@@ -199,13 +199,14 @@ class RelationalDBLocation(Location):
     @contextmanager
     def _get_connection(self) -> Generator[Connection | AdbcConnection, None, None]:
         """Context manager for getting database connections with proper cleanup."""
+        client = require(self.client, "Client not initialised")
         if self.client_type == ClientType.ADBC:
             # To prevent memory corruption in the ADBC driver when reusing a single
             # connection for multiple queries, we clone the connection
-            with self.client.adbc_clone() as connection:
+            with client.adbc_clone() as connection:
                 yield connection
         else:  # SQLAlchemy Engine
-            connection = self.client.connect()
+            connection = client.connect()
             try:
                 yield connection
             finally:

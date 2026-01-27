@@ -11,6 +11,7 @@ from matchbox.client.models import Model, add_model_class
 from matchbox.client.models.linkers.base import LinkerSettings
 from matchbox.client.queries import Query
 from matchbox.common.arrow import table_to_buffer
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     CRUDOperation,
     ErrorResponse,
@@ -90,8 +91,9 @@ def test_init_and_run_model(
     )
 
     model.run()
-    assert model.results.left_root_leaf is None
-    assert model.results.right_root_leaf is None
+    results = require(model.results, "Model results should exist after run")
+    assert results.left_root_leaf is None
+    assert results.right_root_leaf is None
 
     # Can use pre-fetched query data
     left_df, right_df = foo_query.data(), bar_query.data()
@@ -100,8 +102,9 @@ def test_init_and_run_model(
     assert query_endpoint.call_count == old_query_count
 
     model.run(for_validation=True)
-    assert model.results.left_root_leaf is not None
-    assert model.results.right_root_leaf is not None
+    results = require(model.results, "Model results should exist after run")
+    assert results.left_root_leaf is not None
+    assert results.right_root_leaf is not None
 
 
 def test_model_sync(matchbox_api: MockRouter) -> None:

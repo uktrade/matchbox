@@ -186,6 +186,8 @@ class Source:
     @post_run
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""
+        # @post_run decorator ensures hashes is non-None
+        assert self.hashes is not None
         return Resolution(
             description=self.description,
             truth=None,
@@ -284,7 +286,9 @@ class Source:
             def _rename(c: str) -> str:
                 return self.name + "_" + c
 
-        all_fields = self.config.index_fields + tuple([self.config.key_field])
+        key_field = self.config.key_field
+        index_fields = self.config.index_fields
+        all_fields = index_fields + tuple([key_field])
         schema_overrides = {field.name: field.type.to_dtype() for field in all_fields}
 
         if keys:
@@ -294,7 +298,7 @@ class Source:
                 rename=_rename,
                 batch_size=batch_size,
                 return_type=return_type,
-                keys=(self.config.key_field.name, keys),
+                keys=(key_field.name, keys),
             )
         else:
             yield from self.location.execute(
@@ -347,8 +351,10 @@ class Source:
         if writer is not None:
             writer.close()
 
-        key_field: str = self.config.key_field.name
-        index_fields: list[str] = [field.name for field in self.config.index_fields]
+        key_field_obj = self.config.key_field
+        index_fields_obj = self.config.index_fields
+        key_field: str = key_field_obj.name
+        index_fields: list[str] = [field.name for field in index_fields_obj]
 
         all_results: list[pl.DataFrame] = []
 

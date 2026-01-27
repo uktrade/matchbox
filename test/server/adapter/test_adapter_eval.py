@@ -36,8 +36,8 @@ class TestMatchboxEvaluationBackend:
     def test_insert_and_get_judgement(self) -> None:
         """Can insert and retrieve judgements."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            naive_crn_testkit = dag_testkit.models["naive_test_crn"]
 
             # To begin with, no judgements to retrieve
             judgements, expansion = self.backend.get_judgements()
@@ -197,8 +197,8 @@ class TestMatchboxEvaluationBackend:
         # Convergent scenario allows testing we don't accidentally return metadata
         # for sources that aren't relevant for a point of truth
         with self.scenario(self.backend, "convergent") as dag_testkit:
-            source_testkit = dag_testkit.sources.get("foo_a")
-            model_testkit = dag_testkit.models.get("naive_test_foo_a")
+            source_testkit = dag_testkit.sources["foo_a"]
+            model_testkit = dag_testkit.models["naive_test_foo_a"]
 
             bob: User = self.backend.login(User(user_name="bob")).user
 

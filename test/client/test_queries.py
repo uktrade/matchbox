@@ -536,6 +536,8 @@ def test_query_from_config() -> None:
     # Verify reconstruction matches original
     assert reconstructed_query.config == original_query.config
     assert reconstructed_query.sources == original_query.sources
+    assert reconstructed_query.model is not None
+    assert original_query.model is not None
     assert reconstructed_query.model.config == original_query.model.config
     assert reconstructed_query.combine_type == original_query.combine_type
     assert reconstructed_query.threshold == original_query.threshold

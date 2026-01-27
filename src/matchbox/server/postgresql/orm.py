@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
@@ -316,7 +317,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
     def get_lineage(
         self, sources: list["SourceConfigs"] | None = None, threshold: int | None = None
-    ) -> list[tuple[int, int, float | None]]:
+    ) -> list[tuple[int, int | None, int | None]]:
         """Returns lineage ordered by priority.
 
         Highest priority (lowest level) first, then by resolution_id for stability.
@@ -375,9 +376,10 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             self_threshold = threshold if threshold is not None else self.truth
 
             # Add self at beginning (highest priority - level 0)
-            return [(self.resolution_id, self_source_config_id, self_threshold)] + list(
-                results
-            )
+            lineage: list[tuple[int, int | None, int | None]] = [
+                (self.resolution_id, self_source_config_id, self_threshold)
+            ] + [tuple(row) for row in results]
+            return lineage
 
     @classmethod
     def from_path(
@@ -478,7 +480,11 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             )
 
         # Fetch the newly created resolution
-        resolution_orm = session.get(cls, resolution_id)
+        resolution_orm = (
+            session.execute(select(cls).where(cls.resolution_id == resolution_id))
+            .scalars()
+            .one()
+        )
 
         if resolution.resolution_type == ResolutionType.SOURCE:
             resolution_orm.source_config = SourceConfigs.from_dto(resolution.config)
@@ -497,11 +503,15 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             cls._create_closure_entries(session, resolution_orm, left_parent)
 
             if resolution.config.type == ModelType.LINKER:
+                right_query = require(
+                    resolution.config.right_query,
+                    "right_query required for linker model",
+                )
                 right_parent = cls.from_path(
                     path=ResolutionPath(
                         collection=path.collection,
                         run=path.run,
-                        name=resolution.config.right_query.point_of_truth,
+                        name=right_query.point_of_truth,
                     ),
                     session=session,
                 )
@@ -512,9 +522,15 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     def to_dto(self) -> CommonResolution:
         """Convert ORM resolution to a matchbox.common Resolution object."""
         if self.type == ResolutionType.SOURCE:
-            config = self.source_config.to_dto()
+            source_config = require(
+                self.source_config, "source_config required for SOURCE resolution"
+            )
+            config = source_config.to_dto()
         else:
-            config = self.model_config.to_dto()
+            model_config = require(
+                self.model_config, "model_config required for MODEL resolution"
+            )
+            config = model_config.to_dto()
 
         return CommonResolution(
             description=self.description,
@@ -648,7 +664,7 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
     @property
     def name(self) -> str:
         """Get the name of the related resolution."""
-        return self.source_resolution.name
+        return require(self.source_resolution, "source_resolution is required").name
 
     # Relationships
     source_resolution: Mapped["Resolutions"] = relationship(
@@ -745,14 +761,13 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
 
     def to_dto(self) -> CommonSourceConfig:
         """Convert ORM source to a matchbox.common.SourceConfig object."""
+        key_field = require(self.key_field, "key_field is required")
         return CommonSourceConfig(
             location_config=LocationConfig(
                 type=self.location_type, name=self.location_name
             ),
             extract_transform=self.extract_transform,
-            key_field=CommonSourceField(
-                name=self.key_field.name, type=self.key_field.type
-            ),
+            key_field=CommonSourceField(name=key_field.name, type=key_field.type),
             index_fields=[
                 CommonSourceField(
                     name=field.name,
@@ -785,7 +800,7 @@ class ModelConfigs(CountMixin, MBDB.MatchboxBase):
     @property
     def name(self) -> str:
         """Get the name of the related resolution."""
-        return self.model_resolution.name
+        return require(self.model_resolution, "model_resolution is required").name
 
     # Relationships
     model_resolution: Mapped["Resolutions"] = relationship(

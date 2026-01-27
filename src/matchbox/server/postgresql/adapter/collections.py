@@ -4,6 +4,7 @@ from psycopg.errors import LockNotAvailable
 from pyarrow import Table
 from sqlalchemy import CursorResult, delete, select, update
 
+from matchbox.common.datatypes import require
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     Collection,
@@ -65,7 +66,15 @@ class MatchboxPostgresCollectionsMixin:
                 raise MatchboxCollectionAlreadyExists
 
             # Get the newly created collection
-            new_collection = session.get(Collections, collection_id)
+            new_collection = (
+                session.execute(
+                    select(Collections).where(
+                        Collections.collection_id == collection_id
+                    )
+                )
+                .scalars()
+                .one()
+            )
 
             # Grant initial permissions
             for permission_grant in permissions:
@@ -234,7 +243,10 @@ class MatchboxPostgresCollectionsMixin:
 
             # Update config
             if old_resolution.type == "source":
-                old_config: SourceConfigs = old_resolution.source_config
+                old_config: SourceConfigs = require(
+                    old_resolution.source_config,
+                    "source_config required for source resolution",
+                )
                 if not isinstance(new_config, CommonSourceConfig):
                     raise ValueError("Config for source resolution expected.")
                 old_config.location_name = new_config.location_config.name
@@ -273,7 +285,10 @@ class MatchboxPostgresCollectionsMixin:
                     old_config.fields = new_fields
 
             else:
-                old_config: ModelConfigs = old_resolution.model_config
+                old_config: ModelConfigs = require(
+                    old_resolution.model_config,
+                    "model_config required for model resolution",
+                )
                 if not isinstance(new_config, CommonModelConfig):
                     raise ValueError("Config for model resolution expected.")
                 old_config.model_class = new_config.model_class
@@ -379,5 +394,7 @@ class MatchboxPostgresCollectionsMixin:
         with MBDB.get_adbc_connection() as conn:
             stmt: str = compile_sql(results_query)
             return sql_to_df(
-                stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
+                stmt=stmt,
+                connection=require(conn.dbapi_connection, "ADBC connection required"),
+                return_type="arrow",
             )

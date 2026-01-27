@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import PoolProxiedConnection, QueuePool
 
+from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
 
@@ -122,8 +123,9 @@ class MatchboxDatabase:
             self._adbc_pool.dispose()
             self._adbc_pool = None
 
-            self._source_adbc_connection.close()
-            self._source_adbc_connection = None
+            if self._source_adbc_connection is not None:
+                self._source_adbc_connection.close()
+                self._source_adbc_connection = None
 
     def _reset_connections(self) -> None:
         """Dispose and re-initialise SQLAlchemy and ADBC connection managers."""
@@ -137,7 +139,7 @@ class MatchboxDatabase:
         """Get the database engine."""
         if not self._engine:
             self._connect()
-        return self._engine
+        return require(self._engine, "Engine not initialized after _connect()")
 
     def get_session(self) -> Session:
         """Get a new session."""
@@ -154,7 +156,7 @@ class MatchboxDatabase:
         if not self._adbc_pool:
             self._connect_adbc()
 
-        conn = self._adbc_pool.connect()
+        conn = require(self._adbc_pool, "ADBC pool not initialized").connect()
         try:
             yield conn
         finally:
@@ -268,9 +270,9 @@ class MatchboxDatabase:
                     text("SELECT version_num FROM public.alembic_version;")
                 )
                 alembic_version = result.scalar()
+                return alembic_version is not None
         else:
-            alembic_version = None
-        return alembic_version
+            return False
 
     @property
     def sorted_tables(self) -> list[Table]:

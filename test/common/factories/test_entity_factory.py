@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from faker import Faker
 
-from matchbox.common.datatypes import DataTypes
+from matchbox.common.datatypes import DataTypes, require
 from matchbox.common.dtos import SourceResolutionName
 from matchbox.common.factories.entities import (
     ClusterEntity,
@@ -408,9 +408,11 @@ def test_source_to_results_conversion() -> None:
     )
 
     # Convert different subsets to cluster entities
-    results1 = source.to_cluster_entity("source1")
-    results2 = source.to_cluster_entity("source1", "source2")
-    results3 = source.to_cluster_entity("source2")
+    results1 = require(source.to_cluster_entity("source1"), "source1 not found")
+    results2 = require(
+        source.to_cluster_entity("source1", "source2"), "sources not found"
+    )
+    results3 = require(source.to_cluster_entity("source2"), "source2 not found")
 
     # Test different comparison scenarios
     identical, report = diff_results([results1], [results1])

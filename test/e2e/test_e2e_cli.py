@@ -22,6 +22,7 @@ class TestE2ECLI:
         # Clear database before starting to ensure clean state
         response = matchbox_client.delete("/database", params={"certain": "true"})
         assert response.status_code == 200
+        yield
 
     def test_basic_commands(self) -> None:
         """Test version, health, and auth status commands."""

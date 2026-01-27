@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 from sqlalchemy import select
 
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import ModelConfig, ModelType, ResolutionType
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
@@ -21,7 +22,7 @@ class SourceInfo(NamedTuple):
     right_ancestors: set[int] | None
 
 
-def _get_model_parents(resolution_id: int) -> tuple[bytes, bytes | None]:
+def _get_model_parents(resolution_id: int) -> tuple[int, int | None]:
     """Get the model's immediate parent models."""
     parent_query = (
         select(Resolutions.resolution_id, Resolutions.type)
@@ -55,12 +56,28 @@ def _get_source_info(resolution_id: int) -> SourceInfo:
     left_id, right_id = _get_model_parents(resolution_id=resolution_id)
 
     with MBDB.get_session() as session:
-        left = session.get(Resolutions, left_id)
-        right = session.get(Resolutions, right_id) if right_id else None
+        left = (
+            session.execute(
+                select(Resolutions).where(Resolutions.resolution_id == left_id)
+            )
+            .scalars()
+            .one()
+        )
+        right = (
+            session.execute(
+                select(Resolutions).where(Resolutions.resolution_id == right_id)
+            )
+            .scalars()
+            .one()
+            if right_id
+            else None
+        )
 
         left_ancestors = {left_id} | {m.resolution_id for m in left.ancestors}
         if right:
-            right_ancestors = {right_id} | {m.resolution_id for m in right.ancestors}
+            right_ancestors = {
+                require(right_id, "Right ID required when right exists")
+            } | {m.resolution_id for m in right.ancestors}
         else:
             right_ancestors = None
 
@@ -80,13 +97,27 @@ def get_model_config(resolution: Resolutions) -> ModelConfig:
     source_info: SourceInfo = _get_source_info(resolution_id=resolution.resolution_id)
 
     with MBDB.get_session() as session:
-        left = session.get(Resolutions, source_info.left)
+        left = (
+            session.execute(
+                select(Resolutions).where(Resolutions.resolution_id == source_info.left)
+            )
+            .scalars()
+            .one()
+        )
         right = (
-            session.get(Resolutions, source_info.right) if source_info.right else None
+            session.execute(
+                select(Resolutions).where(
+                    Resolutions.resolution_id == source_info.right
+                )
+            )
+            .scalars()
+            .one()
+            if source_info.right
+            else None
         )
 
         return ModelConfig(
             type=ModelType.DEDUPER if source_info.right is None else ModelType.LINKER,
             left_resolution=left.name,
-            right_resolution=right.name if source_info.right else None,
+            right_resolution=right.name if right else None,
         )

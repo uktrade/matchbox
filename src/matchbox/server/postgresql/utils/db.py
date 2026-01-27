@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
@@ -263,7 +264,7 @@ def ingest_to_temporary_table(
         temp_table = Table(temp_table_name, metadata, *columns)
 
         with MBDB.get_session() as session:
-            temp_table.create(session.bind)
+            temp_table.create(require(session.bind, "Session bind required"))
             session.commit()
 
         # Ingest data into the temporary table
@@ -292,7 +293,9 @@ def ingest_to_temporary_table(
         # Step 3: Clean up
         try:
             with MBDB.get_session() as session:
-                temp_table.drop(session.bind, checkfirst=True)
+                temp_table.drop(
+                    require(session.bind, "Session bind required"), checkfirst=True
+                )
                 session.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to drop temp table {temp_table_name}: {e}")

@@ -14,6 +14,7 @@ from typing import Literal
 
 import pytest
 
+from matchbox.common.datatypes import require
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import CollectionName, ResolutionPath, RunID, UploadStage
 from matchbox.server.postgresql import MatchboxPostgres
@@ -485,7 +486,9 @@ class TestGetLineage:
     ) -> None:
         """Source resolutions should return only themselves."""
         with MBDB.get_session() as session:
-            source_a = session.get(Resolutions, 1)  # source_a
+            source_a = require(
+                session.get(Resolutions, 1), "Resolutions 1 not found in test fixture"
+            )  # source_a
 
             lineage = source_a.get_lineage()
 
@@ -498,7 +501,9 @@ class TestGetLineage:
     ) -> None:
         """Dedupe resolution should return itself + source parent."""
         with MBDB.get_session() as session:
-            dedupe_a = session.get(Resolutions, 3)  # dedupe_a
+            dedupe_a = require(
+                session.get(Resolutions, 3), "Resolutions 3 not found in test fixture"
+            )  # dedupe_a
 
             lineage = dedupe_a.get_lineage()
 
@@ -511,7 +516,9 @@ class TestGetLineage:
     ) -> None:
         """Linker resolution should return itself + all parents in hierarchy."""
         with MBDB.get_session() as session:
-            linker = session.get(Resolutions, 5)  # linker_ab
+            linker = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             lineage = linker.get_lineage()
 
@@ -534,8 +541,13 @@ class TestGetLineage:
     ) -> None:
         """Should filter lineage to specific source configs."""
         with MBDB.get_session() as session:
-            linker = session.get(Resolutions, 5)  # linker_ab
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
+            linker = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
 
             lineage = linker.get_lineage(sources=[source_a_config])
 
@@ -556,7 +568,9 @@ class TestGetLineage:
     ) -> None:
         """Should override only the query resolution's threshold."""
         with MBDB.get_session() as session:
-            linker = session.get(Resolutions, 5)  # linker_ab
+            linker = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             lineage = linker.get_lineage(threshold=75)
 
@@ -575,9 +589,17 @@ class TestGetLineage:
     ) -> None:
         """Should filter lineage to multiple source configs."""
         with MBDB.get_session() as session:
-            linker = session.get(Resolutions, 5)  # linker_ab
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
-            source_b_config = session.get(SourceConfigs, 22)  # source_b config
+            linker = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
+            source_b_config = require(
+                session.get(SourceConfigs, 22),
+                "SourceConfigs 22 not found in test fixture",
+            )  # source_b config
 
             lineage = linker.get_lineage(sources=[source_a_config, source_b_config])
 
@@ -596,7 +618,9 @@ class TestGetLineage:
     ) -> None:
         """Should verify ordering is by level ASC, then resolution_id ASC."""
         with MBDB.get_session() as session:
-            linker = session.get(Resolutions, 5)  # linker_ab
+            linker = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             lineage = linker.get_lineage()
 
@@ -625,7 +649,9 @@ class TestGetLineage:
     ) -> None:
         """Should verify threshold override only affects the query resolution."""
         with MBDB.get_session() as session:
-            linker = session.get(Resolutions, 5)  # linker_ab
+            linker = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             # Test with threshold override
             lineage_with_override = linker.get_lineage(threshold=80)
@@ -673,8 +699,9 @@ class TestGetSourceConfig:
                 _resolution_path("source_a"),
                 session=session,
             )
-            assert source_config.source_config.source_config_id == 11
-            assert source_config.source_config.resolution_id == 1
+            config = require(source_config.source_config, "source_config should exist")
+            assert config.source_config_id == 11
+            assert config.resolution_id == 1
 
 
 @pytest.mark.docker
@@ -696,8 +723,13 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Should build unified query for source-only scenario."""
         with MBDB.get_session() as session:
-            source_a_resolution = session.get(Resolutions, 1)  # source_a resolution
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
+            source_a_resolution = require(
+                session.get(Resolutions, 1), "Resolutions 1 not found in test fixture"
+            )  # source_a resolution
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
 
             query = build_unified_query(
                 resolution=source_a_resolution,
@@ -708,7 +740,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         expected_columns = {"root_id", "leaf_id"}
         if level == "leaf":
@@ -741,8 +777,13 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Should build unified query mixing sources and models."""
         with MBDB.get_session() as session:
-            dedupe_a_resolution = session.get(Resolutions, 3)  # dedupe_a context
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
+            dedupe_a_resolution = require(
+                session.get(Resolutions, 3), "Resolutions 3 not found in test fixture"
+            )  # dedupe_a context
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
 
             query = build_unified_query(
                 resolution=dedupe_a_resolution,
@@ -753,7 +794,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         if level == "leaf":
             # We should have 5 unique (root_id, leaf_id) combinations:
@@ -805,9 +850,17 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Should build unified query for linker with all sources."""
         with MBDB.get_session() as session:
-            linker_resolution = session.get(Resolutions, 5)  # linker context
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
-            source_b_config = session.get(SourceConfigs, 22)  # source_b config
+            linker_resolution = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker context
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
+            source_b_config = require(
+                session.get(SourceConfigs, 22),
+                "SourceConfigs 22 not found in test fixture",
+            )  # source_b config
 
             query = build_unified_query(
                 resolution=linker_resolution,
@@ -818,7 +871,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         if level == "leaf":
             # Return 10 unique hashes from the 11 keys
@@ -855,9 +912,17 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Should exclude linker clusters that don't meet high threshold."""
         with MBDB.get_session() as session:
-            linker_resolution = session.get(Resolutions, 5)  # linker context
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
-            source_b_config = session.get(SourceConfigs, 22)  # source_b config
+            linker_resolution = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker context
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
+            source_b_config = require(
+                session.get(SourceConfigs, 22),
+                "SourceConfigs 22 not found in test fixture",
+            )  # source_b config
 
             query = build_unified_query(
                 resolution=linker_resolution,
@@ -868,7 +933,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         if level == "leaf":
             # Return 10 unique hashes from the 11 keys
@@ -901,8 +970,13 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Should filter to single source lineage."""
         with MBDB.get_session() as session:
-            linker_resolution = session.get(Resolutions, 5)  # linker context
-            source_b_config = session.get(SourceConfigs, 22)  # source_b only
+            linker_resolution = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker context
+            source_b_config = require(
+                session.get(SourceConfigs, 22),
+                "SourceConfigs 22 not found in test fixture",
+            )  # source_b only
 
             query = build_unified_query(
                 resolution=linker_resolution,
@@ -913,7 +987,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         if level == "leaf":
             # Return 5 unique hashes from the 5 keys
@@ -953,7 +1031,9 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Should include all sources when no filtering."""
         with MBDB.get_session() as session:
-            linker_resolution = session.get(Resolutions, 5)  # linker context
+            linker_resolution = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker context
 
             query = build_unified_query(
                 resolution=linker_resolution,
@@ -963,7 +1043,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         if level == "leaf":
             # Return 10 unique hashes from the 11 keys
@@ -999,7 +1083,9 @@ class TestBuildUnifiedQuery:
     ) -> None:
         """Source resolution with sources=None returns that source only."""
         with MBDB.get_session() as session:
-            source_a_resolution = session.get(Resolutions, 1)  # source_a resolution
+            source_a_resolution = require(
+                session.get(Resolutions, 1), "Resolutions 1 not found in test fixture"
+            )  # source_a resolution
 
             query = build_unified_query(
                 resolution=source_a_resolution,  # Query source_a
@@ -1010,7 +1096,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         if level == "leaf":
             # Return 5 unique hashes from the 6 keys
@@ -1033,8 +1123,13 @@ class TestBuildUnifiedQuery:
         """Simple test showing thresholding works."""
         # Query at threshold=70 where both C301 (80%) and C302 (70%) qualify
         with MBDB.get_session() as session:
-            dedupe_resolution = session.get(Resolutions, 3)  # dedupe context
-            source_a_config = session.get(SourceConfigs, 11)  # source_a config
+            dedupe_resolution = require(
+                session.get(Resolutions, 3), "Resolutions 3 not found in test fixture"
+            )  # dedupe context
+            source_a_config = require(
+                session.get(SourceConfigs, 11),
+                "SourceConfigs 11 not found in test fixture",
+            )  # source_a config
 
             query = build_unified_query(
                 resolution=dedupe_resolution,
@@ -1045,7 +1140,11 @@ class TestBuildUnifiedQuery:
             )
 
         with MBDB.get_adbc_connection() as conn:
-            result = sql_to_df(compile_sql(query), conn.dbapi_connection, "polars")
+            result = sql_to_df(
+                compile_sql(query),
+                require(conn.dbapi_connection, "ADBC connection required"),
+                "polars",
+            )
 
         # Get the appropriate column name for cluster IDs
         if level == "key":
@@ -1072,7 +1171,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should return cluster hierarchy for model's parents."""
         with MBDB.get_session() as session:
-            linker_res = session.get(Resolutions, 5)  # linker_ab
+            linker_res = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             result = get_parent_clusters_and_leaves(linker_res)
 
@@ -1096,7 +1197,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should return cluster assignments from deduper's parent (source)."""
         with MBDB.get_session() as session:
-            dedupe_res = session.get(Resolutions, 3)  # dedupe_a
+            dedupe_res = require(
+                session.get(Resolutions, 3), "Resolutions 3 not found in test fixture"
+            )  # dedupe_a
 
             result = get_parent_clusters_and_leaves(dedupe_res)
 
@@ -1121,7 +1224,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should return specific cluster assignments from linker's parents."""
         with MBDB.get_session() as session:
-            linker_res = session.get(Resolutions, 5)  # linker_ab
+            linker_res = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             result = get_parent_clusters_and_leaves(linker_res)
 
@@ -1159,7 +1264,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should exclude clusters that don't meet parent's cached threshold."""
         with MBDB.get_session() as session:
-            linker_res = session.get(Resolutions, 5)  # linker_ab
+            linker_res = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             result = get_parent_clusters_and_leaves(linker_res)
 
@@ -1182,7 +1289,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should return empty dict for source resolution (no parents)."""
         with MBDB.get_session() as session:
-            source_res = session.get(Resolutions, 1)  # source_a
+            source_res = require(
+                session.get(Resolutions, 1), "Resolutions 1 not found in test fixture"
+            )  # source_a
 
             result = get_parent_clusters_and_leaves(source_res)
 
@@ -1194,7 +1303,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should include source cluster assignments from indirect parents."""
         with MBDB.get_session() as session:
-            linker_res = session.get(Resolutions, 5)  # linker_ab
+            linker_res = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             result = get_parent_clusters_and_leaves(linker_res)
 
@@ -1220,7 +1331,9 @@ class TestGetClustersWithLeaves:
     ) -> None:
         """Should return leaves with correct structure and unique entries."""
         with MBDB.get_session() as session:
-            linker_res = session.get(Resolutions, 5)  # linker_ab
+            linker_res = require(
+                session.get(Resolutions, 5), "Resolutions 5 not found in test fixture"
+            )  # linker_ab
 
             result = get_parent_clusters_and_leaves(linker_res)
 

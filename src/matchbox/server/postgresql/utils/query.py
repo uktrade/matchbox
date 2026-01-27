@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.selectable import Select
 
+from matchbox.common.datatypes import require
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     Match,
@@ -134,7 +135,11 @@ def build_unified_query(
     source_config_ids: list[int] = []
     for resolution_id, source_config_id, truth in lineage:
         if truth is None:
-            source_config_ids.append(source_config_id)
+            source_config_ids.append(
+                require(
+                    source_config_id, "Source config ID required for source resolution"
+                )
+            )
         else:
             model_resolutions.append((resolution_id, truth))
 
@@ -148,9 +153,11 @@ def build_unified_query(
     elif resolution.type == "source":
         # If querying a source resolution with no sources filter,
         # filter to just that source
+        source_config = require(
+            resolution.source_config, "source_config required for source resolution"
+        )
         source_filter = (
-            ClusterSourceKey.source_config_id
-            == resolution.source_config.source_config_id
+            ClusterSourceKey.source_config_id == source_config.source_config_id
         )
     else:
         # No sources provided, filter to lineage source configs
@@ -458,7 +465,7 @@ def query(
     point_of_truth: ResolutionPath | None = None,
     threshold: int | None = None,
     return_leaf_id: bool = False,
-    limit: int = None,
+    limit: int | None = None,
 ) -> pa.Table:
     """Queries Matchbox to retrieve linked data for a source.
 
@@ -475,9 +482,10 @@ def query(
     Returns all records with their final resolved cluster IDs.
     """
     with MBDB.get_session() as session:
-        source_config: SourceConfigs = Resolutions.from_path(
-            path=source, session=session
-        ).source_config
+        source_config: SourceConfigs = require(
+            Resolutions.from_path(path=source, session=session).source_config,
+            f"source_config not found for path: {source}",
+        )
         source_resolution: Resolutions = source_config.source_resolution
 
         if point_of_truth:
@@ -504,7 +512,9 @@ def query(
             stmt: str = compile_sql(id_query)
             logger.debug(f"Query SQL: \n {stmt}")
             id_results = sql_to_df(
-                stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
+                stmt=stmt,
+                connection=require(conn.dbapi_connection, "ADBC connection required"),
+                return_type="arrow",
             ).rename_columns({"root_id": "id"})
 
         selection = ["id", "key"]
@@ -550,7 +560,7 @@ def get_parent_clusters_and_leaves(
         all_clusters: dict[int, dict] = {}
 
         for parent_id in parent_ids:
-            parent_resolution: Resolutions = session.get(Resolutions, parent_id)
+            parent_resolution: Resolutions | None = session.get(Resolutions, parent_id)
             if parent_resolution is None:
                 continue
 
@@ -598,9 +608,10 @@ def match(
     """
     with MBDB.get_session() as session:
         # Get configurations using ORM relationships
-        source_config: SourceConfigs = Resolutions.from_path(
-            path=source, session=session
-        ).source_config
+        source_config: SourceConfigs = require(
+            Resolutions.from_path(path=source, session=session).source_config,
+            f"source_config not found for path: {source}",
+        )
         truth_resolution: Resolutions = Resolutions.from_path(
             path=point_of_truth, session=session
         )
@@ -609,7 +620,10 @@ def match(
             raise MatchboxResolutionNotQueriable
 
         target_configs: list[SourceConfigs] = [
-            Resolutions.from_path(path=target, session=session).source_config
+            require(
+                Resolutions.from_path(path=target, session=session).source_config,
+                f"source_config not found for target: {target}",
+            )
             for target in targets
         ]
         target_source_config_ids = [tc.source_config_id for tc in target_configs]

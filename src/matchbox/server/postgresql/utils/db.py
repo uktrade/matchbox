@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
@@ -143,8 +144,10 @@ def grant_permission(
     Committing (or otherwise) left to the caller.
     """
     # Get group
-    group = session.scalar(select(Groups).where(Groups.name == group_name))
-    if not group:
+    group = session.scalars(
+        select(Groups).where(Groups.name == group_name)
+    ).one_or_none()
+    if group is None:
         raise MatchboxGroupNotFoundError(f"Group '{group_name}' not found")
 
     if resource == BackendResourceType.SYSTEM:
@@ -161,10 +164,10 @@ def grant_permission(
         session.execute(stmt)
     else:
         # Grant collection permission
-        collection = session.scalar(
+        collection = session.scalars(
             select(Collections).where(Collections.name == resource)
-        )
-        if not collection:
+        ).one_or_none()
+        if collection is None:
             raise MatchboxCollectionNotFoundError(name=resource)
 
         stmt = (
@@ -263,7 +266,7 @@ def ingest_to_temporary_table(
         temp_table = Table(temp_table_name, metadata, *columns)
 
         with MBDB.get_session() as session:
-            temp_table.create(session.bind)
+            temp_table.create(require(session.bind))
             session.commit()
 
         # Ingest data into the temporary table
@@ -292,7 +295,7 @@ def ingest_to_temporary_table(
         # Step 3: Clean up
         try:
             with MBDB.get_session() as session:
-                temp_table.drop(session.bind, checkfirst=True)
+                temp_table.drop(require(session.bind), checkfirst=True)
                 session.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to drop temp table {temp_table_name}: {e}")

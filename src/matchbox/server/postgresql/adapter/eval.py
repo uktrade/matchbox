@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 from pyarrow import Table
-from sqlalchemy import BIGINT, CursorResult, func, select
+from sqlalchemy import BIGINT, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,8 @@ from matchbox.common.arrow import (
     SCHEMA_EVAL_SAMPLES,
     SCHEMA_JUDGEMENTS,
 )
-from matchbox.common.db import sql_to_df
+from matchbox.common.datatypes import require
+from matchbox.common.db import QueryReturnType, sql_to_df
 from matchbox.common.dtos import ModelResolutionPath
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.exceptions import (
@@ -43,26 +44,31 @@ from matchbox.server.postgresql.utils.db import (
 
 if TYPE_CHECKING:
     from pyarrow import Table as ArrowTable
+
+    from matchbox.server.postgresql.adapter.admin import MatchboxPostgresAdminMixin
+
+    _MixinBase = MatchboxPostgresAdminMixin
 else:
     ArrowTable = Any
+    _MixinBase = object
 
 
-class MatchboxPostgresEvaluationMixin:
+class MatchboxPostgresEvaluationMixin(_MixinBase):
     """Evaluation mixin for the PostgreSQL adapter for Matchbox."""
 
     def insert_judgement(self, user_name: str, judgement: CommonJudgement) -> None:  # noqa: D102
         def get_or_create_cluster(leaves: list[int], session: Session) -> int:
             # Compute hash corresponding to set of source clusters (leaves)
             leaf_hashes = [
-                session.scalar(
+                session.scalars(
                     select(Clusters.cluster_hash).where(Clusters.cluster_id == leaf_id)
-                )
+                ).one()
                 for leaf_id in leaves
             ]
             cluster_hash = hash_cluster_leaves(leaf_hashes)
 
             # Upsert cluster
-            result: CursorResult = session.execute(
+            result = session.execute(
                 insert(Clusters)
                 .values(cluster_hash=cluster_hash)
                 .on_conflict_do_nothing(index_elements=["cluster_hash"])
@@ -73,11 +79,11 @@ class MatchboxPostgresEvaluationMixin:
             newly_created = (cluster_id := result.scalar_one_or_none()) is not None
 
             if not newly_created:
-                cluster_id = session.scalar(
+                cluster_id = session.scalars(
                     select(Clusters.cluster_id).where(
                         Clusters.cluster_hash == cluster_hash
                     )
-                )
+                ).one()
 
             # Only insert Contains relationships if we created a new cluster
             if newly_created:
@@ -88,7 +94,7 @@ class MatchboxPostgresEvaluationMixin:
                         .on_conflict_do_nothing()
                     )
 
-            return cluster_id
+            return require(cluster_id)
 
         # Check that all referenced leaf IDs exist
         ids = list(chain(*judgement.endorsed)) + judgement.shown
@@ -146,7 +152,7 @@ class MatchboxPostgresEvaluationMixin:
             judgements = sql_to_df(
                 stmt=compile_sql(judgements_stmt),
                 connection=conn,
-                return_type="polars",
+                return_type=QueryReturnType.POLARS,
             )
 
         if not len(judgements):
@@ -178,7 +184,7 @@ class MatchboxPostgresEvaluationMixin:
                 cluster_expansion = sql_to_df(
                     stmt=compile_sql(cluster_expansion_stmt),
                     connection=conn,
-                    return_type="polars",
+                    return_type=QueryReturnType.POLARS,
                 )
 
         return _cast_tables(judgements, cluster_expansion)
@@ -234,7 +240,7 @@ class MatchboxPostgresEvaluationMixin:
             cluster_features = sql_to_df(
                 stmt=compile_sql(cluster_features_stmt),
                 connection=conn,
-                return_type="polars",
+                return_type=QueryReturnType.POLARS,
             )
 
         # Exclude clusters recently judged by this user
@@ -311,6 +317,6 @@ class MatchboxPostgresEvaluationMixin:
             final_samples = sql_to_df(
                 stmt=compile_sql(enrich_stmt),
                 connection=conn,
-                return_type="polars",
+                return_type=QueryReturnType.POLARS,
             )
             return final_samples.cast(pl.Schema(SCHEMA_EVAL_SAMPLES)).to_arrow()

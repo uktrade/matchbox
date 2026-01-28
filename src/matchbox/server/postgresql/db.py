@@ -1,5 +1,6 @@
 """Matchbox PostgreSQL database connection."""
 
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -79,6 +80,7 @@ class MatchboxDatabase:
         self._engine: Engine | None = None
         self._SessionLocal: sessionmaker | None = None
         self._adbc_pool: QueuePool | None = None
+        self._adbc_lock = threading.Lock()
         self._source_adbc_connection: adbc_dbapi.Connection | None = None
         self.MatchboxBase = declarative_base(
             metadata=MetaData(schema=settings.postgres.db_schema)
@@ -151,12 +153,12 @@ class MatchboxDatabase:
     def get_adbc_connection(self) -> Generator[AdbcConnection, Any, Any]:
         """Get a new ADBC connection wrapped by a SQLAlchemy pool proxy.
 
-        The pool proxy is held within the
-
-        The connection must be used within a context manager.
+        The pool proxy is held and managed within the context manager, yielding
+        the connection directly.
         """
-        if not self._adbc_pool:
-            self._connect_adbc()
+        with self._adbc_lock:
+            if not self._adbc_pool:
+                self._connect_adbc()
 
         pool = self._adbc_pool.connect()
 
@@ -166,6 +168,10 @@ class MatchboxDatabase:
 
         try:
             yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
         finally:
             pool.close()
 

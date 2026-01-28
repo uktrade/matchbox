@@ -1,6 +1,6 @@
 """Admin PostgreSQL mixin for Matchbox server."""
 
-from typing import Literal
+from typing import Literal, cast
 
 from sqlalchemy import CursorResult, and_, bindparam, delete, select, union_all
 
@@ -26,7 +26,11 @@ from matchbox.server.base import (
     PERMISSION_GRANTS,
     MatchboxSnapshot,
 )
-from matchbox.server.postgresql.db import MBDB, MatchboxBackends
+from matchbox.server.postgresql.db import (
+    MBDB,
+    MatchboxBackends,
+    MatchboxPostgresSettings,
+)
 from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
@@ -46,17 +50,19 @@ from matchbox.server.postgresql.utils.db import dump, grant_permission, restore
 class MatchboxPostgresAdminMixin:
     """Admin mixin for the PostgreSQL adapter for Matchbox."""
 
+    settings: MatchboxPostgresSettings
+
     # User management
 
     def login(self, user: User) -> LoginResponse:  # noqa: D102
         with MBDB.get_session() as session:
             # Get public and admins groups
-            public_group = session.scalar(
+            public_group = session.scalars(
                 select(Groups).where(Groups.name == DefaultGroup.PUBLIC)
-            )
-            admins_group = session.scalar(
-                select(Groups).where(Groups.name == GroupName(DefaultGroup.ADMINS))
-            )
+            ).one()
+            admins_group = session.scalars(
+                select(Groups).where(Groups.name == DefaultGroup.ADMINS)
+            ).one()
 
             # Upsert user
             if user.email:
@@ -79,7 +85,9 @@ class MatchboxPostgresAdminMixin:
                 )
 
             # Get the user object
-            user_obj = session.scalar(select(Users).where(Users.name == user.user_name))
+            user_obj = session.scalars(
+                select(Users).where(Users.name == user.user_name)
+            ).one()
 
             # Ensure user is in public group
             session.execute(
@@ -106,13 +114,16 @@ class MatchboxPostgresAdminMixin:
 
             if setup_mode_admin:
                 # Try to add to admins group
-                admin_result: CursorResult = session.execute(
-                    insert(UserGroups)
-                    .values(
-                        user_id=user_obj.user_id,
-                        group_id=admins_group.group_id,
-                    )
-                    .on_conflict_do_nothing()
+                admin_result = cast(
+                    CursorResult,
+                    session.execute(
+                        insert(UserGroups)
+                        .values(
+                            user_id=user_obj.user_id,
+                            group_id=admins_group.group_id,
+                        )
+                        .on_conflict_do_nothing()
+                    ),
                 )
 
                 if admin_result.rowcount > 0:
@@ -219,7 +230,7 @@ class MatchboxPostgresAdminMixin:
 
             grants = [
                 PermissionGrant(
-                    group_name=GroupName(perm.group.name),
+                    group_name=perm.group.name,
                     permission=PermissionType(perm.permission),
                 )
                 for perm in permissions_orm
@@ -285,6 +296,8 @@ class MatchboxPostgresAdminMixin:
 
             session.commit()
 
+            result = cast(CursorResult, result)
+
             if result.rowcount > 0:
                 logger.info(
                     f"Revoked {permission} permission on '{resource}' "
@@ -323,7 +336,7 @@ class MatchboxPostgresAdminMixin:
             raise MatchboxDataNotFound(
                 message="Some items don't exist in Clusters table.",
                 table=Clusters.__tablename__,
-                data=missing_ids,
+                data=list(missing_ids),
             )
 
         return True
@@ -390,7 +403,7 @@ class MatchboxPostgresAdminMixin:
                 .exists()
             )
             # Delete orphans
-            deletion = session.execute(stmt)
+            deletion = cast(CursorResult, session.execute(stmt))
 
             session.commit()
 

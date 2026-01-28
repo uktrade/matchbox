@@ -51,11 +51,19 @@ class MatchboxPostgresAdminMixin:
     def login(self, user: User) -> LoginResponse:  # noqa: D102
         with MBDB.get_session() as session:
             # Get public and admins groups
-            public_group = session.scalar(
-                select(Groups).where(Groups.name == DefaultGroup.PUBLIC)
+            public_group = (
+                session.execute(
+                    select(Groups).where(Groups.name == DefaultGroup.PUBLIC)
+                )
+                .scalars()
+                .one()
             )
-            admins_group = session.scalar(
-                select(Groups).where(Groups.name == GroupName(DefaultGroup.ADMINS))
+            admins_group = (
+                session.execute(
+                    select(Groups).where(Groups.name == GroupName(DefaultGroup.ADMINS))
+                )
+                .scalars()
+                .one()
             )
 
             # Upsert user
@@ -79,7 +87,11 @@ class MatchboxPostgresAdminMixin:
                 )
 
             # Get the user object
-            user_obj = session.scalar(select(Users).where(Users.name == user.user_name))
+            user_obj = (
+                session.execute(select(Users).where(Users.name == user.user_name))
+                .scalars()
+                .one()
+            )
 
             # Ensure user is in public group
             session.execute(

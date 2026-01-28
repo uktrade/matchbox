@@ -40,4 +40,4 @@ class Deduper(BaseModel, ABC):
     @abstractmethod
     def dedupe(self, data: pl.DataFrame) -> pl.DataFrame:
         """Deduplicate the dataframe."""
-        return
+        pass

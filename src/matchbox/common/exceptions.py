@@ -52,6 +52,14 @@ class MatchboxHttpException(MatchboxException):
 # -- Common data objects exceptions --
 
 
+class MatchboxRuntimeError(MatchboxException, RuntimeError):
+    """Runtime error."""
+
+    def __init__(self, message: str) -> None:
+        """Initialise the exception."""
+        super().__init__(message)
+
+
 class MatchboxNameError(MatchboxException, ValueError):
     """Name did not pass validation."""
 

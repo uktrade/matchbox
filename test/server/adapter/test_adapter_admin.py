@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import Engine
 from test.fixtures.db import BACKENDS
 
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendResourceType,
     DefaultGroup,
@@ -741,15 +742,16 @@ class TestMatchboxAdminBackend:
     def test_validate_ids(self) -> None:
         """Test validating data IDs."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            naive_crn_testkit = dag_testkit.models["naive_test_crn"]
 
             df_crn = self.backend.query(
                 source=crn_testkit.source.resolution_path,
                 point_of_truth=naive_crn_testkit.resolution_path,
             )
 
-            ids = df_crn["id"].to_pylist()
+            ids_raw = df_crn["id"].to_pylist()
+            ids = [require(id, "ID should not be None") for id in ids_raw]
             assert len(ids) > 0
             self.backend.validate_ids(ids=ids)
 
@@ -780,8 +782,8 @@ class TestMatchboxAdminBackend:
     def test_clear_and_restore(self) -> None:
         """Test that clearing and restoring the database works."""
         with self.scenario(self.backend, "link") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            naive_crn_testkit = dag_testkit.models["naive_test_crn"]
 
             count_funcs = [
                 self.backend.sources.count,
@@ -840,8 +842,8 @@ class TestMatchboxAdminBackend:
     def test_delete_orphans(self) -> None:
         """Can delete orphaned clusters."""
         with self.scenario(self.backend, "link") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            naive_crn_testkit = dag_testkit.models["naive_test_crn"]
 
             # Get number of clusters
             initial_all_clusters = self.backend.all_clusters.count()

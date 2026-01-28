@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import HTMLResponse
 
 from matchbox.common.arrow import table_to_buffer
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendCountableType,
     CollectionName,
@@ -301,7 +302,7 @@ def clear_database(
 async def custom_swagger_ui_html() -> HTMLResponse:
     """Get locally hosted docs."""
     return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
+        openapi_url=require(app.openapi_url, "OpenAPI URL not configured"),
         title=app.title + " - Swagger UI",
         oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
         swagger_js_url="/static/swagger-ui-bundle.js",
@@ -310,7 +311,10 @@ async def custom_swagger_ui_html() -> HTMLResponse:
     )
 
 
-@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+@app.get(
+    require(app.swagger_ui_oauth2_redirect_url, "OAuth2 redirect URL not configured"),
+    include_in_schema=False,
+)
 async def swagger_ui_redirect() -> HTMLResponse:
     """Helper for OAuth2."""
     return get_swagger_ui_oauth2_redirect_html()

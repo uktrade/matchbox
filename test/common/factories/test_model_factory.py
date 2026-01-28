@@ -195,7 +195,7 @@ def test_model_pipeline_with_dummy_methodology(
             left_testkit=linked.sources[left_testkit],
             true_entities=all_true_sources,
         )
-        sources = [left_testkit]
+        sources: list[str] = [left_testkit]
         model_entities = (tuple(linked.sources[left_testkit].entities), None)
     else:  # linker
         # Create perfect deduped models first
@@ -217,7 +217,8 @@ def test_model_pipeline_with_dummy_methodology(
             right_testkit=right_deduped,
             true_entities=all_true_sources,
         )
-        sources = [left_testkit, right_testkit]
+        assert right_testkit is not None, "right_testkit required for linker"
+        sources: list[str] = [left_testkit, right_testkit]
         model_entities = (tuple(left_deduped.entities), tuple(right_deduped.entities))
 
     # Verify perfect model works

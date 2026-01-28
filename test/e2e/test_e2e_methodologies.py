@@ -59,7 +59,7 @@ class TestE2EMethodologyIntegration:
             dag = dag_testkit.dag
 
             # Get a source that has duplicates (CRN has repetition in the scenario)
-            source_testkit = dag_testkit.sources.get("crn")
+            source_testkit = dag_testkit.sources["crn"]
             source = dag.get_source("crn")
 
             source.run()
@@ -118,8 +118,8 @@ class TestE2EMethodologyIntegration:
             dag = dag_testkit.dag
 
             # Get two sources that can be linked
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
             crn_source = dag.get_source("crn")
             dh_source = dag.get_source("dh")
 

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import Engine
 from test.fixtures.db import BACKENDS
 
-from matchbox.common.datatypes import DataTypes
+from matchbox.common.datatypes import DataTypes, require
 from matchbox.common.dtos import (
     DefaultGroup,
     GroupName,
@@ -227,11 +227,14 @@ class TestMatchboxCollectionsBackend:
             assert collection.default_run == v1.run_id
 
             # Setting v2 as default should automatically unset v1 as default
-            self.backend.set_run_mutable("test_collection", v2.run_id, False)
-            self.backend.set_run_default("test_collection", v2.run_id, True)
+            v1_id = require(v1.run_id, "v1 should have run_id")
+            v2_id = require(v2.run_id, "v2 should have run_id")
 
-            v1 = self.backend.get_run("test_collection", v1.run_id)
-            v2 = self.backend.get_run("test_collection", v2.run_id)
+            self.backend.set_run_mutable("test_collection", v2_id, False)
+            self.backend.set_run_default("test_collection", v2_id, True)
+
+            v1 = self.backend.get_run("test_collection", v1_id)
+            v2 = self.backend.get_run("test_collection", v2_id)
 
             assert v1.is_mutable is False
             assert v1.is_default is False
@@ -239,14 +242,14 @@ class TestMatchboxCollectionsBackend:
             assert v2.is_mutable is False
             assert v2.is_default is True
 
-            self.backend.delete_run("test_collection", v1.run_id, certain=True)
+            self.backend.delete_run("test_collection", v1_id, certain=True)
 
             # Verify run is properly removed
             with pytest.raises(MatchboxRunNotFoundError):
-                self.backend.get_run("test_collection", v1.run_id)
+                self.backend.get_run("test_collection", v1_id)
 
             with pytest.raises(MatchboxRunNotFoundError):
-                self.backend.delete_run("test_collection", v1.run_id, certain=False)
+                self.backend.delete_run("test_collection", v1_id, certain=False)
 
     def test_run_immutable(self) -> None:
         """Nothing in an immutable run can be changed."""
@@ -289,7 +292,7 @@ class TestMatchboxCollectionsBackend:
     def test_get_source(self) -> None:
         """Test querying data from the database."""
         with self.scenario(self.backend, "index") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
+            crn_testkit = dag_testkit.sources["crn"]
 
             crn_retrieved = self.backend.get_resolution(crn_testkit.resolution_path)
             assert isinstance(crn_retrieved, Resolution)
@@ -352,7 +355,7 @@ class TestMatchboxCollectionsBackend:
     def test_index_new_source(self) -> None:
         """Test that indexing a new source works."""
         with self.scenario(self.backend, "preindex") as dag_testkit:
-            crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
+            crn_testkit: SourceTestkit = dag_testkit.sources["crn"].fake_run()
 
             assert self.backend.model_clusters.count() == 0
 
@@ -454,7 +457,7 @@ class TestMatchboxCollectionsBackend:
     def test_index_empty_source(self) -> None:
         """Can insert and retrieve empty source data"""
         with self.scenario(self.backend, "preindex") as dag_testkit:
-            crn_testkit: SourceTestkit = dag_testkit.sources.get("crn")
+            crn_testkit: SourceTestkit = dag_testkit.sources["crn"]
             crn_testkit.data_hashes = crn_testkit.data_hashes.slice(length=0)
             crn_testkit.fake_run()
             self.backend.create_resolution(
@@ -475,9 +478,9 @@ class TestMatchboxCollectionsBackend:
         """Test that indexing data with the same hashes but different sources works."""
         with self.scenario(self.backend, "preindex") as dag_testkit:
             # Prepare original source
-            crn_testkit: SourceTestkit = dag_testkit.sources.get("crn").fake_run()
+            crn_testkit: SourceTestkit = dag_testkit.sources["crn"].fake_run()
             # Create new source with same hashes
-            dh_testkit: SourceTestkit = dag_testkit.sources.get("dh")
+            dh_testkit: SourceTestkit = dag_testkit.sources["dh"]
             dh_testkit.data_hashes = crn_testkit.data_hashes
             dh_testkit.fake_run()
 
@@ -501,8 +504,8 @@ class TestMatchboxCollectionsBackend:
     def test_insert_model(self) -> None:
         """Test that models can be inserted."""
         with self.scenario(self.backend, "index") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
 
@@ -514,7 +517,7 @@ class TestMatchboxCollectionsBackend:
                 description="Test deduper 1",
                 dag=dag_testkit.dag,
                 left_testkit=crn_testkit,
-                true_entities=linked.true_entities,
+                true_entities=tuple(linked.true_entities),
             )
             self.backend.create_resolution(
                 resolution=dedupe_1_testkit.fake_run().model.to_resolution(),
@@ -526,7 +529,7 @@ class TestMatchboxCollectionsBackend:
                 description="Test deduper 2",
                 dag=dag_testkit.dag,
                 left_testkit=dh_testkit,
-                true_entities=linked.true_entities,
+                true_entities=tuple(linked.true_entities),
             )
             self.backend.create_resolution(
                 resolution=dedupe_2_testkit.fake_run().model.to_resolution(),
@@ -541,7 +544,7 @@ class TestMatchboxCollectionsBackend:
                 description="Test linker 1",
                 left_testkit=dedupe_1_testkit,
                 right_testkit=dedupe_2_testkit,
-                true_entities=linked.true_entities,
+                true_entities=tuple(linked.true_entities),
             )
             self.backend.create_resolution(
                 resolution=linker_testkit.fake_run().model.to_resolution(),
@@ -625,8 +628,8 @@ class TestMatchboxCollectionsBackend:
     def test_model_results_basic(self) -> None:
         """Test that a model's results data can be set and retrieved."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            naive_crn_testkit = dag_testkit.models["naive_test_crn"]
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately.
@@ -657,8 +660,16 @@ class TestMatchboxCollectionsBackend:
             assert len(pre_results) > 0
 
             # Validate IDs
-            self.backend.validate_ids(ids=pre_results["left_id"].to_pylist())
-            self.backend.validate_ids(ids=pre_results["right_id"].to_pylist())
+            left_ids: list[int] = [
+                require(x, "left_id should not be None")
+                for x in pre_results["left_id"].to_pylist()
+            ]
+            right_ids: list[int] = [
+                require(x, "right_id should not be None")
+                for x in pre_results["right_id"].to_pylist()
+            ]
+            self.backend.validate_ids(ids=left_ids)
+            self.backend.validate_ids(ids=right_ids)
 
             # Cannot set new results
             with pytest.raises(MatchboxResolutionExistingData):
@@ -678,8 +689,8 @@ class TestMatchboxCollectionsBackend:
     def test_model_results_probabilistic(self) -> None:
         """Test that a probabilistic model's results data can be set and retrieved."""
         with self.scenario(self.backend, "probabilistic_dedupe") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            prob_crn_testkit = dag_testkit.models.get("probabilistic_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            prob_crn_testkit = dag_testkit.models["probabilistic_test_crn"]
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately
@@ -707,13 +718,21 @@ class TestMatchboxCollectionsBackend:
             assert len(pre_results) > 0
 
             # Validate IDs
-            self.backend.validate_ids(ids=pre_results["left_id"].to_pylist())
-            self.backend.validate_ids(ids=pre_results["right_id"].to_pylist())
+            left_ids: list[int] = [
+                require(x, "left_id should not be None")
+                for x in pre_results["left_id"].to_pylist()
+            ]
+            right_ids: list[int] = [
+                require(x, "right_id should not be None")
+                for x in pre_results["right_id"].to_pylist()
+            ]
+            self.backend.validate_ids(ids=left_ids)
+            self.backend.validate_ids(ids=right_ids)
 
     def test_model_results_empty(self) -> None:
         """Can insert and retrieve empty model results"""
         with self.scenario(self.backend, "index") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
+            crn_testkit = dag_testkit.sources["crn"]
             model_testkit = model_factory(
                 model_type="deduper", dag=crn_testkit.source.dag
             )
@@ -724,9 +743,10 @@ class TestMatchboxCollectionsBackend:
                 model_testkit.model.to_resolution(), path=model_testkit.resolution_path
             )
 
+            results = require(model_testkit.model.results, "Model results should exist")
             self.backend.insert_model_data(
                 path=model_testkit.model.resolution_path,
-                results=model_testkit.model.results.probabilities.to_arrow(),
+                results=results.probabilities.to_arrow(),
             )
 
             # Querying from deduper with no results is the same as querying from source

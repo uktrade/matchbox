@@ -5,9 +5,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from matchbox.common.datatypes import require
 from matchbox.server.postgresql.db import MBDB
 
-fileConfig(context.config.config_file_name, disable_existing_loggers=False)
+fileConfig(
+    require(context.config.config_file_name, "Alembic config file name required"),
+    disable_existing_loggers=False,
+)
 
 
 def run_migrations_online() -> None:

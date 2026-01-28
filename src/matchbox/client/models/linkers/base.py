@@ -45,4 +45,4 @@ class Linker(BaseModel, ABC):
     @abstractmethod
     def link(self, left: pl.DataFrame, right: pl.DataFrame) -> pl.DataFrame:
         """Link the left and right dataframes."""
-        return
+        pass

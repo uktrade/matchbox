@@ -266,16 +266,21 @@ class RequiresPermission:
 
         # Short-circuit if authorisation is disabled
         if not settings.authorisation:
-            return user
+            return (
+                user
+                if user is not None
+                else User(user_name=DefaultUser.PUBLIC, email=None)
+            )
 
         # 1. Determine the target resource
         if self.static_resource:
             target_resource = self.static_resource
         else:
             # Check path first, then query parameters
+            param_key_str = str(self.param_key) if self.param_key else ""
             target_resource = request.path_params.get(
-                self.param_key
-            ) or request.query_params.get(self.param_key)
+                param_key_str
+            ) or request.query_params.get(param_key_str)
 
         if not target_resource:
             # Developer-facing error -- should never happen in production

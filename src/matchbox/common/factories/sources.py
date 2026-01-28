@@ -21,7 +21,7 @@ from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_QUERY
-from matchbox.common.datatypes import DataTypes
+from matchbox.common.datatypes import DataTypes, require
 from matchbox.common.dtos import (
     SourceConfig,
     SourceField,
@@ -162,7 +162,7 @@ class SourceTestkit(BaseModel):
 
         pl.from_arrow(self.data).write_database(
             table_name=self.source.name,
-            connection=self.source.location.client,
+            connection=require(self.source.location.client, "Location client required"),
             if_table_exists="replace",
         )
 

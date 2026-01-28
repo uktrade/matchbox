@@ -25,6 +25,7 @@ from matchbox.client.models.models import Model
 from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
 from matchbox.common.arrow import SCHEMA_RESULTS
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     ModelResolutionName,
     ModelResolutionPath,
@@ -142,6 +143,9 @@ def validate_components(
                 merged = entity
             else:
                 merged += entity
+
+        # Component has at least 2 items, so merged cannot be None
+        assert merged is not None, "Merged entity should exist for multi-item component"
 
         # Find which source entity this component belongs to
         found_source = None
@@ -564,8 +568,9 @@ class ModelTestkit(BaseModel):
         if self.model.config.type == ModelType.DEDUPER:
             data = self.left_data
         else:
+            right_data = require(self.right_data, "Right data required for linker")
             data = pa.concat_tables(
-                [self.left_data, self.right_data], promote_options="default"
+                [self.left_data, right_data], promote_options="default"
             )
 
         indices = pc.index_in(data["id"], self._query_lookup["id"])
@@ -857,7 +862,10 @@ def model_factory(
     # * We're using default sources (left_testkit is None)
     if true_entities is None or left_testkit is None:
         final_true_entities = generator.random_elements(
-            elements=dummy_true_entities,
+            elements=require(
+                dummy_true_entities,
+                "Dummy entities required when using default sources",
+            ),
             unique=True,
             length=n_true_entities,
         )

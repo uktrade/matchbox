@@ -29,7 +29,7 @@ class ClientSettings(BaseSettings):
 
     @field_validator("jwt")
     @classmethod
-    def validate_jwt_structure(cls, v: str | None) -> str:
+    def validate_jwt_structure(cls, v: str | None) -> str | None:
         """Perform basic JWT validation."""
         if v is None:
             return v

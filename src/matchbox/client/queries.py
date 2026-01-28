@@ -194,7 +194,8 @@ class Query:
                     )
                 writer.write_table(res)
 
-            writer.close()
+            if writer is not None:
+                writer.close()
 
             # Download sources from warehouse
             lazy_sources = []

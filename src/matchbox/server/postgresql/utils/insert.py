@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import (
     insert,
 )
 
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     ModelResolutionPath,
     ResolutionType,
@@ -81,22 +82,29 @@ def insert_hashes(
             raise MatchboxResolutionInvalidData
 
         # Determine if the resolution already has any keys
-        existing_keys = session.execute(
-            select(func.count())
-            .select_from(
-                join(
-                    ClusterSourceKey,
-                    SourceConfigs,
-                    ClusterSourceKey.source_config_id == SourceConfigs.source_config_id,
+        existing_keys = (
+            session.execute(
+                select(func.count())
+                .select_from(
+                    join(
+                        ClusterSourceKey,
+                        SourceConfigs,
+                        ClusterSourceKey.source_config_id
+                        == SourceConfigs.source_config_id,
+                    )
                 )
+                .where(SourceConfigs.resolution_id == resolution.resolution_id)
             )
-            .where(SourceConfigs.resolution_id == resolution.resolution_id)
-        ).scalar_one()
+            .scalars()
+            .one()
+        )
 
         if existing_keys > 0:
             raise MatchboxResolutionExistingData
 
-        source_config_id = resolution.source_config.source_config_id
+        source_config_id = require(
+            resolution.source_config, "Source config required for source resolution"
+        ).source_config_id
 
     with (
         ingest_to_temporary_table(
@@ -247,7 +255,7 @@ def _build_cluster_hierarchy(
     seen_components: set[frozenset[Cluster]] = set()
     threshold: int = int(pa.compute.max(probabilities["probability"]).as_py())
 
-    def _process_components(probability: int) -> None:
+    def _process_components(probability: int) -> set[frozenset[Cluster]]:
         """Process components at the current threshold."""
         components: set[frozenset[Cluster]] = {
             frozenset(component) for component in djs.get_components()
@@ -327,11 +335,15 @@ def insert_results(
         raise MatchboxResolutionInvalidData
 
     with MBDB.get_session() as session:
-        existing_results = session.execute(
-            select(func.count())
-            .select_from(Results)
-            .where(Results.resolution_id == resolution.resolution_id)
-        ).scalar_one()
+        existing_results = (
+            session.execute(
+                select(func.count())
+                .select_from(Results)
+                .where(Results.resolution_id == resolution.resolution_id)
+            )
+            .scalars()
+            .one()
+        )
 
         if existing_results > 0:
             raise MatchboxResolutionExistingData

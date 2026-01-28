@@ -19,6 +19,7 @@ from splink import Linker as SplinkLibLinkerClass
 from splink.internals.linker_components.training import LinkerTraining
 
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
+from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 
 
@@ -214,7 +215,7 @@ class SplinkLinker(Linker):
             proc_func(**func.arguments)
 
     def link(
-        self, left: pl.DataFrame = None, right: pl.DataFrame = None
+        self, left: pl.DataFrame | None = None, right: pl.DataFrame | None = None
     ) -> pl.DataFrame:
         """Link the left and right dataframes."""
         if left is not None or right is not None:
@@ -223,9 +224,13 @@ class SplinkLinker(Linker):
                 "These values will be ignored"
             )
 
-        res = self._linker.inference.predict(
-            threshold_match_probability=self.settings.threshold
-        )
+        linker = require(self._linker, "_linker must be initialized via prepare()")
+        if self.settings.threshold is not None:
+            res = linker.inference.predict(
+                threshold_match_probability=self.settings.threshold
+            )
+        else:
+            res = linker.inference.predict()
 
         return (
             res.as_duckdbpyrelation()

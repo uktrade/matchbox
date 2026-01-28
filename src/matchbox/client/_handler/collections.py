@@ -12,6 +12,7 @@ from matchbox.client._settings import settings
 from matchbox.common.arrow import (
     table_to_buffer,
 )
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
@@ -297,7 +298,7 @@ def get_resolution_stage(path: ResolutionPath) -> UploadStage:
         f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/data/status"
     )
     upload_info = UploadInfo.model_validate(status_res.json())
-    return upload_info.stage
+    return require(upload_info.stage, "Upload stage not found")
 
 
 @profile_time(kwarg="path")

@@ -100,7 +100,7 @@ def main(
         typer.Argument(
             help=f"Scenario type. Available: {', '.join(SCENARIO_REGISTRY.keys())}"
         ),
-    ] = None,
+    ],
     log_file: Annotated[
         str | None,
         typer.Option(

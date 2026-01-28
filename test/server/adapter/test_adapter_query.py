@@ -28,7 +28,7 @@ class TestMatchboxQueryBackend:
     def test_query_only_source(self) -> None:
         """Test querying data from a link point of truth."""
         with self.scenario(self.backend, "index") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
+            crn_testkit = dag_testkit.sources["crn"]
 
             df_crn_sample = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -46,7 +46,7 @@ class TestMatchboxQueryBackend:
     def test_query_return_leaf_ids(self) -> None:
         """Test querying data and additionally requesting leaf IDs."""
         with self.scenario(self.backend, "index") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
+            crn_testkit = dag_testkit.sources["crn"]
 
             df_crn_full = self.backend.query(
                 source=crn_testkit.resolution_path, return_leaf_id=True
@@ -58,8 +58,8 @@ class TestMatchboxQueryBackend:
     def test_query_with_dedupe_model(self) -> None:
         """Test querying data from a deduplication point of truth."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
-            crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            crn_testkit = dag_testkit.sources["crn"]
+            naive_crn_testkit = dag_testkit.models["naive_test_crn"]
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -80,9 +80,9 @@ class TestMatchboxQueryBackend:
         """Test querying data from a link point of truth."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -117,9 +117,9 @@ class TestMatchboxQueryBackend:
         """Test querying data from a link point of truth."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "probabilistic_naive_test_crn_naive_test_cdms"
-            crn_testkit = dag_testkit.sources.get("crn")
-            cdms_testkit = dag_testkit.sources.get("cdms")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            cdms_testkit = dag_testkit.sources["cdms"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -170,9 +170,9 @@ class TestMatchboxQueryBackend:
         """Test that matching data works when the target has many IDs."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -202,9 +202,9 @@ class TestMatchboxQueryBackend:
         """Test that matching data works when the source has more possible IDs."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -234,9 +234,9 @@ class TestMatchboxQueryBackend:
         """Test that matching data works when the target has no IDs."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -266,9 +266,9 @@ class TestMatchboxQueryBackend:
         """Test that matching data works when the supplied key doesn't exist."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             # Use a non-existent source key
             non_existent_key = "foo"
@@ -292,9 +292,9 @@ class TestMatchboxQueryBackend:
         """Test that matching data works when the target has many IDs."""
         with self.scenario(self.backend, "link") as dag_testkit:
             linker_name = "probabilistic_naive_test_crn_naive_test_cdms"
-            crn_testkit = dag_testkit.sources.get("crn")
-            dh_testkit = dag_testkit.sources.get("dh")
-            linker_testkit = dag_testkit.models.get(linker_name)
+            crn_testkit = dag_testkit.sources["crn"]
+            dh_testkit = dag_testkit.sources["dh"]
+            linker_testkit = dag_testkit.models[linker_name]
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]

@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from adbc_driver_postgresql import dbapi as adbc_dbapi
 from alembic import command
@@ -19,10 +19,25 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
-from sqlalchemy.pool import PoolProxiedConnection, QueuePool
+from sqlalchemy.pool import QueuePool
 
+from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
+
+
+@runtime_checkable
+class ADBCConnectionProtocol(Protocol):
+    """Protocol for ADBC connections with dbapi_connection attribute."""
+
+    @property
+    def dbapi_connection(self) -> object:
+        """The underlying ADBC DBAPI connection."""
+        ...
+
+    def close(self) -> None:
+        """Close the connection."""
+        ...
 
 
 class MatchboxPostgresCoreSettings(BaseModel):
@@ -122,8 +137,9 @@ class MatchboxDatabase:
             self._adbc_pool.dispose()
             self._adbc_pool = None
 
-            self._source_adbc_connection.close()
-            self._source_adbc_connection = None
+            if self._source_adbc_connection is not None:
+                self._source_adbc_connection.close()
+                self._source_adbc_connection = None
 
     def _reset_connections(self) -> None:
         """Dispose and re-initialise SQLAlchemy and ADBC connection managers."""
@@ -137,7 +153,7 @@ class MatchboxDatabase:
         """Get the database engine."""
         if not self._engine:
             self._connect()
-        return self._engine
+        return require(self._engine, "Engine not initialized after _connect()")
 
     def get_session(self) -> Session:
         """Get a new session."""
@@ -146,7 +162,7 @@ class MatchboxDatabase:
         return self._SessionLocal()
 
     @contextmanager
-    def get_adbc_connection(self) -> Generator[PoolProxiedConnection, Any, Any]:
+    def get_adbc_connection(self) -> Generator[ADBCConnectionProtocol, Any, Any]:
         """Get a new ADBC connection wrapped by a SQLAlchemy pool proxy.
 
         The connection must be used within a context manager.
@@ -154,7 +170,13 @@ class MatchboxDatabase:
         if not self._adbc_pool:
             self._connect_adbc()
 
-        conn = self._adbc_pool.connect()
+        conn = require(self._adbc_pool, "ADBC pool not initialized").connect()
+
+        # Assert the connection has the required attribute
+        assert hasattr(conn, "dbapi_connection"), (
+            "ADBC connection missing dbapi_connection attribute"
+        )
+
         try:
             yield conn
         finally:
@@ -268,9 +290,9 @@ class MatchboxDatabase:
                     text("SELECT version_num FROM public.alembic_version;")
                 )
                 alembic_version = result.scalar()
+                return alembic_version is not None
         else:
-            alembic_version = None
-        return alembic_version
+            return False
 
     @property
     def sorted_tables(self) -> list[Table]:

@@ -208,13 +208,18 @@ class DAG:
                 validate_etl=False,
             )
         elif resolution.resolution_type == ResolutionType.MODEL:
+            # Pydantic validator ensures truth is non-None for MODEL resolutions
+            assert resolution.truth is not None
             self.model(
                 name=ModelResolutionName(name),
                 description=resolution.description,
                 model_class=resolution.config.model_class,
                 model_settings=json.loads(resolution.config.model_settings),
                 left_query=Query.from_config(resolution.config.left_query, dag=self),
-                right_query=Query.from_config(resolution.config.right_query, dag=self)
+                right_query=Query.from_config(
+                    resolution.config.right_query,
+                    dag=self,
+                )
                 if resolution.config.right_query
                 else None,
                 truth=threshold_int_to_float(resolution.truth),
@@ -309,6 +314,8 @@ class DAG:
                 return "🔄"
             elif status[name] == DAGNodeExecutionStatus.DONE:
                 return "✅"
+            else:
+                return "❓"  # Unknown status
 
         # Header with collection and run info
         head_collection: str = f"Collection: {self.name}"

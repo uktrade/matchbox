@@ -14,6 +14,7 @@ from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.queries import Query
 from matchbox.client.results import ModelResults
+from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     ModelConfig,
     ModelResolutionName,
@@ -176,12 +177,15 @@ class Model:
     @post_run
     def to_resolution(self) -> Resolution:
         """Convert to Resolution for API calls."""
+        # @post_run decorator ensures results is non-None
+        assert self.results is not None
+        results = self.results
         return Resolution(
             description=self.description,
             truth=self._truth,
             resolution_type=ResolutionType.MODEL,
             config=self.config,
-            fingerprint=hash_model_results(self.results.probabilities),
+            fingerprint=hash_model_results(results.probabilities),
         )
 
     @classmethod
@@ -195,6 +199,8 @@ class Model:
         if resolution.resolution_type != ResolutionType.MODEL:
             raise ValueError("Resolution must be of type 'model'")
 
+        # Pydantic validator ensures truth is non-None for MODEL resolutions
+        assert resolution.truth is not None
         return cls(
             dag=dag,
             name=ModelResolutionName(resolution_name),
@@ -241,6 +247,7 @@ class Model:
     ) -> DataFrame:
         """Run model instance against data."""
         if self.config.type == ModelType.LINKER:
+            right_df = require(right_df, "right_df is required for LINKER model")
             self.model_instance.prepare(left_df, right_df)
             probabilities = self.model_instance.link(left=left_df, right=right_df)
         else:
@@ -277,10 +284,11 @@ class Model:
 
         if self.config.type == ModelType.LINKER:
             logger.info("Executing right query", prefix=log_prefix)
+            right_query = self.right_query
             right_df = (
                 right_data
                 if right_data is not None
-                else self.right_query.data(return_leaf_id=for_validation)
+                else right_query.data(return_leaf_id=for_validation)
             )
 
         logger.info("Running model logic", prefix=log_prefix)
@@ -290,9 +298,7 @@ class Model:
             self.results = ModelResults(
                 probabilities=probabilities,
                 left_root_leaf=self.left_query.leaf_id,
-                right_root_leaf=self.right_query.leaf_id
-                if right_df is not None
-                else None,
+                right_root_leaf=right_query.leaf_id if right_df is not None else None,
             )
         else:
             self.results = ModelResults(probabilities=probabilities)
@@ -340,9 +346,10 @@ class Model:
             _handler.create_resolution(resolution=resolution, path=self.resolution_path)
             logger.info("Setting data for new resolution", prefix=log_prefix)
             # Assumes resolution has not been deleted or made incompatible
-            _handler.set_data(
-                path=self.resolution_path, data=self.results.probabilities
-            )
+            # @post_run decorator ensures results is non-None
+            assert self.results is not None
+            results = self.results
+            _handler.set_data(path=self.resolution_path, data=results.probabilities)
 
     def download_results(self) -> ModelResults:
         """Retrieve results associated with the model from the database."""

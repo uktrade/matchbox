@@ -998,9 +998,9 @@ class Groups(CountMixin, MBDB.MatchboxBase):
             for grant, resource_type, resource_name in DEFAULT_PERMISSIONS:
                 collection_id = None
                 if resource_name and resource_type == BackendResourceType.COLLECTION:
-                    collection = session.scalar(
+                    collection = session.scalars(
                         select(Collections).where(Collections.name == resource_name)
-                    )
+                    ).one()
                     if not collection:
                         raise MatchboxCollectionNotFoundError(name=resource_name)
                     collection_id = collection.collection_id

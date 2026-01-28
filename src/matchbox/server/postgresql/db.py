@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from adbc_driver_postgresql import dbapi as adbc_dbapi
+from adbc_driver_postgresql.dbapi import Connection as AdbcConnection
 from alembic import command
 from alembic.config import Config
 from pydantic import BaseModel, Field
@@ -19,8 +20,9 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
-from sqlalchemy.pool import PoolProxiedConnection, QueuePool
+from sqlalchemy.pool import QueuePool
 
+from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
 
@@ -146,19 +148,26 @@ class MatchboxDatabase:
         return self._SessionLocal()
 
     @contextmanager
-    def get_adbc_connection(self) -> Generator[PoolProxiedConnection, Any, Any]:
+    def get_adbc_connection(self) -> Generator[AdbcConnection, Any, Any]:
         """Get a new ADBC connection wrapped by a SQLAlchemy pool proxy.
+
+        The pool proxy is held within the
 
         The connection must be used within a context manager.
         """
         if not self._adbc_pool:
             self._connect_adbc()
 
-        conn = self._adbc_pool.connect()
+        pool = self._adbc_pool.connect()
+
+        connection = require(
+            pool.dbapi_connection, "ADBC pool must have connection object."
+        )
+
         try:
-            yield conn
+            yield connection
         finally:
-            conn.close()
+            pool.close()
 
     def run_migrations(self) -> None:
         """Create the database and all tables expected in the schema."""

@@ -155,7 +155,7 @@ class MatchboxPostgresEvaluationMixin:
         with MBDB.get_adbc_connection() as conn:
             judgements = sql_to_df(
                 stmt=compile_sql(judgements_stmt),
-                connection=require(conn.dbapi_connection, "ADBC connection required"),
+                connection=conn.dbapi_connection,
                 return_type="polars",
             )
 
@@ -245,7 +245,7 @@ class MatchboxPostgresEvaluationMixin:
         with MBDB.get_adbc_connection() as conn:
             cluster_features = sql_to_df(
                 stmt=compile_sql(cluster_features_stmt),
-                connection=require(conn.dbapi_connection, "ADBC connection required"),
+                connection=conn.dbapi_connection,
                 return_type="polars",
             )
 
@@ -322,7 +322,7 @@ class MatchboxPostgresEvaluationMixin:
 
             final_samples = sql_to_df(
                 stmt=compile_sql(enrich_stmt),
-                connection=require(conn.dbapi_connection, "ADBC connection required"),
+                connection=conn.dbapi_connection,
                 return_type="polars",
             )
             return final_samples.cast(pl.Schema(SCHEMA_EVAL_SAMPLES)).to_arrow()

@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from adbc_driver_postgresql import dbapi as adbc_dbapi
 from alembic import command
@@ -19,11 +19,25 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
-from sqlalchemy.pool import PoolProxiedConnection, QueuePool
+from sqlalchemy.pool import QueuePool
 
 from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
+
+
+@runtime_checkable
+class ADBCConnectionProtocol(Protocol):
+    """Protocol for ADBC connections with dbapi_connection attribute."""
+
+    @property
+    def dbapi_connection(self) -> object:
+        """The underlying ADBC DBAPI connection."""
+        ...
+
+    def close(self) -> None:
+        """Close the connection."""
+        ...
 
 
 class MatchboxPostgresCoreSettings(BaseModel):
@@ -148,7 +162,7 @@ class MatchboxDatabase:
         return self._SessionLocal()
 
     @contextmanager
-    def get_adbc_connection(self) -> Generator[PoolProxiedConnection, Any, Any]:
+    def get_adbc_connection(self) -> Generator[ADBCConnectionProtocol, Any, Any]:
         """Get a new ADBC connection wrapped by a SQLAlchemy pool proxy.
 
         The connection must be used within a context manager.
@@ -157,6 +171,12 @@ class MatchboxDatabase:
             self._connect_adbc()
 
         conn = require(self._adbc_pool, "ADBC pool not initialized").connect()
+
+        # Assert the connection has the required attribute
+        assert hasattr(conn, "dbapi_connection"), (
+            "ADBC connection missing dbapi_connection attribute"
+        )
+
         try:
             yield conn
         finally:

@@ -513,7 +513,7 @@ def query(
             logger.debug(f"Query SQL: \n {stmt}")
             id_results = sql_to_df(
                 stmt=stmt,
-                connection=require(conn.dbapi_connection, "ADBC connection required"),
+                connection=conn.dbapi_connection,
                 return_type="arrow",
             ).rename_columns({"root_id": "id"})
 

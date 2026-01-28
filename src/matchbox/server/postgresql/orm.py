@@ -664,7 +664,7 @@ class SourceConfigs(CountMixin, MBDB.MatchboxBase):
     @property
     def name(self) -> str:
         """Get the name of the related resolution."""
-        return require(self.source_resolution, "source_resolution is required").name
+        return self.source_resolution.name
 
     # Relationships
     source_resolution: Mapped["Resolutions"] = relationship(
@@ -800,7 +800,7 @@ class ModelConfigs(CountMixin, MBDB.MatchboxBase):
     @property
     def name(self) -> str:
         """Get the name of the related resolution."""
-        return require(self.model_resolution, "model_resolution is required").name
+        return self.model_resolution.name
 
     # Relationships
     model_resolution: Mapped["Resolutions"] = relationship(

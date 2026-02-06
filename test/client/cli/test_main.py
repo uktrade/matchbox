@@ -43,7 +43,7 @@ class TestMainCLI:
         test_value = AuthStatusResponse(
             authenticated=True,
             user=User(
-                sub="alice",
+                user_name="alice",
                 email="test@example.com",
             ),
         )

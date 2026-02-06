@@ -3,9 +3,11 @@
 from collections.abc import Callable, Generator, Iterable
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 
 import polars as pl
+from pandas import DataFrame as PandasDataFrame
+from polars import DataFrame as PolarsDataFrame
 from pyarrow import Table as ArrowTable
 from pyarrow import parquet as pq
 
@@ -229,6 +231,33 @@ class Source:
     def cache_path(self) -> Path:
         """The path within the DAG cache for storing this source data."""
         return self.dag.cache_path / f"{self.name}.parquet"
+
+    @overload
+    def fetch(
+        self,
+        qualify_names: bool = False,
+        batch_size: int | None = None,
+        return_type: Literal[QueryReturnType.POLARS] = ...,
+        keys: list[str] | None = None,
+    ) -> Generator[PolarsDataFrame, None, None]: ...
+
+    @overload
+    def fetch(
+        self,
+        qualify_names: bool = False,
+        batch_size: int | None = None,
+        return_type: Literal[QueryReturnType.PANDAS] = ...,
+        keys: list[str] | None = None,
+    ) -> Generator[PandasDataFrame, None, None]: ...
+
+    @overload
+    def fetch(
+        self,
+        qualify_names: bool = False,
+        batch_size: int | None = None,
+        return_type: Literal[QueryReturnType.ARROW] = ...,
+        keys: list[str] | None = None,
+    ) -> Generator[ArrowTable, None, None]: ...
 
     def fetch(
         self,

@@ -76,7 +76,7 @@ class TestGroupsCLI:
         mock_get.return_value = Group(
             name="team-a",
             description="Team A",
-            members=[User(sub="alice", email=None)],
+            members=[User(user_name="alice", email=None)],
         )
 
         result = self.runner.invoke(app, ["groups", "show", "-g", "team-a"])

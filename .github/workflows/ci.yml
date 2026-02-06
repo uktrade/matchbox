@@ -4,6 +4,7 @@ on:
     branches:
       - main
       - "feature/**"
+      - "chore/**"
   workflow_dispatch:
 
 jobs:

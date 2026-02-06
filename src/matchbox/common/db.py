@@ -40,28 +40,84 @@ T = TypeVar("T")
 def sql_to_df(
     stmt: str,
     connection: Engine | AdbcConnection,
-    return_type: QueryReturnType,
+    return_type: Literal[QueryReturnType.POLARS],
     *,
     return_batches: Literal[False] = False,
     batch_size: int | None = None,
     rename: dict[str, str] | Callable | None = None,
     schema_overrides: dict[str, pl.DataType] | None = None,
     execute_options: dict[str, Any] | None = None,
-) -> QueryReturnClass: ...
+) -> PolarsDataFrame: ...
 
 
 @overload
 def sql_to_df(
     stmt: str,
     connection: Engine | AdbcConnection,
-    return_type: QueryReturnType,
+    return_type: Literal[QueryReturnType.PANDAS],
+    *,
+    return_batches: Literal[False] = False,
+    batch_size: int | None = None,
+    rename: dict[str, str] | Callable | None = None,
+    schema_overrides: dict[str, pl.DataType] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> PandasDataFrame: ...
+
+
+@overload
+def sql_to_df(
+    stmt: str,
+    connection: Engine | AdbcConnection,
+    return_type: Literal[QueryReturnType.ARROW],
+    *,
+    return_batches: Literal[False] = False,
+    batch_size: int | None = None,
+    rename: dict[str, str] | Callable | None = None,
+    schema_overrides: dict[str, pl.DataType] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> ArrowTable: ...
+
+
+@overload
+def sql_to_df(
+    stmt: str,
+    connection: Engine | AdbcConnection,
+    return_type: Literal[QueryReturnType.POLARS],
     *,
     return_batches: Literal[True],
     batch_size: int | None = None,
     rename: dict[str, str] | Callable | None = None,
     schema_overrides: dict[str, pl.DataType] | None = None,
     execute_options: dict[str, Any] | None = None,
-) -> Iterator[QueryReturnClass]: ...
+) -> Iterator[PolarsDataFrame]: ...
+
+
+@overload
+def sql_to_df(
+    stmt: str,
+    connection: Engine | AdbcConnection,
+    return_type: Literal[QueryReturnType.PANDAS],
+    *,
+    return_batches: Literal[True],
+    batch_size: int | None = None,
+    rename: dict[str, str] | Callable | None = None,
+    schema_overrides: dict[str, pl.DataType] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> Iterator[PandasDataFrame]: ...
+
+
+@overload
+def sql_to_df(
+    stmt: str,
+    connection: Engine | AdbcConnection,
+    return_type: Literal[QueryReturnType.ARROW],
+    *,
+    return_batches: Literal[True],
+    batch_size: int | None = None,
+    rename: dict[str, str] | Callable | None = None,
+    schema_overrides: dict[str, pl.DataType] | None = None,
+    execute_options: dict[str, Any] | None = None,
+) -> Iterator[ArrowTable]: ...
 
 
 def sql_to_df(

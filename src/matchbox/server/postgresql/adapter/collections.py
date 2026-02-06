@@ -378,6 +378,4 @@ class MatchboxPostgresCollectionsMixin:
 
         with MBDB.get_adbc_connection() as conn:
             stmt: str = compile_sql(results_query)
-            return sql_to_df(
-                stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
-            )
+            return sql_to_df(stmt=stmt, connection=conn, return_type="arrow")

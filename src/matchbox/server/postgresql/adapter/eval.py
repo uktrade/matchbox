@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
     from matchbox.server.postgresql.adapter.admin import MatchboxPostgresAdminMixin
 
+    # The evaluation mixin has self functions that reference the admin mixin
+    # This lets us refernce it in a typesafe way
     _MixinBase = MatchboxPostgresAdminMixin
 else:
     ArrowTable = Any

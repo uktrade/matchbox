@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 
 from pyarrow import Table
@@ -11,7 +12,8 @@ from matchbox.common.arrow import (
 )
 from matchbox.common.dtos import (
     Match,
-    ResolutionPath,
+    ModelResolutionName,
+    ResolverResolutionPath,
     SourceResolutionPath,
 )
 from matchbox.common.exceptions import (
@@ -24,8 +26,8 @@ from matchbox.common.logging import logger
 def query(
     source: SourceResolutionPath,
     return_leaf_id: bool,
-    resolution: ResolutionPath | None = None,
-    threshold: int | None = None,
+    resolution: ResolverResolutionPath | None = None,
+    threshold_overrides: dict[ModelResolutionName, int] | None = None,
     limit: int | None = None,
 ) -> Table:
     """Query a source in Matchbox."""
@@ -41,7 +43,9 @@ def query(
                 "source": source.name,
                 "resolution": resolution.name if resolution else None,
                 "return_leaf_id": return_leaf_id,
-                "threshold": threshold,
+                "threshold_overrides": (
+                    json.dumps(threshold_overrides) if threshold_overrides else None
+                ),
                 "limit": limit,
             }
         ),
@@ -69,8 +73,8 @@ def match(
     targets: list[SourceResolutionPath],
     source: SourceResolutionPath,
     key: str,
-    resolution: ResolutionPath,
-    threshold: int | None = None,
+    resolution: ResolverResolutionPath,
+    threshold_overrides: dict[ModelResolutionName, int] | None = None,
 ) -> list[Match]:
     """Match a source against a list of targets."""
     log_prefix = f"Query {source}"
@@ -89,7 +93,9 @@ def match(
                 "source": source.name,
                 "key": key,
                 "resolution": resolution.name,
-                "threshold": threshold,
+                "threshold_overrides": (
+                    json.dumps(threshold_overrides) if threshold_overrides else None
+                ),
             }
         ),
     )

@@ -174,8 +174,12 @@ def test_process_upload_success(s3: S3Client, resolution_type: ResolutionType) -
 def test_process_upload_empty_table(s3: S3Client) -> None:
     """Test that files representing empty table can be handled."""
     # Setup mock backend
+    source_testkit = source_factory().fake_run()
     mock_backend = Mock()
     mock_backend.settings.datastore.get_client.return_value = s3
+    mock_backend.get_resolution = Mock(
+        return_value=source_testkit.source.to_resolution()
+    )
 
     # Create bucket
     bucket = "test-bucket"
@@ -210,6 +214,8 @@ def test_process_upload_empty_table(s3: S3Client) -> None:
     assert "404" in str(excinfo.value) or "NoSuchKey" in str(excinfo.value), (
         f"File was not deleted: {str(excinfo.value)}"
     )
+
+    assert mock_backend.insert_source_data.called
 
 
 def test_process_upload_deletes_file_on_failure(s3: S3Client) -> None:

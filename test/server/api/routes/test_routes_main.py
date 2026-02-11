@@ -66,6 +66,33 @@ def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     assert table.schema.equals(SCHEMA_QUERY)
 
 
+def test_query_forwards_threshold_overrides(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.query = Mock(
+        return_value=pa.Table.from_pylist(
+            [{"keys": "a", "id": 1}],
+            schema=SCHEMA_QUERY,
+        )
+    )
+
+    response = test_client.get(
+        "/query",
+        params={
+            "collection": "test_collection",
+            "run_id": 1,
+            "source": "foo",
+            "resolution": "resolver",
+            "return_leaf_id": False,
+            "threshold_overrides": '{"model_a": 75}',
+        },
+    )
+
+    assert response.status_code == 200
+    assert mock_backend.query.call_args.kwargs["threshold_overrides"] == {"model_a": 75}
+
+
 def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
 
@@ -140,12 +167,54 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
             "source": "bar",
             "key": 1,
             "resolution": "res",
-            "threshold": 50,
+            "threshold_overrides": '{"model_a": 50}',
         },
     )
 
     assert response.status_code == 200
     [Match.model_validate(m) for m in response.json()]
+    assert mock_backend.match.call_args.kwargs["threshold_overrides"] == {"model_a": 50}
+
+
+def test_match_invalid_threshold_overrides(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, _, _ = api_client_and_mocks
+
+    response = test_client.get(
+        "/match",
+        params={
+            "collection": "test_collection",
+            "run_id": 1,
+            "targets": "foo",
+            "source": "bar",
+            "key": 1,
+            "resolution": "res",
+            "threshold_overrides": "not-json",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_query_invalid_threshold_override_values(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, _, _ = api_client_and_mocks
+
+    response = test_client.get(
+        "/query",
+        params={
+            "collection": "test_collection",
+            "run_id": 1,
+            "source": "foo",
+            "resolution": "resolver",
+            "return_leaf_id": False,
+            "threshold_overrides": '{"model_a": 101}',
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

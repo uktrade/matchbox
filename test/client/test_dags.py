@@ -50,6 +50,13 @@ def test_dag_list(matchbox_api: MockRouter) -> None:
     assert DAG.list_all() == ["companies", "contacts"]
 
 
+def test_dag_uses_resolver_factory_name() -> None:
+    """DAG exposes resolver factory and no longer exposes resolve factory."""
+    dag = DAG("test_collection")
+    assert hasattr(dag, "resolver")
+    assert not hasattr(dag, "resolve")
+
+
 @patch.object(Source, "run")
 @patch.object(Model, "run")
 @patch.object(Source, "sync")
@@ -94,17 +101,17 @@ def test_dag_run_and_sync(
     # Structure:
     # - sources can be passed directly to linkers
     # - or, linkers can take dedupers
-    foo_bar = d_foo.query(foo).linker(
+    foo_bar = foo.query().linker(
         bar.query(),
         name="foo_bar",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
 
-    # Structure: linkers can take other linkers
-    foo_bar_baz = foo_bar.query(foo, bar, baz).linker(
+    # Additional independent model
+    foo_baz = foo.query().linker(
         baz.query(),
-        name="foo_bar_baz",
+        name="foo_baz",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
@@ -115,7 +122,7 @@ def test_dag_run_and_sync(
         baz.name,
         d_foo.name,
         foo_bar.name,
-        foo_bar_baz.name,
+        foo_baz.name,
     }
 
     # Run DAG
@@ -301,20 +308,20 @@ def test_dag_draw(sqla_sqlite_warehouse: Engine) -> None:
         name="d_foo", model_class=NaiveDeduper, model_settings={"unique_fields": []}
     )
 
-    foo_bar = d_foo.query(foo).linker(
+    foo_bar = foo.query().linker(
         bar.query(),
         name="foo_bar",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
 
-    # Structure: linkers can take other linkers
-    foo_bar_baz = foo_bar.query(foo, bar, baz).linker(
+    foo_baz = foo.query().linker(
         baz.query(),
-        name="foo_bar_baz",
+        name="foo_baz",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
+    root = dag.resolver(name="root", inputs=[d_foo, foo_bar, foo_baz])
 
     # Prepare the DAG and draw it
 
@@ -328,7 +335,7 @@ def test_dag_draw(sqla_sqlite_warehouse: Engine) -> None:
     assert "Run" in head_lines[1]
 
     # The root node should be first
-    assert tree_lines[0] == "foo_bar_baz"
+    assert tree_lines[0] == "root"
 
     # Check that all nodes are present
     node_names = [
@@ -337,7 +344,8 @@ def test_dag_draw(sqla_sqlite_warehouse: Engine) -> None:
         baz.name,
         d_foo.name,
         foo_bar.name,
-        foo_bar_baz.name,
+        foo_baz.name,
+        root.name,
     ]
 
     for node in node_names:
@@ -487,17 +495,30 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     foo_source = dag.source(**foo.into_dag())
     bar_source = dag.source(**bar.into_dag())
     baz_source = dag.source(**baz.into_dag())
+    foo_dedupe = foo_source.query().deduper(
+        name="foo_dedupe",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
+    )
     foo_bar = foo_source.query().linker(
         bar_source.query(),
         name="foo_bar",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    foo_bar_baz = foo_bar.query(foo, bar).linker(
+    foo_bar_resolver = dag.resolver(
+        name="foo_bar_resolver",
+        inputs=[foo_dedupe, foo_bar],
+    )
+    bar_baz = bar_source.query().linker(
         baz_source.query(),
-        name="foo_bar_baz",
+        name="bar_baz",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
+    )
+    foo_bar_baz = dag.resolver(
+        name="foo_bar_baz",
+        inputs=[foo_bar_resolver, bar_baz],
     )
     dag.new_run()
 
@@ -518,16 +539,29 @@ def test_resolve(matchbox_api: MockRouter) -> None:
                     foo.name: foo.fake_run().source.to_resolution(),
                     bar.name: bar.fake_run().source.to_resolution(),
                     baz.name: baz.fake_run().source.to_resolution(),
+                    foo_dedupe.name: Resolution(
+                        fingerprint=b"mock_dedupe",
+                        resolution_type=ResolutionType.MODEL,
+                        config=foo_dedupe.config,
+                    ),
                     foo_bar.name: Resolution(
-                        fingerprint=b"mock",
-                        truth=1,
+                        fingerprint=b"mock_model_1",
                         resolution_type=ResolutionType.MODEL,
                         config=foo_bar.config,
                     ),
-                    foo_bar_baz.name: Resolution(
-                        fingerprint=b"mock",
-                        truth=1,
+                    bar_baz.name: Resolution(
+                        fingerprint=b"mock_model_2",
                         resolution_type=ResolutionType.MODEL,
+                        config=bar_baz.config,
+                    ),
+                    foo_bar_resolver.name: Resolution(
+                        fingerprint=b"mock_resolver_1",
+                        resolution_type=ResolutionType.RESOLVER,
+                        config=foo_bar_resolver.config,
+                    ),
+                    foo_bar_baz.name: Resolution(
+                        fingerprint=b"mock_resolver_2",
+                        resolution_type=ResolutionType.RESOLVER,
                         config=foo_bar_baz.config,
                     ),
                 },
@@ -537,43 +571,84 @@ def test_resolve(matchbox_api: MockRouter) -> None:
 
     # Return dummy query data for all sources
     matchbox_api.get(
-        "/query", params={"source": "foo", "run_id": 1, "collection": dag.name}
+        "/query",
+        params={
+            "source": "foo",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolution": foo_bar_baz.name,
+            "return_leaf_id": "True",
+        },
     ).mock(return_value=Response(200, content=table_to_buffer(foo_data).read()))
 
     matchbox_api.get(
-        "/query", params={"source": "bar", "run_id": 1, "collection": dag.name}
+        "/query",
+        params={
+            "source": "bar",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolution": foo_bar_baz.name,
+            "return_leaf_id": "True",
+        },
     ).mock(return_value=Response(200, content=table_to_buffer(bar_data).read()))
 
     matchbox_api.get(
-        "/query", params={"source": "baz", "run_id": 1, "collection": dag.name}
+        "/query",
+        params={
+            "source": "baz",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolution": foo_bar_baz.name,
+            "return_leaf_id": "True",
+        },
     ).mock(return_value=Response(200, content=table_to_buffer(baz_data).read()))
+    matchbox_api.get(
+        "/query",
+        params={
+            "source": "foo",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolution": foo_bar_resolver.name,
+            "return_leaf_id": "True",
+        },
+    ).mock(return_value=Response(200, content=table_to_buffer(foo_data).read()))
+    matchbox_api.get(
+        "/query",
+        params={
+            "source": "bar",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolution": foo_bar_resolver.name,
+            "return_leaf_id": "True",
+        },
+    ).mock(return_value=Response(200, content=table_to_buffer(bar_data).read()))
 
     # No sources are found
     with pytest.raises(MatchboxResolutionNotFoundError):
-        dag.resolve(source_filter=["nonexistent"])
+        dag.get_matches(source_filter=["nonexistent"])
 
     with pytest.raises(MatchboxResolutionNotFoundError):
-        dag.resolve(location_names=["nonexistent"])
+        dag.get_matches(location_names=["nonexistent"])
 
     # With URI filter
-    uri_filter_resolved = dag.resolve(location_names=["sqlite"])
+    uri_filter_resolved = dag.get_matches(location_names=["sqlite"])
 
     assert len(uri_filter_resolved.sources) == 1
     assert uri_filter_resolved.sources[0].name == "foo"
 
     # With source filter
-    source_filter_resolved = dag.resolve(source_filter=["foo"])
+    source_filter_resolved = dag.get_matches(source_filter=["foo"])
 
     assert len(source_filter_resolved.sources) == 1
     assert source_filter_resolved.sources[0].name == "foo"
 
-    # Select intermediate model
-    intermediate_res = dag.resolve(node=foo_bar.name)
+    # Select intermediate resolver
+    intermediate_res = dag.get_matches(node=foo_bar_resolver.name)
     assert len(intermediate_res.sources) == 2
     assert set([s.name for s in intermediate_res.sources]) == {foo.name, bar.name}
 
     # With no filter
-    full_resolved = dag.resolve()
+    full_resolved = dag.get_matches()
     assert len(full_resolved.sources) == 3
     assert len(full_resolved.query_results) == 3
     source_names = [
@@ -590,7 +665,7 @@ def test_resolve(matchbox_api: MockRouter) -> None:
     assert_frame_equal(full_resolved.query_results[baz_index], pl.from_arrow(baz_data))
 
     # Retrieve from reconstituted DAG
-    loaded_res = DAG("companies").load_default().resolve()
+    loaded_res = DAG("companies").load_default().get_matches()
     assert len(loaded_res.sources) == 3
     assert len(loaded_res.query_results) == 3
     source_names = [
@@ -626,17 +701,19 @@ def test_lookup_key_ok(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) 
     bar = dag.source(**bar_testkit.into_dag())
     baz = dag.source(**baz_testkit.into_dag())
 
-    foo.query().linker(
+    linker_foo_bar = foo.query().linker(
         bar.query(),
         name="linker1",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
-    ).query(foo, bar).linker(
+    )
+    linker_bar_baz = bar.query().linker(
         baz.query(),
         name="linker2",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
+    dag.resolver(name="root", inputs=[linker_foo_bar, linker_bar_baz])
 
     foo_path = ResolutionPath(name="foo", collection=dag.name, run=dag.run)
     bar_path = ResolutionPath(name="bar", collection=dag.name, run=dag.run)
@@ -672,12 +749,20 @@ def test_lookup_key_404_source(matchbox_api: MockRouter) -> None:
 
     dag = TestkitDAG().dag
 
-    dag.source(**source_testkit.into_dag()).query().linker(
-        dag.source(**target_testkit.into_dag()).query(),
+    source = dag.source(**source_testkit.into_dag())
+    target = dag.source(**target_testkit.into_dag())
+    linker = source.query().linker(
+        target.query(),
         name="root",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
+    source_dedupe = source.query().deduper(
+        name="source_dedupe",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
+    )
+    dag.resolver(name="root_resolver", inputs=[linker, source_dedupe])
 
     matchbox_api.get("/match").mock(
         return_value=Response(
@@ -708,12 +793,20 @@ def test_lookup_key_no_matches(
 
     dag = TestkitDAG().dag
 
-    dag.source(**source_testkit.into_dag()).query().linker(
-        dag.source(**target_testkit.into_dag()).query(),
+    source = dag.source(**source_testkit.into_dag())
+    target = dag.source(**target_testkit.into_dag())
+    linker = source.query().linker(
+        target.query(),
         name="root",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
+    source_dedupe = source.query().deduper(
+        name="source_dedupe",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
+    )
+    dag.resolver(name="root_resolver", inputs=[linker, source_dedupe])
 
     # Mock empty match results
     matchbox_api.get("/match").mock(return_value=Response(200, content="[]"))
@@ -1058,14 +1151,13 @@ def test_dag_load_server_run(matchbox_api: MockRouter) -> None:
     # Cannot load pending into local DAG that alters the graph
     clashing_dag = DAG(name=test_dag.name)
     crn = clashing_dag.source(**crn_testkit.into_dag())
-    dh = clashing_dag.source(**dh_testkit.into_dag())
+    clashing_dag.source(**dh_testkit.into_dag())
 
-    # This linker skips the deduper defined above
-    crn.query().linker(
-        dh.query(),
+    # This local node has the same name but a different parent set
+    crn.query().deduper(
         name=linker_model_testkit.name,
-        model_class=DeterministicLinker,
-        model_settings={"comparisons": "l.field=r.field"},
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
     )
     with pytest.raises(ValueError, match="Cannot re-assign"):
         clashing_dag.load_pending()
@@ -1098,7 +1190,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     dh_testkit = linked_testkit.sources["dh"].fake_run()
     cdms_testkit = linked_testkit.sources["cdms"].fake_run()
 
-    # Model_inner depends on 2 sources (count=2)
+    # Two base models, both depending on two sources
     model_inner_testkit = model_factory(
         name="model_inner",
         left_testkit=crn_testkit,
@@ -1107,30 +1199,50 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
         dag=test_dag,
     ).fake_run()
 
-    # Model_outer ALSO depends on 2 things: model_inner + a source (count=2)
-    # Same count as model_inner, but MUST be loaded AFTER model_inner
-    model_outer_testkit = model_factory(
-        name="model_outer",
-        left_testkit=model_inner_testkit,  # depends on model_inner!
+    model_side_testkit = model_factory(
+        name="model_side",
+        left_testkit=dh_testkit,
         right_testkit=cdms_testkit,
         true_entities=linked_testkit.true_entities,
         dag=test_dag,
     ).fake_run()
 
-    # Add to original DAG
+    # Add sources and models
     test_dag.source(**crn_testkit.into_dag())
     test_dag.source(**dh_testkit.into_dag())
     test_dag.source(**cdms_testkit.into_dag())
     test_dag.model(**model_inner_testkit.into_dag())
-    test_dag.model(**model_outer_testkit.into_dag())
+    test_dag.model(**model_side_testkit.into_dag())
 
-    # Create resolutions with model_outer FIRST in dict
+    resolver_inner = test_dag.resolver(
+        name="resolver_inner",
+        inputs=[
+            test_dag.get_model(model_inner_testkit.name),
+            test_dag.get_model(model_side_testkit.name),
+        ],
+    )
+    resolver_outer = test_dag.resolver(
+        name="model_outer",
+        inputs=[resolver_inner, test_dag.get_model(model_inner_testkit.name)],
+    )
+
+    # Create resolutions with outer resolver first in dict
     resolutions: dict[ResolutionName, Resolution] = {
-        model_outer_testkit.name: model_outer_testkit.model.to_resolution(),  # 2 deps
-        crn_testkit.name: crn_testkit.source.to_resolution(),  # 0 deps
-        dh_testkit.name: dh_testkit.source.to_resolution(),  # 0 deps
-        cdms_testkit.name: cdms_testkit.source.to_resolution(),  # 0 deps
-        model_inner_testkit.name: model_inner_testkit.model.to_resolution(),  # 2 deps
+        resolver_outer.name: Resolution(
+            fingerprint=b"resolver_outer",
+            resolution_type=ResolutionType.RESOLVER,
+            config=resolver_outer.config,
+        ),
+        crn_testkit.name: crn_testkit.source.to_resolution(),
+        dh_testkit.name: dh_testkit.source.to_resolution(),
+        cdms_testkit.name: cdms_testkit.source.to_resolution(),
+        model_inner_testkit.name: model_inner_testkit.model.to_resolution(),
+        model_side_testkit.name: model_side_testkit.model.to_resolution(),
+        resolver_inner.name: Resolution(
+            fingerprint=b"resolver_inner",
+            resolution_type=ResolutionType.RESOLVER,
+            config=resolver_inner.config,
+        ),
     }
 
     run = Run(run_id=1, resolutions=resolutions)

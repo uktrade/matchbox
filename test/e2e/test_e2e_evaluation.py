@@ -107,7 +107,7 @@ class TestE2EModelEvaluation:
             index_fields=["company_name", "registration_id"],
         )
 
-        source_a_dag1.query().deduper(
+        final_model_1 = source_a_dag1.query().deduper(
             name=final_resolution_1_name,
             description="Deduplicate by registration ID",
             model_class=NaiveDeduper,
@@ -115,6 +115,11 @@ class TestE2EModelEvaluation:
                 "id": "id",
                 "unique_fields": [source_a_dag1.f("registration_id")],
             },
+        )
+        dag1.resolver(
+            name=f"resolver_{final_resolution_1_name}",
+            inputs=[final_model_1],
+            thresholds={final_model_1.name: 0},
         )
 
         dag1.run_and_sync()
@@ -141,7 +146,7 @@ class TestE2EModelEvaluation:
             index_fields=["company_name", "registration_id"],
         )
 
-        source_a_dag2.query(
+        final_model_2 = source_a_dag2.query(
             cleaning={
                 "company_name": self._clean_company_name(
                     source_a_dag2.f("company_name")
@@ -152,6 +157,11 @@ class TestE2EModelEvaluation:
             description="Deduplicate by company name",
             model_class=NaiveDeduper,
             model_settings={"id": "id", "unique_fields": ["company_name"]},
+        )
+        dag2.resolver(
+            name=f"resolver_{final_resolution_2_name}",
+            inputs=[final_model_2],
+            thresholds={final_model_2.name: 0},
         )
 
         dag2.run_and_sync()
@@ -231,7 +241,7 @@ class TestE2EModelEvaluation:
         dag: DAG = (
             DAG(str(self.dag1.name)).load_pending().set_client(self.warehouse_engine)
         )
-        rm = dag.resolve()
+        rm = dag.get_matches()
 
         with tempfile.NamedTemporaryFile(suffix=".pq") as tmp_file:
             # Write the parquet data to the temporary file

@@ -1,5 +1,6 @@
 """API routes for the Matchbox server."""
 
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from importlib.metadata import version
@@ -34,6 +35,7 @@ from matchbox.common.dtos import (
     ModelResolutionName,
     OKMessage,
     ResolutionPath,
+    ResolverResolutionName,
     ResourceOperationStatus,
     RunID,
     SourceResolutionName,
@@ -133,6 +135,54 @@ async def healthcheck() -> OKMessage:
 # Retrieval
 
 
+def _parse_threshold_overrides(
+    raw: str | None,
+) -> dict[ModelResolutionName, int] | None:
+    """Parse JSON-encoded model threshold overrides from query params."""
+    if raw is None:
+        return None
+
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="threshold_overrides must be valid JSON.",
+        ) from exc
+
+    if not isinstance(decoded, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="threshold_overrides must be a JSON object.",
+        )
+
+    parsed: dict[ModelResolutionName, int] = {}
+    for key, value in decoded.items():
+        if not isinstance(key, str):
+            raise HTTPException(
+                status_code=422,
+                detail="threshold_overrides keys must be model names.",
+            )
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not (0 <= value <= 100)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="threshold_overrides values must be ints in [0, 100].",
+            )
+        try:
+            parsed[ModelResolutionName(key)] = value
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid model name in threshold_overrides: {key}",
+            ) from exc
+
+    return parsed
+
+
 @app.get(
     "/query",
     responses={
@@ -148,11 +198,13 @@ def query(
     run_id: RunID,
     source: SourceResolutionName,
     return_leaf_id: bool,
-    resolution: ModelResolutionName | None = None,
-    threshold: int | None = None,
+    resolution: ResolverResolutionName | None = None,
+    threshold_overrides: str | None = None,
     limit: int | None = None,
 ) -> ParquetResponse:
     """Query Matchbox for matches based on a source resolution name."""
+    parsed_overrides = _parse_threshold_overrides(threshold_overrides)
+
     res = backend.query(
         source=SourceResolutionPath(
             collection=collection,
@@ -164,7 +216,7 @@ def query(
         )
         if resolution
         else None,
-        threshold=threshold,
+        threshold_overrides=parsed_overrides,
         return_leaf_id=return_leaf_id,
         limit=limit,
     )
@@ -189,10 +241,12 @@ def match(
     targets: Annotated[list[SourceResolutionName], Query()],
     source: SourceResolutionName,
     key: str,
-    resolution: ModelResolutionName,
-    threshold: int | None = None,
+    resolution: ResolverResolutionName,
+    threshold_overrides: str | None = None,
 ) -> list[Match]:
     """Match a source key against a list of target source resolutions."""
+    parsed_overrides = _parse_threshold_overrides(threshold_overrides)
+
     targets = [
         SourceResolutionPath(collection=collection, run=run_id, name=t) for t in targets
     ]
@@ -209,7 +263,7 @@ def match(
             run=run_id,
             name=resolution,
         ),
-        threshold=threshold,
+        threshold_overrides=parsed_overrides,
     )
 
 

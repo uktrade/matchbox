@@ -15,7 +15,12 @@ from fastapi import (
 from pyarrow import ArrowInvalid
 from pyarrow import parquet as pq
 
-from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS, table_to_buffer
+from matchbox.common.arrow import (
+    SCHEMA_INDEX,
+    SCHEMA_RESOLVER_UPLOAD,
+    SCHEMA_RESULTS,
+    table_to_buffer,
+)
 from matchbox.common.dtos import (
     Collection,
     CollectionName,
@@ -46,7 +51,12 @@ from matchbox.server.api.dependencies import (
     SettingsDependency,
     UploadTrackerDependency,
 )
-from matchbox.server.uploads import file_to_s3, process_upload, process_upload_celery
+from matchbox.server.uploads import (
+    file_to_s3,
+    process_upload,
+    process_upload_celery,
+    resolver_mapping_key,
+)
 
 router = APIRouter(prefix="/collections", tags=["collection"])
 
@@ -478,7 +488,7 @@ def set_data(
     background_tasks: BackgroundTasks,
     collection: CollectionName,
     run_id: RunID,
-    resolution_name: ModelResolutionName,
+    resolution_name: ResolutionName,
     file: UploadFile,
 ) -> ResourceOperationStatus:
     """Create an upload task for source hashes or model results."""
@@ -519,8 +529,12 @@ def set_data(
 
         if resolution.resolution_type == ResolutionType.SOURCE:
             expected_schema = SCHEMA_INDEX
-        else:
+        elif resolution.resolution_type == ResolutionType.MODEL:
             expected_schema = SCHEMA_RESULTS
+        elif resolution.resolution_type == ResolutionType.RESOLVER:
+            expected_schema = SCHEMA_RESOLVER_UPLOAD
+        else:
+            raise RuntimeError("Unsupported resolution type.")
 
         table = pq.read_table(file.file)
         if not table.schema.equals(expected_schema):
@@ -624,3 +638,45 @@ def get_results(
 
     buffer = table_to_buffer(res)
     return ParquetResponse(buffer.getvalue())
+
+
+@router.get(
+    "/{collection}/runs/{run_id}/resolutions/{resolution}/data/mapping",
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    dependencies=[Depends(RequireCollectionRead)],
+    summary="Get resolver upload mapping",
+    description=(
+        "Download resolver client cluster to backend cluster mapping as parquet."
+    ),
+)
+def get_resolver_mapping(
+    backend: BackendDependency,
+    collection: CollectionName,
+    run_id: RunID,
+    resolution: ResolutionName,
+    upload_id: Annotated[str, Query()],
+) -> ParquetResponse:
+    """Download resolver upload mapping as parquet file."""
+    resolution_dto = backend.get_resolution(
+        path=ResolutionPath(collection=collection, run=run_id, name=resolution)
+    )
+    if resolution_dto.resolution_type != ResolutionType.RESOLVER:
+        raise MatchboxServerFileError(
+            message="Mapping is only available for resolver uploads."
+        )
+
+    client = backend.settings.datastore.get_client()
+    bucket = backend.settings.datastore.cache_bucket_name
+    key = resolver_mapping_key(upload_id)
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+        return ParquetResponse(response["Body"].read())
+    except Exception as e:
+        raise MatchboxServerFileError(
+            message=f"Could not retrieve mapping for upload_id={upload_id}: {e}"
+        ) from e

@@ -6,8 +6,13 @@ from sqlalchemy.exc import OperationalError
 
 from matchbox.client import _handler
 from matchbox.client.dags import DAG
+from matchbox.client.resolvers import Resolver
 from matchbox.client.results import ModelResults
-from matchbox.common.dtos import ModelResolutionName, ModelResolutionPath, SourceConfig
+from matchbox.common.dtos import (
+    ResolverResolutionName,
+    ResolverResolutionPath,
+    SourceConfig,
+)
 from matchbox.common.eval import Judgement, precision_recall
 from matchbox.common.exceptions import MatchboxSourceTableError
 
@@ -142,12 +147,16 @@ def _read_sample_file(sample_file: str, n: int) -> pl.DataFrame:
 
 
 def _get_samples_from_server(
-    dag: DAG, n: int, resolution: ModelResolutionName | None = None
+    dag: DAG, n: int, resolution: ResolverResolutionName | None = None
 ) -> pl.DataFrame:
     if resolution:
-        resolution_path: ModelResolutionPath = dag.get_model(resolution).resolution_path
+        resolution_path: ResolverResolutionPath = dag.get_resolver(
+            resolution
+        ).resolution_path
     else:
-        resolution_path: ModelResolutionPath = dag.final_step.resolution_path
+        if not isinstance(dag.final_step, Resolver):
+            raise ValueError("Sampling requires a resolver as point-of-truth")
+        resolution_path = dag.final_step.resolution_path
     return pl.from_arrow(_handler.sample_for_eval(n=n, resolution=resolution_path))
 
 
@@ -155,7 +164,7 @@ def _get_samples_from_server(
 def get_samples(
     n: int,
     dag: DAG,
-    resolution: ModelResolutionName | None = None,
+    resolution: ResolverResolutionName | None = None,
     sample_file: str | None = None,
 ) -> dict[int, EvaluationItem]:
     """Retrieve samples enriched with source data as EvaluationItems.

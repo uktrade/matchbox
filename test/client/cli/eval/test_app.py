@@ -11,7 +11,7 @@ from textual.widgets import Footer, Label
 from matchbox.client.cli.eval.app import EntityResolutionApp, EvaluationQueue
 from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
-from matchbox.common.dtos import ModelResolutionPath
+from matchbox.common.dtos import ResolverResolutionPath
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
@@ -123,9 +123,9 @@ class TestScenarioIntegration:
     """Integration tests using real scenario data with backend."""
 
     @pytest.fixture
-    def test_resolution(self) -> ModelResolutionPath:
+    def test_resolution(self) -> ResolverResolutionPath:
         """Create test resolution path."""
-        return ModelResolutionPath(
+        return ResolverResolutionPath(
             collection="test_collection", run=1, name="test_resolution"
         )
 
@@ -156,9 +156,16 @@ class TestScenarioIntegration:
             model_name: str = "mega_product_linker"
 
             loaded_dag: DAG = dag.dag.load_pending().set_client(self.warehouse_engine)
+            mega_model = loaded_dag.get_model(model_name)
+            mega_resolver = loaded_dag.resolver(
+                name="mega_eval_resolver",
+                inputs=[mega_model],
+            )
+            mega_resolver.run()
+            mega_resolver.sync()
 
             app = EntityResolutionApp(
-                resolution=loaded_dag.get_model(model_name),
+                resolution=mega_resolver.resolution_path,
                 num_samples=3,
                 dag=loaded_dag,
                 scroll_debounce_delay=None,
@@ -297,9 +304,17 @@ class TestScenarioIntegration:
             model_name: str = "naive_test_crn"
 
             loaded_dag: DAG = dag.dag.load_pending().set_client(self.warehouse_engine)
+            crn_model = loaded_dag.get_model(model_name)
+            dh_model = loaded_dag.get_model("naive_test_dh")
+            dedupe_resolver = loaded_dag.resolver(
+                name="dedupe_eval_resolver",
+                inputs=[crn_model, dh_model],
+            )
+            dedupe_resolver.run()
+            dedupe_resolver.sync()
 
             app = EntityResolutionApp(
-                resolution=loaded_dag.get_model(model_name),
+                resolution=dedupe_resolver.resolution_path,
                 num_samples=3,
                 dag=loaded_dag,
             )

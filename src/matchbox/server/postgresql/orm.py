@@ -15,6 +15,8 @@ from sqlalchemy import (
     Identity,
     Index,
     UniqueConstraint,
+    case,
+    func,
     select,
     text,
 )
@@ -24,6 +26,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selecti
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
+    FusionStrategy,
     LocationConfig,
     ModelType,
     ResolutionName,
@@ -35,6 +38,7 @@ from matchbox.common.dtos import (
 from matchbox.common.dtos import Collection as CommonCollection
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
 from matchbox.common.dtos import Resolution as CommonResolution
+from matchbox.common.dtos import ResolverConfig as CommonResolverConfig
 from matchbox.common.dtos import Run as CommonRun
 from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.dtos import SourceField as CommonSourceField
@@ -167,6 +171,7 @@ class Runs(CountMixin, MBDB.MatchboxBase):
                 .selectinload(Resolutions.source_config)
                 .selectinload(SourceConfigs.fields),
                 selectinload(cls.resolutions).selectinload(Resolutions.model_config),
+                selectinload(cls.resolutions).selectinload(Resolutions.resolver_config),
                 selectinload(cls.collection),
             )
         )
@@ -205,7 +210,7 @@ class Runs(CountMixin, MBDB.MatchboxBase):
 
 
 class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
-    """Resolution lineage closure table with cached truth values."""
+    """Resolution lineage closure table."""
 
     __tablename__ = "resolution_from"
 
@@ -233,7 +238,7 @@ class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
 class Resolutions(CountMixin, MBDB.MatchboxBase):
     """Table of resolution points corresponding to models, and sources.
 
-    Resolutions produce probabilities or own data in the clusters table.
+    Models produce edges and resolvers produce cluster assignments.
     """
 
     __tablename__ = "resolutions"
@@ -254,7 +259,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     description: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     type: Mapped[str] = mapped_column(TEXT, nullable=False)
     fingerprint: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
-    truth: Mapped[int | None] = mapped_column(SMALLINT, nullable=True)
 
     # Relationships
     source_config: Mapped[Optional["SourceConfigs"]] = relationship(
@@ -263,11 +267,14 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     model_config: Mapped[Optional["ModelConfigs"]] = relationship(
         back_populates="model_resolution", uselist=False
     )
-    probabilities: Mapped[list["Probabilities"]] = relationship(
+    resolver_config: Mapped[Optional["ResolverConfigs"]] = relationship(
+        back_populates="resolver_resolution", uselist=False
+    )
+    model_edges: Mapped[list["ModelEdges"]] = relationship(
         back_populates="proposed_by",
         passive_deletes=True,
     )
-    results: Mapped[list["Results"]] = relationship(
+    resolution_clusters: Mapped[list["ResolutionClusters"]] = relationship(
         back_populates="proposed_by",
         passive_deletes=True,
     )
@@ -282,7 +289,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
     # Constraints
     __table_args__ = (
         CheckConstraint(
-            "type IN ('model', 'source')",
+            "type IN ('model', 'source', 'resolver')",
             name="resolution_type_constraints",
         ),
         UniqueConstraint("run_id", "name", name="resolutions_name_key"),
@@ -315,19 +322,18 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             return set(session.execute(descendant_query).scalars().all())
 
     def get_lineage(
-        self, sources: list["SourceConfigs"] | None = None, threshold: int | None = None
-    ) -> list[tuple[int, int, float | None]]:
+        self, sources: list["SourceConfigs"] | None = None
+    ) -> list[tuple[int, int | None, int | None]]:
         """Returns lineage ordered by priority.
 
         Highest priority (lowest level) first, then by resolution_id for stability.
 
         Args:
             sources: If provided, only return lineage paths that lead to these sources
-            threshold: If provided, override this resolution's threshold
 
         Returns:
-            List of tuples (resolution_id, source_config_id, threshold) ordered by
-                priority.
+            List of tuples (resolution_id, source_config_id, threshold cache)
+                ordered by priority.
         """
         with MBDB.get_session() as session:
             query = (
@@ -371,13 +377,8 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                 self.source_config.source_config_id if self.source_config else None
             )
 
-            # Threshold handling
-            self_threshold = threshold if threshold is not None else self.truth
-
             # Add self at beginning (highest priority - level 0)
-            return [(self.resolution_id, self_source_config_id, self_threshold)] + list(
-                results
-            )
+            return [(self.resolution_id, self_source_config_id, None)] + list(results)
 
     @classmethod
     def from_path(
@@ -464,7 +465,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                 name=path.name,
                 description=resolution.description,
                 type=resolution.resolution_type.value,
-                truth=resolution.truth,
                 fingerprint=resolution.fingerprint,
             )
             .on_conflict_do_nothing(constraint="resolutions_name_key")
@@ -507,36 +507,86 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                 )
                 cls._create_closure_entries(session, resolution_orm, right_parent)
 
+        elif resolution.resolution_type == ResolutionType.RESOLVER:
+            resolution_orm.resolver_config = ResolverConfigs.from_dto(resolution.config)
+            for parent_name in dict.fromkeys(resolution.config.inputs):
+                parent = cls.from_path(
+                    path=ResolutionPath(
+                        collection=path.collection,
+                        run=path.run,
+                        name=parent_name,
+                    ),
+                    session=session,
+                )
+                cls._create_closure_entries(
+                    session,
+                    resolution_orm,
+                    parent,
+                    direct_threshold_cache=resolution.config.thresholds[parent_name],
+                )
+
         return resolution_orm
 
     def to_dto(self) -> CommonResolution:
         """Convert ORM resolution to a matchbox.common Resolution object."""
         if self.type == ResolutionType.SOURCE:
             config = self.source_config.to_dto()
-        else:
+        elif self.type == ResolutionType.MODEL:
             config = self.model_config.to_dto()
+        else:
+            config = self.resolver_config.to_dto()
 
         return CommonResolution(
             description=self.description,
-            truth=self.truth,
             resolution_type=ResolutionType(self.type),
             config=config,
             fingerprint=self.fingerprint,
         )
 
     @staticmethod
+    def _upsert_closure_entry(
+        session: Session,
+        parent_id: int,
+        child_id: int,
+        level: int,
+        truth_cache: int | None = None,
+    ) -> None:
+        """Insert or update closure table entry with shortest known level."""
+        session.execute(
+            insert(ResolutionFrom)
+            .values(
+                parent=parent_id,
+                child=child_id,
+                level=level,
+                truth_cache=truth_cache,
+            )
+            .on_conflict_do_update(
+                index_elements=[ResolutionFrom.parent, ResolutionFrom.child],
+                set_={
+                    "level": func.least(ResolutionFrom.level, level),
+                    "truth_cache": case(
+                        (level < ResolutionFrom.level, truth_cache),
+                        else_=func.coalesce(ResolutionFrom.truth_cache, truth_cache),
+                    ),
+                },
+            )
+        )
+
+    @staticmethod
     def _create_closure_entries(
-        session: Session, child: "Resolutions", parent: "Resolutions"
+        session: Session,
+        child: "Resolutions",
+        parent: "Resolutions",
+        direct_threshold_cache: int | None = None,
     ) -> None:
         """Create closure table entries for a parent-child relationship."""
-        # Direct relationship
-        session.add(
-            ResolutionFrom(
-                parent=parent.resolution_id,
-                child=child.resolution_id,
-                level=1,
-                truth_cache=parent.truth,
-            )
+        # Direct relationship.
+        Resolutions._upsert_closure_entry(
+            session=session,
+            parent_id=parent.resolution_id,
+            child_id=child.resolution_id,
+            level=1,
+            truth_cache=direct_threshold_cache,
         )
 
         # Transitive closure
@@ -551,13 +601,12 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         )
 
         for ancestor in ancestors:
-            session.add(
-                ResolutionFrom(
-                    parent=ancestor.parent,
-                    child=child.resolution_id,
-                    level=ancestor.level + 1,
-                    truth_cache=ancestor.truth_cache,
-                )
+            Resolutions._upsert_closure_entry(
+                session=session,
+                parent_id=ancestor.parent,
+                child_id=child.resolution_id,
+                level=ancestor.level + 1,
+                truth_cache=ancestor.truth_cache,
             )
 
 
@@ -825,6 +874,52 @@ class ModelConfigs(CountMixin, MBDB.MatchboxBase):
         )
 
 
+class ResolverConfigs(CountMixin, MBDB.MatchboxBase):
+    """Table of resolver configs for Matchbox."""
+
+    __tablename__ = "resolver_configs"
+
+    resolver_config_id: Mapped[int] = mapped_column(
+        BIGINT, Identity(start=1), primary_key=True
+    )
+    resolution_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    strategy: Mapped[str] = mapped_column(TEXT, nullable=False)
+    inputs: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    thresholds: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+
+    resolver_resolution: Mapped["Resolutions"] = relationship(
+        back_populates="resolver_config"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("resolution_id", name="resolver_configs_resolution_key"),
+    )
+
+    @classmethod
+    def from_dto(
+        cls,
+        config: CommonResolverConfig,
+    ) -> "ResolverConfigs":
+        """Create a ResolverConfigs instance from a Resolution DTO object."""
+        return cls(
+            strategy=config.strategy.value,
+            inputs=list(config.inputs),
+            thresholds={key: value for key, value in config.thresholds.items()},
+        )
+
+    def to_dto(self) -> CommonResolverConfig:
+        """Convert ORM resolver config to a matchbox.common ResolverConfig object."""
+        return CommonResolverConfig(
+            inputs=tuple(self.inputs),
+            thresholds=self.thresholds,
+            strategy=FusionStrategy(self.strategy),
+        )
+
+
 class Contains(CountMixin, MBDB.MatchboxBase):
     """Cluster lineage table."""
 
@@ -859,10 +954,6 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
     # Relationships
     keys: Mapped[list["ClusterSourceKey"]] = relationship(
         back_populates="cluster",
-        passive_deletes=True,
-    )
-    probabilities: Mapped[list["Probabilities"]] = relationship(
-        back_populates="proposes",
         passive_deletes=True,
     )
     leaves: Mapped[list["Clusters"]] = relationship(
@@ -1102,40 +1193,13 @@ class EvalJudgements(CountMixin, MBDB.MatchboxBase):
     user: Mapped["Users"] = relationship(back_populates="judgements")
 
 
-class Probabilities(CountMixin, MBDB.MatchboxBase):
-    """Table of probabilities that a cluster is correct, according to a resolution."""
-
-    __tablename__ = "probabilities"
-
-    # Columns
-    resolution_id: Mapped[int] = mapped_column(
-        BIGINT,
-        ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    cluster_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
-    )
-    probability: Mapped[int] = mapped_column(SMALLINT, nullable=False)
-
-    # Relationships
-    proposed_by: Mapped["Resolutions"] = relationship(back_populates="probabilities")
-    proposes: Mapped["Clusters"] = relationship(back_populates="probabilities")
-
-    # Constraints
-    __table_args__ = (
-        CheckConstraint("probability BETWEEN 0 AND 100", name="valid_probability"),
-        Index("ix_probabilities_resolution", "resolution_id"),
-    )
-
-
-class Results(CountMixin, MBDB.MatchboxBase):
+class ModelEdges(CountMixin, MBDB.MatchboxBase):
     """Table of results for a resolution.
 
     Stores the raw left/right probabilities created by a model.
     """
 
-    __tablename__ = "results"
+    __tablename__ = "model_edges"
 
     # Columns
     result_id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
@@ -1153,11 +1217,35 @@ class Results(CountMixin, MBDB.MatchboxBase):
     probability: Mapped[int] = mapped_column(SMALLINT, nullable=False)
 
     # Relationships
-    proposed_by: Mapped["Resolutions"] = relationship(back_populates="results")
+    proposed_by: Mapped["Resolutions"] = relationship(back_populates="model_edges")
 
     # Constraints
     __table_args__ = (
-        Index("ix_results_resolution", "resolution_id"),
+        Index("ix_model_edges_resolution", "resolution_id"),
         CheckConstraint("probability BETWEEN 0 AND 100", name="valid_probability"),
         UniqueConstraint("resolution_id", "left_id", "right_id"),
+    )
+
+
+class ResolutionClusters(CountMixin, MBDB.MatchboxBase):
+    """Association table linking resolutions to cluster IDs."""
+
+    __tablename__ = "resolution_clusters"
+
+    resolution_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    cluster_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
+    )
+
+    proposed_by: Mapped["Resolutions"] = relationship(
+        back_populates="resolution_clusters"
+    )
+
+    __table_args__ = (
+        Index("ix_resolution_clusters_resolution", "resolution_id"),
+        Index("ix_resolution_clusters_cluster", "cluster_id"),
     )

@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from functools import partial
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -14,7 +15,12 @@ from celery.utils.log import get_task_logger
 from fastapi import UploadFile
 from pyarrow import parquet as pq
 
-from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_RESULTS
+from matchbox.common.arrow import (
+    SCHEMA_INDEX,
+    SCHEMA_RESOLVER_UPLOAD,
+    SCHEMA_RESULTS,
+    table_to_buffer,
+)
 from matchbox.common.dtos import (
     ResolutionPath,
     ResolutionType,
@@ -104,6 +110,11 @@ def settings_to_upload_tracker(settings: MatchboxServerSettings) -> UploadTracke
             )
         case _:
             raise RuntimeError("Unsupported task runner.")
+
+
+def resolver_mapping_key(upload_id: str) -> str:
+    """Get cache key for resolver mapping upload artefact."""
+    return f"{upload_id}.mapping.parquet"
 
 
 # -- S3 functions --
@@ -218,11 +229,24 @@ def process_upload(
                 path=resolution_path,
                 data_hashes=pa.Table.from_batches(batches, schema=SCHEMA_INDEX),
             )
-        else:
+        elif resolution.resolution_type == ResolutionType.MODEL:
             backend.insert_model_data(
                 path=resolution_path,
                 results=pa.Table.from_batches(batches, schema=SCHEMA_RESULTS),
             )
+        elif resolution.resolution_type == ResolutionType.RESOLVER:
+            mapping = backend.insert_resolver_data(
+                path=resolution_path,
+                data=pa.Table.from_batches(batches, schema=SCHEMA_RESOLVER_UPLOAD),
+            )
+            mapping_buffer: BytesIO = table_to_buffer(mapping)
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=resolver_mapping_key(upload_id),
+                Body=mapping_buffer.getvalue(),
+            )
+        else:
+            raise RuntimeError("Unsupported resolution type.")
 
     except Exception as e:
         # After failure, signal to clients they can try again

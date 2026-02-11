@@ -742,11 +742,11 @@ class TestMatchboxAdminBackend:
         """Test validating data IDs."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
 
             df_crn = self.backend.query(
                 source=crn_testkit.source.resolution_path,
-                point_of_truth=naive_crn_testkit.resolution_path,
+                point_of_truth=naive_crn_resolver.resolution_path,
             )
 
             ids = df_crn["id"].to_pylist()
@@ -781,7 +781,7 @@ class TestMatchboxAdminBackend:
         """Test that clearing and restoring the database works."""
         with self.scenario(self.backend, "link") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
 
             count_funcs = [
                 self.backend.sources.count,
@@ -804,7 +804,7 @@ class TestMatchboxAdminBackend:
             # Get some specific IDs to verify they're restored properly
             df_crn_before = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=naive_crn_testkit.resolution_path,
+                point_of_truth=naive_crn_resolver.resolution_path,
             )
             sample_ids_before = df_crn_before["id"].to_pylist()[:5]  # Take first 5 IDs
 
@@ -824,7 +824,7 @@ class TestMatchboxAdminBackend:
             # Verify specific data was restored correctly
             df_crn_after = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=naive_crn_testkit.resolution_path,
+                point_of_truth=naive_crn_resolver.resolution_path,
             )
             sample_ids_after = df_crn_after["id"].to_pylist()[:5]  # Take first 5 IDs
 

@@ -274,27 +274,11 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     assert insert_results_route.called
 
 
-def test_truth_getter() -> None:
-    """Test getting model truth threshold from config."""
-    # Create testkit with specific truth value
+def test_model_query_not_supported() -> None:
+    """Models can no longer be queried directly."""
     testkit = model_factory(model_type="linker")
-    # Update the model to have a truth value
-    testkit.model._truth = 90  # Integer truth value (90 = 0.9 as float)
-
-    # Get truth as float
-    truth = testkit.model.truth
-
-    # Verify it returns the correct value converted to float
-    assert truth == 0.9
-
-
-def test_truth_setter_validation_error() -> None:
-    """Test setting invalid truth values."""
-    testkit = model_factory(model_type="linker")
-
-    # Attempt to set an invalid truth value using the validated setter
-    with pytest.raises(ValueError):
-        testkit.model.truth = 1.5
+    with pytest.raises(TypeError, match="Query from a resolver"):
+        testkit.model.query()
 
 
 def test_delete_resolution(matchbox_api: MockRouter) -> None:

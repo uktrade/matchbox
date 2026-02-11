@@ -1,659 +1,812 @@
 """Utilities for querying and matching in the PostgreSQL backend."""
 
-from typing import Literal, TypeVar
-
+import polars as pl
 import pyarrow as pa
-from sqlalchemy import (
-    CTE,
-    ColumnElement,
-    FromClause,
-    and_,
-    func,
-    join,
-    outerjoin,
-    select,
-    union_all,
-)
-from sqlalchemy.orm import aliased
-from sqlalchemy.sql.selectable import Select
+from sqlalchemy import and_, func, literal_column, select
+from sqlalchemy.orm import Session
+from sqlalchemy.sql.selectable import Select, Subquery
 
+from matchbox.common.arrow import SCHEMA_QUERY, SCHEMA_QUERY_WITH_LEAVES
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
+    FusionStrategy,
     Match,
-    ResolutionPath,
+    ModelResolutionName,
+    ResolutionType,
+    ResolverResolutionPath,
     SourceResolutionPath,
     UploadStage,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotQueriable
+from matchbox.common.fusion import fuse_components
 from matchbox.common.logging import logger
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
-    Clusters,
     ClusterSourceKey,
     Contains,
-    Probabilities,
+    ModelEdges,
+    ResolutionClusters,
     ResolutionFrom,
     Resolutions,
     SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import compile_sql
 
-T = TypeVar("T")
+
+def _empty_edges_df() -> pl.DataFrame:
+    return pl.DataFrame(schema={"left_id": pl.UInt64, "right_id": pl.UInt64})
 
 
-def _build_probability_subquery(
-    res_id: int, threshold_val: float, subquery_name: str
-) -> Select:
-    """Build a probability subquery for a given resolution.
+def _empty_assignments_df() -> pl.DataFrame:
+    return pl.DataFrame(schema={"cluster_id": pl.UInt64, "node_id": pl.UInt64})
 
-    When a leaf belongs to multiple clusters that meet the threshold,
-    this selects the cluster with probability CLOSEST to the threshold
-    (i.e., the most conservative/weakest clustering decision).
-    """
-    # Create unique aliases for this subquery to avoid parameter conflicts
-    contains_alias = aliased(Contains, name=f"contains_{subquery_name}")
-    probabilities_alias = aliased(Probabilities, name=f"prob_{subquery_name}")
 
+def _resolver_assignment_subquery(resolution_id: int) -> Subquery:
+    """Build leaf->root assignment subquery for a resolver."""
     return (
         select(
-            contains_alias.leaf.label("leaf"),
-            contains_alias.root.label(f"cluster_{subquery_name}"),
-            probabilities_alias.probability,
+            Contains.leaf.label("leaf_id"),
+            Contains.root.label("root_id"),
         )
-        .select_from(
-            join(
-                contains_alias,
-                probabilities_alias,
-                contains_alias.root == probabilities_alias.cluster_id,
-            )
-        )
-        .where(
+        .select_from(Contains)
+        .join(
+            ResolutionClusters,
             and_(
-                probabilities_alias.resolution_id == res_id,
-                probabilities_alias.probability >= threshold_val,
-            )
+                ResolutionClusters.cluster_id == Contains.root,
+                ResolutionClusters.resolution_id == resolution_id,
+            ),
         )
-        .distinct(contains_alias.leaf)
-        .order_by(
-            contains_alias.leaf,
-            probabilities_alias.probability.asc(),
-            contains_alias.root.asc(),
-        )
-        .subquery(f"prob_{subquery_name}")
+        .subquery("resolver_assignments")
     )
 
 
-def build_unified_query(
-    resolution: Resolutions,
-    sources: list[SourceConfigs] | None = None,
-    threshold: int | None = None,
-    level: Literal["leaf", "key"] = "leaf",
-    get_hashes: bool = False,
-) -> Select:
-    """Build a query to resolve cluster assignments across resolution hierarchies.
-
-    This function creates SQL that determines which cluster each source record belongs
-    to by traversing up a resolution hierarchy and applying priority-based cluster
-    selection.
-
-    The query uses `COALESCE` to implement a priority system where higher-level
-    resolutions can "claim" records, with lower levels only processing unclaimed
-    records:
-
-    ```sql
-    COALESCE(highest_priority_cluster, medium_priority_cluster, ..., source_cluster)
-    ```
-
-    1. **Lineage discovery**: Queries the resolution hierarchy to find all ancestor
-        resolutions, ordered by priority (lowest level = highest priority)
-    2. **Source filtering**: When `sources` is provided, constrains results to only
-        include clusters from those specific source configurations
-    3. **Threshold application**: Applies probability thresholds to determine which
-        clusters qualify at each resolution level
-    4. **Subquery construction**: For each model resolution in the lineage, builds
-        a subquery that finds qualifying clusters via the Contains→Probabilities
-        join. Each joined subquery adds a new cluster column which is then merged
-        via...
-    5. **`COALESCE` assembly**: Joins all subqueries to source data and uses `COALESCE`
-        to select the highest-priority cluster assignment for each record
-
-    The level changes the data returned:
-
-    * `"leaf"`: Returns both root and leaf cluster IDs. For unmerged source
-        clusters, the root and leaf properties will be the same.
-    * `"key"`: In addition to the above, it also returns the source key. This will give
-        more rows than `"leaf"` because it needs a row for every key attached to a leaf.
-
-    Additionally, if `get_hashes` is set to True, the root and leaf hashes are returned.
-    """
-    # Get ordered lineage (already sorted by priority)
-    lineage = resolution.get_lineage(sources=sources, threshold=threshold)
-
-    # Separate to model and source resolutions
-    model_resolutions: list[tuple[int, float]] = []
-    source_config_ids: list[int] = []
-    for resolution_id, source_config_id, truth in lineage:
-        if truth is None:
-            source_config_ids.append(source_config_id)
-        else:
-            model_resolutions.append((resolution_id, truth))
-
-    # Build source config filter
-    if sources:
-        # If sources are provided, filter to those source configs
-        source_config_ids = set(sc.source_config_id for sc in sources) & set(
-            source_config_ids
-        )
-        source_filter = ClusterSourceKey.source_config_id.in_(source_config_ids)
-    elif resolution.type == "source":
-        # If querying a source resolution with no sources filter,
-        # filter to just that source
-        source_filter = (
-            ClusterSourceKey.source_config_id
-            == resolution.source_config.source_config_id
-        )
-    else:
-        # No sources provided, filter to lineage source configs
-        source_filter = ClusterSourceKey.source_config_id.in_(source_config_ids)
-
-    # Create proper aliases for clusters tables
-    leaf_clusters = aliased(Clusters, name="leaf_clusters")
-    root_clusters = aliased(Clusters, name="root_clusters")
-
-    # `ClusterSourceKey` is the basis for all subsequent joins
-    from_clause: FromClause = ClusterSourceKey
-
-    # Handle source-only case (no model resolutions in lineage)
-    if not model_resolutions:
-        # We always must select from `ClusterSourceKey`, as it points to source clusters
-        selection = [
-            ClusterSourceKey.cluster_id.label("root_id"),
-            ClusterSourceKey.cluster_id.label("leaf_id"),
-        ]
-
-        if level == "key":
-            selection.append(
-                ClusterSourceKey.key,
-            )
-
-        if get_hashes:
-            selection += [
-                leaf_clusters.cluster_hash.label("root_hash"),
-                leaf_clusters.cluster_hash.label("leaf_hash"),
-            ]
-
-            from_clause = join(
-                from_clause,
-                leaf_clusters,
-                ClusterSourceKey.cluster_id == leaf_clusters.cluster_id,
-            )
-
-    else:  # Querying from a resolution not at the bottom
-        # Build subqueries for each model resolution
-        # Note both subqueries and cluster_columns are in priority order
-        subqueries: list[Select] = []
-        cluster_columns: list[ColumnElement] = []
-
-        for i, (res_id, threshold_val) in enumerate(model_resolutions):
-            subquery = _build_probability_subquery(res_id, threshold_val, str(i))
-            subqueries.append(subquery)
-            cluster_columns.append(subquery.c[f"cluster_{i}"])
-
-        # To get hashes we need to join `Clusters`, here for leaves
-        # and later for roots
-        if get_hashes:
-            from_clause: FromClause = join(
-                from_clause,
-                leaf_clusters,
-                ClusterSourceKey.cluster_id == leaf_clusters.cluster_id,
-            )
-
-        # Add LEFT JOINs for each model resolution subquery
-        for subquery in subqueries:
-            from_clause = outerjoin(
-                from_clause,
-                subquery,
-                ClusterSourceKey.cluster_id == subquery.c.leaf,
-            )
-
-        # Build final cluster ID
-        # First non-null wins (highest priority first)
-        final_root_cluster_id = func.coalesce(
-            *cluster_columns, ClusterSourceKey.cluster_id
-        )
-
-        selection = [
-            final_root_cluster_id.label("root_id"),
-            ClusterSourceKey.cluster_id.label("leaf_id"),
-        ]
-
-        if level == "key":
-            selection.append(
-                ClusterSourceKey.key,
-            )
-
-        if get_hashes:
-            selection += [
-                root_clusters.cluster_hash.label("root_hash"),
-                leaf_clusters.cluster_hash.label("leaf_hash"),
-            ]
-
-            from_clause: FromClause = from_clause.outerjoin(
-                root_clusters, final_root_cluster_id == root_clusters.cluster_id
-            )
-
-    query = select(*selection).select_from(from_clause).where(source_filter)
-
-    # Because we start from `ClusterSourceKey`, we must remove duplicates caused
-    # by distinct keys on the same leaf
-    if level == "leaf":
-        query = query.distinct()
-
-    return query
-
-
-def _build_target_cluster_cte(
-    key: str,
+def _source_keys_df(
+    session: Session,
     source_config_id: int,
-    resolution: Resolutions,
-    threshold: int | None,
-) -> Select:
-    """Build the target_cluster CTE.
+    *,
+    include_source_config: bool,
+) -> pl.DataFrame:
+    """Load source keys and source-cluster IDs into a dataframe."""
+    columns = [ClusterSourceKey.cluster_id.label("leaf_id"), ClusterSourceKey.key]
+    if include_source_config:
+        columns.insert(0, ClusterSourceKey.source_config_id)
 
-    Follows very similar logic to `build_unified_query`, but with filtering
-    specifically for a single key and source_config_id.
-    """
-    # Get ordered lineage
-    lineage = resolution.get_lineage(threshold=threshold)
-    model_resolutions = [
-        (res_id, truth) for res_id, _, truth in lineage if truth is not None
-    ]
+    rows = session.execute(
+        select(*columns).where(ClusterSourceKey.source_config_id == source_config_id)
+    ).all()
 
-    # Build subqueries for each model resolution
-    # Note both subqueries and cluster_columns are in priority order
-    subqueries = []
-    cluster_columns = []
-    for i, (res_id, threshold_val) in enumerate(model_resolutions):
-        subquery = _build_probability_subquery(res_id, threshold_val, str(i))
-        subqueries.append(subquery)
-        cluster_columns.append(subquery.c[f"cluster_{i}"])
+    if not rows:
+        schema: dict[str, pl.DataType] = {
+            "leaf_id": pl.Int64,
+            "key": pl.String,
+        }
+        if include_source_config:
+            schema = {
+                "source_config_id": pl.Int64,
+                **schema,
+            }
+        return pl.DataFrame(schema=schema)
 
-    # Build FROM clause starting with cluster_keys
-    from_clause = ClusterSourceKey
-
-    # Add LEFT JOINs for each resolution subquery
-    for subquery in subqueries:
-        from_clause = outerjoin(
-            from_clause,
-            subquery,
-            ClusterSourceKey.cluster_id == subquery.c.leaf,
+    if include_source_config:
+        return pl.DataFrame(
+            rows,
+            schema={
+                "source_config_id": pl.Int64,
+                "leaf_id": pl.Int64,
+                "key": pl.String,
+            },
+            orient="row",
         )
 
-    # Build final cluster ID using COALESCE - first non-null wins
-    final_cluster_id = func.coalesce(*cluster_columns, ClusterSourceKey.cluster_id)
-
-    return (
-        select(final_cluster_id.label("cluster_id"))
-        .select_from(from_clause)
-        .where(
-            and_(
-                ClusterSourceKey.key == key,
-                ClusterSourceKey.source_config_id == source_config_id,
-            )
-        )
+    return pl.DataFrame(
+        rows,
+        schema={
+            "leaf_id": pl.Int64,
+            "key": pl.String,
+        },
+        orient="row",
     )
 
 
-def _build_matching_leaves_cte(
-    target_source_config_ids: list[int],
-    resolution: Resolutions,
-    threshold: int | None,
-    target_cluster_cte: CTE,
-) -> Select:
-    """Find all keys from target sources that belong to the target cluster.
-
-    Given a target cluster ID, find all keys from my target sources that belong to
-    it through ANY path in the hierarchy.
-
-    Uses `UNION ALL` to combine multiple ways a key can belong to the target cluster:
-
-        1. **Direct membership**: Keys that directly belong to the target cluster ID
-        2. **Hierarchy membership**: For each model resolution in the lineage, keys that
-            are connected to the target cluster through Contains→Probabilities chains
-
-    The target cluster ID comes from the target_cluster_cte, and we search for all
-    keys from the specified target sources that are related to it through any path
-    in the resolution hierarchy.
-
-    Returns a union of all matching keys with their cluster_id, key, and
-    source_config_id.
-    """
-    # Get ordered lineage and extract model resolutions
-    lineage = resolution.get_lineage(threshold=threshold)
-    model_resolutions = [
-        (res_id, truth) for res_id, _, truth in lineage if truth is not None
-    ]
-
-    # Start with direct members branch
-    branches = [
-        select(
-            ClusterSourceKey.cluster_id,
-            ClusterSourceKey.key,
-            ClusterSourceKey.source_config_id,
+def _source_keys_for_configs_df(
+    session: Session,
+    source_config_ids: list[int],
+) -> pl.DataFrame:
+    """Load source keys for multiple source configs."""
+    if not source_config_ids:
+        return pl.DataFrame(
+            schema={
+                "source_config_id": pl.Int64,
+                "leaf_id": pl.Int64,
+                "key": pl.String,
+            }
         )
-        .select_from(
-            ClusterSourceKey, target_cluster_cte
-        )  # CROSS JOIN with target_cluster
+
+    rows = session.execute(
+        select(
+            ClusterSourceKey.source_config_id,
+            ClusterSourceKey.cluster_id.label("leaf_id"),
+            ClusterSourceKey.key,
+        ).where(ClusterSourceKey.source_config_id.in_(source_config_ids))
+    ).all()
+
+    if not rows:
+        return pl.DataFrame(
+            schema={
+                "source_config_id": pl.Int64,
+                "leaf_id": pl.Int64,
+                "key": pl.String,
+            }
+        )
+
+    return pl.DataFrame(
+        rows,
+        schema={
+            "source_config_id": pl.Int64,
+            "leaf_id": pl.Int64,
+            "key": pl.String,
+        },
+        orient="row",
+    )
+
+
+def _assignment_lookup(assignments: pl.DataFrame) -> pl.DataFrame:
+    """Build leaf->cluster lookup from fused assignments."""
+    if assignments.height == 0:
+        return pl.DataFrame(schema={"leaf_id": pl.Int64, "id": pl.Int64})
+
+    return assignments.select(
+        pl.col("node_id").cast(pl.Int64).alias("leaf_id"),
+        pl.col("cluster_id").cast(pl.Int64).alias("id"),
+    ).unique()
+
+
+def _apply_assignments(
+    source_rows: pl.DataFrame,
+    assignment_lookup: pl.DataFrame,
+) -> pl.DataFrame:
+    """Attach root IDs to source rows using override assignments."""
+    if source_rows.height == 0:
+        return source_rows.with_columns(pl.lit(None, pl.Int64).alias("id"))
+
+    if assignment_lookup.height == 0:
+        return source_rows.with_columns(pl.col("leaf_id").cast(pl.Int64).alias("id"))
+
+    return source_rows.join(assignment_lookup, on="leaf_id", how="left").with_columns(
+        pl.coalesce([pl.col("id"), pl.col("leaf_id").cast(pl.Int64)]).alias("id")
+    )
+
+
+def _load_direct_inputs(
+    session: Session,
+    resolver_resolution: Resolutions,
+) -> dict[str, Resolutions]:
+    """Load direct resolver inputs by name, preserving resolver config order."""
+    input_names = list(resolver_resolution.resolver_config.inputs)
+    input_resolutions = session.execute(
+        select(Resolutions).where(
+            and_(
+                Resolutions.run_id == resolver_resolution.run_id,
+                Resolutions.name.in_(input_names),
+            )
+        )
+    ).scalars()
+
+    by_name = {res.name: res for res in input_resolutions}
+
+    missing = [name for name in input_names if name not in by_name]
+    if missing:
+        raise MatchboxResolutionNotQueriable(
+            f"Resolver inputs were not found for {resolver_resolution.name}: {missing}"
+        )
+
+    return by_name
+
+
+def _load_direct_threshold_cache(
+    session: Session,
+    resolver_resolution: Resolutions,
+) -> dict[str, int | None]:
+    """Return cached direct thresholds from the closure table."""
+    rows = session.execute(
+        select(Resolutions.name, ResolutionFrom.truth_cache)
+        .select_from(ResolutionFrom)
+        .join(Resolutions, ResolutionFrom.parent == Resolutions.resolution_id)
         .where(
             and_(
-                ClusterSourceKey.source_config_id.in_(target_source_config_ids),
-                ClusterSourceKey.cluster_id == target_cluster_cte.c.cluster_id,
+                ResolutionFrom.child == resolver_resolution.resolution_id,
+                ResolutionFrom.level == 1,
             )
         )
-    ]
+    ).all()
 
-    # Add branches for each model resolution
-    for res_id, threshold_val in model_resolutions:
-        branch = (
-            select(
-                ClusterSourceKey.cluster_id,
-                ClusterSourceKey.key,
-                ClusterSourceKey.source_config_id,
+    return {name: truth_cache for name, truth_cache in rows}
+
+
+def _require_backend_threshold(value: object, *, label: str) -> int:
+    """Validate backend threshold payloads are integer percentages in [0, 100]."""
+    if isinstance(value, bool) or not isinstance(value, int) or not (0 <= value <= 100):
+        raise MatchboxResolutionNotQueriable(
+            f"Invalid threshold for {label}: {value!r}. "
+            "Thresholds must be ints in [0, 100]."
+        )
+    return value
+
+
+def _resolve_effective_model_thresholds(
+    session: Session,
+    resolver_resolution: Resolutions,
+    threshold_overrides: dict[ModelResolutionName, int],
+    direct_inputs: dict[str, Resolutions],
+) -> dict[str, int]:
+    """Validate and resolve direct-model thresholds for query-time overrides."""
+    input_names = list(resolver_resolution.resolver_config.inputs)
+
+    direct_model_names = {
+        name
+        for name in input_names
+        if direct_inputs[name].type == ResolutionType.MODEL.value
+    }
+    direct_resolver_names = {
+        name
+        for name in input_names
+        if direct_inputs[name].type == ResolutionType.RESOLVER.value
+    }
+
+    invalid_keys = sorted(set(threshold_overrides) - direct_model_names)
+    if invalid_keys:
+        resolver_keys = [name for name in invalid_keys if name in direct_resolver_names]
+        non_direct_keys = [
+            name for name in invalid_keys if name not in direct_resolver_names
+        ]
+
+        issues: list[str] = []
+        if resolver_keys:
+            issues.append(
+                "resolver inputs cannot be overridden: " + ", ".join(resolver_keys)
             )
-            .select_from(
-                join(
-                    join(
-                        ClusterSourceKey,
-                        Contains,
-                        ClusterSourceKey.cluster_id == Contains.leaf,
-                    ),
-                    Probabilities,
-                    and_(
-                        Contains.root == Probabilities.cluster_id,
-                        Probabilities.resolution_id == res_id,
-                        Probabilities.probability >= threshold_val,
-                    ),
-                ),
-                target_cluster_cte,  # CROSS JOIN with target_cluster
+        if non_direct_keys:
+            issues.append(
+                "unknown or non-direct model inputs: " + ", ".join(non_direct_keys)
             )
-            .where(
-                and_(
-                    ClusterSourceKey.source_config_id.in_(target_source_config_ids),
-                    Probabilities.cluster_id == target_cluster_cte.c.cluster_id,
+
+        raise MatchboxResolutionNotQueriable(
+            "threshold_overrides can only target direct model inputs; "
+            + "; ".join(issues)
+        )
+
+    defaults = resolver_resolution.resolver_config.thresholds
+    direct_cache = _load_direct_threshold_cache(session, resolver_resolution)
+
+    effective: dict[str, int] = {}
+    for model_name in direct_model_names:
+        default = direct_cache.get(model_name)
+        if default is None:
+            default = defaults.get(model_name, 0)
+        effective[model_name] = _require_backend_threshold(
+            default,
+            label=f"default model input '{model_name}'",
+        )
+
+    for model_name, threshold in threshold_overrides.items():
+        effective[str(model_name)] = _require_backend_threshold(
+            threshold,
+            label=f"override model input '{model_name}'",
+        )
+
+    return effective
+
+
+def _load_model_edges_for_threshold(
+    session: Session,
+    resolution_id: int,
+    threshold: int,
+) -> pl.DataFrame:
+    """Load model edges for a model resolution at a threshold."""
+    rows = session.execute(
+        select(ModelEdges.left_id, ModelEdges.right_id).where(
+            and_(
+                ModelEdges.resolution_id == resolution_id,
+                ModelEdges.probability >= threshold,
+            )
+        )
+    ).all()
+
+    if not rows:
+        return _empty_edges_df()
+
+    return pl.DataFrame(
+        rows,
+        schema={"left_id": pl.UInt64, "right_id": pl.UInt64},
+        orient="row",
+    )
+
+
+def _load_resolver_input_assignments(
+    session: Session,
+    resolution_id: int,
+) -> pl.DataFrame:
+    """Load assignments for a direct resolver input (including root membership)."""
+    cluster_ids = session.execute(
+        select(ResolutionClusters.cluster_id).where(
+            ResolutionClusters.resolution_id == resolution_id
+        )
+    ).scalars()
+    cluster_ids_list = [int(cluster_id) for cluster_id in cluster_ids]
+
+    if not cluster_ids_list:
+        return _empty_assignments_df()
+
+    rows = session.execute(
+        select(Contains.root.label("cluster_id"), Contains.leaf.label("node_id")).where(
+            Contains.root.in_(cluster_ids_list)
+        )
+    ).all()
+
+    assignment_rows = [
+        {"cluster_id": int(cluster_id), "node_id": int(node_id)}
+        for cluster_id, node_id in rows
+    ]
+    assignment_rows.extend(
+        {
+            "cluster_id": cluster_id,
+            "node_id": cluster_id,
+        }
+        for cluster_id in cluster_ids_list
+    )
+
+    return (
+        pl.DataFrame(assignment_rows)
+        .cast({"cluster_id": pl.UInt64, "node_id": pl.UInt64})
+        .unique()
+    )
+
+
+def _build_override_assignments(
+    session: Session,
+    resolver_resolution: Resolutions,
+    threshold_overrides: dict[ModelResolutionName, int],
+) -> pl.DataFrame:
+    """Recompute assignments in memory for query-time threshold overrides."""
+    direct_inputs = _load_direct_inputs(session, resolver_resolution)
+    effective_thresholds = _resolve_effective_model_thresholds(
+        session=session,
+        resolver_resolution=resolver_resolution,
+        threshold_overrides=threshold_overrides,
+        direct_inputs=direct_inputs,
+    )
+
+    model_edges: list[pl.DataFrame] = []
+    resolver_assignments: list[pl.DataFrame] = []
+
+    for input_name in resolver_resolution.resolver_config.inputs:
+        input_resolution = direct_inputs[input_name]
+
+        if input_resolution.type == ResolutionType.MODEL.value:
+            model_edges.append(
+                _load_model_edges_for_threshold(
+                    session=session,
+                    resolution_id=input_resolution.resolution_id,
+                    threshold=effective_thresholds[input_name],
                 )
             )
-        )
-        branches.append(branch)
+        elif input_resolution.type == ResolutionType.RESOLVER.value:
+            resolver_assignments.append(
+                _load_resolver_input_assignments(
+                    session=session,
+                    resolution_id=input_resolution.resolution_id,
+                )
+            )
 
-    # Combine all branches with UNION ALL
-    if len(branches) == 1:
-        return branches[0]
-
-    return union_all(*branches)
-
-
-def _build_match_query(
-    key: str,
-    source_config_id: int,
-    target_source_config_ids: list[int],
-    resolution: Resolutions,
-    threshold: int | None,
-) -> Select:
-    """Build a match query to find all keys that cluster with a given input key.
-
-    This function creates SQL that identifies which cluster an input key belongs to,
-    then finds all other keys from specified target sources that belong to the same
-    cluster through the resolution hierarchy.
-
-    The query uses two CTEs to solve the matching problem:
-
-        1. **Target cluster identification**: Determines which cluster the input key
-            belongs to at the specified resolution level
-        2. **Matching leaves discovery**: Finds all keys from target sources that
-            belong to the same target cluster
-
-    The overall process:
-
-        1. **Target cluster CTE**: Uses the same `COALESCE` hierarchy logic as
-            `build_unified_query` to resolve which cluster the input key belongs to.
-            This handles the full resolution hierarchy with proper priority ordering.
-        2. **Matching leaves CTE**: Builds a `UNION ALL` query with multiple branches:
-
-            - **Direct members**: Keys that belong directly to the target cluster
-            - **Hierarchy branches**: For each model resolution, finds keys that are
-                connected to the target cluster through the Contains→Probabilities joins
-
-        3. **Final assembly**: `LEFT JOINs` the target cluster with matching leaves,
-            ensuring we always get the cluster ID even if no target matches exist
-    """
-    target_cluster_cte = _build_target_cluster_cte(
-        key=key,
-        source_config_id=source_config_id,
-        resolution=resolution,
-        threshold=threshold,
-    ).cte("target_cluster")
-
-    # Include both source and target configs to get all keys in the cluster
-    all_source_config_ids = [source_config_id] + target_source_config_ids
-    matching_leaves_cte = _build_matching_leaves_cte(
-        target_source_config_ids=all_source_config_ids,
-        resolution=resolution,
-        threshold=threshold,
-        target_cluster_cte=target_cluster_cte,
-    ).cte("matching_leaves")
-
-    return (
-        select(
-            matching_leaves_cte.c.cluster_id.label("cluster"),
-            matching_leaves_cte.c.source_config_id,
-            matching_leaves_cte.c.key,
-        )
-        .select_from(matching_leaves_cte)
-        .distinct()
+    return fuse_components(
+        strategy=FusionStrategy(resolver_resolution.resolver_config.strategy),
+        model_edges=model_edges,
+        resolver_assignments=resolver_assignments,
     )
+
+
+def _build_override_query_results(
+    session: Session,
+    source_config_id: int,
+    assignments: pl.DataFrame,
+    *,
+    return_leaf_id: bool,
+    limit: int | None,
+) -> pa.Table:
+    """Materialise query output using transient override assignments."""
+    source_rows = _source_keys_df(
+        session=session,
+        source_config_id=source_config_id,
+        include_source_config=False,
+    )
+    if source_rows.height == 0:
+        schema = SCHEMA_QUERY_WITH_LEAVES if return_leaf_id else SCHEMA_QUERY
+        empty = {name: [] for name in schema.names}
+        return pa.Table.from_pydict(empty, schema=schema)
+
+    assignment_lookup = _assignment_lookup(assignments)
+    resolved_rows = _apply_assignments(
+        source_rows=source_rows,
+        assignment_lookup=assignment_lookup,
+    )
+
+    selection = ["id", "key"]
+    if return_leaf_id:
+        selection.append("leaf_id")
+
+    resolved_rows = (
+        resolved_rows.select(selection)
+        .unique()
+        .sort(["id", "leaf_id", "key"] if return_leaf_id else ["id", "key"])
+    )
+
+    if limit is not None:
+        resolved_rows = resolved_rows.head(limit)
+
+    schema = SCHEMA_QUERY_WITH_LEAVES if return_leaf_id else SCHEMA_QUERY
+    return resolved_rows.to_arrow().cast(schema)
+
+
+def _query_without_overrides(
+    source_config_id: int,
+    point_of_truth_resolution_id: int | None,
+    *,
+    return_leaf_id: bool,
+    limit: int | None,
+) -> pa.Table:
+    """Execute the cached resolver query path."""
+    if point_of_truth_resolution_id is None:
+        query_stmt: Select = (
+            select(
+                ClusterSourceKey.cluster_id.label("root_id"),
+                ClusterSourceKey.cluster_id.label("leaf_id"),
+                ClusterSourceKey.key,
+            )
+            .where(ClusterSourceKey.source_config_id == source_config_id)
+            .distinct()
+        )
+    else:
+        assignments = _resolver_assignment_subquery(point_of_truth_resolution_id)
+
+        query_stmt = (
+            select(
+                func.coalesce(
+                    assignments.c.root_id,
+                    ClusterSourceKey.cluster_id,
+                ).label("root_id"),
+                ClusterSourceKey.cluster_id.label("leaf_id"),
+                ClusterSourceKey.key,
+            )
+            .select_from(ClusterSourceKey)
+            .join(
+                assignments,
+                assignments.c.leaf_id == ClusterSourceKey.cluster_id,
+                isouter=True,
+            )
+            .where(ClusterSourceKey.source_config_id == source_config_id)
+            .distinct()
+        )
+
+    query_stmt = query_stmt.order_by(
+        literal_column("root_id"),
+        literal_column("leaf_id"),
+        ClusterSourceKey.key,
+    )
+
+    if limit is not None:
+        query_stmt = query_stmt.limit(limit)
+
+    with MBDB.get_adbc_connection() as conn:
+        stmt = compile_sql(query_stmt)
+        logger.debug(f"Query SQL: \n {stmt}")
+        id_results = sql_to_df(
+            stmt=stmt,
+            connection=conn,
+            return_type="arrow",
+        ).rename_columns({"root_id": "id"})
+
+    selection = ["id", "key"]
+    if return_leaf_id:
+        selection.append("leaf_id")
+
+    return id_results.select(selection)
 
 
 def query(
     source: SourceResolutionPath,
-    point_of_truth: ResolutionPath | None = None,
-    threshold: int | None = None,
+    point_of_truth: ResolverResolutionPath | None = None,
+    threshold_overrides: dict[ModelResolutionName, int] | None = None,
     return_leaf_id: bool = False,
     limit: int | None = None,
 ) -> pa.Table:
-    """Queries Matchbox to retrieve linked data for a source.
-
-    Retrieves all linked data for a given source, resolving through hierarchy if needed.
-
-    * Simple case: If querying the same resolution as the source, just select cluster
-        IDs and keys directly from ClusterSourceKey
-    * Hierarchy case: Uses the unified query builder to traverse up the resolution
-        hierarchy, applying COALESCE priority logic to determine which parent cluster
-        each source record belongs to
-    * Priority resolution: When multiple model resolutions could assign a record to
-        different clusters, COALESCE ensures higher-priority resolutions win
-
-    Returns all records with their final resolved cluster IDs.
-    """
+    """Query Matchbox to retrieve linked data for a source."""
     with MBDB.get_session() as session:
-        source_config: SourceConfigs = Resolutions.from_path(
-            path=source, session=session
-        ).source_config
-        source_resolution: Resolutions = source_config.source_resolution
+        source_resolution: Resolutions = Resolutions.from_path(
+            path=source,
+            session=session,
+        )
+        source_config: SourceConfigs = source_resolution.source_config
 
-        if point_of_truth:
-            truth_resolution: Resolutions = Resolutions.from_path(
-                path=point_of_truth, session=session
+        if point_of_truth is None:
+            if threshold_overrides:
+                raise MatchboxResolutionNotQueriable(
+                    "threshold_overrides require a resolver point_of_truth."
+                )
+            return _query_without_overrides(
+                source_config_id=source_config.source_config_id,
+                point_of_truth_resolution_id=None,
+                return_leaf_id=return_leaf_id,
+                limit=limit,
             )
-        else:
-            truth_resolution: Resolutions = source_resolution
 
-        if truth_resolution.upload_stage != UploadStage.COMPLETE:
+        resolver_resolution = Resolutions.from_path(
+            path=point_of_truth,
+            session=session,
+        )
+        if resolver_resolution.type != ResolutionType.RESOLVER:
+            raise MatchboxResolutionNotQueriable
+        if resolver_resolution.upload_stage != UploadStage.COMPLETE:
             raise MatchboxResolutionNotQueriable
 
-        id_query: Select = build_unified_query(
-            resolution=truth_resolution,
-            sources=[source_config],
-            threshold=threshold,
-            level="key",
-        )
-
-        if limit:
-            id_query = id_query.limit(limit)
-
-        with MBDB.get_adbc_connection() as conn:
-            stmt: str = compile_sql(id_query)
-            logger.debug(f"Query SQL: \n {stmt}")
-            id_results = sql_to_df(
-                stmt=stmt, connection=conn, return_type="arrow"
-            ).rename_columns({"root_id": "id"})
-
-        selection = ["id", "key"]
-        if return_leaf_id:
-            selection.append("leaf_id")
-
-        return id_results.select(selection)
-
-
-def get_parent_clusters_and_leaves(
-    resolution: Resolutions,
-) -> dict[int, dict[str, list[dict]]]:
-    """Query clusters and their leaves for all parent resolutions.
-
-    For a given resolution, find all its parent resolutions and return complete
-    cluster compositions.
-
-    * Parent discovery: Queries ResolutionFrom to find all direct parent
-        resolutions (level 1)
-    * Cluster building: For each parent, runs the full unified query to get all
-        cluster assignments with both root and leaf information
-    * Aggregation: Collects all leaf nodes belonging to each root cluster across all
-        parent resolutions
-
-    Return a dictionary mapping cluster IDs to their complete leaf compositions
-    and metadata.
-    """
-    with MBDB.get_session() as session:
-        # Get direct parent resolution IDs
-        parent_ids: list[int] = [
-            row[0]
-            for row in session.execute(
-                select(ResolutionFrom.parent)
-                .where(ResolutionFrom.child == resolution.resolution_id)
-                .where(ResolutionFrom.level == 1)
-            ).all()
-        ]
-
-        if not parent_ids:
-            return {}
-
-        # For each parent, get all cluster assignments
-        all_clusters: dict[int, dict] = {}
-
-        for parent_id in parent_ids:
-            parent_resolution: Resolutions = session.get(Resolutions, parent_id)
-            if parent_resolution is None:
-                continue
-
-            parent_assignments: Select = build_unified_query(
-                resolution=parent_resolution, get_hashes=True
+        if not threshold_overrides:
+            return _query_without_overrides(
+                source_config_id=source_config.source_config_id,
+                point_of_truth_resolution_id=resolver_resolution.resolution_id,
+                return_leaf_id=return_leaf_id,
+                limit=limit,
             )
 
-            for row in session.execute(parent_assignments):
-                root_id = row.root_id
-                if root_id not in all_clusters:
-                    all_clusters[root_id] = {
-                        "root_hash": row.root_hash,
-                        "leaves": [],
-                        "probability": None,
-                    }
-                all_clusters[root_id]["leaves"].append(
-                    {"leaf_id": row.leaf_id, "leaf_hash": row.leaf_hash}
-                )
+        assignments = _build_override_assignments(
+            session=session,
+            resolver_resolution=resolver_resolution,
+            threshold_overrides=threshold_overrides,
+        )
 
-        return all_clusters
+        return _build_override_query_results(
+            session=session,
+            source_config_id=source_config.source_config_id,
+            assignments=assignments,
+            return_leaf_id=return_leaf_id,
+            limit=limit,
+        )
+
+
+def _match_without_overrides(
+    session: Session,
+    key: str,
+    source_config: SourceConfigs,
+    target_configs: list[SourceConfigs],
+    resolver_resolution_id: int,
+    source_path: SourceResolutionPath,
+    targets: list[SourceResolutionPath],
+) -> list[Match]:
+    """Execute cached resolver matching path."""
+    assignments = _resolver_assignment_subquery(resolver_resolution_id)
+    target_cluster_query = (
+        select(func.coalesce(assignments.c.root_id, ClusterSourceKey.cluster_id))
+        .select_from(ClusterSourceKey)
+        .join(
+            assignments,
+            assignments.c.leaf_id == ClusterSourceKey.cluster_id,
+            isouter=True,
+        )
+        .where(
+            and_(
+                ClusterSourceKey.source_config_id == source_config.source_config_id,
+                ClusterSourceKey.key == key,
+            )
+        )
+        .limit(1)
+    )
+
+    cluster = session.execute(target_cluster_query).scalar_one_or_none()
+
+    if cluster is None:
+        return [
+            Match(
+                cluster=None,
+                source=source_path,
+                source_id=set(),
+                target=target,
+                target_id=set(),
+            )
+            for target in targets
+        ]
+
+    source_and_target_ids = [
+        source_config.source_config_id,
+        *(tc.source_config_id for tc in target_configs),
+    ]
+
+    assignments_alias = assignments.alias("resolver_assignments_match")
+    matched_rows = session.execute(
+        select(ClusterSourceKey.source_config_id, ClusterSourceKey.key)
+        .select_from(ClusterSourceKey)
+        .join(
+            assignments_alias,
+            assignments_alias.c.leaf_id == ClusterSourceKey.cluster_id,
+            isouter=True,
+        )
+        .where(
+            and_(
+                ClusterSourceKey.source_config_id.in_(source_and_target_ids),
+                func.coalesce(
+                    assignments_alias.c.root_id,
+                    ClusterSourceKey.cluster_id,
+                )
+                == cluster,
+            )
+        )
+        .distinct()
+    ).all()
+
+    matches_by_source_id: dict[int, set[str]] = {}
+    for source_config_id_result, key_in_source in matched_rows:
+        matches_by_source_id.setdefault(source_config_id_result, set()).add(
+            key_in_source
+        )
+
+    source_ids = matches_by_source_id.get(source_config.source_config_id, set())
+    result: list[Match] = []
+    for target, target_config in zip(targets, target_configs, strict=False):
+        result.append(
+            Match(
+                cluster=int(cluster),
+                source=source_path,
+                source_id=source_ids,
+                target=target,
+                target_id=matches_by_source_id.get(
+                    target_config.source_config_id,
+                    set(),
+                ),
+            )
+        )
+
+    return result
+
+
+def _match_with_overrides(
+    session: Session,
+    key: str,
+    source_config: SourceConfigs,
+    target_configs: list[SourceConfigs],
+    resolver_resolution: Resolutions,
+    source_path: SourceResolutionPath,
+    targets: list[SourceResolutionPath],
+    threshold_overrides: dict[ModelResolutionName, int],
+) -> list[Match]:
+    """Execute matching using transient query-time override assignments."""
+    assignments = _build_override_assignments(
+        session=session,
+        resolver_resolution=resolver_resolution,
+        threshold_overrides=threshold_overrides,
+    )
+    assignment_lookup = _assignment_lookup(assignments)
+
+    source_rows = _source_keys_df(
+        session=session,
+        source_config_id=source_config.source_config_id,
+        include_source_config=False,
+    ).filter(pl.col("key") == key)
+
+    if source_rows.height == 0:
+        return [
+            Match(
+                cluster=None,
+                source=source_path,
+                source_id=set(),
+                target=target,
+                target_id=set(),
+            )
+            for target in targets
+        ]
+
+    source_resolved = _apply_assignments(source_rows, assignment_lookup)
+    cluster_ids = source_resolved.select("id").unique().to_series().to_list()
+
+    if not cluster_ids:
+        return [
+            Match(
+                cluster=None,
+                source=source_path,
+                source_id=set(),
+                target=target,
+                target_id=set(),
+            )
+            for target in targets
+        ]
+
+    # Mirror the historical SQL path with deterministic tie-breaking.
+    target_cluster = int(sorted(int(cluster_id) for cluster_id in cluster_ids)[0])
+
+    source_and_target_ids = [
+        source_config.source_config_id,
+        *(tc.source_config_id for tc in target_configs),
+    ]
+
+    source_and_target_rows = _source_keys_for_configs_df(
+        session=session,
+        source_config_ids=source_and_target_ids,
+    )
+    resolved_rows = _apply_assignments(
+        source_and_target_rows,
+        assignment_lookup,
+    ).filter(pl.col("id") == target_cluster)
+
+    matches_by_source_id: dict[int, set[str]] = {}
+    if resolved_rows.height > 0:
+        grouped = resolved_rows.group_by("source_config_id").agg(pl.col("key").unique())
+        for row in grouped.iter_rows(named=True):
+            matches_by_source_id[int(row["source_config_id"])] = {
+                str(value) for value in row["key"]
+            }
+
+    source_ids = matches_by_source_id.get(source_config.source_config_id, set())
+
+    result: list[Match] = []
+    for target, target_config in zip(targets, target_configs, strict=False):
+        result.append(
+            Match(
+                cluster=target_cluster,
+                source=source_path,
+                source_id=source_ids,
+                target=target,
+                target_id=matches_by_source_id.get(
+                    target_config.source_config_id,
+                    set(),
+                ),
+            )
+        )
+
+    return result
 
 
 def match(
     key: str,
     source: SourceResolutionPath,
     targets: list[SourceResolutionPath],
-    point_of_truth: ResolutionPath,
-    threshold: int | None = None,
+    point_of_truth: ResolverResolutionPath,
+    threshold_overrides: dict[ModelResolutionName, int] | None = None,
 ) -> list[Match]:
-    """Matches an ID in a source resolution and returns the keys in the targets.
-
-    Given a specific key in a source, find what it matches to in target sources
-    through a resolution hierarchy.
-
-    * Target cluster identification: Uses COALESCE priority CTE to determine which
-        cluster the input key belongs to at the resolution level
-    * Matching leaves discovery: Builds UNION ALL query with branches for:
-        * Direct cluster members (source-only case)
-        * Members connected through each model resolution in the hierarchy
-    * Cross-reference: Joins the target cluster with all possible matching leaves,
-        filtering for the requested target sources
-
-    Organises matches by source configuration and returns structured Match objects
-    for each target.
-    """
+    """Match a source key against targets under a resolver point-of-truth."""
     with MBDB.get_session() as session:
-        # Get configurations using ORM relationships
         source_config: SourceConfigs = Resolutions.from_path(
-            path=source, session=session
+            path=source,
+            session=session,
         ).source_config
-        truth_resolution: Resolutions = Resolutions.from_path(
-            path=point_of_truth, session=session
+        resolver_resolution: Resolutions = Resolutions.from_path(
+            path=point_of_truth,
+            session=session,
         )
 
-        if truth_resolution.upload_stage != UploadStage.COMPLETE:
+        if resolver_resolution.type != ResolutionType.RESOLVER:
+            raise MatchboxResolutionNotQueriable
+        if resolver_resolution.upload_stage != UploadStage.COMPLETE:
             raise MatchboxResolutionNotQueriable
 
         target_configs: list[SourceConfigs] = [
             Resolutions.from_path(path=target, session=session).source_config
             for target in targets
         ]
-        target_source_config_ids = [tc.source_config_id for tc in target_configs]
 
-        # Build and execute the match query
-        matches_query = _build_match_query(
-            key=key,
-            source_config_id=source_config.source_config_id,
-            target_source_config_ids=target_source_config_ids,
-            resolution=truth_resolution,
-            threshold=threshold,
-        )
-
-        logger.debug(f"Match SQL: \n {compile_sql(matches_query)}")
-        matches = session.execute(matches_query).all()
-
-        # Organise matches by source config
-        cluster: int | None = None
-        matches_by_source_id: dict[int, set] = {}
-
-        for cluster_id, source_config_id_result, key_in_source in matches:
-            if cluster is None:
-                cluster = cluster_id
-
-            # Skip NULL results from LEFT JOIN (when no target matches)
-            if source_config_id_result is not None and key_in_source is not None:
-                if source_config_id_result not in matches_by_source_id:
-                    matches_by_source_id[source_config_id_result] = set()
-                matches_by_source_id[source_config_id_result].add(key_in_source)
-
-        # Build result objects
-        result: list[Match] = []
-        for target, target_config in zip(targets, target_configs, strict=False):
-            match_obj = Match(
-                cluster=cluster,
-                source=source,
-                source_id=matches_by_source_id.get(
-                    source_config.source_config_id, set()
-                ),
-                target=target,
-                target_id=matches_by_source_id.get(
-                    target_config.source_config_id, set()
-                ),
+        if threshold_overrides:
+            return _match_with_overrides(
+                session=session,
+                key=key,
+                source_config=source_config,
+                target_configs=target_configs,
+                resolver_resolution=resolver_resolution,
+                source_path=source,
+                targets=targets,
+                threshold_overrides=threshold_overrides,
             )
-            result.append(match_obj)
 
-        return result
+        return _match_without_overrides(
+            session=session,
+            key=key,
+            source_config=source_config,
+            target_configs=target_configs,
+            resolver_resolution_id=resolver_resolution.resolution_id,
+            source_path=source,
+            targets=targets,
+        )

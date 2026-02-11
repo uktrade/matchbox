@@ -105,7 +105,7 @@ def test_model_type_creation(
     # Test threshold setting and querying
     initial_threshold = 80
     model.threshold = initial_threshold
-    assert model.model.truth == initial_threshold / 100
+    assert model.threshold == initial_threshold
     initial_data = model.data
     initial_ids = set(initial_data["id"].to_pylist())
     assert len(initial_ids) > 0
@@ -113,7 +113,7 @@ def test_model_type_creation(
     # Test threshold change affects results
     new_threshold = 90
     model.threshold = new_threshold
-    assert model.model.truth == new_threshold / 100
+    assert model.threshold == new_threshold
     new_data = model.data
     new_ids = set(new_data["id"].to_pylist())
 

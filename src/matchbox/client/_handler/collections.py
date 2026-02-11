@@ -22,6 +22,7 @@ from matchbox.common.dtos import (
     PermissionType,
     Resolution,
     ResolutionPath,
+    ResolverResolutionPath,
     ResourceOperationStatus,
     Run,
     RunID,
@@ -255,7 +256,7 @@ def get_resolution(path: ResolutionPath) -> Resolution | None:
 
 @profile_time(kwarg="path")
 @http_retry
-def set_data(path: ResolutionPath, data: pl.DataFrame | Table) -> None:
+def set_data(path: ResolutionPath, data: pl.DataFrame | Table) -> str:
     """Upload source hashes or model results to server."""
     log_prefix = f"Resolution {path}"
     logger.debug("Uploading results", prefix=log_prefix)
@@ -289,6 +290,7 @@ def set_data(path: ResolutionPath, data: pl.DataFrame | Table) -> None:
         time.sleep(settings.retry_delay)
 
     logger.debug("Finished", prefix=log_prefix)
+    return upload_id
 
 
 @http_retry
@@ -314,12 +316,27 @@ def get_results(path: ModelResolutionPath) -> Table:
     return read_table(buffer)
 
 
+@profile_time(kwarg="path")
+@http_retry
+def get_resolver_mapping(path: ResolverResolutionPath, upload_id: str) -> Table:
+    """Get resolver upload mapping from Matchbox."""
+    log_prefix = f"Resolver {path}"
+    logger.debug("Retrieving upload mapping", prefix=log_prefix)
+
+    res = CLIENT.get(
+        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/data/mapping",
+        params={"upload_id": upload_id},
+    )
+    buffer = BytesIO(res.content)
+    return read_table(buffer)
+
+
 @http_retry
 def delete_resolution(
-    path: ModelResolutionPath, certain: bool = False
+    path: ResolutionPath, certain: bool = False
 ) -> ResourceOperationStatus:
     """Delete a resolution in Matchbox."""
-    log_prefix = f"Model {path}"
+    log_prefix = f"Resolution {path}"
     logger.debug("Deleting", prefix=log_prefix)
 
     res = CLIENT.delete(

@@ -1,5 +1,7 @@
 """Definition of model inputs."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, Self, overload
@@ -19,19 +21,23 @@ from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.common.db import QueryReturnClass, QueryReturnType
 from matchbox.common.dtos import (
+    ModelResolutionName,
     QueryCombineType,
     QueryConfig,
+    stable_hash_dict,
 )
 from matchbox.common.logging import profile_time
-from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
+from matchbox.common.transform import threshold_float_to_int
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
-    from matchbox.client.models import Model
+    from matchbox.client.models.models import Model
+    from matchbox.client.resolvers import Resolver
     from matchbox.client.sources import Source
 else:
     DAG = Any
     Model = Any
+    Resolver = Any
     Source = Any
 
 
@@ -42,9 +48,9 @@ class Query:
         self,
         *sources: Source,
         dag: DAG,
-        model: Model | None = None,
+        resolver: Resolver | None = None,
+        threshold_overrides: dict[ModelResolutionName, float] | None = None,
         combine_type: QueryCombineType = QueryCombineType.CONCAT,
-        threshold: float | None = None,
         cleaning: dict[str, str] | None = None,
     ) -> None:
         """Initialise query.
@@ -52,8 +58,11 @@ class Query:
         Args:
             sources: List of sources to query from
             dag: DAG containing sources and models.
-            model (optional): Model to use to resolve sources. It can only be missing
+            resolver (optional): Resolver to use to resolve sources. It can be missing
                 if querying from a single source.
+            threshold_overrides (optional): Per-model analysis thresholds as floats in
+                ``[0, 1]``. These are normalised to backend ints in ``[0, 100]``
+                immediately and only apply to query-time analysis.
             combine_type (optional): How to combine the data from different sources.
                 Default is `concat`.
 
@@ -66,32 +75,108 @@ class Query:
                     aggregate to nested lists of unique values. One row per ID,
                     but all requested data is in nested arrays
 
-            threshold (optional): The threshold to use for creating clusters
-                If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
-                resolution's cached thresholds for its ancestors
-
             cleaning (optional): A dictionary mapping an output column name to a SQL
                 expression that will populate a new column.
         """
         self.raw_data: PolarsDataFrame | None = None
         self.dag = dag
         self.sources = sources
-        self.model = model
+        self.resolver = resolver
+        self.threshold_overrides = self._normalise_threshold_overrides(
+            threshold_overrides
+        )
         self.combine_type = combine_type
-        self.threshold = threshold
         self.cleaning = cleaning
+
+        if self.threshold_overrides and self.resolver is None:
+            raise ValueError("threshold_overrides require a resolver-backed query.")
+
+        invalid_override_keys = sorted(
+            set(self.threshold_overrides) - self._direct_model_input_names()
+        )
+        if invalid_override_keys:
+            raise ValueError(
+                "threshold_overrides keys must be direct model inputs of the "
+                f"resolver. Invalid keys: {invalid_override_keys}"
+            )
+
+    @staticmethod
+    def _normalise_threshold_overrides(
+        threshold_overrides: dict[ModelResolutionName, float] | None,
+    ) -> dict[ModelResolutionName, int]:
+        """Normalise user-facing float thresholds to backend integer thresholds."""
+        if not threshold_overrides:
+            return {}
+
+        normalised: dict[ModelResolutionName, int] = {}
+        for model_name, threshold in threshold_overrides.items():
+            if not isinstance(threshold, float):
+                raise ValueError(
+                    "threshold_overrides values must be floats between 0 and 1."
+                )
+            normalised[model_name] = threshold_float_to_int(threshold)
+
+        return normalised
+
+    def _direct_model_input_names(self) -> set[ModelResolutionName]:
+        """Return direct model input names for this query's resolver."""
+        if self.resolver is None:
+            return set()
+
+        from matchbox.client.models.models import (  # noqa: PLC0415
+            Model as ModelNode,
+        )
+
+        return {
+            node.name for node in self.resolver.inputs if isinstance(node, ModelNode)
+        }
+
+    def _effective_thresholds(self) -> dict[ModelResolutionName, int]:
+        """Return direct-model thresholds with overrides applied."""
+        if self.resolver is None:
+            return {}
+
+        from matchbox.client.models.models import (  # noqa: PLC0415
+            Model as ModelNode,
+        )
+
+        effective: dict[ModelResolutionName, int] = {}
+        for node in self.resolver.inputs:
+            if isinstance(node, ModelNode):
+                effective[node.name] = self.resolver.thresholds[node.name]
+
+        effective.update(self.threshold_overrides)
+        return effective
+
+    def _resolver_settings_hash(self) -> str | None:
+        """Return hash for resolver config + effective query-time thresholds."""
+        if self.resolver is None:
+            return None
+        return stable_hash_dict(
+            {
+                "resolver_config": self.resolver.config.model_dump(mode="json"),
+                "effective_thresholds": self._effective_thresholds(),
+                "threshold_overrides": self.threshold_overrides,
+            }
+        )
+
+    def _assert_pipeline_safe(self) -> None:
+        """Ensure analysis-only override queries are not used in pipeline builds."""
+        if self.threshold_overrides:
+            raise TypeError(
+                "Queries with threshold_overrides are analysis-only and cannot be "
+                "used as model inputs. Create another resolver for inference-speed "
+                "threshold changes."
+            )
 
     @property
     def config(self) -> QueryConfig:
         """The query configuration for the current DAG."""
         return QueryConfig(
-            source_resolutions=[source.name for source in self.sources],
-            model_resolution=self.model.name if self.model else None,
+            source_resolutions=tuple(source.name for source in self.sources),
+            resolver_resolution=self.resolver.name if self.resolver else None,
             combine_type=self.combine_type,
-            threshold=threshold_float_to_int(self.threshold)
-            if self.threshold
-            else None,
+            resolver_settings_hash=self._resolver_settings_hash(),
             cleaning=self.cleaning,
         )
 
@@ -111,22 +196,18 @@ class Query:
         # Get sources from DAG
         sources = [dag.get_source(res) for res in config.source_resolutions]
 
-        # Get model if specified
-        model = (
-            dag.get_model(config.model_resolution) if config.model_resolution else None
-        )
-
-        # Convert threshold back to float
-        threshold = (
-            threshold_int_to_float(config.threshold) if config.threshold else None
+        # Get resolver if specified
+        resolver = (
+            dag.get_resolver(config.resolver_resolution)
+            if config.resolver_resolution
+            else None
         )
 
         return cls(
             *sources,
             dag=dag,
-            model=model,
+            resolver=resolver,
             combine_type=config.combine_type,
-            threshold=threshold,
             cleaning=config.cleaning,
         )
 
@@ -177,8 +258,8 @@ class Query:
             for source in self.sources:
                 res = _handler.query(
                     source=source.resolution_path,
-                    resolution=self.model.resolution_path if self.model else None,
-                    threshold=self.config.threshold,
+                    resolution=self.resolver.resolution_path if self.resolver else None,
+                    threshold_overrides=self.threshold_overrides or None,
                     return_leaf_id=return_leaf_id,
                 )
 
@@ -260,6 +341,7 @@ class Query:
         description: str | None = None,
     ) -> Model:
         """Create deduper for data in this query."""
+        self._assert_pipeline_safe()
         return self.dag.model(
             name=name,
             description=description,
@@ -277,6 +359,8 @@ class Query:
         description: str | None = None,
     ) -> Model:
         """Create linker for data in this query and another query."""
+        self._assert_pipeline_safe()
+        other_query._assert_pipeline_safe()
         return self.dag.model(
             name=name,
             description=description,

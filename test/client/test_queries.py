@@ -20,7 +20,6 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.factories.dags import TestkitDAG
-from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
@@ -28,25 +27,132 @@ from matchbox.common.factories.sources import (
 )
 
 
+def _resolver_for_sources() -> tuple:
+    """Create two source-backed models and a resolver for query tests."""
+    foo_testkit = source_factory(name="foo")
+    dag = foo_testkit.source.dag
+    foo = dag.source(**foo_testkit.into_dag())
+
+    bar_testkit = source_factory(name="bar", dag=dag)
+    bar = dag.source(**bar_testkit.into_dag())
+
+    foo_model = foo.query().deduper(
+        name="foo_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    bar_model = bar.query().deduper(
+        name="bar_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    resolver = foo.dag.resolver(
+        name="resolver",
+        inputs=[foo_model, bar_model],
+    )
+    return foo, bar, resolver
+
+
 def test_init_query() -> None:
     """Test that query is initialised correctly"""
-    source = source_factory().source
-    model = model_factory(dag=source.dag).model
+    source, _, resolver = _resolver_for_sources()
     query = Query(
         source,
         dag=source.dag,
-        model=model,
+        resolver=resolver,
         combine_type="explode",
-        threshold=0.32,
         cleaning={"hello": "hello"},
     )
 
     assert query.config == QueryConfig(
-        source_resolutions=[source.name],
-        model_resolution=model.name,
+        source_resolutions=(source.name,),
+        resolver_resolution=resolver.name,
         combine_type="explode",
-        threshold=32,
+        resolver_settings_hash=query.config.resolver_settings_hash,
         cleaning={"hello": "hello"},
+    )
+
+
+def test_query_threshold_overrides_normalised() -> None:
+    """Float threshold overrides are normalised to backend ints immediately."""
+    source, _, resolver = _resolver_for_sources()
+    model_name = resolver.inputs[0].name
+
+    query = Query(
+        source,
+        dag=source.dag,
+        resolver=resolver,
+        threshold_overrides={model_name: 0.63},
+    )
+
+    assert query.threshold_overrides == {model_name: 63}
+    assert query.config.resolver_settings_hash is not None
+
+
+def test_query_threshold_overrides_require_direct_models() -> None:
+    """Override keys must be direct model inputs of the queried resolver."""
+    source, _, resolver = _resolver_for_sources()
+
+    with pytest.raises(ValueError, match="direct model inputs"):
+        Query(
+            source,
+            dag=source.dag,
+            resolver=resolver,
+            threshold_overrides={resolver.name: 0.9},
+        )
+
+
+def test_query_threshold_overrides_reject_non_float_values() -> None:
+    """Public threshold override values must be floats."""
+    source, _, resolver = _resolver_for_sources()
+    model_name = resolver.inputs[0].name
+
+    with pytest.raises(ValueError, match="must be floats"):
+        Query(
+            source,
+            dag=source.dag,
+            resolver=resolver,
+            threshold_overrides={model_name: 1},
+        )
+
+
+def test_query_threshold_overrides_are_analysis_only() -> None:
+    """Override queries cannot be used to build model pipelines."""
+    source, _, resolver = _resolver_for_sources()
+    model_name = resolver.inputs[0].name
+    query = Query(
+        source,
+        dag=source.dag,
+        resolver=resolver,
+        threshold_overrides={model_name: 0.8},
+    )
+
+    with pytest.raises(TypeError, match="analysis-only"):
+        query.deduper(
+            name="blocked",
+            model_class="NaiveDeduper",
+            model_settings={"unique_fields": []},
+        )
+
+
+def test_query_threshold_overrides_change_hash_even_if_effective_same() -> None:
+    """Override provenance should always alter resolver settings hash."""
+    source, _, resolver = _resolver_for_sources()
+    model_name = resolver.inputs[0].name
+
+    base_query = Query(source, dag=source.dag, resolver=resolver)
+    override_query = Query(
+        source,
+        dag=source.dag,
+        resolver=resolver,
+        threshold_overrides={model_name: 0.0},
+    )
+
+    assert base_query.config.resolver_settings_hash is not None
+    assert override_query.config.resolver_settings_hash is not None
+    assert (
+        base_query.config.resolver_settings_hash
+        != override_query.config.resolver_settings_hash
     )
 
 
@@ -91,17 +197,18 @@ def test_query_single_source(
     }
 
     # Tests with optional params
-    results = testkit.source.query(threshold=0.5).data(return_type="pandas")
+    results = testkit.source.query(cleaning={"foo_a": "foo_a"}).data(
+        return_type="pandas"
+    )
 
     assert isinstance(results, PandasDataFrame)
     assert len(results) == 2
-    assert {"foo_a", "foo_b", "id"} == set(results.columns)
+    assert {"foo_a", "id"} == set(results.columns)
 
     assert dict(query_route.calls.last.request.url.params) == {
         "collection": testkit.source.dag.name,
         "run_id": str(testkit.source.dag.run),
         "source": testkit.source.name,
-        "threshold": "50",
         "return_leaf_id": "False",
     }
 
@@ -159,9 +266,26 @@ def test_query_multiple_sources(
         * 2  # 2 calls to `query()` in this test, each querying server twice
     )
 
-    model = model_factory(dag=testkit1.source.dag).model
+    foo_source = testkit1.source.dag.source(**testkit1.into_dag())
+    bar_source = testkit2.source.dag.source(**testkit2.into_dag())
+
+    model_foo = foo_source.query().deduper(
+        name="foo_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    model_bar = bar_source.query().deduper(
+        name="bar_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    resolver = foo_source.dag.resolver(
+        name="resolver",
+        inputs=[model_foo, model_bar],
+    )
+
     # Validate results (no cleaning, so all columns passed through)
-    results = model.query(testkit1.source, testkit2.source).data()
+    results = resolver.query(foo_source, bar_source).data()
     assert len(results) == 4
     assert {"foo_a", "foo_b", "foo2_c", "id"} == set(results.columns)
 
@@ -169,14 +293,14 @@ def test_query_multiple_sources(
         "collection": testkit1.source.dag.name,
         "run_id": str(testkit1.source.dag.run),
         "source": testkit1.source.name,
-        "resolution": model.name,
+        "resolution": resolver.name,
         "return_leaf_id": "False",
     }
     assert dict(query_route.calls[-1].request.url.params) == {
         "collection": testkit2.source.dag.name,
         "run_id": str(testkit2.source.dag.run),
         "source": testkit2.source.name,
-        "resolution": model.name,
+        "resolution": resolver.name,
         "return_leaf_id": "False",
     }
 
@@ -346,12 +470,26 @@ def test_query_combine_type(
         ]  # two sources to query
     )
 
-    model = model_factory(dag=testkit1.source.dag).model
+    foo_source = testkit1.source.dag.source(**testkit1.into_dag())
+    bar_source = testkit2.source.dag.source(**testkit2.into_dag())
+
+    foo_model = foo_source.query().deduper(
+        name="foo_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    bar_model = bar_source.query().deduper(
+        name="bar_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    resolver = foo_source.dag.resolver(
+        name="resolver",
+        inputs=[foo_model, bar_model],
+    )
 
     # Validate results
-    results = model.query(
-        testkit1.source, testkit2.source, combine_type=combine_type
-    ).data()
+    results = resolver.query(foo_source, bar_source, combine_type=combine_type).data()
 
     if combine_type == "set_agg":
         expected_len = 3
@@ -428,9 +566,25 @@ def test_query_leaf_ids(
         ]  # two sources to query
     )
 
-    model = model_factory(dag=testkit1.source.dag).model
+    foo_source = testkit1.source.dag.source(**testkit1.into_dag())
+    bar_source = testkit2.source.dag.source(**testkit2.into_dag())
 
-    query = model.query(testkit1.source, testkit2.source, combine_type=combine_type)
+    foo_model = foo_source.query().deduper(
+        name="foo_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    bar_model = bar_source.query().deduper(
+        name="bar_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    resolver = foo_source.dag.resolver(
+        name="resolver",
+        inputs=[foo_model, bar_model],
+    )
+
+    query = resolver.query(foo_source, bar_source, combine_type=combine_type)
     data: pl.DataFrame = query.data(return_leaf_id=True)
     assert set(data.columns) == {"foo_col", "bar_col", "id"}
 
@@ -508,25 +662,40 @@ def test_query_from_config() -> None:
     crn_testkit = linked_testkit.sources["crn"]
     dh_testkit = linked_testkit.sources["dh"]
 
-    model_testkit = model_factory(
-        left_testkit=crn_testkit,
-        right_testkit=dh_testkit,
-        true_entities=linked_testkit.true_entities,
-        dag=dag,
-    )
-
-    # Add to DAG
     dag.source(**crn_testkit.into_dag())
     dag.source(**dh_testkit.into_dag())
-    dag.model(**model_testkit.into_dag())
+
+    model_testkit = (
+        dag.get_source(crn_testkit.name)
+        .query()
+        .linker(
+            dag.get_source(dh_testkit.name).query(),
+            name="link",
+            model_class="DeterministicLinker",
+            model_settings={"comparisons": "l.key=r.key"},
+        )
+    )
+    dedupe_testkit = (
+        dag.get_source(crn_testkit.name)
+        .query()
+        .deduper(
+            name="dedupe",
+            model_class="NaiveDeduper",
+            model_settings={"unique_fields": []},
+        )
+    )
+
+    resolver = dag.resolver(
+        name="resolver",
+        inputs=[model_testkit, dedupe_testkit],
+    )
 
     # Create original query
-    original_query = model_testkit.model.query(
-        crn_testkit.source,
-        dh_testkit.source,
+    original_query = resolver.query(
+        dag.get_source(crn_testkit.name),
+        dag.get_source(dh_testkit.name),
         combine_type="explode",
-        threshold=0.75,
-        cleaning={"new_col": "foo_a * 2"},
+        cleaning={"new_col": "crn_a * 2"},
     )
 
     # Get config and reconstruct
@@ -536,14 +705,13 @@ def test_query_from_config() -> None:
     # Verify reconstruction matches original
     assert reconstructed_query.config == original_query.config
     assert reconstructed_query.sources == original_query.sources
-    assert reconstructed_query.model.config == original_query.model.config
+    assert reconstructed_query.resolver.name == original_query.resolver.name
     assert reconstructed_query.combine_type == original_query.combine_type
-    assert reconstructed_query.threshold == original_query.threshold
     assert reconstructed_query.cleaning == original_query.cleaning
 
 
 def test_query_from_config_no_model() -> None:
-    """Test reconstructing a Query without a model."""
+    """Test reconstructing a Query without a resolver."""
     dag = TestkitDAG().dag
 
     # Create test source
@@ -552,8 +720,8 @@ def test_query_from_config_no_model() -> None:
     # Add to DAG
     dag.source(**testkit.into_dag())
 
-    # Create query without model
-    original_query = testkit.source.query(threshold=0.5)
+    # Create query without resolver
+    original_query = testkit.source.query()
 
     # Reconstruct from config
     config = original_query.config
@@ -561,8 +729,54 @@ def test_query_from_config_no_model() -> None:
 
     # Verify
     assert reconstructed_query.config == original_query.config
-    assert reconstructed_query.model is None
-    assert reconstructed_query.threshold == 0.5
+    assert reconstructed_query.resolver is None
+
+
+def test_query_from_config_resolver_roundtrip() -> None:
+    """Round-trip a resolver-backed query via QueryConfig."""
+    dag = TestkitDAG().dag
+
+    linked_testkit = linked_sources_factory(dag=dag)
+    crn_testkit = linked_testkit.sources["crn"]
+    dh_testkit = linked_testkit.sources["dh"]
+
+    dag.source(**crn_testkit.into_dag())
+    dag.source(**dh_testkit.into_dag())
+
+    linker = (
+        dag.get_source(crn_testkit.name)
+        .query()
+        .linker(
+            dag.get_source(dh_testkit.name).query(),
+            name="link",
+            model_class="DeterministicLinker",
+            model_settings={"comparisons": "l.key=r.key"},
+        )
+    )
+    dedupe = (
+        dag.get_source(crn_testkit.name)
+        .query()
+        .deduper(
+            name="dedupe",
+            model_class="NaiveDeduper",
+            model_settings={"unique_fields": []},
+        )
+    )
+
+    resolver = dag.resolver(name="resolver", inputs=[linker, dedupe])
+
+    original_query = resolver.query(
+        dag.get_source(crn_testkit.name),
+        dag.get_source(dh_testkit.name),
+        combine_type="explode",
+        cleaning={"new_col": "crn_a * 2"},
+    )
+
+    config = original_query.config
+    reconstructed_query = Query.from_config(config, dag=dag)
+    assert reconstructed_query.config == original_query.config
+    assert reconstructed_query.resolver is not None
+    assert reconstructed_query.resolver.name == resolver.name
 
 
 @pytest.mark.parametrize(

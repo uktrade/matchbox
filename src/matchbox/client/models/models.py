@@ -6,6 +6,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
+import polars as pl
 from polars import DataFrame
 
 from matchbox.client import _handler
@@ -26,7 +27,6 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_model_results
 from matchbox.common.logging import logger, profile_time
-from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -84,7 +84,6 @@ class Model:
         model_settings: DeduperSettings | dict,
         left_query: Query,
         right_query: None = None,
-        truth: float = 1.0,
         description: str | None = None,
     ) -> None: ...
 
@@ -97,7 +96,6 @@ class Model:
         model_settings: LinkerSettings | dict,
         left_query: Query,
         right_query: Query,
-        truth: float = 1.0,
         description: str | None = None,
     ) -> None: ...
 
@@ -109,7 +107,6 @@ class Model:
         model_settings: DeduperSettings | LinkerSettings | dict,
         left_query: Query,
         right_query: Query | None = None,
-        truth: float = 1.0,
         description: str | None = None,
     ):
         """Create a new model instance.
@@ -117,7 +114,6 @@ class Model:
         Args:
             dag: DAG containing this model.
             name: Unique name for the model
-            truth: Truth threshold. Defaults to 1.0. Can be set later after analysis.
             model_class: Class of Linker or Deduper, or its name.
             model_settings: Appropriate settings object to pass to model class.
             left_query: The query that will get the data to deduplicate, or the data to
@@ -128,10 +124,20 @@ class Model:
         self.dag = dag
         self.name = name
         self.description = description
-        self._truth: int = threshold_float_to_int(truth)
         self.left_query = left_query
         self.right_query = right_query
         self.results: ModelResults | None = None
+
+        if self.left_query.threshold_overrides:
+            raise TypeError(
+                "Model inputs cannot use Query.threshold_overrides. "
+                "Create a resolver with the required thresholds instead."
+            )
+        if self.right_query and self.right_query.threshold_overrides:
+            raise TypeError(
+                "Model inputs cannot use Query.threshold_overrides. "
+                "Create a resolver with the required thresholds instead."
+            )
 
         if isinstance(model_class, str):
             self.model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
@@ -178,7 +184,6 @@ class Model:
         """Convert to Resolution for API calls."""
         return Resolution(
             description=self.description,
-            truth=self._truth,
             resolution_type=ResolutionType.MODEL,
             config=self.config,
             fingerprint=hash_model_results(self.results.probabilities),
@@ -205,7 +210,6 @@ class Model:
             right_query=Query.from_config(resolution.config.right_query, dag=dag)
             if resolution.config.right_query
             else None,
-            truth=threshold_int_to_float(resolution.truth),
         )
 
     @property
@@ -216,18 +220,6 @@ class Model:
             run=self.dag.run,
             name=self.name,
         )
-
-    @property
-    def truth(self) -> float | None:
-        """Returns the truth threshold for the model as a float."""
-        if self._truth is not None:
-            return threshold_int_to_float(self._truth)
-        return None
-
-    @truth.setter
-    def truth(self, truth: float) -> None:
-        """Set the truth threshold for the model."""
-        self._truth = threshold_float_to_int(truth)
 
     def delete(self, certain: bool = False) -> bool:
         """Delete the model from the database."""
@@ -346,12 +338,14 @@ class Model:
 
     def download_results(self) -> ModelResults:
         """Retrieve results associated with the model from the database."""
-        results = _handler.get_results(name=self.name)
-        return ModelResults(probabilities=results)
+        results = _handler.get_results(path=self.resolution_path)
+        return ModelResults(probabilities=pl.from_arrow(results))
 
     def query(self, *sources: Source, **kwargs: Any) -> Query:
-        """Generate a query for this model."""
-        return Query(*sources, **kwargs, model=self, dag=self.dag)
+        """Models are edge producers only and cannot be queried directly."""
+        raise TypeError(
+            "Model.query() is not supported. Query from a resolver instead."
+        )
 
     def clear_data(self) -> None:
         """Deletes data computed for node."""

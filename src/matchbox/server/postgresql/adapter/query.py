@@ -2,7 +2,12 @@
 
 from typing import TYPE_CHECKING, Any
 
-from matchbox.common.dtos import Match, ResolutionPath, SourceResolutionPath
+from matchbox.common.dtos import (
+    Match,
+    ModelResolutionName,
+    ResolverResolutionPath,
+    SourceResolutionPath,
+)
 from matchbox.server.postgresql.utils.query import match, query
 
 if TYPE_CHECKING:
@@ -17,15 +22,15 @@ class MatchboxPostgresQueryMixin:
     def query(  # noqa: D102
         self,
         source: SourceResolutionPath,
-        point_of_truth: ResolutionPath | None = None,
-        threshold: int | None = None,
+        point_of_truth: ResolverResolutionPath | None = None,
+        threshold_overrides: dict[ModelResolutionName, int] | None = None,
         return_leaf_id: bool = False,
         limit: int | None = None,
     ) -> ArrowTable:
         return query(
             source=source,
             point_of_truth=point_of_truth,
-            threshold=threshold,
+            threshold_overrides=threshold_overrides,
             return_leaf_id=return_leaf_id,
             limit=limit,
         )
@@ -35,13 +40,13 @@ class MatchboxPostgresQueryMixin:
         key: str,
         source: SourceResolutionPath,
         targets: list[SourceResolutionPath],
-        point_of_truth: ResolutionPath,
-        threshold: int | None = None,
+        point_of_truth: ResolverResolutionPath,
+        threshold_overrides: dict[ModelResolutionName, int] | None = None,
     ) -> list[Match]:
         return match(
             key=key,
             source=source,
             targets=targets,
             point_of_truth=point_of_truth,
-            threshold=threshold,
+            threshold_overrides=threshold_overrides,
         )

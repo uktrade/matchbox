@@ -141,12 +141,13 @@ def test_get_samples_remote(
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.key=r.key"},
     )
-    foo_bar_baz = foo_bar.query(foo, bar).linker(
+    bar_baz = bar.query().linker(
         baz.query(),
         name="linker2",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.key=r.key"},
     )
+    resolver = dag.resolver(name="resolver", inputs=[foo_bar, bar_baz])
 
     # Mock the collection and run endpoint that load_pending() calls
     collection_data = Collection(runs=[dag.run])
@@ -159,15 +160,18 @@ def test_get_samples_remote(
             "baz": baz_testkit.fake_run().source.to_resolution(),
             "linker1": Resolution(
                 fingerprint=b"mock",
-                truth=1,
                 resolution_type=ResolutionType.MODEL,
                 config=foo_bar.config,
             ),
             "linker2": Resolution(
                 fingerprint=b"mock2",
-                truth=1,
                 resolution_type=ResolutionType.MODEL,
-                config=foo_bar_baz.config,
+                config=bar_baz.config,
+            ),
+            "resolver": Resolution(
+                fingerprint=b"mock3",
+                resolution_type=ResolutionType.RESOLVER,
+                config=resolver.config,
             ),
         },
     )

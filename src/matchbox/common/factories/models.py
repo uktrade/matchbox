@@ -544,6 +544,7 @@ class ModelTestkit(BaseModel):
     right_query: Query | None
     right_clusters: dict[int, ClusterEntity] | None
     probabilities: pl.DataFrame
+    threshold_value: int = 0
 
     _entities: tuple[ClusterEntity, ...]
     _query_lookup: pa.Table
@@ -593,12 +594,12 @@ class ModelTestkit(BaseModel):
     @property
     def threshold(self) -> int:
         """Threshold for the model."""
-        return self.model._truth
+        return self.threshold_value
 
     @threshold.setter
     def threshold(self, value: int) -> None:
         """Set the threshold for the model."""
-        self.model._truth = value
+        self.threshold_value = value
         right_clusters = self.right_clusters.values() if self.right_clusters else []
         input_results = set(self.left_clusters.values()) | set(right_clusters)
 
@@ -642,7 +643,6 @@ class ModelTestkit(BaseModel):
             "model_settings": json.loads(self.model.config.model_settings),
             "left_query": self.model.left_query,
             "right_query": self.model.right_query,
-            "truth": self.model.truth,
             "description": self.model.description,
         }
 
@@ -660,11 +660,12 @@ def _testkit_to_query(testkit: SourceTestkit | ModelTestkit) -> Query:
         all_sources = list(testkit.model.left_query.sources)
         if testkit.model.right_query is not None:
             all_sources += list(testkit.model.right_query.sources)
-        return Query(
-            *all_sources,
-            model=testkit.model,
-            dag=testkit.model.dag,
-        )
+        if len(all_sources) > 1:
+            raise ValueError(
+                "ModelTestkit no longer exposes a queryable point-of-truth. "
+                "Create a resolver for multi-source queries."
+            )
+        return Query(*all_sources, dag=testkit.model.dag)
 
 
 def model_factory(
@@ -848,7 +849,6 @@ def model_factory(
         model_settings=model_settings,
         left_query=left_query,
         right_query=right_query,
-        truth=min(prob_range),
     )
 
     # ==== Entity and probability generation ====
@@ -884,7 +884,7 @@ def model_factory(
         if right_entities
         else None,
         probabilities=probabilities,
-        _threshold=model._truth,
+        threshold_value=0,
     )
 
 
@@ -964,7 +964,6 @@ def query_to_model_factory(
         model_settings=model_settings,
         left_query=left_query,
         right_query=right_query,
-        truth=min(prob_range),
     )
 
     # Generate probabilities
@@ -988,5 +987,5 @@ def query_to_model_factory(
         if right_clusters
         else None,
         probabilities=probabilities,
-        _threshold=model._truth,
+        threshold_value=0,
     )

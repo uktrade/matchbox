@@ -14,6 +14,7 @@ from matchbox.common.dtos import (
     ModelConfig,
     PermissionGrant,
     PermissionType,
+    QueryCombineType,
     Resolution,
     ResolutionPath,
     SourceConfig,
@@ -565,7 +566,7 @@ class TestMatchboxCollectionsBackend:
                 old_resolution.config.model_copy(
                     update={
                         "left_query": old_resolution.config.left_query.model_copy(
-                            update={"threshold": 99}
+                            update={"combine_type": QueryCombineType.SET_AGG}
                         )
                     }
                 )
@@ -574,7 +575,6 @@ class TestMatchboxCollectionsBackend:
                 old_resolution.model_copy(
                     update={
                         "description": "updated",
-                        "truth": 33,
                         "config": updated_config,
                     }
                 )
@@ -589,15 +589,17 @@ class TestMatchboxCollectionsBackend:
                 linker_testkit.resolution_path
             )
             assert linker_retrieved.description == "updated"
-            assert linker_retrieved.truth == 33
-            assert linker_retrieved.config.left_query.threshold == 99
+            assert (
+                linker_retrieved.config.left_query.combine_type
+                == QueryCombineType.SET_AGG
+            )
 
             # We cannot change a model's inputs
             rewired_config = ModelConfig.model_validate(
                 old_resolution.config.model_copy(
                     update={
                         "left_query": old_resolution.config.left_query.model_copy(
-                            update={"model_resolution": "new_model"}
+                            update={"source_resolutions": ("new_source",)}
                         )
                     }
                 )
@@ -627,6 +629,7 @@ class TestMatchboxCollectionsBackend:
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
             naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately.
@@ -634,7 +637,7 @@ class TestMatchboxCollectionsBackend:
             # marked as complete)
             res = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=naive_crn_testkit.resolution_path,
+                point_of_truth=naive_crn_resolver.resolution_path,
             )
             res_clusters = query_to_cluster_entities(
                 data=res,
@@ -680,12 +683,15 @@ class TestMatchboxCollectionsBackend:
         with self.scenario(self.backend, "probabilistic_dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
             prob_crn_testkit = dag_testkit.models.get("probabilistic_test_crn")
+            prob_crn_resolver = dag_testkit.resolvers.get(
+                "resolver_probabilistic_test_crn"
+            )
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately
             res = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=prob_crn_testkit.resolution_path,
+                point_of_truth=prob_crn_resolver.resolution_path,
             )
             res_clusters = query_to_cluster_entities(
                 data=res,
@@ -728,13 +734,29 @@ class TestMatchboxCollectionsBackend:
                 path=model_testkit.model.resolution_path,
                 results=model_testkit.model.results.probabilities.to_arrow(),
             )
+            model_testkit.model.dag._add_step(model_testkit.model)  # noqa: SLF001
+
+            resolver = model_testkit.model.dag.resolver(
+                name=f"resolver_{model_testkit.model.name}",
+                inputs=[model_testkit.model],
+                thresholds={model_testkit.model.name: model_testkit.threshold},
+            )
+            resolver.run()
+            self.backend.create_resolution(
+                resolution=resolver.to_resolution(),
+                path=resolver.resolution_path,
+            )
+            self.backend.insert_resolver_data(
+                path=resolver.resolution_path,
+                data=resolver._upload_results.to_arrow(),  # noqa: SLF001
+            )
 
             # Querying from deduper with no results is the same as querying from source
             # (That we can query also implies that resolution marked as complete)
             source_query = self.backend.query(source=crn_testkit.resolution_path)
             dedupe_query = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=model_testkit.resolution_path,
+                point_of_truth=resolver.resolution_path,
             )
 
             assert source_query == dedupe_query

@@ -116,7 +116,7 @@ def create_admin_scenario(
     )
 
     # First user is admin
-    response = backend.login(User(sub="alice", email="alice@example.org"))
+    response = backend.login(User(user_name="alice", email="alice@example.org"))
     assert response.setup_mode_admin
 
     return dag_testkit
@@ -149,9 +149,9 @@ def create_closed_collection_scenario(
     )
 
     # Create additional test users
-    backend.login(User(sub="bob", email="bob@example.org"))
-    backend.login(User(sub="charlie", email="charlie@example.org"))
-    backend.login(User(sub="dave", email="dave@example.org"))
+    backend.login(User(user_name="bob", email="bob@example.org"))
+    backend.login(User(user_name="charlie", email="charlie@example.org"))
+    backend.login(User(user_name="dave", email="dave@example.org"))
 
     # Create groups
     backend.create_group(

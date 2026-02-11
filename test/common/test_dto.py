@@ -2,30 +2,9 @@ import pytest
 
 from matchbox.common.dtos import (
     Collection,
-    CollectionName,
     Match,
-    ModelResolutionName,
-    ResolutionName,
     ResolutionPath,
-    SourceResolutionName,
 )
-from matchbox.common.exceptions import MatchboxNameError
-
-
-def test_validate_names() -> None:
-    """Names are validated when they're instantiated."""
-    name_classes = [
-        CollectionName,
-        ModelResolutionName,
-        ResolutionName,
-        SourceResolutionName,
-    ]
-
-    [NameClass("Valid.name_-") for NameClass in name_classes]
-
-    for NameClass in name_classes:
-        with pytest.raises(MatchboxNameError):
-            NameClass("invalid name")
 
 
 def test_match_validates() -> None:

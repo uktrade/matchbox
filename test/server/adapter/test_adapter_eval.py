@@ -62,7 +62,7 @@ class TestMatchboxEvaluationBackend:
                     .to_list()
                 )
 
-            bob: User = self.backend.login(User(sub="bob")).user
+            bob: User = self.backend.login(User(user_name="bob")).user
 
             original_cluster_num = self.backend.model_clusters.count()
 
@@ -185,7 +185,7 @@ class TestMatchboxEvaluationBackend:
             self.scenario(self.backend, "admin"),
             pytest.raises(MatchboxResolutionNotFoundError, match="naive_test_crn"),
         ):
-            bob: User = self.backend.login(User(sub="bob")).user
+            bob: User = self.backend.login(User(user_name="bob")).user
             self.backend.sample_for_eval(
                 n=10,
                 path=ResolutionPath(
@@ -200,7 +200,7 @@ class TestMatchboxEvaluationBackend:
             source_testkit = dag_testkit.sources.get("foo_a")
             model_testkit = dag_testkit.models.get("naive_test_foo_a")
 
-            bob: User = self.backend.login(User(sub="bob")).user
+            bob: User = self.backend.login(User(user_name="bob")).user
 
             # Source clusters should not be returned
             # So if we sample from a source resolution, we get nothing

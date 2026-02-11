@@ -2,13 +2,15 @@
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self, overload
 
 import duckdb
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pandas import DataFrame as PandasDataFrame
 from polars import DataFrame as PolarsDataFrame
+from pyarrow import Table as ArrowTable
 from sqlglot import expressions, parse_one
 from sqlglot import select as sqlglot_select
 
@@ -127,6 +129,27 @@ class Query:
             threshold=threshold,
             cleaning=config.cleaning,
         )
+
+    @overload
+    def data_raw(
+        self,
+        return_type: Literal[QueryReturnType.POLARS] = ...,
+        return_leaf_id: bool = False,
+    ) -> PolarsDataFrame: ...
+
+    @overload
+    def data_raw(
+        self,
+        return_type: Literal[QueryReturnType.PANDAS] = ...,
+        return_leaf_id: bool = False,
+    ) -> PandasDataFrame: ...
+
+    @overload
+    def data_raw(
+        self,
+        return_type: Literal[QueryReturnType.ARROW] = ...,
+        return_leaf_id: bool = False,
+    ) -> ArrowTable: ...
 
     def data_raw(
         self,

@@ -458,7 +458,7 @@ def query(
     point_of_truth: ResolutionPath | None = None,
     threshold: int | None = None,
     return_leaf_id: bool = False,
-    limit: int = None,
+    limit: int | None = None,
 ) -> pa.Table:
     """Queries Matchbox to retrieve linked data for a source.
 
@@ -504,7 +504,7 @@ def query(
             stmt: str = compile_sql(id_query)
             logger.debug(f"Query SQL: \n {stmt}")
             id_results = sql_to_df(
-                stmt=stmt, connection=conn.dbapi_connection, return_type="arrow"
+                stmt=stmt, connection=conn, return_type="arrow"
             ).rename_columns({"root_id": "id"})
 
         selection = ["id", "key"]

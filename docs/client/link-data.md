@@ -99,7 +99,8 @@ The `key_field` is the field in your source that contains some unique code that 
         location=warehouse,
         extract_transform="""
             select
-                number::str as company_number,
+                id,
+                company_number::text as company_number,
                 company_name,
                 upper(postcode) as postcode,
             from
@@ -107,7 +108,7 @@ The `key_field` is the field in your source that contains some unique code that 
         """,
         infer_types=True,
         index_fields=["company_name", "company_number", "postcode"],
-        key_field="company_number",
+        key_field="id",
     )
     
     # Exporters data
@@ -139,6 +140,7 @@ Each [`Source`][matchbox.client.sources.Source] object requires:
     - These must be found in the result of the `extract_transform` logic
 - A key field (`key_field`) that uniquely identifies each record
     - This must be found in the result of the `extract_transform` logic
+    - The key field cannot be in the index fields
 
 ## 3. Creating dedupers
 
@@ -159,8 +161,7 @@ Dedupe steps identify and resolve duplicates within a single source.
         model_class=NaiveDeduper,
         model_settings={
             "unique_fields": ["company_name", "company_number],
-        },
-        truth=1.0,
+        }
     )
     ```
 
@@ -181,7 +182,6 @@ A deduper takes:
 - An optional `description` explaining the purpose of the step
 - The deduplication algorithm to use (`model_class`)
 - Configuration settings (`model_settings`) for the algorithm
-- Optionally, a `truth` threshold (a float between `0.0` and `1.0`) above which a match is considered "true". By default, this is set to `1.0`. This value is only relevant when using a model that can output matches with different confidence scores, which is not the case for a `NaiveDeduper`.
 
 ### On cleaning
 
@@ -306,7 +306,6 @@ A linker requires:
 - An optional `description` explaining the purpose of the step
 - The linking algorithm to use (`model_class`)
 - Configuration (`model_settings`) for the algorithm
-- An optional `truth` threshold (a float between `0.0` and `1.0`) above which a match is considered "true", the default being `1.0`.
 
 As with deduplication, the `cleaning` dictionary maps field aliases to DuckDB SQL expressions that can reference input columns. See [On cleaning](#on-cleaning) for how to specify this functionality.
 

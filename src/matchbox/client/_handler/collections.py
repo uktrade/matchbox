@@ -318,6 +318,20 @@ def get_results(path: ModelResolutionPath) -> Table:
 
 @profile_time(kwarg="path")
 @http_retry
+def get_resolver_data(path: ResolverResolutionPath) -> Table:
+    """Get resolver assignments from Matchbox."""
+    log_prefix = f"Resolver {path}"
+    logger.debug("Retrieving assignments", prefix=log_prefix)
+
+    res = CLIENT.get(
+        f"/collections/{path.collection}/runs/{path.run}/resolutions/{path.name}/data"
+    )
+    buffer = BytesIO(res.content)
+    return read_table(buffer)
+
+
+@profile_time(kwarg="path")
+@http_retry
 def get_resolver_mapping(path: ResolverResolutionPath, upload_id: str) -> Table:
     """Get resolver upload mapping from Matchbox."""
     log_prefix = f"Resolver {path}"

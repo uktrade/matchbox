@@ -4,13 +4,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
 import polars as pl
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from matchbox.common.dtos import ResolutionName
 
 
 class ResolverSettings(BaseModel):
     """Base settings type for resolver methodologies."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ResolverMethod(BaseModel, ABC):

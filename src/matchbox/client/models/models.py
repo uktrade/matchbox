@@ -30,10 +30,8 @@ from matchbox.common.logging import logger, profile_time
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
-    from matchbox.client.sources import Source
 else:
     DAG = Any
-    Source = Any
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -128,15 +126,18 @@ class Model:
         self.right_query = right_query
         self.results: ModelResults | None = None
 
-        if self.left_query.threshold_overrides:
-            raise TypeError(
-                "Model inputs cannot use Query.threshold_overrides. "
-                "Create a resolver with the required thresholds instead."
+        if self.left_query.resolver_overrides is not None:
+            raise ValueError(
+                "Model inputs cannot use Query.resolver_overrides. "
+                "Create a resolver with the required settings instead."
             )
-        if self.right_query and self.right_query.threshold_overrides:
-            raise TypeError(
-                "Model inputs cannot use Query.threshold_overrides. "
-                "Create a resolver with the required thresholds instead."
+        if (
+            self.right_query is not None
+            and self.right_query.resolver_overrides is not None
+        ):
+            raise ValueError(
+                "Model inputs cannot use Query.resolver_overrides. "
+                "Create a resolver with the required settings instead."
             )
 
         if isinstance(model_class, str):
@@ -340,12 +341,6 @@ class Model:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(path=self.resolution_path)
         return ModelResults(probabilities=pl.from_arrow(results))
-
-    def query(self, *sources: Source, **kwargs: Any) -> Query:
-        """Models are edge producers only and cannot be queried directly."""
-        raise TypeError(
-            "Model.query() is not supported. Query from a resolver instead."
-        )
 
     def clear_data(self) -> None:
         """Deletes data computed for node."""

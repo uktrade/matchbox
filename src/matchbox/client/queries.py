@@ -20,16 +20,11 @@ from matchbox.client import _handler
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.common.db import QueryReturnClass, QueryReturnType
-from matchbox.common.dtos import (
-    ModelResolutionName,
-    QueryCombineType,
-    QueryConfig,
-    ResolverType,
-    stable_hash_dict,
-)
+from matchbox.common.dtos import QueryCombineType, QueryConfig, stable_hash_dict
 from matchbox.common.logging import profile_time
-from matchbox.common.resolvers import ComponentsSettings
-from matchbox.common.transform import threshold_float_to_int
+from matchbox.common.resolvers import (
+    ResolverSettings,
+)
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -51,7 +46,7 @@ class Query:
         *sources: Source,
         dag: DAG,
         resolver: Resolver | None = None,
-        threshold_overrides: dict[ModelResolutionName, float] | None = None,
+        resolver_overrides: ResolverSettings | dict[str, Any] | None = None,
         combine_type: QueryCombineType = QueryCombineType.CONCAT,
         cleaning: dict[str, str] | None = None,
     ) -> None:
@@ -62,9 +57,8 @@ class Query:
             dag: DAG containing sources and models.
             resolver (optional): Resolver to use to resolve sources. It can be missing
                 if querying from a single source.
-            threshold_overrides (optional): Per-model analysis thresholds as floats in
-                ``[0, 1]``. These are normalised to backend ints in ``[0, 100]``
-                immediately and only apply to query-time analysis.
+            resolver_overrides (optional): Full replacement settings object to apply
+                to this resolver for query-time analysis.
             combine_type (optional): How to combine the data from different sources.
                 Default is `concat`.
 
@@ -84,105 +78,49 @@ class Query:
         self.dag = dag
         self.sources = sources
         self.resolver = resolver
-        self.threshold_overrides = self._normalise_threshold_overrides(
-            threshold_overrides
-        )
+        self.resolver_overrides = self._normalise_resolver_overrides(resolver_overrides)
         self.combine_type = combine_type
         self.cleaning = cleaning
 
-        if self.threshold_overrides and self.resolver is None:
-            raise ValueError("threshold_overrides require a resolver-backed query.")
-        if (
-            self.threshold_overrides
-            and self.resolver is not None
-            and self.resolver.resolver_type != ResolverType.COMPONENTS
-        ):
-            raise ValueError(
-                "threshold_overrides are only supported for Components resolvers."
-            )
-
-        invalid_override_keys = sorted(
-            set(self.threshold_overrides) - self._direct_model_input_names()
-        )
-        if invalid_override_keys:
-            raise ValueError(
-                "threshold_overrides keys must be direct model inputs of the "
-                f"resolver. Invalid keys: {invalid_override_keys}"
-            )
-
-    @staticmethod
-    def _normalise_threshold_overrides(
-        threshold_overrides: dict[ModelResolutionName, float] | None,
-    ) -> dict[ModelResolutionName, int]:
-        """Normalise user-facing float thresholds to backend integer thresholds."""
-        if not threshold_overrides:
-            return {}
-
-        normalised: dict[ModelResolutionName, int] = {}
-        for model_name, threshold in threshold_overrides.items():
-            if not isinstance(threshold, float):
-                raise ValueError(
-                    "threshold_overrides values must be floats between 0 and 1."
-                )
-            normalised[model_name] = threshold_float_to_int(threshold)
-
-        return normalised
-
-    def _direct_model_input_names(self) -> set[ModelResolutionName]:
-        """Return direct model input names for this query's resolver."""
+    def _normalise_resolver_overrides(
+        self,
+        resolver_overrides: ResolverSettings | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Validate and normalise resolver overrides as JSON payloads."""
+        if resolver_overrides is None:
+            return None
         if self.resolver is None:
-            return set()
+            raise ValueError("resolver_overrides require a resolver-backed query.")
+        method = self.resolver.resolver_class(settings=resolver_overrides)
+        return method.settings.model_dump(mode="json")
 
-        from matchbox.client.models.models import (  # noqa: PLC0415
-            Model as ModelNode,
-        )
-
-        return {
-            node.name for node in self.resolver.inputs if isinstance(node, ModelNode)
-        }
-
-    def _effective_thresholds(self) -> dict[ModelResolutionName, int]:
-        """Return direct-model thresholds with overrides applied."""
+    def _effective_resolver_settings(self) -> dict[str, Any] | None:
+        """Return resolver settings applied to this query."""
         if self.resolver is None:
-            return {}
-        if self.resolver.resolver_type != ResolverType.COMPONENTS:
-            return {}
-
-        from matchbox.client.models.models import (  # noqa: PLC0415
-            Model as ModelNode,
-        )
-
-        settings = self.resolver.resolver_settings
-        if not isinstance(settings, ComponentsSettings):
-            raise ValueError("Components resolver must use ComponentsSettings.")
-
-        effective: dict[ModelResolutionName, int] = {}
-        for node in self.resolver.inputs:
-            if isinstance(node, ModelNode):
-                effective[node.name] = settings.thresholds.get(node.name, 0)
-
-        effective.update(self.threshold_overrides)
-        return effective
+            return None
+        if self.resolver_overrides is not None:
+            return self.resolver_overrides
+        return self.resolver.resolver_settings.model_dump(mode="json")
 
     def _resolver_settings_hash(self) -> str | None:
-        """Return hash for resolver config + effective query-time thresholds."""
+        """Return hash for resolver config + effective query-time settings."""
         if self.resolver is None:
             return None
         return stable_hash_dict(
             {
                 "resolver_config": self.resolver.config.model_dump(mode="json"),
-                "effective_thresholds": self._effective_thresholds(),
-                "threshold_overrides": self.threshold_overrides,
+                "effective_resolver_settings": self._effective_resolver_settings(),
+                "resolver_overrides": self.resolver_overrides,
             }
         )
 
     def _assert_pipeline_safe(self) -> None:
         """Ensure analysis-only override queries are not used in pipeline builds."""
-        if self.threshold_overrides:
-            raise TypeError(
-                "Queries with threshold_overrides are analysis-only and cannot be "
+        if self.resolver_overrides is not None:
+            raise ValueError(
+                "Queries with resolver_overrides are analysis-only and cannot be "
                 "used as model inputs. Create another resolver for inference-speed "
-                "threshold changes."
+                "settings changes."
             )
 
     @property
@@ -275,7 +213,7 @@ class Query:
                 res = _handler.query(
                     source=source.resolution_path,
                     resolution=self.resolver.resolution_path if self.resolver else None,
-                    threshold_overrides=self.threshold_overrides or None,
+                    resolver_overrides=self.resolver_overrides,
                     return_leaf_id=return_leaf_id,
                 )
 

@@ -2,6 +2,7 @@
 
 from functools import partial
 
+import polars as pl
 import pyarrow as pa
 import pytest
 from sqlalchemy import Engine
@@ -27,6 +28,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionExistingData,
     MatchboxResolutionNotFoundError,
+    MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
     MatchboxRunNotFoundError,
     MatchboxRunNotWriteable,
@@ -35,7 +37,6 @@ from matchbox.common.factories.entities import diff_results, query_to_cluster_en
 from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
-from matchbox.common.resolvers import Components, ComponentsSettings
 from matchbox.server.base import MatchboxDBAdapter
 
 
@@ -717,6 +718,40 @@ class TestMatchboxCollectionsBackend:
             self.backend.validate_ids(ids=pre_results["left_id"].to_pylist())
             self.backend.validate_ids(ids=pre_results["right_id"].to_pylist())
 
+    def test_get_resolver_data_includes_root_membership(self) -> None:
+        """Resolver data retrieval returns canonical assignments with root rows."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
+            resolver_data = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+
+            assert resolver_data.columns == ["cluster_id", "node_id"]
+            assert resolver_data.equals(resolver_data.sort(["cluster_id", "node_id"]))
+
+            roots = resolver_data.select("cluster_id").unique().sort("cluster_id")
+            root_rows = (
+                resolver_data.filter(pl.col("cluster_id") == pl.col("node_id"))
+                .select("cluster_id")
+                .unique()
+                .sort("cluster_id")
+            )
+            assert roots.equals(root_rows)
+
+    def test_get_resolver_data_rejects_incomplete_resolver(self) -> None:
+        """Resolver data cannot be downloaded before upload completion."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers["resolver_naive_test_crn"]
+            pending_path = resolver.resolution_path.model_copy(
+                update={"name": "pending_resolver"}
+            )
+            self.backend.create_resolution(
+                resolution=resolver.to_resolution(),
+                path=pending_path,
+            )
+            with pytest.raises(MatchboxResolutionNotQueriable):
+                self.backend.get_resolver_data(path=pending_path)
+
     def test_model_results_empty(self) -> None:
         """Can insert and retrieve empty model results"""
         with self.scenario(self.backend, "index") as dag_testkit:
@@ -735,24 +770,11 @@ class TestMatchboxCollectionsBackend:
                 path=model_testkit.model.resolution_path,
                 results=model_testkit.model.results.probabilities.to_arrow(),
             )
-            model_testkit.model.dag._add_step(model_testkit.model)  # noqa: SLF001
-
-            resolver = model_testkit.model.dag.resolver(
-                name=f"resolver_{model_testkit.model.name}",
-                inputs=[model_testkit.model],
-                resolver_class=Components,
-                resolver_settings=ComponentsSettings(
-                    thresholds={model_testkit.model.name: model_testkit.threshold}
-                ),
-            )
-            resolver.run()
-            self.backend.create_resolution(
-                resolution=resolver.to_resolution(),
-                path=resolver.resolution_path,
-            )
-            self.backend.insert_resolver_data(
-                path=resolver.resolution_path,
-                data=resolver._upload_results.to_arrow(),  # noqa: SLF001
+            dag_testkit.add_model(model_testkit)
+            resolver = dag_testkit.materialise_model_resolver(
+                backend=self.backend,
+                model_name=model_testkit.model.name,
+                threshold=model_testkit.threshold,
             )
 
             # Querying from deduper with no results is the same as querying from source

@@ -30,6 +30,7 @@ from matchbox.common.resolvers import (
     ResolverMethod,
     ResolverSettings,
     get_resolver_class,
+    run_resolver_method,
 )
 
 if TYPE_CHECKING:
@@ -189,7 +190,9 @@ class Resolver:
         resolver_assignments: Mapping[ResolutionName, pl.DataFrame],
     ) -> pl.DataFrame:
         """Delegate cluster computation to resolver methodology instance."""
-        return self.resolver_instance.compute_clusters(
+        return run_resolver_method(
+            resolver_class=self.resolver_class,
+            settings_payload=self.resolver_settings,
             model_edges=model_edges,
             resolver_assignments=resolver_assignments,
         )
@@ -321,30 +324,15 @@ class Resolver:
         return Query(*sources, resolver=self, dag=self.dag, **kwargs)
 
     def download_results(self) -> pl.DataFrame:
-        """Reconstruct resolver assignments from backend query API."""
-        rows: list[pl.DataFrame] = []
-        for source_name in sorted(self.sources):
-            source = self.dag.get_source(source_name)
-            result = pl.from_arrow(
-                _handler.query(
-                    source=source.resolution_path,
-                    resolution=self.resolution_path,
-                    return_leaf_id=True,
-                )
-            ).select(
-                pl.col("id").cast(pl.UInt64).alias("cluster_id"),
-                pl.col("leaf_id").cast(pl.UInt64).alias("node_id"),
-            )
-            rows.append(result)
-
-        if rows:
-            assignments = pl.concat(rows, how="vertical").unique()
-        else:
-            assignments = pl.DataFrame(
-                schema={"cluster_id": pl.UInt64, "node_id": pl.UInt64}
-            )
-
-        self.results = self._with_root_membership(assignments)
+        """Download resolver assignments directly from the resolution data API."""
+        self.results = pl.from_arrow(
+            _handler.get_resolver_data(path=self.resolution_path)
+        ).cast(
+            {
+                "cluster_id": pl.UInt64,
+                "node_id": pl.UInt64,
+            }
+        )
         return self.results
 
     def clear_data(self) -> None:

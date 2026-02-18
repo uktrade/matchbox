@@ -2,6 +2,7 @@
 
 import json
 
+import pyarrow as pa
 from psycopg.errors import LockNotAvailable
 from pyarrow import Table
 from sqlalchemy import CursorResult, delete, select, update
@@ -29,6 +30,7 @@ from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
     MatchboxDeletionNotConfirmed,
     MatchboxLockError,
+    MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
     MatchboxRunNotWriteable,
 )
@@ -36,8 +38,10 @@ from matchbox.common.logging import logger
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Collections,
+    Contains,
     ModelConfigs,
     ModelEdges,
+    ResolutionClusters,
     ResolutionFrom,
     Resolutions,
     ResolverConfigs,
@@ -426,3 +430,47 @@ class MatchboxPostgresCollectionsMixin:
         with MBDB.get_adbc_connection() as conn:
             stmt: str = compile_sql(results_query)
             return sql_to_df(stmt=stmt, connection=conn, return_type="arrow")
+
+    def get_resolver_data(self, path: ResolverResolutionPath) -> Table:  # noqa: D102
+        with MBDB.get_session() as session:
+            resolution = Resolutions.from_path(
+                path=path,
+                res_type=ResolutionType.RESOLVER,
+                session=session,
+            )
+            if resolution.upload_stage != UploadStage.COMPLETE:
+                raise MatchboxResolutionNotQueriable
+
+            roots_query = select(
+                ResolutionClusters.cluster_id.label("cluster_id"),
+                ResolutionClusters.cluster_id.label("node_id"),
+            ).where(ResolutionClusters.resolution_id == resolution.resolution_id)
+            leaves_query = (
+                select(
+                    ResolutionClusters.cluster_id.label("cluster_id"),
+                    Contains.leaf.label("node_id"),
+                )
+                .select_from(ResolutionClusters)
+                .join(Contains, Contains.root == ResolutionClusters.cluster_id)
+                .where(ResolutionClusters.resolution_id == resolution.resolution_id)
+            )
+            assignments_query = roots_query.union(leaves_query).subquery("assignments")
+            ordered_query = select(
+                assignments_query.c.cluster_id,
+                assignments_query.c.node_id,
+            ).order_by(
+                assignments_query.c.cluster_id,
+                assignments_query.c.node_id,
+            )
+
+        with MBDB.get_adbc_connection() as conn:
+            stmt = compile_sql(ordered_query)
+            res = sql_to_df(stmt=stmt, connection=conn, return_type="arrow")
+            return res.cast(
+                pa.schema(
+                    [
+                        ("cluster_id", pa.uint64()),
+                        ("node_id", pa.uint64()),
+                    ]
+                )
+            )

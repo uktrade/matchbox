@@ -1,4 +1,3 @@
-import json
 from io import BytesIO
 
 from pyarrow import Table
@@ -12,7 +11,6 @@ from matchbox.common.arrow import (
 )
 from matchbox.common.dtos import (
     Match,
-    ModelResolutionName,
     ResolverResolutionPath,
     SourceResolutionPath,
 )
@@ -27,29 +25,31 @@ def query(
     source: SourceResolutionPath,
     return_leaf_id: bool,
     resolution: ResolverResolutionPath | None = None,
-    threshold_overrides: dict[ModelResolutionName, int] | None = None,
+    resolver_overrides: dict[str, object] | None = None,
     limit: int | None = None,
 ) -> Table:
     """Query a source in Matchbox."""
     log_prefix = f"Query {source}"
     logger.debug(f"Using {resolution}", prefix=log_prefix)
 
-    res = CLIENT.get(
-        "/query",
-        params=url_params(
-            {
-                "collection": source.collection,
-                "run_id": source.run,
-                "source": source.name,
-                "resolution": resolution.name if resolution else None,
-                "return_leaf_id": return_leaf_id,
-                "threshold_overrides": (
-                    json.dumps(threshold_overrides) if threshold_overrides else None
-                ),
-                "limit": limit,
-            }
-        ),
+    params = url_params(
+        {
+            "collection": source.collection,
+            "run_id": source.run,
+            "source": source.name,
+            "resolution": resolution.name if resolution else None,
+            "return_leaf_id": return_leaf_id,
+            "limit": limit,
+        }
     )
+    if resolver_overrides is None:
+        res = CLIENT.get("/query", params=params)
+    else:
+        res = CLIENT.post(
+            "/query",
+            params=params,
+            json={"resolver_overrides": resolver_overrides},
+        )
 
     buffer = BytesIO(res.content)
     table = read_table(buffer)
@@ -74,7 +74,7 @@ def match(
     source: SourceResolutionPath,
     key: str,
     resolution: ResolverResolutionPath,
-    threshold_overrides: dict[ModelResolutionName, int] | None = None,
+    resolver_overrides: dict[str, object] | None = None,
 ) -> list[Match]:
     """Match a source against a list of targets."""
     log_prefix = f"Query {source}"
@@ -83,22 +83,24 @@ def match(
         prefix=log_prefix,
     )
 
-    res = CLIENT.get(
-        "/match",
-        params=url_params(
-            {
-                "collection": resolution.collection,
-                "run_id": resolution.run,
-                "targets": [t.name for t in targets],
-                "source": source.name,
-                "key": key,
-                "resolution": resolution.name,
-                "threshold_overrides": (
-                    json.dumps(threshold_overrides) if threshold_overrides else None
-                ),
-            }
-        ),
+    params = url_params(
+        {
+            "collection": resolution.collection,
+            "run_id": resolution.run,
+            "targets": [t.name for t in targets],
+            "source": source.name,
+            "key": key,
+            "resolution": resolution.name,
+        }
     )
+    if resolver_overrides is None:
+        res = CLIENT.get("/match", params=params)
+    else:
+        res = CLIENT.post(
+            "/match",
+            params=params,
+            json={"resolver_overrides": resolver_overrides},
+        )
 
     logger.debug("Finished", prefix=log_prefix)
 

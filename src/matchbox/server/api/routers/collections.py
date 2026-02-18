@@ -27,19 +27,21 @@ from matchbox.common.dtos import (
     CRUDOperation,
     ErrorResponse,
     GroupName,
-    ModelResolutionName,
+    ModelResolutionPath,
     PermissionGrant,
     PermissionType,
     Resolution,
     ResolutionName,
     ResolutionPath,
     ResolutionType,
+    ResolverResolutionPath,
     ResourceOperationStatus,
     Run,
     RunID,
     UploadInfo,
 )
 from matchbox.common.exceptions import (
+    MatchboxResolutionNotQueriable,
     MatchboxServerFileError,
 )
 from matchbox.server.api.dependencies import (
@@ -620,6 +622,7 @@ def get_upload_status(
         401: {"model": ErrorResponse},
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
     },
     dependencies=[Depends(RequireCollectionRead)],
     summary="Get resolution results",
@@ -629,12 +632,31 @@ def get_results(
     backend: BackendDependency,
     collection: CollectionName,
     run_id: RunID,
-    resolution: ModelResolutionName,
+    resolution: ResolutionName,
 ) -> ParquetResponse:
-    """Download results for a model as a parquet file."""
-    res = backend.get_model_data(
-        path=ResolutionPath(collection=collection, run=run_id, name=resolution)
-    )
+    """Download results for a model or resolver as a parquet file."""
+    resolution_path = ResolutionPath(collection=collection, run=run_id, name=resolution)
+    resolution_dto = backend.get_resolution(path=resolution_path)
+    if resolution_dto.resolution_type == ResolutionType.MODEL:
+        res = backend.get_model_data(
+            path=ModelResolutionPath(
+                collection=collection,
+                run=run_id,
+                name=resolution,
+            )
+        )
+    elif resolution_dto.resolution_type == ResolutionType.RESOLVER:
+        res = backend.get_resolver_data(
+            path=ResolverResolutionPath(
+                collection=collection,
+                run=run_id,
+                name=resolution,
+            )
+        )
+    else:
+        raise MatchboxResolutionNotQueriable(
+            "Resolution data download only supports model and resolver resolutions."
+        )
 
     buffer = table_to_buffer(res)
     return ParquetResponse(buffer.getvalue())

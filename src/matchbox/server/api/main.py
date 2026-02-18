@@ -1,20 +1,12 @@
 """API routes for the Matchbox server."""
 
-import json
 import uuid
 from collections.abc import Awaitable, Callable
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    HTTPException,
-    Query,
-    Request,
-    Response,
-)
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.openapi.docs import (
     get_swagger_ui_html,
@@ -24,35 +16,22 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import HTMLResponse
 
-from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendCountableType,
-    CollectionName,
     CountResult,
     CRUDOperation,
     ErrorResponse,
-    Match,
-    ModelResolutionName,
     OKMessage,
-    ResolutionPath,
-    ResolverResolutionName,
     ResourceOperationStatus,
-    RunID,
-    SourceResolutionName,
-    SourceResolutionPath,
 )
-from matchbox.common.exceptions import (
-    MatchboxHttpException,
-)
+from matchbox.common.exceptions import MatchboxHttpException
 from matchbox.common.logging import logger
 from matchbox.server.api.dependencies import (
     BackendDependency,
-    ParquetResponse,
-    RequireCollectionRead,
     RequireSysAdmin,
     lifespan,
 )
-from matchbox.server.api.routers import auth, collections, eval, groups
+from matchbox.server.api.routers import auth, collections, eval, groups, query
 
 app = FastAPI(
     title="matchbox API",
@@ -61,6 +40,7 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+app.include_router(query.router)
 app.include_router(collections.router)
 app.include_router(eval.router)
 app.include_router(auth.router)
@@ -132,141 +112,6 @@ async def healthcheck() -> OKMessage:
     return OKMessage()
 
 
-# Retrieval
-
-
-def _parse_threshold_overrides(
-    raw: str | None,
-) -> dict[ModelResolutionName, int] | None:
-    """Parse JSON-encoded model threshold overrides from query params."""
-    if raw is None:
-        return None
-
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail="threshold_overrides must be valid JSON.",
-        ) from exc
-
-    if not isinstance(decoded, dict):
-        raise HTTPException(
-            status_code=422,
-            detail="threshold_overrides must be a JSON object.",
-        )
-
-    parsed: dict[ModelResolutionName, int] = {}
-    for key, value in decoded.items():
-        if not isinstance(key, str):
-            raise HTTPException(
-                status_code=422,
-                detail="threshold_overrides keys must be model names.",
-            )
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, int)
-            or not (0 <= value <= 100)
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="threshold_overrides values must be ints in [0, 100].",
-            )
-        try:
-            parsed[ModelResolutionName(key)] = value
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Invalid model name in threshold_overrides: {key}",
-            ) from exc
-
-    return parsed
-
-
-@app.get(
-    "/query",
-    responses={
-        401: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
-    },
-    dependencies=[Depends(RequireCollectionRead)],
-)
-def query(
-    backend: BackendDependency,
-    collection: CollectionName,
-    run_id: RunID,
-    source: SourceResolutionName,
-    return_leaf_id: bool,
-    resolution: ResolverResolutionName | None = None,
-    threshold_overrides: str | None = None,
-    limit: int | None = None,
-) -> ParquetResponse:
-    """Query Matchbox for matches based on a source resolution name."""
-    parsed_overrides = _parse_threshold_overrides(threshold_overrides)
-
-    res = backend.query(
-        source=SourceResolutionPath(
-            collection=collection,
-            run=run_id,
-            name=source,
-        ),
-        point_of_truth=ResolutionPath(
-            collection=collection, run=run_id, name=resolution
-        )
-        if resolution
-        else None,
-        threshold_overrides=parsed_overrides,
-        return_leaf_id=return_leaf_id,
-        limit=limit,
-    )
-
-    buffer = table_to_buffer(res)
-    return ParquetResponse(buffer.getvalue())
-
-
-@app.get(
-    "/match",
-    responses={
-        401: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
-    },
-    dependencies=[Depends(RequireCollectionRead)],
-)
-def match(
-    backend: BackendDependency,
-    collection: CollectionName,
-    run_id: RunID,
-    targets: Annotated[list[SourceResolutionName], Query()],
-    source: SourceResolutionName,
-    key: str,
-    resolution: ResolverResolutionName,
-    threshold_overrides: str | None = None,
-) -> list[Match]:
-    """Match a source key against a list of target source resolutions."""
-    parsed_overrides = _parse_threshold_overrides(threshold_overrides)
-
-    targets = [
-        SourceResolutionPath(collection=collection, run=run_id, name=t) for t in targets
-    ]
-    return backend.match(
-        key=key,
-        source=SourceResolutionPath(
-            collection=collection,
-            run=run_id,
-            name=source,
-        ),
-        targets=targets,
-        point_of_truth=ResolutionPath(
-            collection=collection,
-            run=run_id,
-            name=resolution,
-        ),
-        threshold_overrides=parsed_overrides,
-    )
-
-
 # Admin
 
 
@@ -285,9 +130,9 @@ def count_backend_items(
 
     if entity is not None:
         return CountResult(entities={str(entity): get_count(entity)})
-    else:
-        res = {str(e): get_count(e) for e in BackendCountableType}
-        return CountResult(entities=res)
+
+    res = {str(e): get_count(e) for e in BackendCountableType}
+    return CountResult(entities=res)
 
 
 @app.delete(

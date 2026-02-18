@@ -38,8 +38,10 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.logging import log_mem_usage, logger, profile_time
-from matchbox.common.resolvers import ResolverMethod, ResolverSettings
-from matchbox.common.transform import threshold_float_to_int
+from matchbox.common.resolvers import (
+    ResolverMethod,
+    ResolverSettings,
+)
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -639,7 +641,7 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
-        threshold_overrides: dict[ModelResolutionName, float] | None = None,
+        resolver_overrides: ResolverSettings | dict[str, Any] | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
 
@@ -647,9 +649,8 @@ class DAG:
             from_source: Name of source the provided key belongs to
             to_sources: Names of sources to find keys in
             key: The value to match from the source. Usually a primary key
-            threshold_overrides (optional): Query-time threshold overrides keyed by
-                direct model inputs of the queried resolver. Values must be floats in
-                ``[0, 1]``.
+            resolver_overrides (optional): Full replacement settings object to apply
+                to the queried resolver for this lookup.
 
         Returns:
             Dictionary mapping source names to list of keys within that source.
@@ -669,7 +670,10 @@ class DAG:
         if not isinstance(self.final_step, Resolver):
             raise ValueError("lookup_key requires the DAG apex to be a resolver")
 
-        normalised_overrides = self._normalise_threshold_overrides(threshold_overrides)
+        normalised_overrides = self._normalise_resolver_overrides(
+            self.final_step,
+            resolver_overrides,
+        )
 
         matches = _handler.match(
             targets=[
@@ -679,7 +683,7 @@ class DAG:
             source=ResolutionPath(name=from_source, collection=self.name, run=self.run),
             key=key,
             resolution=self.final_step.resolution_path,
-            threshold_overrides=normalised_overrides,
+            resolver_overrides=normalised_overrides,
         )
 
         to_sources_results = {m.target.name: list(m.target_id) for m in matches}
@@ -693,7 +697,7 @@ class DAG:
         node: ResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
-        threshold_overrides: dict[ModelResolutionName, float] | None = None,
+        resolver_overrides: ResolverSettings | dict[str, Any] | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
@@ -702,14 +706,16 @@ class DAG:
                 If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
-            threshold_overrides (optional): Query-time threshold overrides keyed by
-                direct model inputs of the queried resolver. Values must be floats in
-                ``[0, 1]``.
+            resolver_overrides (optional): Full replacement settings object to apply
+                to the queried resolver for this request.
         """
         point_of_truth = self.nodes[node] if node else self.final_step
         if not isinstance(point_of_truth, Resolver):
             raise ValueError("get_matches can only query from resolver nodes")
-        normalised_overrides = self._normalise_threshold_overrides(threshold_overrides)
+        normalised_overrides = self._normalise_resolver_overrides(
+            point_of_truth,
+            resolver_overrides,
+        )
 
         available_sources = {
             node_name: self.get_source(node_name)
@@ -742,7 +748,7 @@ class DAG:
                     _handler.query(
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
-                        threshold_overrides=normalised_overrides,
+                        resolver_overrides=normalised_overrides,
                         return_leaf_id=True,
                     )
                 )
@@ -751,19 +757,12 @@ class DAG:
         return ResolvedMatches(sources=resolved_sources, query_results=query_results)
 
     @staticmethod
-    def _normalise_threshold_overrides(
-        threshold_overrides: dict[ModelResolutionName, float] | None,
-    ) -> dict[ModelResolutionName, int] | None:
-        """Normalise query-time threshold overrides to backend integer values."""
-        if threshold_overrides is None:
+    def _normalise_resolver_overrides(
+        resolver: Resolver,
+        resolver_overrides: ResolverSettings | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Normalise resolver override payload to JSON-serialisable settings."""
+        if resolver_overrides is None:
             return None
-
-        normalised: dict[ModelResolutionName, int] = {}
-        for model_name, threshold in threshold_overrides.items():
-            if not isinstance(threshold, float):
-                raise ValueError(
-                    "threshold_overrides values must be floats between 0 and 1."
-                )
-            normalised[model_name] = threshold_float_to_int(threshold)
-
-        return normalised
+        method = resolver.resolver_class(settings=resolver_overrides)
+        return method.settings.model_dump(mode="json")

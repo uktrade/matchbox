@@ -29,7 +29,6 @@ from matchbox.common.dtos import (
     GroupName,
     LoginResponse,
     Match,
-    ModelResolutionName,
     ModelResolutionPath,
     PermissionGrant,
     PermissionType,
@@ -354,7 +353,6 @@ class MatchboxDBAdapter(ABC):
         self,
         source: SourceResolutionPath,
         point_of_truth: ResolverResolutionPath | None = None,
-        threshold_overrides: dict[ModelResolutionName, int] | None = None,
         return_leaf_id: bool = False,
         limit: int | None = None,
     ) -> Table:
@@ -364,8 +362,6 @@ class MatchboxDBAdapter(ABC):
             source: the resolution pathidentifying the source to query
             point_of_truth (optional): the resolution path to use for filtering results
                 If not specified, will use the source resolution for the queried source
-            threshold_overrides (optional): query-time model threshold overrides.
-                Keys are model names and values are backend thresholds in ``[0, 100]``.
             return_leaf_id (optional): whether to return cluster ID of leaves
             limit (optional): the number to use in a limit clause. Useful for testing
 
@@ -381,7 +377,6 @@ class MatchboxDBAdapter(ABC):
         source: SourceResolutionPath,
         targets: list[SourceResolutionPath],
         point_of_truth: ResolverResolutionPath,
-        threshold_overrides: dict[ModelResolutionName, int] | None = None,
     ) -> list[Match]:
         """Matches an ID in a source resolution and returns the keys in the targets.
 
@@ -390,8 +385,6 @@ class MatchboxDBAdapter(ABC):
             source: The path of the source resolution.
             targets: The paths of the target source resolutions.
             point_of_truth: The path of the resolution to use for matching.
-            threshold_overrides (optional): query-time model threshold overrides.
-                Keys are model names and values are backend thresholds in ``[0, 100]``.
         """
         ...
 
@@ -626,6 +619,11 @@ class MatchboxDBAdapter(ABC):
     @abstractmethod
     def get_model_data(self, path: ModelResolutionPath) -> Table:
         """Get the results for a model resolution."""
+        ...
+
+    @abstractmethod
+    def get_resolver_data(self, path: ResolverResolutionPath) -> Table:
+        """Get cluster assignments for a resolver resolution."""
         ...
 
     # Data management

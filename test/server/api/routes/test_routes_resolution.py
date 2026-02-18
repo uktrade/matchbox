@@ -1,5 +1,6 @@
 from unittest.mock import Mock, patch
 
+import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,6 +9,7 @@ from matchbox.common.dtos import (
     CRUDOperation,
     ErrorResponse,
     ResolutionPath,
+    ResolutionType,
     ResourceOperationStatus,
     UploadInfo,
     UploadStage,
@@ -361,6 +363,9 @@ def test_get_results(
 ) -> None:
     testkit = model_factory()
     test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution = Mock(
+        return_value=Mock(resolution_type=ResolutionType.MODEL)
+    )
     mock_backend.get_model_data = Mock(return_value=testkit.probabilities.to_arrow())
 
     response = test_client.get(
@@ -369,6 +374,45 @@ def test_get_results(
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"
+    mock_backend.get_model_data.assert_called_once()
+
+
+def test_get_results_resolver(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution = Mock(
+        return_value=Mock(resolution_type=ResolutionType.RESOLVER)
+    )
+    mock_backend.get_resolver_data = Mock(
+        return_value=pa.table(
+            {
+                "cluster_id": pa.array([1, 1], type=pa.uint64()),
+                "node_id": pa.array([1, 2], type=pa.uint64()),
+            }
+        )
+    )
+
+    response = test_client.get("/collections/default/runs/1/resolutions/resolver/data")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/octet-stream"
+    mock_backend.get_resolver_data.assert_called_once()
+
+
+def test_get_results_rejects_source_resolution(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution = Mock(
+        return_value=Mock(resolution_type=ResolutionType.SOURCE)
+    )
+
+    response = test_client.get("/collections/default/runs/1/resolutions/source/data")
+
+    assert response.status_code == 422
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxResolutionNotQueriable"
 
 
 def test_delete_resolution(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

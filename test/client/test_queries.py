@@ -1,3 +1,5 @@
+import json
+
 import polars as pl
 import pyarrow as pa
 import pytest
@@ -19,13 +21,12 @@ from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.factories.dags import TestkitDAG
+from matchbox.common.factories.dags import TestkitDAG, add_components_resolver
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
     source_from_tuple,
 )
-from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 def _resolver_for_sources() -> tuple:
@@ -47,13 +48,11 @@ def _resolver_for_sources() -> tuple:
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = foo.dag.resolver(
+    resolver = add_components_resolver(
+        dag=foo.dag,
         name="resolver",
         inputs=[foo_model, bar_model],
-        resolver_class=Components,
-        resolver_settings=ComponentsSettings(
-            thresholds={foo_model.name: 0, bar_model.name: 0}
-        ),
+        thresholds={foo_model.name: 0, bar_model.name: 0},
     )
     return foo, bar, resolver
 
@@ -78,61 +77,64 @@ def test_init_query() -> None:
     )
 
 
-def test_query_threshold_overrides_normalised() -> None:
-    """Float threshold overrides are normalised to backend ints immediately."""
+def test_query_resolver_overrides_normalised() -> None:
+    """Resolver overrides are validated via resolver settings schema."""
     source, _, resolver = _resolver_for_sources()
-    model_name = resolver.inputs[0].name
+    input_names = [node.name for node in resolver.inputs]
 
     query = Query(
         source,
         dag=source.dag,
         resolver=resolver,
-        threshold_overrides={model_name: 0.63},
+        resolver_overrides={
+            "thresholds": {input_names[0]: 0.63, input_names[1]: 0},
+        },
     )
 
-    assert query.threshold_overrides == {model_name: 63}
+    assert query.resolver_overrides == {
+        "thresholds": {input_names[0]: 63, input_names[1]: 0}
+    }
     assert query.config.resolver_settings_hash is not None
 
 
-def test_query_threshold_overrides_require_direct_models() -> None:
-    """Override keys must be direct model inputs of the queried resolver."""
+def test_query_resolver_overrides_require_resolver() -> None:
+    """Resolver overrides require a resolver-backed query."""
+    source_testkit = source_factory(name="foo")
+    source = source_testkit.source
+
+    with pytest.raises(ValueError, match="require a resolver-backed query"):
+        Query(
+            source,
+            dag=source.dag,
+            resolver_overrides={"thresholds": {}},
+        )
+
+
+def test_query_resolver_overrides_reject_invalid_payload() -> None:
+    """Invalid resolver override payloads raise validation errors."""
     source, _, resolver = _resolver_for_sources()
 
-    with pytest.raises(ValueError, match="direct model inputs"):
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         Query(
             source,
             dag=source.dag,
             resolver=resolver,
-            threshold_overrides={resolver.name: 0.9},
+            resolver_overrides={"not_thresholds": {}},
         )
 
 
-def test_query_threshold_overrides_reject_non_float_values() -> None:
-    """Public threshold override values must be floats."""
-    source, _, resolver = _resolver_for_sources()
-    model_name = resolver.inputs[0].name
-
-    with pytest.raises(ValueError, match="must be floats"):
-        Query(
-            source,
-            dag=source.dag,
-            resolver=resolver,
-            threshold_overrides={model_name: 1},
-        )
-
-
-def test_query_threshold_overrides_are_analysis_only() -> None:
+def test_query_resolver_overrides_are_analysis_only() -> None:
     """Override queries cannot be used to build model pipelines."""
     source, _, resolver = _resolver_for_sources()
-    model_name = resolver.inputs[0].name
+    input_names = [node.name for node in resolver.inputs]
     query = Query(
         source,
         dag=source.dag,
         resolver=resolver,
-        threshold_overrides={model_name: 0.8},
+        resolver_overrides={"thresholds": {name: 0 for name in input_names}},
     )
 
-    with pytest.raises(TypeError, match="analysis-only"):
+    with pytest.raises(ValueError, match="analysis-only"):
         query.deduper(
             name="blocked",
             model_class="NaiveDeduper",
@@ -140,17 +142,17 @@ def test_query_threshold_overrides_are_analysis_only() -> None:
         )
 
 
-def test_query_threshold_overrides_change_hash_even_if_effective_same() -> None:
+def test_query_resolver_overrides_change_hash_even_if_effective_same() -> None:
     """Override provenance should always alter resolver settings hash."""
     source, _, resolver = _resolver_for_sources()
-    model_name = resolver.inputs[0].name
+    input_names = [node.name for node in resolver.inputs]
 
     base_query = Query(source, dag=source.dag, resolver=resolver)
     override_query = Query(
         source,
         dag=source.dag,
         resolver=resolver,
-        threshold_overrides={model_name: 0.0},
+        resolver_overrides={"thresholds": {name: 0 for name in input_names}},
     )
 
     assert base_query.config.resolver_settings_hash is not None
@@ -159,6 +161,58 @@ def test_query_threshold_overrides_change_hash_even_if_effective_same() -> None:
         base_query.config.resolver_settings_hash
         != override_query.config.resolver_settings_hash
     )
+
+
+def test_query_with_resolver_overrides_uses_post(
+    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
+) -> None:
+    source_testkit = source_from_tuple(
+        data_tuple=({"a": 1}, {"a": 2}),
+        data_keys=["0", "1"],
+        name="foo",
+        engine=sqla_sqlite_warehouse,
+    ).write_to_location()
+    source = source_testkit.source.dag.source(**source_testkit.into_dag())
+    source.run()
+    model = source.query().deduper(
+        name="foo_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    resolver = add_components_resolver(
+        dag=source.dag,
+        name="resolver",
+        inputs=[model],
+        thresholds={model.name: 0},
+    )
+    post_route = matchbox_api.post("/query").mock(
+        return_value=Response(
+            200,
+            content=table_to_buffer(
+                pa.Table.from_pylist(
+                    [{"key": "0", "id": 1}, {"key": "1", "id": 2}],
+                    schema=SCHEMA_QUERY,
+                )
+            ).read(),
+        )
+    )
+
+    resolver.query(
+        source,
+        resolver_overrides={"thresholds": {model.name: 0}},
+    ).data_raw()
+
+    request = post_route.calls.last.request
+    assert dict(request.url.params) == {
+        "collection": source.dag.name,
+        "run_id": str(source.dag.run),
+        "source": source.name,
+        "resolution": resolver.name,
+        "return_leaf_id": "False",
+    }
+    assert json.loads(request.content.decode()) == {
+        "resolver_overrides": {"thresholds": {model.name: 0}}
+    }
 
 
 def test_query_single_source(
@@ -284,13 +338,11 @@ def test_query_multiple_sources(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = foo_source.dag.resolver(
+    resolver = add_components_resolver(
+        dag=foo_source.dag,
         name="resolver",
         inputs=[model_foo, model_bar],
-        resolver_class=Components,
-        resolver_settings=ComponentsSettings(
-            thresholds={model_foo.name: 0, model_bar.name: 0}
-        ),
+        thresholds={model_foo.name: 0, model_bar.name: 0},
     )
 
     # Validate results (no cleaning, so all columns passed through)
@@ -492,13 +544,11 @@ def test_query_combine_type(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = foo_source.dag.resolver(
+    resolver = add_components_resolver(
+        dag=foo_source.dag,
         name="resolver",
         inputs=[foo_model, bar_model],
-        resolver_class=Components,
-        resolver_settings=ComponentsSettings(
-            thresholds={foo_model.name: 0, bar_model.name: 0}
-        ),
+        thresholds={foo_model.name: 0, bar_model.name: 0},
     )
 
     # Validate results
@@ -592,13 +642,11 @@ def test_query_leaf_ids(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = foo_source.dag.resolver(
+    resolver = add_components_resolver(
+        dag=foo_source.dag,
         name="resolver",
         inputs=[foo_model, bar_model],
-        resolver_class=Components,
-        resolver_settings=ComponentsSettings(
-            thresholds={foo_model.name: 0, bar_model.name: 0}
-        ),
+        thresholds={foo_model.name: 0, bar_model.name: 0},
     )
 
     query = resolver.query(foo_source, bar_source, combine_type=combine_type)
@@ -702,13 +750,11 @@ def test_query_from_config() -> None:
         )
     )
 
-    resolver = dag.resolver(
+    resolver = add_components_resolver(
+        dag=dag,
         name="resolver",
         inputs=[model_testkit, dedupe_testkit],
-        resolver_class=Components,
-        resolver_settings=ComponentsSettings(
-            thresholds={model_testkit.name: 0, dedupe_testkit.name: 0}
-        ),
+        thresholds={model_testkit.name: 0, dedupe_testkit.name: 0},
     )
 
     # Create original query
@@ -784,13 +830,11 @@ def test_query_from_config_resolver_roundtrip() -> None:
         )
     )
 
-    resolver = dag.resolver(
+    resolver = add_components_resolver(
+        dag=dag,
         name="resolver",
         inputs=[linker, dedupe],
-        resolver_class=Components,
-        resolver_settings=ComponentsSettings(
-            thresholds={linker.name: 0, dedupe.name: 0}
-        ),
+        thresholds={linker.name: 0, dedupe.name: 0},
     )
 
     original_query = resolver.query(

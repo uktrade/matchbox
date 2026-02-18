@@ -274,11 +274,11 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     assert insert_results_route.called
 
 
-def test_model_query_not_supported() -> None:
-    """Models can no longer be queried directly."""
+def test_model_query_method_removed() -> None:
+    """Models no longer expose query() directly."""
     testkit = model_factory(model_type="linker")
-    with pytest.raises(TypeError, match="Query from a resolver"):
-        testkit.model.query()
+    with pytest.raises(AttributeError):
+        _ = testkit.model.query
 
 
 def test_delete_resolution(matchbox_api: MockRouter) -> None:

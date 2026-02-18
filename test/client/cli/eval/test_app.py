@@ -14,6 +14,7 @@ from matchbox.client.dags import DAG
 from matchbox.common.dtos import ResolverResolutionPath
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.scenarios import setup_scenario
+from matchbox.common.resolvers import Components, ComponentsSettings
 from matchbox.server.base import MatchboxDBAdapter
 
 backends = [
@@ -160,6 +161,8 @@ class TestScenarioIntegration:
             mega_resolver = loaded_dag.resolver(
                 name="mega_eval_resolver",
                 inputs=[mega_model],
+                resolver_class=Components,
+                resolver_settings=ComponentsSettings(thresholds={mega_model.name: 0}),
             )
             mega_resolver.run()
             mega_resolver.sync()
@@ -309,6 +312,10 @@ class TestScenarioIntegration:
             dedupe_resolver = loaded_dag.resolver(
                 name="dedupe_eval_resolver",
                 inputs=[crn_model, dh_model],
+                resolver_class=Components,
+                resolver_settings=ComponentsSettings(
+                    thresholds={crn_model.name: 0, dh_model.name: 0}
+                ),
             )
             dedupe_resolver.run()
             dedupe_resolver.sync()

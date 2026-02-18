@@ -21,6 +21,7 @@ from matchbox.common.factories.sources import (
     SuffixRule,
     linked_sources_factory,
 )
+from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 @pytest.mark.docker
@@ -200,12 +201,14 @@ class TestE2EPipelineBuilder:
         dedupe_a_resolver = dag.resolver(
             name="resolver_dedupe_source_a",
             inputs=[dedupe_a],
-            thresholds={dedupe_a.name: 0},
+            resolver_class=Components,
+            resolver_settings=ComponentsSettings(thresholds={dedupe_a.name: 0}),
         )
         dedupe_b_resolver = dag.resolver(
             name="resolver_dedupe_source_b",
             inputs=[dedupe_b],
-            thresholds={dedupe_b.name: 0},
+            resolver_class=Components,
+            resolver_settings=ComponentsSettings(thresholds={dedupe_b.name: 0}),
         )
 
         # Link deduplicated sources A and B
@@ -233,11 +236,14 @@ class TestE2EPipelineBuilder:
         final_resolver = dag.resolver(
             name="resolver_final",
             inputs=[link_a_b, dedupe_a_resolver, dedupe_b_resolver],
-            thresholds={
-                link_a_b.name: 0,
-                dedupe_a_resolver.name: 0,
-                dedupe_b_resolver.name: 0,
-            },
+            resolver_class=Components,
+            resolver_settings=ComponentsSettings(
+                thresholds={
+                    link_a_b.name: 0,
+                    dedupe_a_resolver.name: 0,
+                    dedupe_b_resolver.name: 0,
+                }
+            ),
         )
 
         # === FIRST RUN ===

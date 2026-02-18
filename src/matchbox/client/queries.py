@@ -24,9 +24,11 @@ from matchbox.common.dtos import (
     ModelResolutionName,
     QueryCombineType,
     QueryConfig,
+    ResolverType,
     stable_hash_dict,
 )
 from matchbox.common.logging import profile_time
+from matchbox.common.resolvers import ComponentsSettings
 from matchbox.common.transform import threshold_float_to_int
 
 if TYPE_CHECKING:
@@ -90,6 +92,14 @@ class Query:
 
         if self.threshold_overrides and self.resolver is None:
             raise ValueError("threshold_overrides require a resolver-backed query.")
+        if (
+            self.threshold_overrides
+            and self.resolver is not None
+            and self.resolver.resolver_type != ResolverType.COMPONENTS
+        ):
+            raise ValueError(
+                "threshold_overrides are only supported for Components resolvers."
+            )
 
         invalid_override_keys = sorted(
             set(self.threshold_overrides) - self._direct_model_input_names()
@@ -135,15 +145,21 @@ class Query:
         """Return direct-model thresholds with overrides applied."""
         if self.resolver is None:
             return {}
+        if self.resolver.resolver_type != ResolverType.COMPONENTS:
+            return {}
 
         from matchbox.client.models.models import (  # noqa: PLC0415
             Model as ModelNode,
         )
 
+        settings = self.resolver.resolver_settings
+        if not isinstance(settings, ComponentsSettings):
+            raise ValueError("Components resolver must use ComponentsSettings.")
+
         effective: dict[ModelResolutionName, int] = {}
         for node in self.resolver.inputs:
             if isinstance(node, ModelNode):
-                effective[node.name] = self.resolver.thresholds[node.name]
+                effective[node.name] = settings.thresholds.get(node.name, 0)
 
         effective.update(self.threshold_overrides)
         return effective

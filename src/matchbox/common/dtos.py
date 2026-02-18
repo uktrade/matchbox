@@ -540,31 +540,52 @@ class ModelConfig(BaseModel):
         return stable_hash_dict(self.model_dump(mode="json"))
 
 
-class FusionStrategy(StrEnum):
-    """Enumeration of supported resolver fusion strategies."""
+class ResolverType(StrEnum):
+    """Enumeration of supported resolver methodology types."""
 
-    UNION = "union"
+    COMPONENTS = "components"
 
 
 class ResolverConfig(BaseModel):
-    """Configuration for resolver that fuses model and resolver outputs."""
+    """Configuration for resolver that combines model and resolver outputs."""
 
+    type: ResolverType
+    resolver_class: str
+    resolver_settings: str
     inputs: tuple[ResolutionName, ...]
-    thresholds: dict[ResolutionName, int]
-    strategy: FusionStrategy = FusionStrategy.UNION
 
     @model_validator(mode="after")
     def validate_inputs(self) -> Self:
         """Ensure resolver config is internally consistent."""
         if len(self.inputs) < 1:
             raise ValueError("Resolver must have at least one input.")
-        missing_inputs = [node for node in self.inputs if node not in self.thresholds]
-        if missing_inputs:
-            raise ValueError(
-                "Thresholds must be provided for every resolver input. "
-                f"Missing: {missing_inputs}"
-            )
+
+        if self.type == ResolverType.COMPONENTS:
+            settings = json.loads(self.resolver_settings)
+            thresholds = settings.get("thresholds")
+            if not isinstance(thresholds, dict):
+                raise ValueError(
+                    "Components resolver_settings must include a thresholds object."
+                )
+            missing_inputs = [node for node in self.inputs if node not in thresholds]
+            if missing_inputs:
+                raise ValueError(
+                    "Thresholds must be provided for every resolver input. "
+                    f"Missing: {missing_inputs}"
+                )
         return self
+
+    @field_validator("resolver_settings", mode="after")
+    @classmethod
+    def validate_settings_json(cls, value: str) -> str:
+        """Ensure that resolver settings are valid JSON."""
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as e:
+            raise ValueError("Resolver settings are not valid JSON") from e
+        if not isinstance(parsed, dict):
+            raise ValueError("Resolver settings JSON must decode to an object.")
+        return value
 
     @property
     def dependencies(self) -> list[ResolutionName]:

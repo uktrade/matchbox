@@ -22,7 +22,6 @@ from matchbox.common.dtos import (
     Collection,
     CollectionName,
     DefaultGroup,
-    FusionStrategy,
     GroupName,
     ModelResolutionName,
     Resolution,
@@ -39,6 +38,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.logging import log_mem_usage, logger, profile_time
+from matchbox.common.resolvers import ResolverMethod, ResolverSettings
 from matchbox.common.transform import threshold_float_to_int
 
 
@@ -203,8 +203,8 @@ class DAG:
         self,
         name: ResolverResolutionName,
         inputs: list[Model | Resolver | ResolutionName],
-        thresholds: dict[ResolutionName, int | float] | None = None,
-        strategy: FusionStrategy | str = FusionStrategy.UNION,
+        resolver_class: type[ResolverMethod] | str,
+        resolver_settings: ResolverSettings | dict,
         description: str | None = None,
     ) -> Resolver:
         """Create a resolver and add it to the DAG."""
@@ -225,8 +225,8 @@ class DAG:
             dag=self,
             name=name,
             inputs=resolved_inputs,
-            thresholds=thresholds,
-            strategy=strategy,
+            resolver_class=resolver_class,
+            resolver_settings=resolver_settings,
             description=description,
         )
         self._add_step(resolver)
@@ -275,8 +275,8 @@ class DAG:
                 name=ResolverResolutionName(name),
                 description=resolution.description,
                 inputs=inputs,
-                thresholds=resolution.config.thresholds,
-                strategy=resolution.config.strategy,
+                resolver_class=resolution.config.resolver_class,
+                resolver_settings=json.loads(resolution.config.resolver_settings),
             )
         else:
             raise ValueError(f"Unknown resolution type {resolution.resolution_type}")

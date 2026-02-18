@@ -31,6 +31,7 @@ from matchbox.common.factories.sources import (
     SourceTestkitParameters,
     linked_sources_factory,
 )
+from matchbox.common.resolvers import Components, ComponentsSettings
 from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
 
 # Type definitions
@@ -113,7 +114,8 @@ def _add_model_resolver(
     resolver = dag_testkit.dag.resolver(
         name=_resolver_name_for_model(model_name),
         inputs=unique_inputs,
-        thresholds=thresholds,
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(thresholds=thresholds),
     )
     resolver.run()
     backend.create_resolution(

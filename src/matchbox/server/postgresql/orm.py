@@ -26,12 +26,12 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selecti
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
-    FusionStrategy,
     LocationConfig,
     ModelType,
     ResolutionName,
     ResolutionPath,
     ResolutionType,
+    ResolverType,
     RunID,
     UploadStage,
 )
@@ -48,6 +48,7 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
 )
+from matchbox.common.resolvers import get_resolver_class
 from matchbox.server.base import (
     DEFAULT_GROUPS,
     DEFAULT_PERMISSIONS,
@@ -509,6 +510,13 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
         elif resolution.resolution_type == ResolutionType.RESOLVER:
             resolution_orm.resolver_config = ResolverConfigs.from_dto(resolution.config)
+            component_thresholds: dict[str, int] = {}
+            if resolution.config.type == ResolverType.COMPONENTS:
+                settings_payload = json.loads(resolution.config.resolver_settings)
+                raw_thresholds = settings_payload.get("thresholds", {})
+                component_thresholds = {
+                    key: int(value) for key, value in raw_thresholds.items()
+                }
             for parent_name in dict.fromkeys(resolution.config.inputs):
                 parent = cls.from_path(
                     path=ResolutionPath(
@@ -522,7 +530,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                     session,
                     resolution_orm,
                     parent,
-                    direct_threshold_cache=resolution.config.thresholds[parent_name],
+                    direct_threshold_cache=component_thresholds.get(parent_name),
                 )
 
         return resolution_orm
@@ -887,9 +895,9 @@ class ResolverConfigs(CountMixin, MBDB.MatchboxBase):
         ForeignKey("resolutions.resolution_id", ondelete="CASCADE"),
         nullable=False,
     )
-    strategy: Mapped[str] = mapped_column(TEXT, nullable=False)
+    resolver_class: Mapped[str] = mapped_column(TEXT, nullable=False)
     inputs: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    thresholds: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+    resolver_settings: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     resolver_resolution: Mapped["Resolutions"] = relationship(
         back_populates="resolver_config"
@@ -906,17 +914,26 @@ class ResolverConfigs(CountMixin, MBDB.MatchboxBase):
     ) -> "ResolverConfigs":
         """Create a ResolverConfigs instance from a Resolution DTO object."""
         return cls(
-            strategy=config.strategy.value,
+            resolver_class=config.resolver_class,
             inputs=list(config.inputs),
-            thresholds={key: value for key, value in config.thresholds.items()},
+            resolver_settings=config.resolver_settings,
         )
 
     def to_dto(self) -> CommonResolverConfig:
         """Convert ORM resolver config to a matchbox.common ResolverConfig object."""
+        resolver_class = get_resolver_class(self.resolver_class)
+        resolver_type_value = getattr(resolver_class, "resolver_type", None)
+        if resolver_type_value is None:
+            raise ValueError(
+                "Resolver class "
+                f"{resolver_class.__name__} does not define resolver_type."
+            )
+        resolver_type = ResolverType(resolver_type_value)
         return CommonResolverConfig(
+            type=resolver_type,
+            resolver_class=self.resolver_class,
+            resolver_settings=self.resolver_settings,
             inputs=tuple(self.inputs),
-            thresholds=self.thresholds,
-            strategy=FusionStrategy(self.strategy),
         )
 
 

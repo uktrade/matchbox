@@ -19,6 +19,7 @@ from matchbox.common.factories.sources import (
     SuffixRule,
     linked_sources_factory,
 )
+from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 @pytest.mark.docker
@@ -119,7 +120,8 @@ class TestE2EModelEvaluation:
         dag1.resolver(
             name=f"resolver_{final_resolution_1_name}",
             inputs=[final_model_1],
-            thresholds={final_model_1.name: 0},
+            resolver_class=Components,
+            resolver_settings=ComponentsSettings(thresholds={final_model_1.name: 0}),
         )
 
         dag1.run_and_sync()
@@ -161,7 +163,8 @@ class TestE2EModelEvaluation:
         dag2.resolver(
             name=f"resolver_{final_resolution_2_name}",
             inputs=[final_model_2],
-            thresholds={final_model_2.name: 0},
+            resolver_class=Components,
+            resolver_settings=ComponentsSettings(thresholds={final_model_2.name: 0}),
         )
 
         dag2.run_and_sync()

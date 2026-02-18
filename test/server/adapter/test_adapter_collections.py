@@ -35,6 +35,7 @@ from matchbox.common.factories.entities import diff_results, query_to_cluster_en
 from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
+from matchbox.common.resolvers import Components, ComponentsSettings
 from matchbox.server.base import MatchboxDBAdapter
 
 
@@ -739,7 +740,10 @@ class TestMatchboxCollectionsBackend:
             resolver = model_testkit.model.dag.resolver(
                 name=f"resolver_{model_testkit.model.name}",
                 inputs=[model_testkit.model],
-                thresholds={model_testkit.model.name: model_testkit.threshold},
+                resolver_class=Components,
+                resolver_settings=ComponentsSettings(
+                    thresholds={model_testkit.model.name: model_testkit.threshold}
+                ),
             )
             resolver.run()
             self.backend.create_resolution(

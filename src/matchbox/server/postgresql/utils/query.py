@@ -1,5 +1,7 @@
 """Utilities for querying and matching in the PostgreSQL backend."""
 
+import json
+
 import polars as pl
 import pyarrow as pa
 from sqlalchemy import and_, func, literal_column, select
@@ -9,32 +11,31 @@ from sqlalchemy.sql.selectable import Select, Subquery
 from matchbox.common.arrow import SCHEMA_QUERY, SCHEMA_QUERY_WITH_LEAVES
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
-    FusionStrategy,
     Match,
     ModelResolutionName,
     ResolutionType,
     ResolverResolutionPath,
+    ResolverType,
     SourceResolutionPath,
     UploadStage,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotQueriable
-from matchbox.common.fusion import fuse_components
 from matchbox.common.logging import logger
+from matchbox.common.resolvers import (
+    ComponentsSettings,
+    ResolverMethod,
+    get_resolver_class,
+)
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     ClusterSourceKey,
     Contains,
     ModelEdges,
     ResolutionClusters,
-    ResolutionFrom,
     Resolutions,
     SourceConfigs,
 )
 from matchbox.server.postgresql.utils.db import compile_sql
-
-
-def _empty_edges_df() -> pl.DataFrame:
-    return pl.DataFrame(schema={"left_id": pl.UInt64, "right_id": pl.UInt64})
 
 
 def _empty_assignments_df() -> pl.DataFrame:
@@ -151,7 +152,7 @@ def _source_keys_for_configs_df(
 
 
 def _assignment_lookup(assignments: pl.DataFrame) -> pl.DataFrame:
-    """Build leaf->cluster lookup from fused assignments."""
+    """Build leaf->cluster lookup from resolver assignments."""
     if assignments.height == 0:
         return pl.DataFrame(schema={"leaf_id": pl.Int64, "id": pl.Int64})
 
@@ -203,26 +204,6 @@ def _load_direct_inputs(
     return by_name
 
 
-def _load_direct_threshold_cache(
-    session: Session,
-    resolver_resolution: Resolutions,
-) -> dict[str, int | None]:
-    """Return cached direct thresholds from the closure table."""
-    rows = session.execute(
-        select(Resolutions.name, ResolutionFrom.truth_cache)
-        .select_from(ResolutionFrom)
-        .join(Resolutions, ResolutionFrom.parent == Resolutions.resolution_id)
-        .where(
-            and_(
-                ResolutionFrom.child == resolver_resolution.resolution_id,
-                ResolutionFrom.level == 1,
-            )
-        )
-    ).all()
-
-    return {name: truth_cache for name, truth_cache in rows}
-
-
 def _require_backend_threshold(value: object, *, label: str) -> int:
     """Validate backend threshold payloads are integer percentages in [0, 100]."""
     if isinstance(value, bool) or not isinstance(value, int) or not (0 <= value <= 100):
@@ -234,10 +215,10 @@ def _require_backend_threshold(value: object, *, label: str) -> int:
 
 
 def _resolve_effective_model_thresholds(
-    session: Session,
     resolver_resolution: Resolutions,
     threshold_overrides: dict[ModelResolutionName, int],
     direct_inputs: dict[str, Resolutions],
+    default_thresholds: dict[str, int],
 ) -> dict[str, int]:
     """Validate and resolve direct-model thresholds for query-time overrides."""
     input_names = list(resolver_resolution.resolver_config.inputs)
@@ -275,14 +256,9 @@ def _resolve_effective_model_thresholds(
             + "; ".join(issues)
         )
 
-    defaults = resolver_resolution.resolver_config.thresholds
-    direct_cache = _load_direct_threshold_cache(session, resolver_resolution)
-
     effective: dict[str, int] = {}
     for model_name in direct_model_names:
-        default = direct_cache.get(model_name)
-        if default is None:
-            default = defaults.get(model_name, 0)
+        default = default_thresholds.get(model_name, 0)
         effective[model_name] = _require_backend_threshold(
             default,
             label=f"default model input '{model_name}'",
@@ -297,27 +273,33 @@ def _resolve_effective_model_thresholds(
     return effective
 
 
-def _load_model_edges_for_threshold(
+def _load_model_edges(
     session: Session,
     resolution_id: int,
-    threshold: int,
 ) -> pl.DataFrame:
-    """Load model edges for a model resolution at a threshold."""
+    """Load model edges for a model resolution."""
     rows = session.execute(
-        select(ModelEdges.left_id, ModelEdges.right_id).where(
-            and_(
-                ModelEdges.resolution_id == resolution_id,
-                ModelEdges.probability >= threshold,
-            )
+        select(ModelEdges.left_id, ModelEdges.right_id, ModelEdges.probability).where(
+            ModelEdges.resolution_id == resolution_id
         )
     ).all()
 
     if not rows:
-        return _empty_edges_df()
+        return pl.DataFrame(
+            schema={
+                "left_id": pl.UInt64,
+                "right_id": pl.UInt64,
+                "probability": pl.UInt8,
+            }
+        )
 
     return pl.DataFrame(
         rows,
-        schema={"left_id": pl.UInt64, "right_id": pl.UInt64},
+        schema={
+            "left_id": pl.UInt64,
+            "right_id": pl.UInt64,
+            "probability": pl.UInt8,
+        },
         orient="row",
     )
 
@@ -369,37 +351,70 @@ def _build_override_assignments(
 ) -> pl.DataFrame:
     """Recompute assignments in memory for query-time threshold overrides."""
     direct_inputs = _load_direct_inputs(session, resolver_resolution)
-    effective_thresholds = _resolve_effective_model_thresholds(
-        session=session,
-        resolver_resolution=resolver_resolution,
-        threshold_overrides=threshold_overrides,
-        direct_inputs=direct_inputs,
-    )
+    try:
+        resolver_class = get_resolver_class(
+            resolver_resolution.resolver_config.resolver_class
+        )
+    except ValueError as e:
+        raise MatchboxResolutionNotQueriable(str(e)) from e
+    resolver_type_value = getattr(resolver_class, "resolver_type", None)
+    if resolver_type_value is None:
+        raise MatchboxResolutionNotQueriable(
+            f"Resolver class {resolver_class.__name__} does not define resolver_type."
+        )
+    resolver_type = ResolverType(resolver_type_value)
+    settings_payload = json.loads(resolver_resolution.resolver_config.resolver_settings)
 
-    model_edges: list[pl.DataFrame] = []
-    resolver_assignments: list[pl.DataFrame] = []
+    method_settings: dict[str, object] | ComponentsSettings = settings_payload
+    if resolver_type == ResolverType.COMPONENTS:
+        try:
+            component_settings = ComponentsSettings(**settings_payload)
+        except Exception as e:
+            raise MatchboxResolutionNotQueriable(
+                "Invalid Components resolver_settings payload."
+            ) from e
+        effective_thresholds = _resolve_effective_model_thresholds(
+            resolver_resolution=resolver_resolution,
+            threshold_overrides=threshold_overrides,
+            direct_inputs=direct_inputs,
+            default_thresholds=component_settings.thresholds,
+        )
+        method_settings = ComponentsSettings(
+            thresholds={
+                **component_settings.thresholds,
+                **effective_thresholds,
+            }
+        )
+    elif threshold_overrides:
+        raise MatchboxResolutionNotQueriable(
+            "threshold_overrides are only supported for Components resolvers."
+        )
+
+    try:
+        method_instance: ResolverMethod = resolver_class(settings=method_settings)
+    except Exception as e:
+        raise MatchboxResolutionNotQueriable(
+            f"Failed to initialise resolver class {resolver_class.__name__}."
+        ) from e
+
+    model_edges: dict[str, pl.DataFrame] = {}
+    resolver_assignments: dict[str, pl.DataFrame] = {}
 
     for input_name in resolver_resolution.resolver_config.inputs:
         input_resolution = direct_inputs[input_name]
 
         if input_resolution.type == ResolutionType.MODEL.value:
-            model_edges.append(
-                _load_model_edges_for_threshold(
-                    session=session,
-                    resolution_id=input_resolution.resolution_id,
-                    threshold=effective_thresholds[input_name],
-                )
+            model_edges[input_name] = _load_model_edges(
+                session=session,
+                resolution_id=input_resolution.resolution_id,
             )
         elif input_resolution.type == ResolutionType.RESOLVER.value:
-            resolver_assignments.append(
-                _load_resolver_input_assignments(
-                    session=session,
-                    resolution_id=input_resolution.resolution_id,
-                )
+            resolver_assignments[input_name] = _load_resolver_input_assignments(
+                session=session,
+                resolution_id=input_resolution.resolution_id,
             )
 
-    return fuse_components(
-        strategy=FusionStrategy(resolver_resolution.resolver_config.strategy),
+    return method_instance.compute_clusters(
         model_edges=model_edges,
         resolver_assignments=resolver_assignments,
     )

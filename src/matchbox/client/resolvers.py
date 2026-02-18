@@ -1,8 +1,8 @@
-"""Resolver nodes that fuse model edges into materialised clusters."""
+"""Resolver nodes that materialise clusters from model and resolver inputs."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
@@ -12,20 +12,25 @@ from matchbox.client.models.models import Model
 from matchbox.client.queries import Query
 from matchbox.common.arrow import SCHEMA_RESOLVER_UPLOAD
 from matchbox.common.dtos import (
-    FusionStrategy,
     Resolution,
     ResolutionName,
     ResolutionType,
     ResolverConfig,
     ResolverResolutionName,
     ResolverResolutionPath,
+    ResolverType,
     SourceResolutionName,
 )
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
-from matchbox.common.fusion import fuse_components
 from matchbox.common.hash import hash_arrow_table
 from matchbox.common.logging import logger, profile_time
-from matchbox.common.transform import threshold_float_to_int
+from matchbox.common.resolvers import (
+    Components,
+    ComponentsSettings,
+    ResolverMethod,
+    ResolverSettings,
+    get_resolver_class,
+)
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -36,18 +41,18 @@ else:
 
 
 class Resolver:
-    """Client-side node that fuses multiple model/resolver inputs."""
+    """Client-side node that computes clusters from model/resolver inputs."""
 
     def __init__(
         self,
         dag: DAG,
         name: ResolverResolutionName,
         inputs: Iterable[Model | Resolver],
-        thresholds: dict[ResolutionName, int | float] | None = None,
-        strategy: FusionStrategy | str = FusionStrategy.UNION,
+        resolver_class: type[ResolverMethod] | str,
+        resolver_settings: ResolverSettings | dict,
         description: str | None = None,
     ) -> None:
-        """Create a resolver node that fuses model and resolver inputs."""
+        """Create a resolver node that computes clusters from its inputs."""
         self.dag = dag
         self.name = ResolverResolutionName(name)
         deduped_inputs: list[Model | Resolver] = []
@@ -59,13 +64,56 @@ class Resolver:
             deduped_inputs.append(node)
         self.inputs = tuple(deduped_inputs)
         self.description = description
-        self.strategy = FusionStrategy(strategy)
 
         if len(self.inputs) < 1:
             raise ValueError("Resolver needs at least one input")
 
+        if isinstance(resolver_class, str):
+            self.resolver_class = get_resolver_class(resolver_class)
+        else:
+            self.resolver_class = resolver_class
+
+        self.resolver_instance = self.resolver_class(settings=resolver_settings)
+        self.resolver_type = self._infer_resolver_type(self.resolver_class)
+
+        if isinstance(resolver_settings, dict):
+            SettingsClass = self.resolver_instance.__annotations__["settings"]
+            self.resolver_settings = SettingsClass(**resolver_settings)
+        else:
+            self.resolver_settings = resolver_settings
+
+        self.resolver_instance.settings = self.resolver_settings
+        self._normalise_components_settings()
+
+        self.results: pl.DataFrame | None = None
+        self._upload_results: pl.DataFrame | None = None
+
+    @staticmethod
+    def _infer_resolver_type(
+        resolver_class: type[ResolverMethod],
+    ) -> ResolverType:
+        """Infer resolver type from resolver class metadata."""
+        resolver_type = getattr(resolver_class, "resolver_type", None)
+        if resolver_type is None:
+            if issubclass(resolver_class, Components):
+                return ResolverType.COMPONENTS
+            raise ValueError(
+                f"Resolver class '{resolver_class.__name__}' must define resolver_type"
+            )
+        return ResolverType(resolver_type)
+
+    def _normalise_components_settings(self) -> None:
+        """Ensure Components settings are aligned with configured inputs."""
+        if self.resolver_type != ResolverType.COMPONENTS:
+            return
+
+        if not isinstance(self.resolver_settings, ComponentsSettings):
+            self.resolver_settings = ComponentsSettings.model_validate(
+                self.resolver_settings.model_dump(mode="json")
+            )
+
         input_names = tuple(node.name for node in self.inputs)
-        threshold_input = thresholds or {}
+        threshold_input = dict(self.resolver_settings.thresholds)
 
         extra_thresholds = [name for name in threshold_input if name not in input_names]
         if extra_thresholds:
@@ -74,30 +122,20 @@ class Resolver:
                 f"{extra_thresholds}"
             )
 
-        self.thresholds: dict[ResolutionName, int] = {}
         for node_name in input_names:
-            threshold = threshold_input.get(node_name, 0)
-            self.thresholds[node_name] = self._normalise_threshold(threshold)
+            threshold_input.setdefault(node_name, 0)
 
-        self.results: pl.DataFrame | None = None
-        self._upload_results: pl.DataFrame | None = None
-
-    @staticmethod
-    def _normalise_threshold(value: int | float) -> int:
-        """Normalise threshold input to integer percent."""
-        if isinstance(value, float):
-            return threshold_float_to_int(value)
-        if isinstance(value, int) and 0 <= value <= 100:
-            return value
-        raise ValueError("Thresholds must be floats in [0,1] or ints in [0,100]")
+        self.resolver_settings = ComponentsSettings(thresholds=threshold_input)
+        self.resolver_instance.settings = self.resolver_settings
 
     @property
     def config(self) -> ResolverConfig:
         """Generate config DTO from Resolver."""
         return ResolverConfig(
+            type=self.resolver_type,
+            resolver_class=self.resolver_class.__name__,
+            resolver_settings=self.resolver_settings.model_dump_json(),
             inputs=tuple(node.name for node in self.inputs),
-            thresholds=self.thresholds,
-            strategy=self.strategy,
         )
 
     @property
@@ -145,31 +183,36 @@ class Resolver:
         )
 
     @profile_time(attr="name")
+    def compute_clusters(
+        self,
+        model_edges: Mapping[ResolutionName, pl.DataFrame],
+        resolver_assignments: Mapping[ResolutionName, pl.DataFrame],
+    ) -> pl.DataFrame:
+        """Delegate cluster computation to resolver methodology instance."""
+        return self.resolver_instance.compute_clusters(
+            model_edges=model_edges,
+            resolver_assignments=resolver_assignments,
+        )
+
+    @profile_time(attr="name")
     def run(self) -> pl.DataFrame:
-        """Run the resolver by fusing all configured inputs with UNION."""
-        model_edges: list[pl.DataFrame] = []
-        resolver_assignments: list[pl.DataFrame] = []
+        """Run the resolver and materialise cluster assignments."""
+        model_edges: dict[ResolutionName, pl.DataFrame] = {}
+        resolver_assignments: dict[ResolutionName, pl.DataFrame] = {}
 
         for node in self.inputs:
-            threshold = self.thresholds[node.name]
-
             if isinstance(node, Model):
-                model_edges.append(
-                    self._get_model_edges(node).filter(
-                        pl.col("probability") >= threshold
-                    )
-                )
+                model_edges[node.name] = self._get_model_edges(node)
             else:
-                resolver_assignments.append(self._get_resolver_assignments(node))
+                resolver_assignments[node.name] = self._get_resolver_assignments(node)
 
-        fused = fuse_components(
-            strategy=self.strategy,
+        clusters = self.compute_clusters(
             model_edges=model_edges,
             resolver_assignments=resolver_assignments,
         )
 
         upload_results = (
-            fused.rename({"cluster_id": "client_cluster_id"})
+            clusters.rename({"cluster_id": "client_cluster_id"})
             .select("client_cluster_id", "node_id")
             .cast({"client_cluster_id": pl.UInt64, "node_id": pl.UInt64})
         )

@@ -25,6 +25,7 @@ from matchbox.common.factories.sources import (
     source_factory,
     source_from_tuple,
 )
+from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 def _resolver_for_sources() -> tuple:
@@ -49,6 +50,10 @@ def _resolver_for_sources() -> tuple:
     resolver = foo.dag.resolver(
         name="resolver",
         inputs=[foo_model, bar_model],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={foo_model.name: 0, bar_model.name: 0}
+        ),
     )
     return foo, bar, resolver
 
@@ -282,6 +287,10 @@ def test_query_multiple_sources(
     resolver = foo_source.dag.resolver(
         name="resolver",
         inputs=[model_foo, model_bar],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={model_foo.name: 0, model_bar.name: 0}
+        ),
     )
 
     # Validate results (no cleaning, so all columns passed through)
@@ -486,6 +495,10 @@ def test_query_combine_type(
     resolver = foo_source.dag.resolver(
         name="resolver",
         inputs=[foo_model, bar_model],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={foo_model.name: 0, bar_model.name: 0}
+        ),
     )
 
     # Validate results
@@ -582,6 +595,10 @@ def test_query_leaf_ids(
     resolver = foo_source.dag.resolver(
         name="resolver",
         inputs=[foo_model, bar_model],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={foo_model.name: 0, bar_model.name: 0}
+        ),
     )
 
     query = resolver.query(foo_source, bar_source, combine_type=combine_type)
@@ -688,6 +705,10 @@ def test_query_from_config() -> None:
     resolver = dag.resolver(
         name="resolver",
         inputs=[model_testkit, dedupe_testkit],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={model_testkit.name: 0, dedupe_testkit.name: 0}
+        ),
     )
 
     # Create original query
@@ -763,7 +784,14 @@ def test_query_from_config_resolver_roundtrip() -> None:
         )
     )
 
-    resolver = dag.resolver(name="resolver", inputs=[linker, dedupe])
+    resolver = dag.resolver(
+        name="resolver",
+        inputs=[linker, dedupe],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={linker.name: 0, dedupe.name: 0}
+        ),
+    )
 
     original_query = resolver.query(
         dag.get_source(crn_testkit.name),

@@ -22,6 +22,7 @@ from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
+from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:
@@ -147,7 +148,14 @@ def test_get_samples_remote(
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.key=r.key"},
     )
-    resolver = dag.resolver(name="resolver", inputs=[foo_bar, bar_baz])
+    resolver = dag.resolver(
+        name="resolver",
+        inputs=[foo_bar, bar_baz],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={foo_bar.name: 0, bar_baz.name: 0}
+        ),
+    )
 
     # Mock the collection and run endpoint that load_pending() calls
     collection_data = Collection(runs=[dag.run])

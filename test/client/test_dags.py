@@ -35,8 +35,9 @@ from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.factories.dags import TestkitDAG, add_components_resolver
+from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.models import model_factory
+from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
@@ -48,13 +49,6 @@ def test_dag_list(matchbox_api: MockRouter) -> None:
     dummy_names = ["companies", "contacts"]
     matchbox_api.get("/collections").mock(return_value=Response(200, json=dummy_names))
     assert DAG.list_all() == ["companies", "contacts"]
-
-
-def test_dag_uses_resolver_factory_name() -> None:
-    """DAG exposes resolver factory and no longer exposes resolve factory."""
-    dag = DAG("test_collection")
-    assert hasattr(dag, "resolver")
-    assert not hasattr(dag, "resolve")
 
 
 @patch.object(Source, "run")
@@ -321,12 +315,12 @@ def test_dag_draw(sqla_sqlite_warehouse: Engine) -> None:
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    root = add_components_resolver(
+    root = resolver_factory(
         dag=dag,
         name="root",
         inputs=[d_foo, foo_bar, foo_baz],
         thresholds={d_foo.name: 0, foo_bar.name: 0, foo_baz.name: 0},
-    )
+    ).resolver
 
     # Prepare the DAG and draw it
 
@@ -511,24 +505,24 @@ def test_resolve(matchbox_api: MockRouter) -> None:
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    foo_bar_resolver = add_components_resolver(
+    foo_bar_resolver = resolver_factory(
         dag=dag,
         name="foo_bar_resolver",
         inputs=[foo_dedupe, foo_bar],
         thresholds={foo_dedupe.name: 0, foo_bar.name: 0},
-    )
+    ).resolver
     bar_baz = bar_source.query().linker(
         baz_source.query(),
         name="bar_baz",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    foo_bar_baz = add_components_resolver(
+    foo_bar_baz = resolver_factory(
         dag=dag,
         name="foo_bar_baz",
         inputs=[foo_bar_resolver, bar_baz],
         thresholds={foo_bar_resolver.name: 0, bar_baz.name: 0},
-    )
+    ).resolver
     dag.new_run()
 
     # Then the new run
@@ -722,7 +716,7 @@ def test_lookup_key_ok(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) 
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    add_components_resolver(
+    resolver_factory(
         dag=dag,
         name="root",
         inputs=[linker_foo_bar, linker_bar_baz],
@@ -785,7 +779,7 @@ def test_lookup_key_with_resolver_overrides_uses_post(
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    add_components_resolver(
+    resolver_factory(
         dag=dag,
         name="root",
         inputs=[linker_foo_bar, linker_bar_baz],
@@ -862,7 +856,7 @@ def test_lookup_key_404_source(matchbox_api: MockRouter) -> None:
         model_class=NaiveDeduper,
         model_settings={"unique_fields": []},
     )
-    add_components_resolver(
+    resolver_factory(
         dag=dag,
         name="root_resolver",
         inputs=[linker, source_dedupe],
@@ -911,7 +905,7 @@ def test_lookup_key_no_matches(
         model_class=NaiveDeduper,
         model_settings={"unique_fields": []},
     )
-    add_components_resolver(
+    resolver_factory(
         dag=dag,
         name="root_resolver",
         inputs=[linker, source_dedupe],
@@ -1324,7 +1318,7 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     test_dag.model(**model_inner_testkit.into_dag())
     test_dag.model(**model_side_testkit.into_dag())
 
-    resolver_inner = add_components_resolver(
+    resolver_inner = resolver_factory(
         dag=test_dag,
         name="resolver_inner",
         inputs=[
@@ -1335,13 +1329,13 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
             model_inner_testkit.name: 0,
             model_side_testkit.name: 0,
         },
-    )
-    resolver_outer = add_components_resolver(
+    ).resolver
+    resolver_outer = resolver_factory(
         dag=test_dag,
         name="model_outer",
         inputs=[resolver_inner, test_dag.get_model(model_inner_testkit.name)],
         thresholds={resolver_inner.name: 0, model_inner_testkit.name: 0},
-    )
+    ).resolver
 
     # Create resolutions with outer resolver first in dict
     resolutions: dict[ResolutionName, Resolution] = {

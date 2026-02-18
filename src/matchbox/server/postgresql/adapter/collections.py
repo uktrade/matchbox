@@ -298,7 +298,7 @@ class MatchboxPostgresCollectionsMixin:
                     if not new_config.right_query
                     else new_config.right_query.model_dump_json()
                 )
-            else:
+            elif old_resolution.type == ResolutionType.RESOLVER:
                 old_config: ResolverConfigs = old_resolution.resolver_config
                 if not isinstance(new_config, CommonResolverConfig):
                     raise ValueError("Config for resolver resolution expected.")
@@ -308,8 +308,9 @@ class MatchboxPostgresCollectionsMixin:
 
                 direct_thresholds: dict[str, int] = {}
                 if new_config.type == ResolverType.COMPONENTS:
-                    settings_payload = json.loads(new_config.resolver_settings)
-                    raw_thresholds = settings_payload.get("thresholds", {})
+                    raw_thresholds = json.loads(new_config.resolver_settings).get(
+                        "thresholds", {}
+                    )
                     direct_thresholds = {
                         key: int(value) for key, value in raw_thresholds.items()
                     }
@@ -326,6 +327,10 @@ class MatchboxPostgresCollectionsMixin:
                 ).all()
                 for closure_entry, parent_name in direct_rows:
                     closure_entry.truth_cache = direct_thresholds.get(parent_name)
+            else:
+                raise ValueError(
+                    f"Unsupported resolution type for update: {old_resolution.type}"
+                )
 
             session.commit()
 

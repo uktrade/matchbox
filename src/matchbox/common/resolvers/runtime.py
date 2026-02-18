@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
 
 import polars as pl
 
@@ -56,7 +55,7 @@ def _normalise_assignments(assignments: pl.DataFrame) -> pl.DataFrame:
 
 def run_resolver_method(
     resolver_class: type[ResolverMethod],
-    settings_payload: ResolverSettings | Mapping[str, Any],
+    settings_payload: ResolverSettings,
     model_edges: Mapping[ResolutionName, pl.DataFrame],
     resolver_assignments: Mapping[ResolutionName, pl.DataFrame],
 ) -> pl.DataFrame:
@@ -79,7 +78,7 @@ def run_resolver_method(
 
 def compute_override_assignments(
     resolver_class: type[ResolverMethod],
-    resolver_overrides: ResolverSettings | Mapping[str, Any],
+    resolver_overrides: ResolverSettings,
     model_edges: Mapping[ResolutionName, pl.DataFrame],
     resolver_assignments: Mapping[ResolutionName, pl.DataFrame],
 ) -> pl.DataFrame:

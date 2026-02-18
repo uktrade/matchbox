@@ -89,10 +89,10 @@ def test_resolver_registry_allows_custom_class() -> None:
 
 
 def test_run_resolver_method_validates_settings_payload() -> None:
-    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+    with pytest.raises(ValueError, match="ComponentsSettings"):
         run_resolver_method(
             resolver_class=Components,
-            settings_payload={"not_thresholds": {}},
+            settings_payload=_DummyResolverSettings(),
             model_edges={},
             resolver_assignments={},
         )
@@ -101,7 +101,7 @@ def test_run_resolver_method_validates_settings_payload() -> None:
 def test_run_resolver_method_normalises_assignment_output() -> None:
     assignments = run_resolver_method(
         resolver_class=Components,
-        settings_payload={"thresholds": {}},
+        settings_payload=ComponentsSettings(thresholds={}),
         model_edges={},
         resolver_assignments={
             "resolver_a": pl.DataFrame(
@@ -127,7 +127,7 @@ def test_run_resolver_method_normalises_assignment_output() -> None:
 def test_compute_override_assignments_returns_canonical_assignments() -> None:
     assignments = compute_override_assignments(
         resolver_class=Components,
-        resolver_overrides={"thresholds": {"model_a": 80}},
+        resolver_overrides=ComponentsSettings(thresholds={"model_a": 80}),
         model_edges={
             "model_a": pl.DataFrame(
                 {

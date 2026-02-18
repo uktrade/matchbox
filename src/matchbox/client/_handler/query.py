@@ -18,6 +18,7 @@ from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
 )
 from matchbox.common.logging import logger
+from matchbox.common.resolvers import ResolverSettings
 
 
 @http_retry
@@ -25,7 +26,7 @@ def query(
     source: SourceResolutionPath,
     return_leaf_id: bool,
     resolution: ResolverResolutionPath | None = None,
-    resolver_overrides: dict[str, object] | None = None,
+    resolver_overrides: ResolverSettings | None = None,
     limit: int | None = None,
 ) -> Table:
     """Query a source in Matchbox."""
@@ -48,7 +49,7 @@ def query(
         res = CLIENT.post(
             "/query",
             params=params,
-            json={"resolver_overrides": resolver_overrides},
+            json={"resolver_overrides": resolver_overrides.model_dump(mode="json")},
         )
 
     buffer = BytesIO(res.content)
@@ -74,7 +75,7 @@ def match(
     source: SourceResolutionPath,
     key: str,
     resolution: ResolverResolutionPath,
-    resolver_overrides: dict[str, object] | None = None,
+    resolver_overrides: ResolverSettings | None = None,
 ) -> list[Match]:
     """Match a source against a list of targets."""
     log_prefix = f"Query {source}"
@@ -99,7 +100,7 @@ def match(
         res = CLIENT.post(
             "/match",
             params=params,
-            json={"resolver_overrides": resolver_overrides},
+            json={"resolver_overrides": resolver_overrides.model_dump(mode="json")},
         )
 
     logger.debug("Finished", prefix=log_prefix)

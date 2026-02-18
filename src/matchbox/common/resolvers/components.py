@@ -7,9 +7,8 @@ import polars as pl
 from pydantic import Field, field_validator
 
 from matchbox.common.dtos import ResolutionName, ResolverType
+from matchbox.common.resolvers.base import ResolverMethod, ResolverSettings
 from matchbox.common.transform import DisjointSet, threshold_float_to_int
-
-from .base import ResolverMethod, ResolverSettings
 
 
 class ComponentsSettings(ResolverSettings):

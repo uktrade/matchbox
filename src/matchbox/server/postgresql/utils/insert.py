@@ -232,7 +232,7 @@ def insert_resolver_clusters(
     """Writes resolver assignments and returns client-to-cluster ID mapping."""
     log_prefix = f"Resolver {path.name}"
     fingerprint = hash_arrow_table(assignments)
-    assignment_df = pl.from_arrow(assignments)
+    assignment_df = pl.from_arrow(assignments).select("client_cluster_id", "node_id")
 
     with MBDB.get_session() as session:
         resolution = Resolutions.from_path(
@@ -256,97 +256,156 @@ def insert_resolver_clusters(
                 {"client_cluster_id": [], "cluster_id": []},
                 schema=SCHEMA_RESOLVER_MAPPING,
             )
+        resolution_id = resolution.resolution_id
 
-        node_ids: list[int] = (
-            assignment_df.select("node_id")
+        node_ids: list[int] = [
+            int(node_id)
+            for node_id in assignment_df.select("node_id")
             .unique()
             .to_series()
-            .cast(pl.Int64)
             .to_list()
-        )
+        ]
         contains_rows = session.execute(
             select(Contains.root, Contains.leaf).where(Contains.root.in_(node_ids))
         ).all()
 
-        root_to_leaves: dict[int, set[int]] = {}
-        for root_id, leaf_id in contains_rows:
-            root_to_leaves.setdefault(root_id, set()).add(leaf_id)
+    root_to_leaves: dict[int, set[int]] = {}
+    for root_id, leaf_id in contains_rows:
+        root_to_leaves.setdefault(int(root_id), set()).add(int(leaf_id))
 
-        expanded_rows: list[tuple[int, int]] = []
-        for client_cluster_id, node_id in assignment_df.iter_rows():
-            node = int(node_id)
-            leaves = root_to_leaves.get(node, {node})
-            for leaf_id in leaves:
-                expanded_rows.append((int(client_cluster_id), int(leaf_id)))
+    expanded_rows: list[tuple[int, int]] = []
+    for client_cluster_id, node_id in assignment_df.iter_rows():
+        node = int(node_id)
+        leaves = root_to_leaves.get(node, {node})
+        for leaf_id in leaves:
+            expanded_rows.append((int(client_cluster_id), int(leaf_id)))
 
-        expanded_df = (
-            pl.DataFrame(
-                expanded_rows,
-                schema={"client_cluster_id": pl.Int64, "leaf_id": pl.Int64},
-                orient="row",
-            )
-            .group_by("client_cluster_id", maintain_order=True)
-            .agg(pl.col("leaf_id").unique().sort())
-        )
+    expanded_leaves_df = pl.DataFrame(
+        expanded_rows,
+        schema={"client_cluster_id": pl.Int64, "leaf_id": pl.Int64},
+        orient="row",
+    ).unique()
+    grouped_leaves_df = expanded_leaves_df.group_by("client_cluster_id").agg(
+        pl.col("leaf_id").unique().sort()
+    )
 
-        all_leaves: list[int] = (
-            expanded_df.select(pl.col("leaf_id").explode())
-            .unique()
-            .to_series()
-            .to_list()
-        )
+    all_leaves = [
+        int(leaf_id)
+        for leaf_id in grouped_leaves_df.select(pl.col("leaf_id").explode())
+        .unique()
+        .to_series()
+        .to_list()
+    ]
+
+    with MBDB.get_session() as session:
         leaf_hash_rows = session.execute(
             select(Clusters.cluster_id, Clusters.cluster_hash).where(
                 Clusters.cluster_id.in_(all_leaves)
             )
         ).all()
-        leaf_hashes: dict[int, bytes] = {
-            int(cluster_id): cluster_hash for cluster_id, cluster_hash in leaf_hash_rows
-        }
 
-        missing_leaves = set(all_leaves) - set(leaf_hashes)
-        if missing_leaves:
-            raise MatchboxResolutionInvalidData(
-                "Resolver upload references unknown cluster IDs: "
-                f"{sorted(missing_leaves)}"
-            )
+    leaf_hashes: dict[int, bytes] = {
+        int(cluster_id): cluster_hash for cluster_id, cluster_hash in leaf_hash_rows
+    }
+    missing_leaves = set(all_leaves) - set(leaf_hashes)
+    if missing_leaves:
+        raise MatchboxResolutionInvalidData(
+            f"Resolver upload references unknown cluster IDs: {sorted(missing_leaves)}"
+        )
 
-        mapping_rows: list[dict[str, int]] = []
+    cluster_hash_rows = []
+    for row in grouped_leaves_df.iter_rows(named=True):
+        leaves = [int(leaf_id) for leaf_id in row["leaf_id"]]
+        cluster_hash_rows.append(
+            {
+                "client_cluster_id": int(row["client_cluster_id"]),
+                "cluster_hash": hash_cluster_leaves(
+                    [leaf_hashes[leaf_id] for leaf_id in leaves]
+                ),
+            }
+        )
 
-        for row in expanded_df.iter_rows(named=True):
-            client_cluster_id = int(row["client_cluster_id"])
-            leaves = [int(leaf_id) for leaf_id in row["leaf_id"]]
-            cluster_hash = hash_cluster_leaves(
-                [leaf_hashes[leaf_id] for leaf_id in leaves]
-            )
+    cluster_hash_df = pl.DataFrame(
+        cluster_hash_rows,
+        schema={"client_cluster_id": pl.Int64, "cluster_hash": pl.Binary},
+        orient="row",
+    ).unique()
 
-            inserted_root = session.execute(
-                insert(Clusters)
-                .values(cluster_hash=cluster_hash)
-                .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
-                .returning(Clusters.cluster_id)
-            ).scalar_one_or_none()
-
-            if inserted_root is None:
-                root_id = int(
-                    session.execute(
-                        select(Clusters.cluster_id).where(
-                            Clusters.cluster_hash == cluster_hash
+    with (
+        ingest_to_temporary_table(
+            table_name="incoming_resolver_leaves",
+            schema_name="mb",
+            column_types={"client_cluster_id": BIGINT(), "leaf_id": BIGINT()},
+            data=expanded_leaves_df.to_arrow(),
+        ) as incoming_leaves,
+        ingest_to_temporary_table(
+            table_name="incoming_resolver_hashes",
+            schema_name="mb",
+            column_types={"client_cluster_id": BIGINT(), "cluster_hash": BYTEA()},
+            data=cluster_hash_df.to_arrow(),
+        ) as incoming_hashes,
+        MBDB.get_session() as session,
+    ):
+        try:
+            new_hashes = (
+                select(incoming_hashes.c.cluster_hash)
+                .distinct()
+                .where(
+                    ~exists(
+                        select(1).where(
+                            Clusters.cluster_hash == incoming_hashes.c.cluster_hash
                         )
-                    ).scalar_one()
+                    )
                 )
-            else:
-                root_id = int(inserted_root)
+            )
+            session.execute(
+                insert(Clusters)
+                .from_select(["cluster_hash"], new_hashes)
+                .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
+            )
+            session.flush()
 
+            cluster_map = (
+                select(
+                    incoming_hashes.c.client_cluster_id,
+                    Clusters.cluster_id,
+                )
+                .select_from(
+                    incoming_hashes.join(
+                        Clusters,
+                        Clusters.cluster_hash == incoming_hashes.c.cluster_hash,
+                    )
+                )
+                .distinct()
+                .subquery()
+            )
+
+            contains_rows_select = (
+                select(
+                    cluster_map.c.cluster_id.label("root"), incoming_leaves.c.leaf_id
+                )
+                .select_from(
+                    incoming_leaves.join(
+                        cluster_map,
+                        incoming_leaves.c.client_cluster_id
+                        == cluster_map.c.client_cluster_id,
+                    )
+                )
+                .distinct()
+            )
             session.execute(
                 insert(Contains)
-                .values([{"root": root_id, "leaf": leaf_id} for leaf_id in leaves])
+                .from_select(["root", "leaf"], contains_rows_select)
                 .on_conflict_do_nothing(index_elements=[Contains.root, Contains.leaf])
             )
 
+            resolution_rows = select(
+                literal(resolution_id, BIGINT).label("resolution_id"),
+                cluster_map.c.cluster_id,
+            ).distinct()
             session.execute(
                 insert(ResolutionClusters)
-                .values(resolution_id=resolution.resolution_id, cluster_id=root_id)
+                .from_select(["resolution_id", "cluster_id"], resolution_rows)
                 .on_conflict_do_nothing(
                     index_elements=[
                         ResolutionClusters.resolution_id,
@@ -355,11 +414,16 @@ def insert_resolver_clusters(
                 )
             )
 
-            mapping_rows.append(
-                {"client_cluster_id": client_cluster_id, "cluster_id": root_id}
-            )
-
-        session.commit()
+            mapping_rows = session.execute(
+                select(
+                    cluster_map.c.client_cluster_id,
+                    cluster_map.c.cluster_id,
+                ).order_by(cluster_map.c.client_cluster_id)
+            ).all()
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
     logger.info("Resolver cluster insert complete!", prefix=log_prefix)
 

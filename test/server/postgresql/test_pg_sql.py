@@ -44,7 +44,7 @@ class TestPostgresQueryUtilities:
         _, dag = link_scenario
         crn = dag.sources["crn"]
         linker_name = "deterministic_naive_test_crn_naive_test_dh"
-        resolver = dag.resolvers[f"resolver_{linker_name}"]
+        resolver = dag.resolvers[f"resolver_{linker_name}"].resolver
 
         source_rows = pl.from_arrow(
             query(source=crn.resolution_path, return_leaf_id=True)
@@ -85,7 +85,7 @@ class TestPostgresQueryUtilities:
         _, dag = link_scenario
         crn = dag.sources["crn"]
         linker_name = "deterministic_naive_test_crn_naive_test_dh"
-        resolver = dag.resolvers[f"resolver_{linker_name}"]
+        resolver = dag.resolvers[f"resolver_{linker_name}"].resolver
 
         with MBDB.get_session() as session:
             resolver_orm = Resolutions.from_path(
@@ -111,7 +111,7 @@ class TestPostgresQueryUtilities:
         crn = dag.sources["crn"]
         dh = dag.sources["dh"]
         linker_name = "deterministic_naive_test_crn_naive_test_dh"
-        resolver = dag.resolvers[f"resolver_{linker_name}"]
+        resolver = dag.resolvers[f"resolver_{linker_name}"].resolver
         linked = dag.source_to_linked["crn"]
 
         entity = linked.find_entities(

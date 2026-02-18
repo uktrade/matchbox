@@ -1,7 +1,5 @@
 """Definition of model inputs."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, Self, overload
@@ -20,7 +18,7 @@ from matchbox.client import _handler
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.common.db import QueryReturnClass, QueryReturnType
-from matchbox.common.dtos import QueryCombineType, QueryConfig, stable_hash_dict
+from matchbox.common.dtos import QueryCombineType, QueryConfig
 from matchbox.common.logging import profile_time
 from matchbox.common.resolvers import (
     ResolverSettings,
@@ -78,41 +76,20 @@ class Query:
         self.dag = dag
         self.sources = sources
         self.resolver = resolver
-        self.resolver_overrides = self._normalise_resolver_overrides(resolver_overrides)
+        self.resolver_overrides = self._validate_resolver_overrides(resolver_overrides)
         self.combine_type = combine_type
         self.cleaning = cleaning
 
-    def _normalise_resolver_overrides(
+    def _validate_resolver_overrides(
         self,
         resolver_overrides: ResolverSettings | dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """Validate and normalise resolver overrides as JSON payloads."""
+    ) -> ResolverSettings | None:
+        """Validate resolver overrides and return a typed settings object."""
         if resolver_overrides is None:
             return None
         if self.resolver is None:
             raise ValueError("resolver_overrides require a resolver-backed query.")
-        method = self.resolver.resolver_class(settings=resolver_overrides)
-        return method.settings.model_dump(mode="json")
-
-    def _effective_resolver_settings(self) -> dict[str, Any] | None:
-        """Return resolver settings applied to this query."""
-        if self.resolver is None:
-            return None
-        if self.resolver_overrides is not None:
-            return self.resolver_overrides
-        return self.resolver.resolver_settings.model_dump(mode="json")
-
-    def _resolver_settings_hash(self) -> str | None:
-        """Return hash for resolver config + effective query-time settings."""
-        if self.resolver is None:
-            return None
-        return stable_hash_dict(
-            {
-                "resolver_config": self.resolver.config.model_dump(mode="json"),
-                "effective_resolver_settings": self._effective_resolver_settings(),
-                "resolver_overrides": self.resolver_overrides,
-            }
-        )
+        return self.resolver.resolver_class(settings=resolver_overrides).settings
 
     def _assert_pipeline_safe(self) -> None:
         """Ensure analysis-only override queries are not used in pipeline builds."""
@@ -130,7 +107,6 @@ class Query:
             source_resolutions=tuple(source.name for source in self.sources),
             resolver_resolution=self.resolver.name if self.resolver else None,
             combine_type=self.combine_type,
-            resolver_settings_hash=self._resolver_settings_hash(),
             cleaning=self.cleaning,
         )
 

@@ -37,7 +37,9 @@ class TestMatchboxEvaluationBackend:
         """Can insert and retrieve judgements."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_crn"
+            ).resolver
 
             # To begin with, no judgements to retrieve
             judgements, expansion = self.backend.get_judgements()
@@ -200,7 +202,9 @@ class TestMatchboxEvaluationBackend:
         # for sources that aren't relevant for a point of truth
         with self.scenario(self.backend, "convergent") as dag_testkit:
             source_testkit = dag_testkit.sources.get("foo_a")
-            model_resolver = dag_testkit.resolvers.get("resolver_naive_test_foo_a")
+            model_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_foo_a"
+            ).resolver
 
             bob: User = self.backend.login(User(user_name="bob")).user
 

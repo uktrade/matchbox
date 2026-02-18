@@ -433,7 +433,6 @@ class QueryConfig(BaseModel):
     source_resolutions: tuple[SourceResolutionName, ...]
     resolver_resolution: ResolverResolutionName | None = None
     combine_type: QueryCombineType = QueryCombineType.CONCAT
-    resolver_settings_hash: str | None = None
     cleaning: dict[str, str] | None = None
 
     @model_validator(mode="after")
@@ -556,23 +555,9 @@ class ResolverConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_inputs(self) -> Self:
-        """Ensure resolver config is internally consistent."""
+        """Ensure resolver config has at least one input."""
         if len(self.inputs) < 1:
             raise ValueError("Resolver must have at least one input.")
-
-        if self.type == ResolverType.COMPONENTS:
-            settings = json.loads(self.resolver_settings)
-            thresholds = settings.get("thresholds")
-            if not isinstance(thresholds, dict):
-                raise ValueError(
-                    "Components resolver_settings must include a thresholds object."
-                )
-            missing_inputs = [node for node in self.inputs if node not in thresholds]
-            if missing_inputs:
-                raise ValueError(
-                    "Thresholds must be provided for every resolver input. "
-                    f"Missing: {missing_inputs}"
-                )
         return self
 
     @field_validator("resolver_settings", mode="after")
@@ -580,11 +565,9 @@ class ResolverConfig(BaseModel):
     def validate_settings_json(cls, value: str) -> str:
         """Ensure that resolver settings are valid JSON."""
         try:
-            parsed = json.loads(value)
+            isinstance(json.loads(value), dict)
         except json.JSONDecodeError as e:
             raise ValueError("Resolver settings are not valid JSON") from e
-        if not isinstance(parsed, dict):
-            raise ValueError("Resolver settings JSON must decode to an object.")
         return value
 
     @property

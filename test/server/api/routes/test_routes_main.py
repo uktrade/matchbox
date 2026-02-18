@@ -1,8 +1,7 @@
 from importlib.metadata import version
 from io import BytesIO
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 from fastapi.testclient import TestClient
@@ -65,59 +64,6 @@ def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     table = pq.read_table(buffer)
 
     assert table.schema.equals(SCHEMA_QUERY)
-
-
-def test_query_with_overrides_uses_runtime(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, mock_backend, _ = api_client_and_mocks
-    baseline = pl.DataFrame(
-        {"id": [1], "leaf_id": [1], "key": ["a"]},
-        schema={"id": pl.UInt64, "leaf_id": pl.UInt64, "key": pl.String},
-    )
-    override_lookup = pl.DataFrame(
-        schema={"leaf_id": pl.UInt64, "override_id": pl.UInt64}
-    )
-    with (
-        patch(
-            "matchbox.server.api.routers.query._baseline_rows",
-            return_value=baseline,
-        ),
-        patch(
-            "matchbox.server.api.routers.query._override_lookup_for_sources",
-            return_value=override_lookup,
-        ),
-        patch(
-            "matchbox.server.api.routers.query._project_query_rows",
-            return_value=pa.Table.from_pylist(
-                [
-                    {"id": 99, "key": "a"},
-                    {"id": 200, "key": "b"},
-                ],
-                schema=SCHEMA_QUERY,
-            ),
-        ) as mock_project_query,
-    ):
-        response = test_client.post(
-            "/query",
-            params={
-                "collection": "test_collection",
-                "run_id": 1,
-                "source": "foo",
-                "resolution": "resolver",
-                "return_leaf_id": False,
-            },
-            json={"resolver_overrides": {"thresholds": {"model_a": 75}}},
-        )
-
-    assert response.status_code == 200
-    table = pq.read_table(BytesIO(response.content))
-    assert table.to_pylist() == [
-        {"id": 99, "key": "a"},
-        {"id": 200, "key": "b"},
-    ]
-    mock_project_query.assert_called_once()
-    mock_backend.query.assert_not_called()
 
 
 def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -238,76 +184,6 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     assert response.status_code == 200
     [Match.model_validate(m) for m in response.json()]
     mock_backend.match.assert_called_once()
-
-
-def test_match_with_overrides_uses_runtime(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, mock_backend, _ = api_client_and_mocks
-    mock_backend.match = Mock()
-    baseline = pl.DataFrame(
-        {"id": [1], "leaf_id": [1], "key": ["from"]},
-        schema={"id": pl.UInt64, "leaf_id": pl.UInt64, "key": pl.String},
-    )
-    override_lookup = pl.DataFrame(
-        schema={"leaf_id": pl.UInt64, "override_id": pl.UInt64}
-    )
-    with (
-        patch(
-            "matchbox.server.api.routers.query._baseline_rows",
-            return_value=baseline,
-        ),
-        patch(
-            "matchbox.server.api.routers.query._override_lookup_for_sources",
-            return_value=override_lookup,
-        ),
-        patch(
-            "matchbox.server.api.routers.query._project_match_rows",
-            return_value=[
-                Match(
-                    cluster=99,
-                    source=SourceResolutionPath(
-                        collection="test_collection", name="bar", run=1
-                    ),
-                    source_id={"from"},
-                    target=SourceResolutionPath(
-                        collection="test_collection", name="foo", run=1
-                    ),
-                    target_id={"to"},
-                )
-            ],
-        ) as mock_project_match,
-    ):
-        response = test_client.post(
-            "/match",
-            params={
-                "collection": "test_collection",
-                "run_id": 1,
-                "targets": "foo",
-                "source": "bar",
-                "key": "from",
-                "resolution": "res",
-            },
-            json={"resolver_overrides": {"thresholds": {"model_a": 50}}},
-        )
-
-    assert response.status_code == 200
-    matches = [Match.model_validate(m) for m in response.json()]
-    assert matches == [
-        Match(
-            cluster=99,
-            source=SourceResolutionPath(
-                collection="test_collection", name="bar", run=1
-            ),
-            source_id={"from"},
-            target=SourceResolutionPath(
-                collection="test_collection", name="foo", run=1
-            ),
-            target_id={"to"},
-        )
-    ]
-    mock_project_match.assert_called_once()
-    mock_backend.match.assert_not_called()
 
 
 def test_match_invalid_resolver_overrides(

@@ -1,8 +1,7 @@
 """Resolver methodology registry."""
 
 from matchbox.common.logging import logger
-
-from .base import ResolverMethod
+from matchbox.common.resolvers.base import ResolverMethod
 
 _RESOLVER_CLASSES: dict[str, type[ResolverMethod]] = {}
 

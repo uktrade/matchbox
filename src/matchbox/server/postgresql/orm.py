@@ -512,8 +512,9 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             resolution_orm.resolver_config = ResolverConfigs.from_dto(resolution.config)
             component_thresholds: dict[str, int] = {}
             if resolution.config.type == ResolverType.COMPONENTS:
-                settings_payload = json.loads(resolution.config.resolver_settings)
-                raw_thresholds = settings_payload.get("thresholds", {})
+                raw_thresholds = json.loads(resolution.config.resolver_settings).get(
+                    "thresholds", {}
+                )
                 component_thresholds = {
                     key: int(value) for key, value in raw_thresholds.items()
                 }

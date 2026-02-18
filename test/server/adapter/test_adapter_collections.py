@@ -35,6 +35,7 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.factories.entities import diff_results, query_to_cluster_entities
 from matchbox.common.factories.models import model_factory
+from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
 from matchbox.server.base import MatchboxDBAdapter
@@ -631,7 +632,9 @@ class TestMatchboxCollectionsBackend:
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
             naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
-            naive_crn_resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_crn"
+            ).resolver
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately.
@@ -687,7 +690,7 @@ class TestMatchboxCollectionsBackend:
             prob_crn_testkit = dag_testkit.models.get("probabilistic_test_crn")
             prob_crn_resolver = dag_testkit.resolvers.get(
                 "resolver_probabilistic_test_crn"
-            )
+            ).resolver
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately
@@ -721,7 +724,7 @@ class TestMatchboxCollectionsBackend:
     def test_get_resolver_data_includes_root_membership(self) -> None:
         """Resolver data retrieval returns canonical assignments with root rows."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
-            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
             resolver_data = pl.from_arrow(
                 self.backend.get_resolver_data(path=resolver.resolution_path)
             )
@@ -741,7 +744,7 @@ class TestMatchboxCollectionsBackend:
     def test_get_resolver_data_rejects_incomplete_resolver(self) -> None:
         """Resolver data cannot be downloaded before upload completion."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
-            resolver = dag_testkit.resolvers["resolver_naive_test_crn"]
+            resolver = dag_testkit.resolvers["resolver_naive_test_crn"].resolver
             pending_path = resolver.resolution_path.model_copy(
                 update={"name": "pending_resolver"}
             )
@@ -771,11 +774,15 @@ class TestMatchboxCollectionsBackend:
                 results=model_testkit.model.results.probabilities.to_arrow(),
             )
             dag_testkit.add_model(model_testkit)
-            resolver = dag_testkit.materialise_model_resolver(
-                backend=self.backend,
-                model_name=model_testkit.model.name,
-                threshold=model_testkit.threshold,
+            resolver_tkit = resolver_factory(
+                dag=dag_testkit.dag,
+                name=f"resolver_{model_testkit.model.name}",
+                inputs=[model_testkit.model],
+                thresholds={model_testkit.model.name: model_testkit.threshold},
             )
+            resolver_tkit.materialise(backend=self.backend)
+            dag_testkit.add_resolver(resolver_tkit)
+            resolver = resolver_tkit.resolver
 
             # Querying from deduper with no results is the same as querying from source
             # (That we can query also implies that resolution marked as complete)

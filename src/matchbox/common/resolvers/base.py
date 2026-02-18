@@ -2,11 +2,12 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from typing import TypeAlias
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
-from matchbox.common.dtos import ResolutionName
+ResolutionName: TypeAlias = str
 
 
 class ResolverSettings(BaseModel):

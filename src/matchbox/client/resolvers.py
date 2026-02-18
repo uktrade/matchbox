@@ -50,7 +50,7 @@ class Resolver:
         name: ResolverResolutionName,
         inputs: Iterable[Model | Resolver],
         resolver_class: type[ResolverMethod] | str,
-        resolver_settings: ResolverSettings | dict,
+        resolver_settings: ResolverSettings | dict[str, Any],
         description: str | None = None,
     ) -> None:
         """Create a resolver node that computes clusters from its inputs."""
@@ -76,12 +76,7 @@ class Resolver:
 
         self.resolver_instance = self.resolver_class(settings=resolver_settings)
         self.resolver_type = self._infer_resolver_type(self.resolver_class)
-
-        if isinstance(resolver_settings, dict):
-            SettingsClass = self.resolver_instance.__annotations__["settings"]
-            self.resolver_settings = SettingsClass(**resolver_settings)
-        else:
-            self.resolver_settings = resolver_settings
+        self.resolver_settings = self.resolver_instance.settings
 
         self.resolver_instance.settings = self.resolver_settings
         self._normalise_components_settings()
@@ -156,18 +151,6 @@ class Resolver:
             name=self.name,
         )
 
-    def _get_model_edges(self, model: Model) -> pl.DataFrame:
-        """Retrieve model edges either from memory or backend."""
-        if model.results is not None:
-            return model.results.probabilities
-        return model.download_results().probabilities
-
-    def _get_resolver_assignments(self, resolver: Resolver) -> pl.DataFrame:
-        """Retrieve resolver assignments either from memory or backend."""
-        if resolver.results is not None:
-            return resolver.results.select("cluster_id", "node_id")
-        return resolver.download_results().select("cluster_id", "node_id")
-
     @staticmethod
     def _with_root_membership(assignments: pl.DataFrame) -> pl.DataFrame:
         """Ensure each cluster includes itself as a node."""
@@ -205,9 +188,21 @@ class Resolver:
 
         for node in self.inputs:
             if isinstance(node, Model):
-                model_edges[node.name] = self._get_model_edges(node)
+                if node.results is None:
+                    raise ValueError(
+                        f"Resolver input model '{node.name}' has no local results. "
+                        "Run or download upstream nodes before running this resolver."
+                    )
+                model_edges[node.name] = node.results.probabilities
             else:
-                resolver_assignments[node.name] = self._get_resolver_assignments(node)
+                if node.results is None:
+                    raise ValueError(
+                        f"Resolver input resolver '{node.name}' has no local results. "
+                        "Run or download upstream nodes before running this resolver."
+                    )
+                resolver_assignments[node.name] = node.results.select(
+                    "cluster_id", "node_id"
+                )
 
         clusters = self.compute_clusters(
             model_edges=model_edges,

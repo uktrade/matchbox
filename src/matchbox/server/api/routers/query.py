@@ -135,9 +135,10 @@ def _override_lookup_for_sources(
         backend=backend,
         point_of_truth=point_of_truth,
     )
+    resolver_settings = resolver_class(settings=resolver_overrides).settings
     assignments = compute_override_assignments(
         resolver_class=resolver_class,
-        resolver_overrides=resolver_overrides,
+        resolver_overrides=resolver_settings,
         model_edges=model_edges,
         resolver_assignments=resolver_assignments,
     )

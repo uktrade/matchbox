@@ -59,7 +59,9 @@ class TestMatchboxQueryBackend:
         """Test querying data from a deduplication resolver point of truth."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            dedupe_resolver = dag_testkit.resolvers.get("resolver_naive_test_crn")
+            dedupe_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_crn"
+            ).resolver
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -82,7 +84,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -119,7 +123,9 @@ class TestMatchboxQueryBackend:
             linker_name = "probabilistic_naive_test_crn_naive_test_cdms"
             crn_testkit = dag_testkit.sources.get("crn")
             cdms_testkit = dag_testkit.sources.get("cdms")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -157,7 +163,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -189,7 +197,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -221,7 +231,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -253,7 +265,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             # Use a non-existent source key
             non_existent_key = "foo"
@@ -279,7 +293,9 @@ class TestMatchboxQueryBackend:
             linker_name = "probabilistic_naive_test_crn_naive_test_cdms"
             crn_testkit = dag_testkit.sources.get("crn")
             cdms_testkit = dag_testkit.sources.get("cdms")
-            linker_resolver = dag_testkit.resolvers.get(f"resolver_{linker_name}")
+            linker_resolver = dag_testkit.resolvers.get(
+                f"resolver_{linker_name}"
+            ).resolver
 
             # Assumes CRN and CDMS come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]

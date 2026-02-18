@@ -1,13 +1,36 @@
 import polars as pl
 import pyarrow as pa
+import pytest
 from httpx import Response
 from polars.testing import assert_frame_equal
 from respx import MockRouter
 from sqlalchemy import Engine
 
 from matchbox.common.arrow import table_to_buffer
-from matchbox.common.factories.dags import add_components_resolver
+from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import source_factory
+
+
+def test_resolver_run_requires_materialised_inputs(
+    sqla_sqlite_warehouse: Engine,
+) -> None:
+    """Resolver run should require explicit upstream materialisation."""
+    source_testkit = source_factory(name="foo", engine=sqla_sqlite_warehouse)
+    source = source_testkit.source.dag.source(**source_testkit.into_dag())
+    model = source.query().deduper(
+        name="foo_dedupe",
+        model_class="NaiveDeduper",
+        model_settings={"unique_fields": []},
+    )
+    resolver = resolver_factory(
+        dag=source.dag,
+        name="resolver",
+        inputs=[model],
+        thresholds={model.name: 0},
+    ).resolver
+
+    with pytest.raises(ValueError, match="has no local results"):
+        resolver.run()
 
 
 def test_resolver_download_results_uses_resolution_data_endpoint(
@@ -23,12 +46,12 @@ def test_resolver_download_results_uses_resolution_data_endpoint(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = add_components_resolver(
+    resolver = resolver_factory(
         dag=source.dag,
         name="resolver",
         inputs=[model],
         thresholds={model.name: 0},
-    )
+    ).resolver
 
     data_route = matchbox_api.get(
         f"/collections/{resolver.dag.name}/runs/{resolver.dag.run}/resolutions/{resolver.name}/data"

@@ -206,7 +206,7 @@ class DAG:
         name: ResolverResolutionName,
         inputs: list[Model | Resolver | ResolutionName],
         resolver_class: type[ResolverMethod] | str,
-        resolver_settings: ResolverSettings | dict,
+        resolver_settings: ResolverSettings | dict[str, Any],
         description: str | None = None,
     ) -> Resolver:
         """Create a resolver and add it to the DAG."""
@@ -670,9 +670,10 @@ class DAG:
         if not isinstance(self.final_step, Resolver):
             raise ValueError("lookup_key requires the DAG apex to be a resolver")
 
-        normalised_overrides = self._normalise_resolver_overrides(
-            self.final_step,
-            resolver_overrides,
+        effective_overrides = (
+            None
+            if resolver_overrides is None
+            else self.final_step.resolver_class(settings=resolver_overrides).settings
         )
 
         matches = _handler.match(
@@ -683,7 +684,7 @@ class DAG:
             source=ResolutionPath(name=from_source, collection=self.name, run=self.run),
             key=key,
             resolution=self.final_step.resolution_path,
-            resolver_overrides=normalised_overrides,
+            resolver_overrides=effective_overrides,
         )
 
         to_sources_results = {m.target.name: list(m.target_id) for m in matches}
@@ -712,9 +713,10 @@ class DAG:
         point_of_truth = self.nodes[node] if node else self.final_step
         if not isinstance(point_of_truth, Resolver):
             raise ValueError("get_matches can only query from resolver nodes")
-        normalised_overrides = self._normalise_resolver_overrides(
-            point_of_truth,
-            resolver_overrides,
+        effective_overrides = (
+            None
+            if resolver_overrides is None
+            else point_of_truth.resolver_class(settings=resolver_overrides).settings
         )
 
         available_sources = {
@@ -748,21 +750,10 @@ class DAG:
                     _handler.query(
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
-                        resolver_overrides=normalised_overrides,
+                        resolver_overrides=effective_overrides,
                         return_leaf_id=True,
                     )
                 )
             )
 
         return ResolvedMatches(sources=resolved_sources, query_results=query_results)
-
-    @staticmethod
-    def _normalise_resolver_overrides(
-        resolver: Resolver,
-        resolver_overrides: ResolverSettings | dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """Normalise resolver override payload to JSON-serialisable settings."""
-        if resolver_overrides is None:
-            return None
-        method = resolver.resolver_class(settings=resolver_overrides)
-        return method.settings.model_dump(mode="json")

@@ -164,6 +164,7 @@ class TestScenarioIntegration:
                 resolver_class=Components,
                 resolver_settings=ComponentsSettings(thresholds={mega_model.name: 0}),
             )
+            mega_model.results = mega_model.download_results()
             mega_resolver.run()
             mega_resolver.sync()
 
@@ -317,6 +318,8 @@ class TestScenarioIntegration:
                     thresholds={crn_model.name: 0, dh_model.name: 0}
                 ),
             )
+            crn_model.results = crn_model.download_results()
+            dh_model.results = dh_model.download_results()
             dedupe_resolver.run()
             dedupe_resolver.sync()
 

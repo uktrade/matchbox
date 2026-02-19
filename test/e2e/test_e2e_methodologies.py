@@ -85,9 +85,8 @@ class TestE2EMethodologyIntegration:
 
             # Basic integration checks
             assert results is not None, f"{Deduper.__name__} returned None"
-            assert results.probabilities is not None
-            assert isinstance(results.probabilities, pl.DataFrame)
-            assert len(results.probabilities) >= 0
+            assert isinstance(results, pl.DataFrame)
+            assert len(results) >= 0
 
     @pytest.mark.parametrize(
         ("Linker", "configure_linker"),
@@ -152,6 +151,5 @@ class TestE2EMethodologyIntegration:
 
             # Basic integration checks
             assert results is not None, f"{Linker.__name__} returned None"
-            assert results.probabilities is not None
-            assert isinstance(results.probabilities, pl.DataFrame)
-            assert len(results.probabilities) >= 0
+            assert isinstance(results, pl.DataFrame)
+            assert len(results) >= 0

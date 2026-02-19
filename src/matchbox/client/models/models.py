@@ -14,7 +14,7 @@ from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.queries import Query
-from matchbox.client.results import ModelResults
+from matchbox.client.results import normalise_model_probabilities
 from matchbox.common.dtos import (
     ModelConfig,
     ModelResolutionName,
@@ -124,7 +124,7 @@ class Model:
         self.description = description
         self.left_query = left_query
         self.right_query = right_query
-        self.results: ModelResults | None = None
+        self.results: pl.DataFrame | None = None
 
         if isinstance(model_class, str):
             self.model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
@@ -173,7 +173,7 @@ class Model:
             description=self.description,
             resolution_type=ResolutionType.MODEL,
             config=self.config,
-            fingerprint=hash_model_results(self.results.probabilities),
+            fingerprint=hash_model_results(self.results.to_arrow()),
         )
 
     @classmethod
@@ -232,8 +232,7 @@ class Model:
         self,
         left_data: DataFrame | None = None,
         right_data: DataFrame | None = None,
-        for_validation: bool = False,
-    ) -> ModelResults:
+    ) -> pl.DataFrame:
         """Execute the model pipeline and return results.
 
         Args:
@@ -241,40 +240,20 @@ class Model:
                 a deduper, or link on the left if the model is a linker.
             right_data (optional): Pre-fetched query data to link on the right, if the
                 model is a linker. If the model is a deduper, this argument is ignored.
-            for_validation: Whether to download and store extra data to explore and
-                score results.
         """
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)
 
-        left_df = (
-            left_data
-            if left_data is not None
-            else self.left_query.data(return_leaf_id=for_validation)
-        )
+        left_df = left_data if left_data is not None else self.left_query.data()
         right_df = None
 
         if self.config.type == ModelType.LINKER:
             logger.info("Executing right query", prefix=log_prefix)
-            right_df = (
-                right_data
-                if right_data is not None
-                else self.right_query.data(return_leaf_id=for_validation)
-            )
+            right_df = right_data if right_data is not None else self.right_query.data()
 
         logger.info("Running model logic", prefix=log_prefix)
         probabilities = self.compute_probabilities(left_df, right_df)
-
-        if for_validation:
-            self.results = ModelResults(
-                probabilities=probabilities,
-                left_root_leaf=self.left_query.leaf_id,
-                right_root_leaf=self.right_query.leaf_id
-                if right_df is not None
-                else None,
-            )
-        else:
-            self.results = ModelResults(probabilities=probabilities)
+        self.results = normalise_model_probabilities(probabilities)
 
         return self.results
 
@@ -319,14 +298,12 @@ class Model:
             _handler.create_resolution(resolution=resolution, path=self.resolution_path)
             logger.info("Setting data for new resolution", prefix=log_prefix)
             # Assumes resolution has not been deleted or made incompatible
-            _handler.set_data(
-                path=self.resolution_path, data=self.results.probabilities
-            )
+            _handler.set_data(path=self.resolution_path, data=self.results)
 
-    def download_results(self) -> ModelResults:
+    def download_results(self) -> pl.DataFrame:
         """Retrieve results associated with the model from the database."""
         results = _handler.get_results(path=self.resolution_path)
-        return ModelResults(probabilities=pl.from_arrow(results))
+        return normalise_model_probabilities(pl.from_arrow(results))
 
     def clear_data(self) -> None:
         """Deletes data computed for node."""

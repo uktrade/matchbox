@@ -261,7 +261,7 @@ class Resolver:
                     "Run or download upstream nodes before running this resolver."
                 )
             if isinstance(node, Model):
-                model_edges[node.name] = node.results.probabilities
+                model_edges[node.name] = node.results
                 continue
 
             resolver_assignments[node.name] = node.results.select(

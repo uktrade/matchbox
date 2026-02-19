@@ -897,7 +897,7 @@ class TestMatchboxCollectionsBackend:
 
             self.backend.insert_model_data(
                 path=model_testkit.model.resolution_path,
-                results=model_testkit.model.results.probabilities.to_arrow(),
+                results=model_testkit.model.results.to_arrow(),
             )
             dag_testkit.add_model(model_testkit)
             resolver_tkit = resolver_factory(

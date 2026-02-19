@@ -96,13 +96,6 @@ class BackendCountableType(StrEnum):
     PROPOSES = "proposes"
 
 
-class ModelResultsType(StrEnum):
-    """Enumeration of supported model results types."""
-
-    PROBABILITIES = "probabilities"
-    CLUSTERS = "clusters"
-
-
 class BackendResourceType(StrEnum):
     """Enumeration of resources types referenced by client or API."""
 

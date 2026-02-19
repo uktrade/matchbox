@@ -7,7 +7,6 @@ from respx import MockRouter
 from sqlalchemy import Engine
 
 from matchbox.common.arrow import table_to_buffer
-from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import source_factory
 
 
@@ -22,12 +21,12 @@ def test_resolver_run_requires_materialised_inputs(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = resolver_factory(
-        dag=source.dag,
+    resolver = source.dag.resolver(
         name="resolver",
         inputs=[model],
-        thresholds={model.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {model.name: 0}},
+    )
 
     with pytest.raises(ValueError, match="has no local results"):
         resolver.run()
@@ -46,12 +45,12 @@ def test_resolver_download_results_uses_resolution_data_endpoint(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = resolver_factory(
-        dag=source.dag,
+    resolver = source.dag.resolver(
         name="resolver",
         inputs=[model],
-        thresholds={model.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {model.name: 0}},
+    )
 
     data_route = matchbox_api.get(
         f"/collections/{resolver.dag.name}/runs/{resolver.dag.run}/resolutions/{resolver.name}/data"

@@ -37,7 +37,6 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.models import model_factory
-from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
@@ -315,12 +314,14 @@ def test_dag_draw(sqla_sqlite_warehouse: Engine) -> None:
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    root = resolver_factory(
-        dag=dag,
+    root = dag.resolver(
         name="root",
         inputs=[d_foo, foo_bar, foo_baz],
-        thresholds={d_foo.name: 0, foo_bar.name: 0, foo_baz.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={
+            "thresholds": {d_foo.name: 0, foo_bar.name: 0, foo_baz.name: 0}
+        },
+    )
 
     # Prepare the DAG and draw it
 
@@ -505,24 +506,24 @@ def test_resolve(matchbox_api: MockRouter) -> None:
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    foo_bar_resolver = resolver_factory(
-        dag=dag,
+    foo_bar_resolver = dag.resolver(
         name="foo_bar_resolver",
         inputs=[foo_dedupe, foo_bar],
-        thresholds={foo_dedupe.name: 0, foo_bar.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {foo_dedupe.name: 0, foo_bar.name: 0}},
+    )
     bar_baz = bar_source.query().linker(
         baz_source.query(),
         name="bar_baz",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    foo_bar_baz = resolver_factory(
-        dag=dag,
+    foo_bar_baz = dag.resolver(
         name="foo_bar_baz",
         inputs=[foo_bar_resolver, bar_baz],
-        thresholds={foo_bar_resolver.name: 0, bar_baz.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {foo_bar_resolver.name: 0, bar_baz.name: 0}},
+    )
     dag.new_run()
 
     # Then the new run
@@ -716,11 +717,13 @@ def test_lookup_key_ok(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) 
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    resolver_factory(
-        dag=dag,
+    dag.resolver(
         name="root",
         inputs=[linker_foo_bar, linker_bar_baz],
-        thresholds={linker_foo_bar.name: 0, linker_bar_baz.name: 0},
+        resolver_class="Components",
+        resolver_settings={
+            "thresholds": {linker_foo_bar.name: 0, linker_bar_baz.name: 0}
+        },
     )
 
     foo_path = ResolutionPath(name="foo", collection=dag.name, run=dag.run)
@@ -779,11 +782,13 @@ def test_lookup_key_uses_get(
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.field=r.field"},
     )
-    resolver_factory(
-        dag=dag,
+    dag.resolver(
         name="root",
         inputs=[linker_foo_bar, linker_bar_baz],
-        thresholds={linker_foo_bar.name: 0, linker_bar_baz.name: 0},
+        resolver_class="Components",
+        resolver_settings={
+            "thresholds": {linker_foo_bar.name: 0, linker_bar_baz.name: 0}
+        },
     )
 
     foo_path = ResolutionPath(name="foo", collection=dag.name, run=dag.run)
@@ -848,11 +853,11 @@ def test_lookup_key_404_source(matchbox_api: MockRouter) -> None:
         model_class=NaiveDeduper,
         model_settings={"unique_fields": []},
     )
-    resolver_factory(
-        dag=dag,
+    dag.resolver(
         name="root_resolver",
         inputs=[linker, source_dedupe],
-        thresholds={linker.name: 0, source_dedupe.name: 0},
+        resolver_class="Components",
+        resolver_settings={"thresholds": {linker.name: 0, source_dedupe.name: 0}},
     )
 
     matchbox_api.get("/match").mock(
@@ -897,11 +902,11 @@ def test_lookup_key_no_matches(
         model_class=NaiveDeduper,
         model_settings={"unique_fields": []},
     )
-    resolver_factory(
-        dag=dag,
+    dag.resolver(
         name="root_resolver",
         inputs=[linker, source_dedupe],
-        thresholds={linker.name: 0, source_dedupe.name: 0},
+        resolver_class="Components",
+        resolver_settings={"thresholds": {linker.name: 0, source_dedupe.name: 0}},
     )
 
     # Mock empty match results
@@ -1310,24 +1315,28 @@ def test_dag_load_run_complex_dependencies(matchbox_api: MockRouter) -> None:
     test_dag.model(**model_inner_testkit.into_dag())
     test_dag.model(**model_side_testkit.into_dag())
 
-    resolver_inner = resolver_factory(
-        dag=test_dag,
+    resolver_inner = test_dag.resolver(
         name="resolver_inner",
         inputs=[
             test_dag.get_model(model_inner_testkit.name),
             test_dag.get_model(model_side_testkit.name),
         ],
-        thresholds={
-            model_inner_testkit.name: 0,
-            model_side_testkit.name: 0,
+        resolver_class="Components",
+        resolver_settings={
+            "thresholds": {
+                model_inner_testkit.name: 0,
+                model_side_testkit.name: 0,
+            },
         },
-    ).resolver
-    resolver_outer = resolver_factory(
-        dag=test_dag,
+    )
+    resolver_outer = test_dag.resolver(
         name="model_outer",
         inputs=[resolver_inner, test_dag.get_model(model_inner_testkit.name)],
-        thresholds={resolver_inner.name: 0, model_inner_testkit.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={
+            "thresholds": {resolver_inner.name: 0, model_inner_testkit.name: 0}
+        },
+    )
 
     # Create resolutions with outer resolver first in dict
     resolutions: dict[ResolutionName, Resolution] = {

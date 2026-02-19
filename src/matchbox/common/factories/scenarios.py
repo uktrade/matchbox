@@ -4,6 +4,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any, Literal
 
+import polars as pl
 import pyarrow as pa
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
@@ -23,13 +24,11 @@ from matchbox.common.factories.entities import (
     FeatureConfig,
     PrefixRule,
     ReplaceRule,
+    SourceEntity,
     SuffixRule,
 )
 from matchbox.common.factories.models import query_to_model_factory
-from matchbox.common.factories.resolvers import (
-    resolver_factory,
-    resolver_name_for_model,
-)
+from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import (
     SourceTestkitParameters,
     linked_sources_factory,
@@ -54,24 +53,69 @@ def _materialise_model_resolver(
     resolver_name: str | None = None,
 ) -> Resolver:
     """Create and materialise a canonical Components resolver for a model."""
-    model = dag_testkit.models[model_name].model
-    inputs = [model]
-    thresholds = {model.name: threshold}
+    model_testkit = dag_testkit.models[model_name]
+    true_entities: set[SourceEntity] = set()
+    for source_name in model_testkit.model.sources:
+        linked = dag_testkit.source_to_linked.get(source_name)
+        if linked is None:
+            raise ValueError(
+                f"Source '{source_name}' is not attached to linked true entities."
+            )
+        true_entities.update(linked.true_entities)
 
-    for query in (model.left_query, model.right_query):
+    inputs = [model_testkit]
+    thresholds = {model_testkit.name: threshold}
+
+    for query in (model_testkit.model.left_query, model_testkit.model.right_query):
         if query is not None and query.resolver is not None:
-            inputs.append(query.resolver)
-            thresholds[query.resolver.name] = 0
+            parent_name = query.resolver.name
+            if parent_name not in dag_testkit.resolvers:
+                raise ValueError(
+                    f"Resolver '{parent_name}' must be materialised before it can be "
+                    "used as a resolver input."
+                )
+            inputs.append(dag_testkit.resolvers[parent_name])
+            thresholds[parent_name] = 0
 
     resolver_testkit = resolver_factory(
         dag=dag_testkit.dag,
-        name=resolver_name or resolver_name_for_model(model_name),
+        name=resolver_name or f"resolver_{model_name}",
         inputs=inputs,
+        true_entities=tuple(true_entities),
         thresholds=thresholds,
     )
-    resolver_testkit.materialise(backend=backend)
     dag_testkit.add_resolver(resolver_testkit)
-    return resolver_testkit.resolver
+    resolver = dag_testkit.resolvers[resolver_testkit.name].resolver
+
+    resolver.run()
+    backend.create_resolution(
+        resolution=resolver.to_resolution(),
+        path=resolver.resolution_path,
+    )
+    if resolver._upload_results is None:  # noqa: SLF001
+        raise RuntimeError("Resolver upload payload missing after run().")
+
+    mapping = pl.from_arrow(
+        backend.insert_resolver_data(
+            path=resolver.resolution_path,
+            data=resolver._upload_results.to_arrow(),  # noqa: SLF001
+        )
+    ).cast({"client_cluster_id": pl.UInt64, "cluster_id": pl.UInt64})
+    resolver.results = (
+        resolver._upload_results.join(  # noqa: SLF001
+            mapping,
+            on="client_cluster_id",
+            how="left",
+        )
+        .drop("client_cluster_id")
+        .select("cluster_id", "node_id")
+    )
+    if resolver.results["cluster_id"].null_count() > 0:
+        raise RuntimeError(
+            "Resolver upload mapping was incomplete in scenario materialisation."
+        )
+    resolver.results = resolver._with_root_membership(resolver.results)  # noqa: SLF001
+    return resolver
 
 
 def register_scenario(name: str) -> Callable[[ScenarioBuilder], ScenarioBuilder]:
@@ -458,13 +502,9 @@ def create_link_scenario(
     crn_model = dag_testkit.models["naive_test_crn"]
     dh_model = dag_testkit.models["naive_test_dh"]
     cdms_model = dag_testkit.models["naive_test_cdms"]
-    crn_resolver = dag_testkit.resolvers[
-        resolver_name_for_model(crn_model.name)
-    ].resolver
-    dh_resolver = dag_testkit.resolvers[resolver_name_for_model(dh_model.name)].resolver
-    cdms_resolver = dag_testkit.resolvers[
-        resolver_name_for_model(cdms_model.name)
-    ].resolver
+    crn_resolver = dag_testkit.resolvers[f"resolver_{crn_model.name}"].resolver
+    dh_resolver = dag_testkit.resolvers[f"resolver_{dh_model.name}"].resolver
+    cdms_resolver = dag_testkit.resolvers[f"resolver_{cdms_model.name}"].resolver
 
     # Query data for each resolution
     crn_data = backend.query(

@@ -1,9 +1,11 @@
 """Factory helpers for resolver testkits."""
 
+import json
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import polars as pl
+from faker import Faker
 from pydantic import BaseModel, ConfigDict
 
 from matchbox.client.dags import DAG
@@ -16,104 +18,125 @@ from matchbox.client.resolvers import (
     ResolverSettings,
 )
 from matchbox.common.dtos import ResolverResolutionName
+from matchbox.common.factories.entities import (
+    ClusterEntity,
+    SourceEntity,
+)
+from matchbox.common.factories.models import ModelTestkit
 
-if TYPE_CHECKING:
-    from matchbox.server.base import MatchboxDBAdapter
-
-
-def resolver_name_for_model(model_name: str) -> str:
-    """Build canonical resolver name for a model."""
-    return f"resolver_{model_name}"
+_ASSIGNMENT_SCHEMA = {"cluster_id": pl.UInt64, "node_id": pl.UInt64}
 
 
 class ResolverTestkit(BaseModel):
-    """A testkit wrapper around a resolver node."""
+    """Resolver plus local expected data for tests."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     resolver: Resolver
+    assignments: pl.DataFrame
+    entities: tuple[ClusterEntity, ...]
 
     @property
     def name(self) -> str:
         """Return resolver name."""
         return self.resolver.name
 
-    def materialise(self, backend: "MatchboxDBAdapter") -> "ResolverTestkit":
-        """Run resolver, upload assignments, and hydrate backend IDs."""
-        self.resolver.run()
-        backend.create_resolution(
-            resolution=self.resolver.to_resolution(),
-            path=self.resolver.resolution_path,
-        )
+    def into_dag(self) -> dict[str, Any]:
+        """Return kwargs for explicit DAG insertion."""
+        config = self.resolver.config
+        return {
+            "name": self.resolver.name,
+            "inputs": list(config.inputs),
+            "resolver_class": config.resolver_class,
+            "resolver_settings": json.loads(config.resolver_settings),
+            "description": self.resolver.description,
+        }
 
-        if self.resolver._upload_results is None:  # noqa: SLF001
-            raise RuntimeError("Resolver upload payload missing after run().")
 
-        mapping = pl.from_arrow(
-            backend.insert_resolver_data(
-                path=self.resolver.resolution_path,
-                data=self.resolver._upload_results.to_arrow(),  # noqa: SLF001
-            )
-        ).cast(
-            {
-                "client_cluster_id": pl.UInt64,
-                "cluster_id": pl.UInt64,
-            }
-        )
-        self.resolver.results = (
-            self.resolver._upload_results.join(  # noqa: SLF001
-                mapping,
-                on="client_cluster_id",
-                how="left",
-            )
-            .drop("client_cluster_id")
-            .select("cluster_id", "node_id")
-        )
-        if self.resolver.results["cluster_id"].null_count() > 0:
-            raise RuntimeError(
-                "Resolver upload mapping was incomplete in resolver materialisation."
-            )
-        self.resolver.results = self.resolver._with_root_membership(  # noqa: SLF001
-            self.resolver.results
-        )
-        return self
+def _as_assignments(data: pl.DataFrame) -> pl.DataFrame:
+    """Coerce client_cluster_id outputs as if they were mapped server-side."""
+    if data.height == 0:
+        return pl.DataFrame(schema=_ASSIGNMENT_SCHEMA)
+    return (
+        data.select("cluster_id", "node_id")
+        .cast(_ASSIGNMENT_SCHEMA)
+        .unique()
+        .sort(["cluster_id", "node_id"])
+    )
 
 
 def resolver_factory(
     *,
     dag: DAG,
-    name: ResolverResolutionName,
-    inputs: Iterable[Model | Resolver],
+    inputs: Iterable[ModelTestkit | ResolverTestkit],
+    true_entities: Iterable[SourceEntity],
+    name: ResolverResolutionName | None = None,
     resolver_class: type[ResolverMethod] | str = Components,
     resolver_settings: ResolverSettings | dict[str, Any] | None = None,
     thresholds: dict[str, int] | None = None,
     description: str | None = None,
+    seed: int = 42,
 ) -> ResolverTestkit:
-    """Create a resolver testkit with sensible defaults."""
-    unique_inputs: list[Model | Resolver] = []
-    seen: set[str] = set()
-    for node in inputs:
-        if node.name in seen:
-            continue
-        seen.add(node.name)
-        unique_inputs.append(node)
+    """Build a detached resolver testkit and local expected entities."""
+    input_map: dict[str, ModelTestkit | ResolverTestkit] = {}
+    for testkit in inputs:
+        if not isinstance(testkit, (ModelTestkit, ResolverTestkit)):
+            raise TypeError(
+                "resolver_factory inputs must be ModelTestkit or ResolverTestkit."
+            )
+        input_map.setdefault(testkit.name, testkit)
 
     if resolver_settings is None:
-        is_components = resolver_class in {Components, "Components"}
-        if not is_components:
+        if resolver_class not in {Components, "Components"}:
             raise ValueError(
                 "resolver_settings must be provided for non-Components resolvers."
             )
-        effective_thresholds = thresholds or {node.name: 0 for node in unique_inputs}
-        resolver_settings = ComponentsSettings(thresholds=effective_thresholds)
+        resolver_settings = ComponentsSettings(
+            thresholds=thresholds or {input_name: 0 for input_name in input_map}
+        )
     elif thresholds is not None:
         raise ValueError("Cannot set both resolver_settings and thresholds.")
 
-    resolver = dag.resolver(
-        name=name,
-        inputs=unique_inputs,
+    resolver_inputs: list[Model | Resolver] = []
+    for testkit in input_map.values():
+        if isinstance(testkit, ModelTestkit):
+            if testkit.model.dag != dag:
+                raise ValueError("Cannot mix DAGs when building a resolver testkit.")
+            if testkit.model.results is None:
+                testkit.fake_run()
+            resolver_inputs.append(testkit.model)
+            continue
+
+        if testkit.resolver.dag != dag:
+            raise ValueError("Cannot mix DAGs when building a resolver testkit.")
+        testkit.resolver.results = _as_assignments(
+            testkit.resolver.results
+            if testkit.resolver.results is not None
+            else testkit.assignments
+        )
+        resolver_inputs.append(testkit.resolver)
+
+    generator = Faker()
+    generator.seed_instance(seed)
+    resolver = Resolver(
+        dag=dag,
+        name=name or generator.unique.word(),
+        inputs=resolver_inputs,
         resolver_class=resolver_class,
         resolver_settings=resolver_settings,
         description=description,
     )
-    return ResolverTestkit(resolver=resolver)
+    assignments = _as_assignments(resolver.run())
+
+    source_names = tuple(sorted(resolver.sources))
+    entities = tuple(
+        projected
+        for entity in true_entities
+        if (projected := entity.to_cluster_entity(*source_names)) is not None
+    )
+
+    return ResolverTestkit(
+        resolver=resolver,
+        assignments=assignments,
+        entities=entities,
+    )

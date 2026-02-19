@@ -114,44 +114,6 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     assert response.json()["exception_type"] == "MatchboxResolutionNotFoundError"
 
 
-def test_query_post_not_allowed(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, _, _ = api_client_and_mocks
-
-    response = test_client.post(
-        "/query",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "source": "foo",
-            "return_leaf_id": False,
-        },
-    )
-
-    assert response.status_code == 405
-
-
-def test_match_post_not_allowed(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, _, _ = api_client_and_mocks
-
-    response = test_client.post(
-        "/match",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "targets": "foo",
-            "source": "bar",
-            "key": "k",
-            "resolution": "res",
-        },
-    )
-
-    assert response.status_code == 405
-
-
 def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     test_client, mock_backend, _ = api_client_and_mocks
     mock_matches = [

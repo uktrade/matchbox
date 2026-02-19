@@ -903,12 +903,38 @@ class TestMatchboxCollectionsBackend:
             resolver_tkit = resolver_factory(
                 dag=dag_testkit.dag,
                 name=f"resolver_{model_testkit.model.name}",
-                inputs=[model_testkit.model],
+                inputs=[model_testkit],
+                true_entities=tuple(
+                    dag_testkit.source_to_linked[crn_testkit.name].true_entities
+                ),
                 thresholds={model_testkit.model.name: model_testkit.threshold},
             )
-            resolver_tkit.materialise(backend=self.backend)
             dag_testkit.add_resolver(resolver_tkit)
-            resolver = resolver_tkit.resolver
+            resolver = dag_testkit.resolvers[resolver_tkit.name].resolver
+
+            resolver.run()
+            self.backend.create_resolution(
+                resolution=resolver.to_resolution(),
+                path=resolver.resolution_path,
+            )
+            if resolver._upload_results is None:  # noqa: SLF001
+                raise RuntimeError("Resolver upload payload missing after run().")
+            mapping = pl.from_arrow(
+                self.backend.insert_resolver_data(
+                    path=resolver.resolution_path,
+                    data=resolver._upload_results.to_arrow(),  # noqa: SLF001
+                )
+            ).cast({"client_cluster_id": pl.UInt64, "cluster_id": pl.UInt64})
+            resolver.results = (
+                resolver._upload_results.join(  # noqa: SLF001
+                    mapping,
+                    on="client_cluster_id",
+                    how="left",
+                )
+                .drop("client_cluster_id")
+                .select("cluster_id", "node_id")
+            )
+            resolver.results = resolver._with_root_membership(resolver.results)  # noqa: SLF001
 
             # Querying from deduper with no results is the same as querying from source
             # (That we can query also implies that resolution marked as complete)

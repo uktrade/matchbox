@@ -56,5 +56,7 @@ class TestkitDAG(BaseModel):
 
     def add_resolver(self, testkit: ResolverTestkit) -> None:
         """Add resolver to the real DAG and register test data."""
-        self.dag._add_step(testkit.resolver)
+        resolver = self.dag.resolver(**testkit.into_dag())
+        resolver.results = testkit.assignments
+        testkit.resolver = resolver
         self.resolvers[testkit.name] = testkit

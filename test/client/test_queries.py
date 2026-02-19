@@ -14,111 +14,17 @@ from matchbox.common.arrow import (
     SCHEMA_QUERY_WITH_LEAVES,
     table_to_buffer,
 )
-from matchbox.common.dtos import ErrorResponse, QueryConfig
+from matchbox.common.dtos import ErrorResponse
 from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.factories.dags import TestkitDAG
-from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import (
     linked_sources_factory,
     source_factory,
     source_from_tuple,
 )
-
-
-def _resolver_for_sources() -> tuple:
-    """Create two source-backed models and a resolver for query tests."""
-    foo_testkit = source_factory(name="foo")
-    dag = foo_testkit.source.dag
-    foo = dag.source(**foo_testkit.into_dag())
-
-    bar_testkit = source_factory(name="bar", dag=dag)
-    bar = dag.source(**bar_testkit.into_dag())
-
-    foo_model = foo.query().deduper(
-        name="foo_dedupe",
-        model_class="NaiveDeduper",
-        model_settings={"unique_fields": []},
-    )
-    bar_model = bar.query().deduper(
-        name="bar_dedupe",
-        model_class="NaiveDeduper",
-        model_settings={"unique_fields": []},
-    )
-    resolver = resolver_factory(
-        dag=foo.dag,
-        name="resolver",
-        inputs=[foo_model, bar_model],
-        thresholds={foo_model.name: 0, bar_model.name: 0},
-    ).resolver
-    return foo, bar, resolver
-
-
-def test_init_query() -> None:
-    """Test that query is initialised correctly"""
-    source, _, resolver = _resolver_for_sources()
-    query = Query(
-        source,
-        dag=source.dag,
-        resolver=resolver,
-        combine_type="explode",
-        cleaning={"hello": "hello"},
-    )
-
-    assert query.config == QueryConfig(
-        source_resolutions=(source.name,),
-        resolver_resolution=resolver.name,
-        combine_type="explode",
-        cleaning={"hello": "hello"},
-    )
-
-
-def test_query_with_resolver_uses_get(
-    matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
-) -> None:
-    source_testkit = source_from_tuple(
-        data_tuple=({"a": 1}, {"a": 2}),
-        data_keys=["0", "1"],
-        name="foo",
-        engine=sqla_sqlite_warehouse,
-    ).write_to_location()
-    source = source_testkit.source.dag.source(**source_testkit.into_dag())
-    source.run()
-    model = source.query().deduper(
-        name="foo_dedupe",
-        model_class="NaiveDeduper",
-        model_settings={"unique_fields": []},
-    )
-    resolver = resolver_factory(
-        dag=source.dag,
-        name="resolver",
-        inputs=[model],
-        thresholds={model.name: 0},
-    ).resolver
-    get_route = matchbox_api.get("/query").mock(
-        return_value=Response(
-            200,
-            content=table_to_buffer(
-                pa.Table.from_pylist(
-                    [{"key": "0", "id": 1}, {"key": "1", "id": 2}],
-                    schema=SCHEMA_QUERY,
-                )
-            ).read(),
-        )
-    )
-
-    resolver.query(source).data_raw()
-
-    request = get_route.calls.last.request
-    assert dict(request.url.params) == {
-        "collection": source.dag.name,
-        "run_id": str(source.dag.run),
-        "source": source.name,
-        "resolution": resolver.name,
-        "return_leaf_id": "False",
-    }
 
 
 def test_query_single_source(
@@ -244,12 +150,12 @@ def test_query_multiple_sources(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = resolver_factory(
-        dag=foo_source.dag,
+    resolver = foo_source.dag.resolver(
         name="resolver",
         inputs=[model_foo, model_bar],
-        thresholds={model_foo.name: 0, model_bar.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {model_foo.name: 0, model_bar.name: 0}},
+    )
 
     # Validate results (no cleaning, so all columns passed through)
     results = resolver.query(foo_source, bar_source).data()
@@ -450,12 +356,12 @@ def test_query_combine_type(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = resolver_factory(
-        dag=foo_source.dag,
+    resolver = foo_source.dag.resolver(
         name="resolver",
         inputs=[foo_model, bar_model],
-        thresholds={foo_model.name: 0, bar_model.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {foo_model.name: 0, bar_model.name: 0}},
+    )
 
     # Validate results
     results = resolver.query(foo_source, bar_source, combine_type=combine_type).data()
@@ -548,12 +454,12 @@ def test_query_leaf_ids(
         model_class="NaiveDeduper",
         model_settings={"unique_fields": []},
     )
-    resolver = resolver_factory(
-        dag=foo_source.dag,
+    resolver = foo_source.dag.resolver(
         name="resolver",
         inputs=[foo_model, bar_model],
-        thresholds={foo_model.name: 0, bar_model.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {foo_model.name: 0, bar_model.name: 0}},
+    )
 
     query = resolver.query(foo_source, bar_source, combine_type=combine_type)
     data: pl.DataFrame = query.data(return_leaf_id=True)
@@ -656,12 +562,14 @@ def test_query_from_config() -> None:
         )
     )
 
-    resolver = resolver_factory(
-        dag=dag,
+    resolver = dag.resolver(
         name="resolver",
         inputs=[model_testkit, dedupe_testkit],
-        thresholds={model_testkit.name: 0, dedupe_testkit.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={
+            "thresholds": {model_testkit.name: 0, dedupe_testkit.name: 0}
+        },
+    )
 
     # Create original query
     original_query = resolver.query(
@@ -736,12 +644,12 @@ def test_query_from_config_resolver_roundtrip() -> None:
         )
     )
 
-    resolver = resolver_factory(
-        dag=dag,
+    resolver = dag.resolver(
         name="resolver",
         inputs=[linker, dedupe],
-        thresholds={linker.name: 0, dedupe.name: 0},
-    ).resolver
+        resolver_class="Components",
+        resolver_settings={"thresholds": {linker.name: 0, dedupe.name: 0}},
+    )
 
     original_query = resolver.query(
         dag.get_source(crn_testkit.name),

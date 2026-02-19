@@ -27,6 +27,7 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionExistingData,
+    MatchboxResolutionInvalidData,
     MatchboxResolutionNotFoundError,
     MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
@@ -38,6 +39,7 @@ from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
+from matchbox.common.hash import hash_arrow_table
 from matchbox.server.base import MatchboxDBAdapter
 
 
@@ -740,6 +742,130 @@ class TestMatchboxCollectionsBackend:
                 .sort("cluster_id")
             )
             assert roots.equals(root_rows)
+
+    def test_insert_resolver_data_expands_root_inputs(self) -> None:
+        """Uploading resolver roots expands to leaves when available in ``contains``."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            existing = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+
+            selected_root: int | None = None
+            expected_leaves: set[int] = set()
+            for cluster_id in (
+                existing.get_column("cluster_id").unique().sort().to_list()
+            ):
+                leaves = set(
+                    int(node_id)
+                    for node_id in existing.filter(
+                        (pl.col("cluster_id") == cluster_id)
+                        & (pl.col("node_id") != cluster_id)
+                    )
+                    .get_column("node_id")
+                    .to_list()
+                )
+                if leaves:
+                    selected_root = int(cluster_id)
+                    expected_leaves = leaves
+                    break
+
+            assert selected_root is not None
+            upload = pa.table(
+                {
+                    "client_cluster_id": pa.array([2], type=pa.uint64()),
+                    "node_id": pa.array([selected_root], type=pa.uint64()),
+                }
+            )
+            path = resolver.resolution_path.model_copy(
+                update={"name": "resolver_root_expansion"}
+            )
+            resolution = resolver.to_resolution().model_copy(
+                update={"fingerprint": hash_arrow_table(upload)}
+            )
+
+            self.backend.create_resolution(resolution=resolution, path=path)
+            mapping = pl.from_arrow(
+                self.backend.insert_resolver_data(path=path, data=upload)
+            )
+            mapped_cluster_id = int(mapping.get_column("cluster_id").item())
+
+            uploaded = pl.from_arrow(self.backend.get_resolver_data(path=path))
+            mapped_members = set(
+                int(node_id)
+                for node_id in uploaded.filter(
+                    pl.col("cluster_id") == mapped_cluster_id
+                )
+                .get_column("node_id")
+                .to_list()
+            )
+            assert expected_leaves.issubset(mapped_members)
+            assert mapped_cluster_id in mapped_members
+
+    def test_insert_resolver_data_deduplicates_and_sorts_mapping(self) -> None:
+        """Duplicate uploaded rows should still return sorted unique mapping rows."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            existing = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+            node_candidates = [
+                int(node_id)
+                for node_id in existing.get_column("node_id").unique().sort().to_list()
+            ]
+            assert len(node_candidates) >= 2
+            left, right = node_candidates[:2]
+
+            upload = pa.table(
+                {
+                    "client_cluster_id": pa.array([9, 7, 9, 7, 7], type=pa.uint64()),
+                    "node_id": pa.array(
+                        [left, right, left, right, right], type=pa.uint64()
+                    ),
+                }
+            )
+            path = resolver.resolution_path.model_copy(
+                update={"name": "resolver_duplicate_upload"}
+            )
+            resolution = resolver.to_resolution().model_copy(
+                update={"fingerprint": hash_arrow_table(upload)}
+            )
+
+            self.backend.create_resolution(resolution=resolution, path=path)
+            mapping = pl.from_arrow(
+                self.backend.insert_resolver_data(path=path, data=upload)
+            )
+
+            assert mapping.equals(mapping.sort("client_cluster_id"))
+            assert mapping.get_column("client_cluster_id").to_list() == [7, 9]
+            assert mapping.select("client_cluster_id").n_unique() == 2
+
+    def test_insert_resolver_data_rejects_unknown_cluster_ids(self) -> None:
+        """Resolver uploads fail clearly when assignments reference unknown clusters."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            existing = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+            unknown_cluster_id = int(existing.get_column("node_id").max()) + 10000
+            upload = pa.table(
+                {
+                    "client_cluster_id": pa.array([1], type=pa.uint64()),
+                    "node_id": pa.array([unknown_cluster_id], type=pa.uint64()),
+                }
+            )
+            path = resolver.resolution_path.model_copy(
+                update={"name": "resolver_unknown_cluster"}
+            )
+            resolution = resolver.to_resolution().model_copy(
+                update={"fingerprint": hash_arrow_table(upload)}
+            )
+
+            self.backend.create_resolution(resolution=resolution, path=path)
+            with pytest.raises(
+                MatchboxResolutionInvalidData, match="unknown cluster IDs"
+            ):
+                self.backend.insert_resolver_data(path=path, data=upload)
 
     def test_get_resolver_data_rejects_incomplete_resolver(self) -> None:
         """Resolver data cannot be downloaded before upload completion."""

@@ -27,7 +27,6 @@ from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
     MatchboxDeletionNotConfirmed,
     MatchboxLockError,
-    MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
     MatchboxRunNotWriteable,
 )
@@ -35,10 +34,8 @@ from matchbox.common.logging import logger
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Collections,
-    Contains,
     ModelConfigs,
     ModelEdges,
-    ResolutionClusters,
     Resolutions,
     ResolverConfigs,
     Runs,
@@ -51,6 +48,10 @@ from matchbox.server.postgresql.utils.insert import (
     insert_hashes,
     insert_model_edges,
     insert_resolver_clusters,
+)
+from matchbox.server.postgresql.utils.query import (
+    require_complete_resolver,
+    resolver_membership_subquery,
 )
 
 
@@ -392,7 +393,11 @@ class MatchboxPostgresCollectionsMixin:
     def insert_resolver_data(self, path: ResolverResolutionPath, data: Table) -> Table:
         """Insert resolver assignments and return mapping table."""
         self._check_writeable(path)
-        mapping = insert_resolver_clusters(path=path, assignments=data)
+        mapping = insert_resolver_clusters(
+            path=path,
+            assignments=data,
+            batch_size=self.settings.batch_size,
+        )
         self.unlock_resolution_data(path=path, complete=True)
         return mapping
 
@@ -412,28 +417,11 @@ class MatchboxPostgresCollectionsMixin:
 
     def get_resolver_data(self, path: ResolverResolutionPath) -> Table:  # noqa: D102
         with MBDB.get_session() as session:
-            resolution = Resolutions.from_path(
-                path=path,
-                res_type=ResolutionType.RESOLVER,
-                session=session,
+            resolution = require_complete_resolver(session=session, path=path)
+            assignments_query = resolver_membership_subquery(
+                resolution_id=resolution.resolution_id,
+                alias="assignments",
             )
-            if resolution.upload_stage != UploadStage.COMPLETE:
-                raise MatchboxResolutionNotQueriable
-
-            roots_query = select(
-                ResolutionClusters.cluster_id.label("cluster_id"),
-                ResolutionClusters.cluster_id.label("node_id"),
-            ).where(ResolutionClusters.resolution_id == resolution.resolution_id)
-            leaves_query = (
-                select(
-                    ResolutionClusters.cluster_id.label("cluster_id"),
-                    Contains.leaf.label("node_id"),
-                )
-                .select_from(ResolutionClusters)
-                .join(Contains, Contains.root == ResolutionClusters.cluster_id)
-                .where(ResolutionClusters.resolution_id == resolution.resolution_id)
-            )
-            assignments_query = roots_query.union(leaves_query).subquery("assignments")
             ordered_query = select(
                 assignments_query.c.cluster_id,
                 assignments_query.c.node_id,

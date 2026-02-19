@@ -2,6 +2,7 @@
 
 import pyarrow as pa
 from sqlalchemy import and_, func, literal_column, select
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.selectable import Select, Subquery
 
 from matchbox.common.db import sql_to_df
@@ -25,7 +26,23 @@ from matchbox.server.postgresql.orm import (
 from matchbox.server.postgresql.utils.db import compile_sql
 
 
-def _resolver_assignment_subquery(resolution_id: int) -> Subquery:
+def require_complete_resolver(
+    session: Session,
+    path: ResolverResolutionPath,
+) -> Resolutions:
+    """Resolve and validate a resolver path for query-time operations."""
+    resolver_resolution = Resolutions.from_path(path=path, session=session)
+    if resolver_resolution.type != ResolutionType.RESOLVER:
+        raise MatchboxResolutionNotQueriable
+    if resolver_resolution.upload_stage != UploadStage.COMPLETE:
+        raise MatchboxResolutionNotQueriable
+    return resolver_resolution
+
+
+def resolver_leaf_to_root_subquery(
+    resolution_id: int,
+    alias: str = "resolver_assignments",
+) -> Subquery:
     """Build leaf->root assignment subquery for a resolver."""
     return (
         select(
@@ -40,7 +57,43 @@ def _resolver_assignment_subquery(resolution_id: int) -> Subquery:
                 ResolutionClusters.resolution_id == resolution_id,
             ),
         )
-        .subquery("resolver_assignments")
+        .subquery(alias)
+    )
+
+
+def resolver_membership_subquery(
+    resolution_id: int,
+    alias: str = "resolver_membership",
+) -> Subquery:
+    """Build ``cluster_id``/``node_id`` membership rows for a resolver."""
+    roots_query = select(
+        ResolutionClusters.cluster_id.label("cluster_id"),
+        ResolutionClusters.cluster_id.label("node_id"),
+    ).where(ResolutionClusters.resolution_id == resolution_id)
+
+    leaves_query = (
+        select(
+            ResolutionClusters.cluster_id.label("cluster_id"),
+            Contains.leaf.label("node_id"),
+        )
+        .select_from(ResolutionClusters)
+        .join(Contains, Contains.root == ResolutionClusters.cluster_id)
+        .where(ResolutionClusters.resolution_id == resolution_id)
+    )
+
+    return roots_query.union(leaves_query).subquery(alias)
+
+
+def _source_cluster_query(source_config_id: int) -> Select:
+    """Build base source cluster query with root and leaf IDs."""
+    return (
+        select(
+            ClusterSourceKey.cluster_id.label("root_id"),
+            ClusterSourceKey.cluster_id.label("leaf_id"),
+            ClusterSourceKey.key,
+        )
+        .where(ClusterSourceKey.source_config_id == source_config_id)
+        .distinct()
     )
 
 
@@ -57,30 +110,13 @@ def query(
             session=session,
         )
         source_config: SourceConfigs = source_resolution.source_config
+        source_config_id = source_config.source_config_id
 
         if point_of_truth is None:
-            query_stmt: Select = (
-                select(
-                    ClusterSourceKey.cluster_id.label("root_id"),
-                    ClusterSourceKey.cluster_id.label("leaf_id"),
-                    ClusterSourceKey.key,
-                )
-                .where(
-                    ClusterSourceKey.source_config_id == source_config.source_config_id
-                )
-                .distinct()
-            )
+            query_stmt = _source_cluster_query(source_config_id)
         else:
-            resolver_resolution = Resolutions.from_path(
-                path=point_of_truth,
-                session=session,
-            )
-            if resolver_resolution.type != ResolutionType.RESOLVER:
-                raise MatchboxResolutionNotQueriable
-            if resolver_resolution.upload_stage != UploadStage.COMPLETE:
-                raise MatchboxResolutionNotQueriable
-
-            assignments = _resolver_assignment_subquery(
+            resolver_resolution = require_complete_resolver(session, point_of_truth)
+            assignments = resolver_leaf_to_root_subquery(
                 resolver_resolution.resolution_id
             )
             query_stmt = (
@@ -98,9 +134,7 @@ def query(
                     assignments.c.leaf_id == ClusterSourceKey.cluster_id,
                     isouter=True,
                 )
-                .where(
-                    ClusterSourceKey.source_config_id == source_config.source_config_id
-                )
+                .where(ClusterSourceKey.source_config_id == source_config_id)
                 .distinct()
             )
 
@@ -141,22 +175,14 @@ def match(
             path=source,
             session=session,
         ).source_config
-        resolver_resolution: Resolutions = Resolutions.from_path(
-            path=point_of_truth,
-            session=session,
-        )
-
-        if resolver_resolution.type != ResolutionType.RESOLVER:
-            raise MatchboxResolutionNotQueriable
-        if resolver_resolution.upload_stage != UploadStage.COMPLETE:
-            raise MatchboxResolutionNotQueriable
+        resolver_resolution = require_complete_resolver(session, point_of_truth)
 
         target_configs: list[SourceConfigs] = [
             Resolutions.from_path(path=target, session=session).source_config
             for target in targets
         ]
 
-        assignments = _resolver_assignment_subquery(resolver_resolution.resolution_id)
+        assignments = resolver_leaf_to_root_subquery(resolver_resolution.resolution_id)
         target_cluster_query = (
             select(func.coalesce(assignments.c.root_id, ClusterSourceKey.cluster_id))
             .select_from(ClusterSourceKey)

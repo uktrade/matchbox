@@ -1,5 +1,6 @@
 import tempfile
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -10,8 +11,9 @@ from respx import MockRouter
 from sqlalchemy import Engine
 
 from matchbox.client.dags import DAG
-from matchbox.client.eval import get_samples
+from matchbox.client.eval import EvalData, get_samples
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.resolvers import Components, ComponentsSettings
 from matchbox.client.results import ResolvedMatches
 from matchbox.common.arrow import (
     SCHEMA_EVAL_SAMPLES,
@@ -19,7 +21,10 @@ from matchbox.common.arrow import (
     table_to_buffer,
 )
 from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
-from matchbox.common.exceptions import MatchboxSourceTableError
+from matchbox.common.exceptions import (
+    MatchboxResolutionNotQueriable,
+    MatchboxSourceTableError,
+)
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
 
@@ -141,11 +146,19 @@ def test_get_samples_remote(
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.key=r.key"},
     )
-    foo_bar_baz = foo_bar.query(foo, bar).linker(
+    bar_baz = bar.query().linker(
         baz.query(),
         name="linker2",
         model_class=DeterministicLinker,
         model_settings={"comparisons": "l.key=r.key"},
+    )
+    resolver = dag.resolver(
+        name="resolver",
+        inputs=[foo_bar, bar_baz],
+        resolver_class=Components,
+        resolver_settings=ComponentsSettings(
+            thresholds={foo_bar.name: 0, bar_baz.name: 0}
+        ),
     )
 
     # Mock the collection and run endpoint that load_pending() calls
@@ -159,15 +172,18 @@ def test_get_samples_remote(
             "baz": baz_testkit.fake_run().source.to_resolution(),
             "linker1": Resolution(
                 fingerprint=b"mock",
-                truth=1,
                 resolution_type=ResolutionType.MODEL,
                 config=foo_bar.config,
             ),
             "linker2": Resolution(
                 fingerprint=b"mock2",
-                truth=1,
                 resolution_type=ResolutionType.MODEL,
-                config=foo_bar_baz.config,
+                config=bar_baz.config,
+            ),
+            "resolver": Resolution(
+                fingerprint=b"mock3",
+                resolution_type=ResolutionType.RESOLVER,
+                config=resolver.config,
             ),
         },
     )
@@ -317,3 +333,64 @@ def test_get_samples_remote(
             resolution=dag.final_step.resolution_path.name,
             dag=bad_dag,
         )
+
+
+def test_evaldata_precision_recall_from_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EvalData scores resolver output from backend-resolved matches."""
+    judgements = pl.DataFrame(
+        [{"user_name": "alice", "shown": 1, "endorsed": 1}],
+        schema={"user_name": pl.String, "shown": pl.UInt64, "endorsed": pl.UInt64},
+    )
+    expansion = pl.DataFrame(
+        [{"root": 1, "leaves": [1, 2]}],
+        schema={"root": pl.UInt64, "leaves": pl.List(pl.UInt64)},
+    )
+
+    monkeypatch.setattr(
+        "matchbox.client.eval.samples._handler.download_eval_data",
+        lambda tag=None: (judgements, expansion),
+    )
+
+    resolved = SimpleNamespace(
+        as_dump=lambda: pl.DataFrame({"id": [1, 1], "leaf_id": [1, 2]})
+    )
+    resolver = SimpleNamespace(
+        name="resolver",
+        dag=SimpleNamespace(get_matches=lambda node=None: resolved),
+    )
+
+    precision, recall = EvalData().precision_recall(resolver=resolver)
+    assert precision == 1.0
+    assert recall == 1.0
+
+
+def test_evaldata_precision_recall_requires_synced_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EvalData emits a clear error when resolver cannot be queried."""
+    judgements = pl.DataFrame(
+        [{"user_name": "alice", "shown": 1, "endorsed": 1}],
+        schema={"user_name": pl.String, "shown": pl.UInt64, "endorsed": pl.UInt64},
+    )
+    expansion = pl.DataFrame(
+        [{"root": 1, "leaves": [1, 2]}],
+        schema={"root": pl.UInt64, "leaves": pl.List(pl.UInt64)},
+    )
+
+    monkeypatch.setattr(
+        "matchbox.client.eval.samples._handler.download_eval_data",
+        lambda tag=None: (judgements, expansion),
+    )
+
+    def raise_not_queriable(node: str | None = None) -> None:
+        raise MatchboxResolutionNotQueriable("Resolver is not complete")
+
+    resolver = SimpleNamespace(
+        name="resolver",
+        dag=SimpleNamespace(get_matches=raise_not_queriable),
+    )
+
+    with pytest.raises(ValueError, match="must be run and synced before scoring"):
+        EvalData().precision_recall(resolver=resolver)

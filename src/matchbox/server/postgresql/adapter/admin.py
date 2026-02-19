@@ -37,9 +37,9 @@ from matchbox.server.postgresql.orm import (
     Collections,
     EvalJudgements,
     Groups,
+    ModelEdges,
     Permissions,
-    Probabilities,
-    Results,
+    ResolutionClusters,
     UserGroups,
     Users,
     insert,
@@ -386,9 +386,9 @@ class MatchboxPostgresAdminMixin:
                 select(EvalJudgements.endorsed_cluster_id.label("cluster_id")),
                 select(EvalJudgements.shown_cluster_id.label("cluster_id")),
                 select(ClusterSourceKey.cluster_id),
-                select(Probabilities.cluster_id),
-                select(Results.left_id.label("cluster_id")),
-                select(Results.right_id.label("cluster_id")),
+                select(ResolutionClusters.cluster_id.label("cluster_id")),
+                select(ModelEdges.left_id.label("cluster_id")),
+                select(ModelEdges.right_id.label("cluster_id")),
             ).cte("union_all_cte")
 
             # Deduplicate only once

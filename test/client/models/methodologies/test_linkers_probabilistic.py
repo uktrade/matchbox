@@ -17,7 +17,6 @@ from matchbox.client.models.linkers.weighteddeterministic import (
     WeightedDeterministicSettings,
 )
 from matchbox.client.queries import Query
-from matchbox.client.results import ModelResults
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.factories.entities import (
     FeatureConfig,
@@ -251,11 +250,11 @@ def test_probabilistic_scores_generation(
         right_query=Query(right_source, dag=linked.dag),
     )
 
-    results: ModelResults = linker.run()
+    results = linker.run()
 
     # Validate results against ground truth
     identical, report = linked.diff_results(
-        probabilities=results.probabilities,
+        probabilities=results,
         left_clusters=left_source.entities,
         right_clusters=right_source.entities,
         sources=["source_left", "source_right"],
@@ -266,11 +265,11 @@ def test_probabilistic_scores_generation(
 
     # Validate results over a threshold as a subset of the ground truth
     identical, report = linked.diff_results(
-        probabilities=results.probabilities,
+        probabilities=results,
         left_clusters=left_source.entities,
         right_clusters=right_source.entities,
         sources=["source_left", "source_right"],
-        threshold=results.probabilities["probability"].mean(),
+        threshold=results["probability"].mean(),
     )
 
     assert not identical, f"Expected imperfect results but got: {report}"

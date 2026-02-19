@@ -1,6 +1,6 @@
 import json
 
-import pyarrow as pa
+import polars as pl
 import pytest
 from httpx import Response
 from respx.router import MockRouter
@@ -42,17 +42,6 @@ def test_init_and_run_model(
     bar = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
     bar.source.run()
 
-    foo_leafy_data = foo.data.append_column(
-        "leaf_id", pa.array(range(len(foo.data)), type=pa.int64())
-    )
-    bar_leafy_data = foo.data.append_column(
-        "leaf_id",
-        pa.array(
-            range(len(foo_leafy_data), len(foo_leafy_data) + len(bar.data)),
-            type=pa.int64(),
-        ),
-    )
-
     # Mock API
     query_endpoint = matchbox_api.get("/query").mock(
         side_effect=[
@@ -62,9 +51,6 @@ def test_init_and_run_model(
             # Second query (for pre-fetching)
             Response(200, content=table_to_buffer(foo.data).read()),
             Response(200, content=table_to_buffer(bar.data).read()),
-            # Third query (for validation)
-            Response(200, content=table_to_buffer(foo_leafy_data).read()),
-            Response(200, content=table_to_buffer(bar_leafy_data).read()),
         ]
     )
     dag = DAG("collection")
@@ -89,19 +75,15 @@ def test_init_and_run_model(
         right_query=bar_query.config,
     )
 
-    model.run()
-    assert model.results.left_root_leaf is None
-    assert model.results.right_root_leaf is None
+    results = model.run()
+    assert isinstance(results, pl.DataFrame)
+    assert isinstance(model.results, pl.DataFrame)
 
     # Can use pre-fetched query data
     left_df, right_df = foo_query.data(), bar_query.data()
     old_query_count = query_endpoint.call_count
     model.run(left_df, right_df)
     assert query_endpoint.call_count == old_query_count
-
-    model.run(for_validation=True)
-    assert model.results.left_root_leaf is not None
-    assert model.results.right_root_leaf is not None
 
 
 def test_model_sync(matchbox_api: MockRouter) -> None:
@@ -274,27 +256,11 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     assert insert_results_route.called
 
 
-def test_truth_getter() -> None:
-    """Test getting model truth threshold from config."""
-    # Create testkit with specific truth value
+def test_model_query_method_removed() -> None:
+    """Models no longer expose query() directly."""
     testkit = model_factory(model_type="linker")
-    # Update the model to have a truth value
-    testkit.model._truth = 90  # Integer truth value (90 = 0.9 as float)
-
-    # Get truth as float
-    truth = testkit.model.truth
-
-    # Verify it returns the correct value converted to float
-    assert truth == 0.9
-
-
-def test_truth_setter_validation_error() -> None:
-    """Test setting invalid truth values."""
-    testkit = model_factory(model_type="linker")
-
-    # Attempt to set an invalid truth value using the validated setter
-    with pytest.raises(ValueError):
-        testkit.model.truth = 1.5
+    with pytest.raises(AttributeError):
+        _ = testkit.model.query
 
 
 def test_delete_resolution(matchbox_api: MockRouter) -> None:

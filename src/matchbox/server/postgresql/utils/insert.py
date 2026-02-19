@@ -1,53 +1,42 @@
 """Utilities for inserting data into the PostgreSQL backend."""
 
-from collections.abc import Iterator
-
-import polars as pl
 import pyarrow as pa
-from sqlalchemy import exists, func, join, literal, select, update
+from sqlalchemy import exists, func, join, literal, select
 from sqlalchemy.dialects.postgresql import (
     ARRAY,
     BIGINT,
-    BOOLEAN,
     BYTEA,
     SMALLINT,
     TEXT,
+    aggregate_order_by,
     insert,
 )
 
+from matchbox.common.arrow import SCHEMA_RESOLVER_MAPPING
 from matchbox.common.dtos import (
     ModelResolutionPath,
     ResolutionType,
+    ResolverResolutionPath,
     SourceResolutionPath,
 )
 from matchbox.common.exceptions import (
     MatchboxResolutionExistingData,
     MatchboxResolutionInvalidData,
 )
-from matchbox.common.hash import IntMap, hash_arrow_table, hash_model_results
+from matchbox.common.hash import hash_arrow_table, hash_model_results
 from matchbox.common.logging import logger
-from matchbox.common.transform import Cluster, DisjointSet
+from matchbox.common.transform import hash_cluster_leaves
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
     ClusterSourceKey,
     Contains,
-    Probabilities,
+    ModelEdges,
+    ResolutionClusters,
     Resolutions,
-    Results,
     SourceConfigs,
 )
-from matchbox.server.postgresql.utils.db import (
-    ingest_to_temporary_table,
-)
-from matchbox.server.postgresql.utils.query import get_parent_clusters_and_leaves
-
-MODEL_CLUSTERS_SCHEMA = {
-    "cluster_id": pl.Int64,
-    "cluster_hash": pl.Binary,
-    "leaves": pl.List(pl.Int64),
-    "probability": pl.Int8,
-}
+from matchbox.server.postgresql.utils.db import ingest_to_temporary_table
 
 
 def insert_hashes(
@@ -76,11 +65,9 @@ def insert_hashes(
         resolution = Resolutions.from_path(
             path=path, res_type=ResolutionType.SOURCE, session=session
         )
-        # Check if the content hash is the same
         if resolution.fingerprint != fingerprint:
             raise MatchboxResolutionInvalidData
 
-        # Determine if the resolution already has any keys
         existing_keys = session.execute(
             select(func.count())
             .select_from(
@@ -109,7 +96,6 @@ def insert_hashes(
         MBDB.get_session() as session,
     ):
         try:
-            # Add clusters
             new_hashes = (
                 select(incoming.c.hash)
                 .distinct()
@@ -131,7 +117,6 @@ def insert_hashes(
             )
             session.flush()
 
-            # Add source keys
             exploded = select(
                 Clusters.cluster_id,
                 literal(source_config_id, BIGINT).label("source_config_id"),
@@ -153,7 +138,6 @@ def insert_hashes(
             session.commit()
 
         except Exception as e:
-            # Log the error and rollback
             logger.warning(f"Error, rolling back: {e}", prefix=log_prefix)
             session.rollback()
             raise
@@ -162,200 +146,44 @@ def insert_hashes(
         Clusters.__table__.fullname,
         ClusterSourceKey.__table__.fullname,
     )
-
     logger.info("Finished", prefix=log_prefix)
 
 
-def _build_cluster_objects(
-    nested_dict: dict[int, dict[str, list[dict]]],
-    intmap: IntMap,
-) -> dict[int, Cluster]:
-    """Convert the nested dictionary to Cluster objects.
-
-    Args:
-        nested_dict: Dictionary from get_parent_clusters_and_leaves()
-        intmap: IntMap object for creating new IDs safely
-
-    Returns:
-        Dict mapping cluster IDs to Cluster objects
-    """
-    cluster_lookup: dict[int, Cluster] = {}
-
-    for cluster_id, data in nested_dict.items():
-        # Create leaf clusters on-demand
-        leaves = []
-        for leaf_data in data["leaves"]:
-            leaf_id = leaf_data["leaf_id"]
-            if leaf_id not in cluster_lookup:
-                cluster_lookup[leaf_id] = Cluster(
-                    id=leaf_id, hash=leaf_data["leaf_hash"], intmap=intmap
-                )
-            leaves.append(cluster_lookup[leaf_id])
-
-        # Create parent cluster
-        cluster_lookup[cluster_id] = Cluster(
-            id=cluster_id,
-            hash=data["root_hash"],
-            probability=data["probability"],
-            leaves=leaves,
-            intmap=intmap,
-        )
-
-    return cluster_lookup
-
-
-def _results_to_cluster_pairs(
-    cluster_lookup: dict[int, Cluster],
-    results: pa.Table,
-) -> Iterator[tuple[Cluster, Cluster, int]]:
-    """Convert the results from a PyArrow table to an iterator of cluster pairs.
-
-    Args:
-        cluster_lookup (dict[int, Cluster]): A dictionary mapping cluster IDs to
-            Cluster objects.
-        results (pa.Table): The PyArrow table containing the results: left_id
-            right_id, and probability.
-
-    Returns:
-        list[tuple[Cluster, Cluster, int]]: An iterator of tuples, each containing
-            the left cluster, right cluster, and the probability, in descending
-            order of probability.
-    """
-    for row in pl.from_arrow(results).sort("probability", descending=True).iter_rows():
-        left_cluster: Cluster = cluster_lookup[row[0]]
-        right_cluster: Cluster = cluster_lookup[row[1]]
-
-        yield left_cluster, right_cluster, row[2]
-
-
-def _build_cluster_hierarchy(
-    cluster_lookup: dict[int, Cluster], probabilities: pa.Table
-) -> pl.DataFrame:
-    """Build cluster hierarchy using disjoint sets and probability thresholding.
-
-    Args:
-        cluster_lookup: Dictionary mapping cluster IDs to Cluster objects
-        probabilities: Arrow table containing probability data
-
-    Returns:
-        DataFrame with MODEL_CLUSTERS_SCHEMA
-    """
-    logger.debug("Computing hierarchies")
-
-    djs = DisjointSet[Cluster]()
-    all_clusters: dict[bytes, Cluster] = {}
-    seen_components: set[frozenset[Cluster]] = set()
-    threshold: int = int(pa.compute.max(probabilities["probability"]).as_py())
-
-    def _process_components(probability: int) -> None:
-        """Process components at the current threshold."""
-        components: set[frozenset[Cluster]] = {
-            frozenset(component) for component in djs.get_components()
-        }
-        for component in components.difference(seen_components):
-            cluster = Cluster.combine(
-                clusters=component,
-                probability=probability,
-            )
-            all_clusters[cluster.hash] = cluster
-
-        return components
-
-    for left_cluster, right_cluster, probability in _results_to_cluster_pairs(
-        cluster_lookup, probabilities
-    ):
-        if probability < threshold:
-            # Process the components at the previous threshold
-            seen_components.update(_process_components(threshold))
-            threshold = probability
-
-        djs.union(left_cluster, right_cluster)
-
-    # Process any remaining components
-    _process_components(probability)
-    return pl.DataFrame(
-        [
-            {
-                "cluster_hash": cluster.hash,
-                "cluster_id": cluster.id,
-                "probability": cluster.probability,
-                "leaves": [leaf.id for leaf in cluster.leaves]
-                if cluster.leaves
-                else [],
-            }
-            for cluster in all_clusters.values()
-        ],
-        schema=MODEL_CLUSTERS_SCHEMA,
-    )
-
-
-def insert_results(
+def insert_model_edges(
     path: ModelResolutionPath,
     results: pa.Table,
     batch_size: int,
 ) -> None:
-    """Writes a results table to Matchbox.
-
-    The PostgreSQL backend stores clusters in a hierarchical structure, where
-    each component references its parent component at a higher threshold.
-
-    This means two-item components are synonymous with their original pairwise
-    probabilities.
-
-    This allows easy querying of clusters at any threshold.
-
-    Args:
-        path: The path of the model resolution to upload results for
-        results: A PyArrow results table with left_id, right_id, probability
-        batch_size: Number of records to insert in each batch
-
-    Raises:
-        MatchboxResolutionNotFoundError: If the specified resolution doesn't exist.
-        MatchboxResolutionInvalidData: If data fingerprint conflicts with resolution.
-        MatchboxResolutionExistingData: If data was already inserted for resolution.
-    """
+    """Writes model edges to Matchbox."""
     log_prefix = f"Model {path.name}"
     if results.num_rows == 0:
-        logger.info("Empty results given.", prefix=log_prefix)
+        logger.info("Empty model edges given.", prefix=log_prefix)
         return
 
     resolution = Resolutions.from_path(path=path, res_type=ResolutionType.MODEL)
 
-    # Check if the content hash is the same
     fingerprint = hash_model_results(results)
     if resolution.fingerprint != fingerprint:
         raise MatchboxResolutionInvalidData
 
     with MBDB.get_session() as session:
-        existing_results = session.execute(
+        existing_edges = session.execute(
             select(func.count())
-            .select_from(Results)
-            .where(Results.resolution_id == resolution.resolution_id)
+            .select_from(ModelEdges)
+            .where(ModelEdges.resolution_id == resolution.resolution_id)
         ).scalar_one()
 
-        if existing_results > 0:
+        if existing_edges > 0:
             raise MatchboxResolutionExistingData
 
     logger.info(
-        f"Writing results data with batch size {batch_size:,}", prefix=log_prefix
+        f"Writing model edges with batch size {batch_size:,}", prefix=log_prefix
     )
 
-    # Get a cluster lookup dictionary based on the resolution's parents
-    im = IntMap()
-    nested_data = get_parent_clusters_and_leaves(resolution=resolution)
-    cluster_lookup: dict[int, Cluster] = _build_cluster_objects(nested_data, im)
-
-    logger.debug("Computing hierarchies", prefix=log_prefix)
-    cluster_df = _build_cluster_hierarchy(
-        cluster_lookup=cluster_lookup, probabilities=results
-    )
-    del cluster_lookup
-
-    logger.debug("Ingesting clusters dataframe", prefix=log_prefix)
     with (
         MBDB.get_session() as session,
         ingest_to_temporary_table(
-            table_name="model_results",
+            table_name="incoming_model_edges",
             schema_name="mb",
             column_types={
                 "left_id": BIGINT(),
@@ -364,125 +192,293 @@ def insert_results(
             },
             data=results,
             max_chunksize=batch_size,
-        ) as new_results,
-        ingest_to_temporary_table(
-            table_name="model_clusters",
-            schema_name="mb",
-            column_types={
-                "cluster_id": BIGINT(),
-                "cluster_hash": BYTEA(),
-                "leaves": ARRAY(BIGINT),
-                "probability": SMALLINT(),
-                "is_new": BOOLEAN(),
-            },
-            data=cluster_df.with_columns(pl.lit(True).alias("is_new")).to_arrow(),
-            max_chunksize=batch_size,
-        ) as new_clusters,
+        ) as incoming_edges,
     ):
         try:
-            # Labelling new clusters is technically unnecessary but theory is that
-            # in our case it will be faster than a lot of ignored conflicts
-            session.execute(
-                update(new_clusters).values(
-                    is_new=~exists(
-                        select(1).where(
-                            Clusters.cluster_hash == new_clusters.c.cluster_hash
-                        )
-                    )
-                )
-            )
-            session.flush()
-            # Clusters
-            cluster_select = (
-                select(new_clusters.c.cluster_hash)
-                .distinct()
-                .where(new_clusters.c.is_new)
-            )
-            cluster_results = session.execute(
-                insert(Clusters)
-                .from_select(["cluster_hash"], cluster_select)
-                .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
-            )
-            logger.info(
-                f"Will add {cluster_results.rowcount:,} entries to Clusters table",
-                prefix=log_prefix,
-            )
-            session.flush()
-
-            # Contains
-            contains_select = (
-                select(
-                    Clusters.cluster_id.label("root"),
-                    func.unnest(new_clusters.c.leaves).label("leaf"),
-                )
-                .select_from(
-                    new_clusters.join(
-                        Clusters, Clusters.cluster_hash == new_clusters.c.cluster_hash
-                    )
-                )
-                .where(new_clusters.c.is_new)
-            )
-            contains_results = session.execute(
-                insert(Contains)
-                .from_select(["root", "leaf"], contains_select)
-                .on_conflict_do_nothing(index_elements=[Contains.root, Contains.leaf])
-            )
-            logger.info(
-                f"Will add {contains_results.rowcount:,} entries to Contains table",
-                prefix=log_prefix,
-            )
-
-            # Probabilities
-            prob_select = select(
+            edges_select = select(
                 literal(resolution.resolution_id, BIGINT).label("resolution_id"),
-                Clusters.cluster_id,
-                new_clusters.c.probability,
-            ).select_from(
-                new_clusters.join(
-                    Clusters, Clusters.cluster_hash == new_clusters.c.cluster_hash
-                )
+                incoming_edges.c.left_id,
+                incoming_edges.c.right_id,
+                incoming_edges.c.probability,
             )
-            prob_res = session.execute(
-                insert(Probabilities).from_select(
-                    ["resolution_id", "cluster_id", "probability"], prob_select
-                )
-            )
-            logger.info(
-                f"Will add {prob_res.rowcount:,} entries to Probabilities table",
-                prefix=log_prefix,
-            )
-
-            # Results
-            results_select = select(
-                literal(resolution.resolution_id, BIGINT).label("resolution_id"),
-                new_results.c.left_id,
-                new_results.c.right_id,
-                new_results.c.probability,
-            )
-            results_res = session.execute(
-                insert(Results).from_select(
+            inserted = session.execute(
+                insert(ModelEdges).from_select(
                     ["resolution_id", "left_id", "right_id", "probability"],
-                    results_select,
+                    edges_select,
                 )
             )
             logger.info(
-                f"Will add {results_res.rowcount:,} entries to Results table",
+                f"Will add {inserted.rowcount:,} entries to ModelEdges table",
                 prefix=log_prefix,
             )
             session.commit()
 
         except Exception as e:
             logger.error(
-                f"Failed to insert data, rolling back: {str(e)}", prefix=log_prefix
+                f"Failed to insert model edges, rolling back: {str(e)}",
+                prefix=log_prefix,
             )
             session.rollback()
             raise
 
+    MBDB.vacuum_analyze(ModelEdges.__table__.fullname)
+    logger.info("Model edge insert complete!", prefix=log_prefix)
+
+
+def insert_resolver_clusters(
+    path: ResolverResolutionPath,
+    assignments: pa.Table,
+    batch_size: int,
+) -> pa.Table:
+    """Write resolver assignments and return client-to-cluster ID mapping.
+
+    Steps:
+    1. Validate fingerprint/existing-data constraints and short-circuit empty uploads.
+    2. Ingest uploaded assignments into a temporary table.
+    3. Expand uploaded nodes to leaves in SQL and validate all leaves exist.
+    4. Compute per-client cluster hashes in Python from SQL-aggregated leaf hashes.
+    5. Ingest hashes, materialise canonical clusters, and build client->cluster map.
+    6. Insert ``contains`` and ``resolution_clusters`` rows from that map.
+    7. Return the deterministic mapping table.
+    """
+    log_prefix = f"Resolver {path.name}"
+    fingerprint = hash_arrow_table(assignments)
+    assignment_data = assignments.select(["client_cluster_id", "node_id"])
+
+    # 1) Validate resolver upload constraints and short-circuit empty payloads.
+    with MBDB.get_session() as session:
+        resolution = Resolutions.from_path(
+            path=path, res_type=ResolutionType.RESOLVER, session=session
+        )
+
+        if resolution.fingerprint != fingerprint:
+            raise MatchboxResolutionInvalidData
+
+        existing = session.execute(
+            select(func.count())
+            .select_from(ResolutionClusters)
+            .where(ResolutionClusters.resolution_id == resolution.resolution_id)
+        ).scalar_one()
+
+        if existing > 0:
+            raise MatchboxResolutionExistingData
+
+        if assignment_data.num_rows == 0:
+            return pa.Table.from_pydict(
+                {"client_cluster_id": [], "cluster_id": []},
+                schema=SCHEMA_RESOLVER_MAPPING,
+            )
+        resolution_id = resolution.resolution_id
+
+    # 2) Ingest uploaded assignments.
+    with ingest_to_temporary_table(
+        table_name="resolver_assignments",
+        schema_name="mb",
+        column_types={"client_cluster_id": BIGINT(), "node_id": BIGINT()},
+        data=assignment_data,
+        max_chunksize=batch_size,
+    ) as incoming_assignments:
+        # 3) Expand uploaded nodes to leaves in SQL.
+        expanded_leaves = (
+            select(
+                incoming_assignments.c.client_cluster_id.label("client_cluster_id"),
+                func.coalesce(Contains.leaf, incoming_assignments.c.node_id).label(
+                    "leaf_id"
+                ),
+            )
+            .distinct()
+            .select_from(
+                incoming_assignments.outerjoin(
+                    Contains,
+                    Contains.root == incoming_assignments.c.node_id,
+                )
+            )
+            .subquery("expanded_resolver_leaves")
+        )
+
+        with MBDB.get_session() as session:
+            # 3a) Resolve leaf hashes and missing leaf IDs in one grouped query.
+            grouped_hash_rows = session.execute(
+                select(
+                    expanded_leaves.c.client_cluster_id,
+                    func.array_agg(
+                        aggregate_order_by(
+                            Clusters.cluster_hash,
+                            Clusters.cluster_hash,
+                        )
+                    )
+                    .filter(Clusters.cluster_hash.is_not(None))
+                    .label("leaf_hashes"),
+                    func.array_agg(
+                        aggregate_order_by(
+                            expanded_leaves.c.leaf_id,
+                            expanded_leaves.c.leaf_id,
+                        )
+                    )
+                    .filter(Clusters.cluster_id.is_(None))
+                    .label("missing_leaf_ids"),
+                )
+                .select_from(
+                    expanded_leaves.outerjoin(
+                        Clusters,
+                        Clusters.cluster_id == expanded_leaves.c.leaf_id,
+                    )
+                )
+                .group_by(expanded_leaves.c.client_cluster_id)
+                .order_by(expanded_leaves.c.client_cluster_id)
+            ).all()
+
+        # 3b) Validate leaf IDs are all known.
+        missing_leaf_ids: set[int] = set()
+        for _, _, missing_for_client in grouped_hash_rows:
+            if not missing_for_client:
+                continue
+            if any(leaf_id is None for leaf_id in missing_for_client):
+                raise MatchboxResolutionInvalidData(
+                    "Resolver upload references null cluster IDs."
+                )
+            missing_leaf_ids.update(int(leaf_id) for leaf_id in missing_for_client)
+
+        if missing_leaf_ids:
+            raise MatchboxResolutionInvalidData(
+                "Resolver upload references unknown cluster IDs: "
+                f"{sorted(missing_leaf_ids)}"
+            )
+
+        # 4) Compute deterministic cluster hashes per client in Python.
+        client_cluster_ids: list[int] = []
+        cluster_hashes: list[bytes] = []
+        for client_cluster_id, leaf_hashes, _ in grouped_hash_rows:
+            if not leaf_hashes:
+                raise MatchboxResolutionInvalidData(
+                    "Resolver upload references no resolvable leaves."
+                )
+            client_cluster_ids.append(int(client_cluster_id))
+            cluster_hashes.append(
+                hash_cluster_leaves([bytes(leaf_hash) for leaf_hash in leaf_hashes])
+            )
+        hash_data = pa.table(
+            {
+                "client_cluster_id": client_cluster_ids,
+                "cluster_hash": cluster_hashes,
+            }
+        )
+
+        # 5) Ingest hashes, materialise clusters, and build a client->cluster map.
+        with (
+            ingest_to_temporary_table(
+                table_name="resolver_hashes",
+                schema_name="mb",
+                column_types={"client_cluster_id": BIGINT(), "cluster_hash": BYTEA()},
+                data=hash_data,
+                max_chunksize=batch_size,
+            ) as incoming_hashes,
+            MBDB.get_session() as session,
+        ):
+            try:
+                new_hashes = (
+                    select(incoming_hashes.c.cluster_hash)
+                    .distinct()
+                    .where(
+                        ~exists(
+                            select(1).where(
+                                Clusters.cluster_hash == incoming_hashes.c.cluster_hash
+                            )
+                        )
+                    )
+                )
+                session.execute(
+                    insert(Clusters)
+                    .from_select(["cluster_hash"], new_hashes)
+                    .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
+                )
+                session.flush()
+
+                cluster_map = (
+                    select(
+                        incoming_hashes.c.client_cluster_id,
+                        Clusters.cluster_id,
+                    )
+                    .select_from(
+                        incoming_hashes.join(
+                            Clusters,
+                            Clusters.cluster_hash == incoming_hashes.c.cluster_hash,
+                        )
+                    )
+                    .subquery("cluster_map")
+                )
+
+                # 6) Persist memberships and resolution-level cluster mapping.
+                contains_rows_select = (
+                    select(
+                        cluster_map.c.cluster_id.label("root"),
+                        expanded_leaves.c.leaf_id.label("leaf"),
+                    )
+                    .select_from(
+                        expanded_leaves.join(
+                            cluster_map,
+                            expanded_leaves.c.client_cluster_id
+                            == cluster_map.c.client_cluster_id,
+                        )
+                    )
+                    .distinct()
+                )
+                session.execute(
+                    insert(Contains)
+                    .from_select(["root", "leaf"], contains_rows_select)
+                    .on_conflict_do_nothing(
+                        index_elements=[Contains.root, Contains.leaf]
+                    )
+                )
+
+                resolution_rows = select(
+                    literal(resolution_id, BIGINT).label("resolution_id"),
+                    cluster_map.c.cluster_id,
+                ).distinct()
+                session.execute(
+                    insert(ResolutionClusters)
+                    .from_select(["resolution_id", "cluster_id"], resolution_rows)
+                    .on_conflict_do_nothing(
+                        index_elements=[
+                            ResolutionClusters.resolution_id,
+                            ResolutionClusters.cluster_id,
+                        ]
+                    )
+                )
+
+                # 7) Return mapping rows in deterministic order.
+                mapping_rows = session.execute(
+                    select(
+                        cluster_map.c.client_cluster_id,
+                        cluster_map.c.cluster_id,
+                    ).order_by(cluster_map.c.client_cluster_id)
+                ).all()
+
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    logger.info("Resolver cluster insert complete!", prefix=log_prefix)
+
     MBDB.vacuum_analyze(
         Clusters.__table__.fullname,
         Contains.__table__.fullname,
-        Probabilities.__table__.fullname,
-        Results.__table__.fullname,
+        ResolutionClusters.__table__.fullname,
     )
 
-    logger.info("Insert operation complete!", prefix=log_prefix)
+    if not mapping_rows:
+        return pa.Table.from_pydict(
+            {"client_cluster_id": [], "cluster_id": []},
+            schema=SCHEMA_RESOLVER_MAPPING,
+        )
+
+    return pa.table(
+        {
+            "client_cluster_id": [
+                int(client_cluster_id) for client_cluster_id, _ in mapping_rows
+            ],
+            "cluster_id": [int(cluster_id) for _, cluster_id in mapping_rows],
+        },
+        schema=SCHEMA_RESOLVER_MAPPING,
+    )

@@ -37,7 +37,9 @@ class TestMatchboxEvaluationBackend:
         """Can insert and retrieve judgements."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_crn"
+            ).resolver
 
             # To begin with, no judgements to retrieve
             judgements, expansion = self.backend.get_judgements()
@@ -47,7 +49,7 @@ class TestMatchboxEvaluationBackend:
             deduped_query = pl.from_arrow(
                 self.backend.query(
                     source=crn_testkit.resolution_path,
-                    point_of_truth=naive_crn_testkit.resolution_path,
+                    point_of_truth=naive_crn_resolver.resolution_path,
                 )
             )
             unique_ids = deduped_query["id"].unique()
@@ -183,13 +185,15 @@ class TestMatchboxEvaluationBackend:
         # Missing resolution raises error
         with (
             self.scenario(self.backend, "admin"),
-            pytest.raises(MatchboxResolutionNotFoundError, match="naive_test_crn"),
+            pytest.raises(
+                MatchboxResolutionNotFoundError, match="resolver_naive_test_crn"
+            ),
         ):
             bob: User = self.backend.login(User(user_name="bob")).user
             self.backend.sample_for_eval(
                 n=10,
                 path=ResolutionPath(
-                    collection="collection", run=1, name="naive_test_crn"
+                    collection="collection", run=1, name="resolver_naive_test_crn"
                 ),
                 user_name=bob.user_name,
             )
@@ -198,7 +202,9 @@ class TestMatchboxEvaluationBackend:
         # for sources that aren't relevant for a point of truth
         with self.scenario(self.backend, "convergent") as dag_testkit:
             source_testkit = dag_testkit.sources.get("foo_a")
-            model_testkit = dag_testkit.models.get("naive_test_foo_a")
+            model_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_foo_a"
+            ).resolver
 
             bob: User = self.backend.login(User(user_name="bob")).user
 
@@ -214,7 +220,7 @@ class TestMatchboxEvaluationBackend:
             resolution_clusters = pl.from_arrow(
                 self.backend.query(
                     source=source_testkit.resolution_path,
-                    point_of_truth=model_testkit.resolution_path,
+                    point_of_truth=model_resolver.resolution_path,
                 )
             )
             source_clusters = pl.from_arrow(
@@ -224,7 +230,7 @@ class TestMatchboxEvaluationBackend:
             assert len(resolution_clusters["id"].unique()) < 99
 
             samples_99 = self.backend.sample_for_eval(
-                n=99, path=model_testkit.resolution_path, user_name=bob.user_name
+                n=99, path=model_resolver.resolution_path, user_name=bob.user_name
             )
 
             assert samples_99.schema.equals(SCHEMA_EVAL_SAMPLES)
@@ -247,7 +253,7 @@ class TestMatchboxEvaluationBackend:
             # We can request less than available
             assert len(resolution_clusters["id"].unique()) > 5
             samples_5 = self.backend.sample_for_eval(
-                n=5, path=model_testkit.resolution_path, user_name=bob.user_name
+                n=5, path=model_resolver.resolution_path, user_name=bob.user_name
             )
             assert len(samples_5["root"].unique()) == 5
 
@@ -271,7 +277,7 @@ class TestMatchboxEvaluationBackend:
             )
 
             samples_without_cluster = self.backend.sample_for_eval(
-                n=99, path=model_testkit.resolution_path, user_name=bob.user_name
+                n=99, path=model_resolver.resolution_path, user_name=bob.user_name
             )
             # Compared to the first query, we should have one fewer cluster
             assert len(samples_99["root"].unique()) - 1 == len(
@@ -301,6 +307,6 @@ class TestMatchboxEvaluationBackend:
                 )
 
             samples_all_done = self.backend.sample_for_eval(
-                n=99, path=model_testkit.resolution_path, user_name=bob.user_name
+                n=99, path=model_resolver.resolution_path, user_name=bob.user_name
             )
             assert len(samples_all_done) == 0

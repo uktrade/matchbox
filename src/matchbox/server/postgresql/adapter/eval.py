@@ -19,7 +19,7 @@ from matchbox.common.arrow import (
 )
 from matchbox.common.datatypes import require
 from matchbox.common.db import QueryReturnType, sql_to_df
-from matchbox.common.dtos import ModelResolutionPath
+from matchbox.common.dtos import ResolverResolutionPath
 from matchbox.common.eval import Judgement as CommonJudgement
 from matchbox.common.exceptions import (
     MatchboxTooManySamplesRequested,
@@ -32,7 +32,7 @@ from matchbox.server.postgresql.orm import (
     ClusterSourceKey,
     Contains,
     EvalJudgements,
-    Probabilities,
+    ResolutionClusters,
     Resolutions,
     SourceConfigs,
     Users,
@@ -192,7 +192,7 @@ class MatchboxPostgresEvaluationMixin(_MixinBase):
         return _cast_tables(judgements, cluster_expansion)
 
     def sample_for_eval(  # noqa: D102
-        self, n: int, path: ModelResolutionPath, user_name: str
+        self, n: int, path: ResolverResolutionPath, user_name: str
     ) -> ArrowTable:
         """Sample some clusters from a resolution."""
         # Not currently checking validity of the user_name
@@ -212,7 +212,6 @@ class MatchboxPostgresEvaluationMixin(_MixinBase):
             # Use ORM to get resolution metadata
             resolution_orm = Resolutions.from_path(path=path, session=session)
             resolution_id = resolution_orm.resolution_id
-            truth = resolution_orm.truth
 
         # Get a list of cluster IDs and features for this resolution and user
         user_judgements = (
@@ -222,20 +221,18 @@ class MatchboxPostgresEvaluationMixin(_MixinBase):
         )
         cluster_features_stmt = (
             select(
-                Probabilities.cluster_id,
-                # We expect only one probability per cluster within one resolution
-                func.max(Probabilities.probability).label("probability"),
+                ResolutionClusters.cluster_id.label("cluster_id"),
                 func.max(user_judgements.c.timestamp).label("latest_ts"),
             )
             .join(
                 user_judgements,
-                Probabilities.cluster_id == user_judgements.c.shown_cluster_id,
+                ResolutionClusters.cluster_id == user_judgements.c.shown_cluster_id,
                 isouter=True,
             )
             .where(
-                Probabilities.resolution_id == resolution_id,
+                ResolutionClusters.resolution_id == resolution_id,
             )
-            .group_by(Probabilities.cluster_id)
+            .group_by(ResolutionClusters.cluster_id)
         )
 
         with MBDB.get_adbc_connection() as conn:
@@ -255,19 +252,11 @@ class MatchboxPostgresEvaluationMixin(_MixinBase):
         if not len(to_sample):
             return pl.DataFrame(schema=pl.Schema(SCHEMA_EVAL_SAMPLES)).to_arrow()
 
-        # Sample proportionally to distance from the truth, and get 1D array
-        distances = np.abs(to_sample.select("probability").to_numpy() - truth)[:, 0]
-        # Add small noise to avoid division by 0 if all distances are 0
-        unnormalised_probs = distances + 0.001
-        probs = unnormalised_probs / unnormalised_probs.sum()
-
         # With fewer clusters than requested, return all
         if to_sample.shape[0] <= n:
             sampled_cluster_ids = to_sample.select("cluster_id").to_series().to_list()
         else:
-            indices = np.random.choice(
-                to_sample.shape[0], size=n, p=probs, replace=False
-            )
+            indices = np.random.choice(to_sample.shape[0], size=n, replace=False)
             sampled_cluster_ids = (
                 to_sample[indices].select("cluster_id").to_series().to_list()
             )

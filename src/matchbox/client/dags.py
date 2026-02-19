@@ -15,6 +15,7 @@ from matchbox.client._settings import settings
 from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
+from matchbox.client.resolvers import Resolver, ResolverMethod, ResolverSettings
 from matchbox.client.results import ResolvedMatches
 from matchbox.client.sources import Source
 from matchbox.common.dtos import (
@@ -27,6 +28,7 @@ from matchbox.common.dtos import (
     ResolutionName,
     ResolutionPath,
     ResolutionType,
+    ResolverResolutionName,
     Run,
     RunID,
     SourceResolutionName,
@@ -36,7 +38,6 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.logging import log_mem_usage, logger, profile_time
-from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -69,7 +70,7 @@ class DAG:
         self.name: CollectionName = CollectionName(name)
         self.admin_group: GroupName = GroupName(admin_group)
         self._run: RunID | None = None
-        self.nodes: dict[ResolutionName, Source | Model] = {}
+        self.nodes: dict[ResolutionName, Source | Model | Resolver] = {}
         self.graph: dict[ResolutionName, list[ResolutionName]] = {}
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,7 +82,7 @@ class DAG:
         if self != dag:
             raise ValueError("Cannot mix DAGs")
 
-    def _add_step(self, step: Source | Model) -> None:
+    def _add_step(self, step: Source | Model | Resolver) -> None:
         """Validate and add sources and models to DAG."""
         self._check_dag(step.dag)
 
@@ -106,6 +107,13 @@ class DAG:
             if step.right_query:
                 self._check_dag(step.right_query.dag)
 
+            for resolution in step.config.dependencies:
+                if resolution not in self.nodes:
+                    raise ValueError(f"Step {resolution} not added to DAG")
+            self.graph[step.name] = [parent for parent in step.config.parents]
+        elif isinstance(step, Resolver):
+            for input_node in step.inputs:
+                self._check_dag(input_node.dag)
             for resolution in step.config.dependencies:
                 if resolution not in self.nodes:
                     raise ValueError(f"Step {resolution} not added to DAG")
@@ -137,7 +145,7 @@ class DAG:
         self._run = run_id
 
     @property
-    def final_steps(self) -> list[Source | Model]:
+    def final_steps(self) -> list[Source | Model | Resolver]:
         """Returns all apex nodes in the DAG.
 
         Returns:
@@ -157,7 +165,7 @@ class DAG:
         return [self.nodes[name] for name in apex_node_names]
 
     @property
-    def final_step(self) -> Source | Model:
+    def final_step(self) -> Source | Model | Resolver:
         """Returns the root node in the DAG.
 
         Returns:
@@ -189,6 +197,39 @@ class DAG:
 
         return model
 
+    def resolver(
+        self,
+        name: ResolverResolutionName,
+        inputs: list[Model | Resolver | ResolutionName],
+        resolver_class: type[ResolverMethod] | str,
+        resolver_settings: ResolverSettings | dict[str, Any],
+        description: str | None = None,
+    ) -> Resolver:
+        """Create a resolver and add it to the DAG."""
+        resolved_inputs: list[Model | Resolver] = []
+        for input_node in inputs:
+            if isinstance(input_node, (Model, Resolver)):
+                resolved = input_node
+            else:
+                node = self.nodes.get(input_node)
+                if not isinstance(node, (Model, Resolver)):
+                    raise ValueError(
+                        f"Resolver input '{input_node}' is not a model or resolver"
+                    )
+                resolved = node
+            resolved_inputs.append(resolved)
+
+        resolver = Resolver(
+            dag=self,
+            name=name,
+            inputs=resolved_inputs,
+            resolver_class=resolver_class,
+            resolver_settings=resolver_settings,
+            description=description,
+        )
+        self._add_step(resolver)
+        return resolver
+
     @validate_call
     def add_resolution(
         self,
@@ -217,7 +258,23 @@ class DAG:
                 right_query=Query.from_config(resolution.config.right_query, dag=self)
                 if resolution.config.right_query
                 else None,
-                truth=threshold_int_to_float(resolution.truth),
+            )
+        elif resolution.resolution_type == ResolutionType.RESOLVER:
+            inputs: list[Model | Resolver] = []
+            for input_name in resolution.config.inputs:
+                node = self.nodes.get(input_name)
+                if not isinstance(node, (Model, Resolver)):
+                    raise RuntimeError(
+                        f"Resolver input '{input_name}' not available while loading run"
+                    )
+                inputs.append(node)
+
+            self.resolver(
+                name=ResolverResolutionName(name),
+                description=resolution.description,
+                inputs=inputs,
+                resolver_class=resolution.config.resolver_class,
+                resolver_settings=json.loads(resolution.config.resolver_settings),
             )
         else:
             raise ValueError(f"Unknown resolution type {resolution.resolution_type}")
@@ -266,6 +323,20 @@ class DAG:
         if not isinstance(node, Model):
             raise ValueError(
                 f"Node '{name}' is not a Model, it's a {type(node).__name__}"
+            )
+
+        return node
+
+    @validate_call
+    def get_resolver(self, name: ResolutionName) -> Resolver:
+        """Get a resolver by name from the DAG."""
+        if name not in self.nodes:
+            raise ValueError(f"Resolver '{name}' not found in DAG")
+
+        node = self.nodes[name]
+        if not isinstance(node, Resolver):
+            raise ValueError(
+                f"Node '{name}' is not a Resolver, it's a {type(node).__name__}"
             )
 
         return node
@@ -566,7 +637,6 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
-        threshold: float | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
 
@@ -574,10 +644,6 @@ class DAG:
             from_source: Name of source the provided key belongs to
             to_sources: Names of sources to find keys in
             key: The value to match from the source. Usually a primary key
-            threshold (optional): The threshold to use for creating clusters.
-                If None, uses the resolutions' default threshold
-                If a float, uses that threshold for the specified resolution, and the
-                resolution's cached thresholds for its ancestors
 
         Returns:
             Dictionary mapping source names to list of keys within that source.
@@ -594,10 +660,9 @@ class DAG:
             )
             ```
         """
-        if threshold:
-            if not isinstance(threshold, float):
-                raise ValueError("If passed, threshold must be a float")
-            threshold = threshold_float_to_int(threshold)
+        if not isinstance(self.final_step, Resolver):
+            raise ValueError("lookup_key requires the DAG apex to be a resolver")
+
         matches = _handler.match(
             targets=[
                 ResolutionPath(name=target, collection=self.name, run=self.run)
@@ -606,7 +671,6 @@ class DAG:
             source=ResolutionPath(name=from_source, collection=self.name, run=self.run),
             key=key,
             resolution=self.final_step.resolution_path,
-            threshold=threshold,
         )
 
         to_sources_results = {m.target.name: list(m.target_id) for m in matches}
@@ -615,30 +679,23 @@ class DAG:
 
     @validate_call
     @profile_time(kwarg="node")
-    def resolve(
+    def get_matches(
         self,
         node: ResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
-        threshold: float | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
         Args:
-            node: Name of source or model to resolve within DAG.
+            node: Name of resolver to query within DAG.
                 If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
-            threshold (optional): The threshold to use for creating clusters.
-                If None, uses the resolutions' default threshold
-                If a float, uses that threshold for the specified resolution, and the
-                resolution's cached thresholds for its ancestors
         """
-        if threshold:
-            if not isinstance(threshold, float):
-                raise ValueError("If passed, threshold must be a float")
-            threshold = threshold_float_to_int(threshold)
         point_of_truth = self.nodes[node] if node else self.final_step
+        if not isinstance(point_of_truth, Resolver):
+            raise ValueError("get_matches can only query from resolver nodes")
 
         available_sources = {
             node_name: self.get_source(node_name)
@@ -672,7 +729,6 @@ class DAG:
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
                         return_leaf_id=True,
-                        threshold=threshold,
                     )
                 )
             )

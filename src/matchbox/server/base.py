@@ -34,6 +34,7 @@ from matchbox.common.dtos import (
     PermissionType,
     Resolution,
     ResolutionPath,
+    ResolverResolutionPath,
     Run,
     RunID,
     SourceResolutionPath,
@@ -351,8 +352,7 @@ class MatchboxDBAdapter(ABC):
     def query(
         self,
         source: SourceResolutionPath,
-        point_of_truth: ResolutionPath | None = None,
-        threshold: int | None = None,
+        point_of_truth: ResolverResolutionPath | None = None,
         return_leaf_id: bool = False,
         limit: int | None = None,
     ) -> Table:
@@ -362,10 +362,6 @@ class MatchboxDBAdapter(ABC):
             source: the resolution pathidentifying the source to query
             point_of_truth (optional): the resolution path to use for filtering results
                 If not specified, will use the source resolution for the queried source
-            threshold (optional): the threshold to use for creating clusters
-                If None, uses the models' default threshold
-                If an integer, uses that threshold for the specified model, and the
-                model's cached thresholds for its ancestors
             return_leaf_id (optional): whether to return cluster ID of leaves
             limit (optional): the number to use in a limit clause. Useful for testing
 
@@ -380,8 +376,7 @@ class MatchboxDBAdapter(ABC):
         key: str,
         source: SourceResolutionPath,
         targets: list[SourceResolutionPath],
-        point_of_truth: ResolutionPath,
-        threshold: int | None = None,
+        point_of_truth: ResolverResolutionPath,
     ) -> list[Match]:
         """Matches an ID in a source resolution and returns the keys in the targets.
 
@@ -390,11 +385,6 @@ class MatchboxDBAdapter(ABC):
             source: The path of the source resolution.
             targets: The paths of the target source resolutions.
             point_of_truth: The path of the resolution to use for matching.
-            threshold (optional): the threshold to use for creating clusters
-                If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
-                resolution's cached thresholds for its ancestors
-                Will use these threshold values instead of the cached thresholds
         """
         ...
 
@@ -622,8 +612,18 @@ class MatchboxDBAdapter(ABC):
         ...
 
     @abstractmethod
+    def insert_resolver_data(self, path: ResolverResolutionPath, data: Table) -> Table:
+        """Inserts resolver assignment data and returns client-to-cluster mapping."""
+        ...
+
+    @abstractmethod
     def get_model_data(self, path: ModelResolutionPath) -> Table:
         """Get the results for a model resolution."""
+        ...
+
+    @abstractmethod
+    def get_resolver_data(self, path: ResolverResolutionPath) -> Table:
+        """Get cluster assignments for a resolver resolution."""
         ...
 
     # Data management
@@ -866,7 +866,7 @@ class MatchboxDBAdapter(ABC):
 
     @abstractmethod
     def sample_for_eval(
-        self, n: int, path: ModelResolutionPath, user_name: str
+        self, n: int, path: ResolverResolutionPath, user_name: str
     ) -> Table:
         """Sample a cluster to validate.
 

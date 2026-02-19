@@ -8,14 +8,14 @@ from pydantic import BaseModel, ConfigDict
 
 from matchbox.client.dags import DAG
 from matchbox.client.models import Model
-from matchbox.client.resolvers import Resolver
-from matchbox.common.dtos import ResolverResolutionName
-from matchbox.common.resolvers import (
+from matchbox.client.resolvers import (
     Components,
     ComponentsSettings,
+    Resolver,
     ResolverMethod,
     ResolverSettings,
 )
+from matchbox.common.dtos import ResolverResolutionName
 
 if TYPE_CHECKING:
     from matchbox.server.base import MatchboxDBAdapter

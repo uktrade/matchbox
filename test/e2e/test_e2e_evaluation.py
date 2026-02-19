@@ -13,13 +13,13 @@ from matchbox.client.dags import DAG
 from matchbox.client.eval import EvalData
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
+from matchbox.client.resolvers import Components, ComponentsSettings
 from matchbox.common.factories.sources import (
     FeatureConfig,
     SourceTestkitParameters,
     SuffixRule,
     linked_sources_factory,
 )
-from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 @pytest.mark.docker

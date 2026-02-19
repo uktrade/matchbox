@@ -12,6 +12,7 @@ from sqlalchemy import Engine
 from matchbox.client.dags import DAG
 from matchbox.client.eval import get_samples
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.resolvers import Components, ComponentsSettings
 from matchbox.client.results import ResolvedMatches
 from matchbox.common.arrow import (
     SCHEMA_EVAL_SAMPLES,
@@ -22,7 +23,6 @@ from matchbox.common.dtos import Collection, Resolution, ResolutionType, Run
 from matchbox.common.exceptions import MatchboxSourceTableError
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.sources import source_from_tuple
-from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 def test_get_samples_local(sqlite_in_memory_warehouse: Engine) -> None:

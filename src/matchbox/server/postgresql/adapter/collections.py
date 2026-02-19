@@ -1,7 +1,5 @@
 """Collections PostgreSQL mixin for Matchbox server."""
 
-import json
-
 import pyarrow as pa
 from psycopg.errors import LockNotAvailable
 from pyarrow import Table
@@ -17,7 +15,6 @@ from matchbox.common.dtos import (
     ResolutionPath,
     ResolutionType,
     ResolverResolutionPath,
-    ResolverType,
     Run,
     RunID,
     SourceResolutionPath,
@@ -42,7 +39,6 @@ from matchbox.server.postgresql.orm import (
     ModelConfigs,
     ModelEdges,
     ResolutionClusters,
-    ResolutionFrom,
     Resolutions,
     ResolverConfigs,
     Runs,
@@ -305,28 +301,6 @@ class MatchboxPostgresCollectionsMixin:
                 old_config.resolver_class = new_config.resolver_class
                 old_config.inputs = list(new_config.inputs)
                 old_config.resolver_settings = new_config.resolver_settings
-
-                direct_thresholds: dict[str, int] = {}
-                if new_config.type == ResolverType.COMPONENTS:
-                    raw_thresholds = json.loads(new_config.resolver_settings).get(
-                        "thresholds", {}
-                    )
-                    direct_thresholds = {
-                        key: int(value) for key, value in raw_thresholds.items()
-                    }
-
-                direct_rows = session.execute(
-                    select(ResolutionFrom, Resolutions.name)
-                    .join(
-                        Resolutions, ResolutionFrom.parent == Resolutions.resolution_id
-                    )
-                    .where(
-                        ResolutionFrom.child == old_resolution.resolution_id,
-                        ResolutionFrom.level == 1,
-                    )
-                ).all()
-                for closure_entry, parent_name in direct_rows:
-                    closure_entry.truth_cache = direct_thresholds.get(parent_name)
             else:
                 raise ValueError(
                     f"Unsupported resolution type for update: {old_resolution.type}"

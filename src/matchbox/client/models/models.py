@@ -126,20 +126,6 @@ class Model:
         self.right_query = right_query
         self.results: ModelResults | None = None
 
-        if self.left_query.resolver_overrides is not None:
-            raise ValueError(
-                "Model inputs cannot use Query.resolver_overrides. "
-                "Create a resolver with the required settings instead."
-            )
-        if (
-            self.right_query is not None
-            and self.right_query.resolver_overrides is not None
-        ):
-            raise ValueError(
-                "Model inputs cannot use Query.resolver_overrides. "
-                "Create a resolver with the required settings instead."
-            )
-
         if isinstance(model_class, str):
             self.model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
         else:

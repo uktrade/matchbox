@@ -20,9 +20,6 @@ from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.common.db import QueryReturnClass, QueryReturnType
 from matchbox.common.dtos import QueryCombineType, QueryConfig
 from matchbox.common.logging import profile_time
-from matchbox.common.resolvers import (
-    ResolverSettings,
-)
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -44,7 +41,6 @@ class Query:
         *sources: Source,
         dag: DAG,
         resolver: Resolver | None = None,
-        resolver_overrides: ResolverSettings | dict[str, Any] | None = None,
         combine_type: QueryCombineType = QueryCombineType.CONCAT,
         cleaning: dict[str, str] | None = None,
     ) -> None:
@@ -55,8 +51,6 @@ class Query:
             dag: DAG containing sources and models.
             resolver (optional): Resolver to use to resolve sources. It can be missing
                 if querying from a single source.
-            resolver_overrides (optional): Full replacement settings object to apply
-                to this resolver for query-time analysis.
             combine_type (optional): How to combine the data from different sources.
                 Default is `concat`.
 
@@ -76,29 +70,8 @@ class Query:
         self.dag = dag
         self.sources = sources
         self.resolver = resolver
-        self.resolver_overrides = self._validate_resolver_overrides(resolver_overrides)
         self.combine_type = combine_type
         self.cleaning = cleaning
-
-    def _validate_resolver_overrides(
-        self,
-        resolver_overrides: ResolverSettings | dict[str, Any] | None,
-    ) -> ResolverSettings | None:
-        """Validate resolver overrides and return a typed settings object."""
-        if resolver_overrides is None:
-            return None
-        if self.resolver is None:
-            raise ValueError("resolver_overrides require a resolver-backed query.")
-        return self.resolver.resolver_class(settings=resolver_overrides).settings
-
-    def _assert_pipeline_safe(self) -> None:
-        """Ensure analysis-only override queries are not used in pipeline builds."""
-        if self.resolver_overrides is not None:
-            raise ValueError(
-                "Queries with resolver_overrides are analysis-only and cannot be "
-                "used as model inputs. Create another resolver for inference-speed "
-                "settings changes."
-            )
 
     @property
     def config(self) -> QueryConfig:
@@ -189,7 +162,6 @@ class Query:
                 res = _handler.query(
                     source=source.resolution_path,
                     resolution=self.resolver.resolution_path if self.resolver else None,
-                    resolver_overrides=self.resolver_overrides,
                     return_leaf_id=return_leaf_id,
                 )
 
@@ -208,14 +180,13 @@ class Query:
             writer.close()
 
             # Download sources from warehouse
-            lazy_sources = []
-            for source in self.sources:
-                lazy_sources.append(
-                    pl.scan_parquet(source.cache_path)
-                    .select(pl.all().name.prefix(f"{source.name}_"))
-                    .with_columns(pl.lit(source.name).alias("source"))
-                    .rename({source.qualified_key: "key"})
-                )
+            lazy_sources = [
+                pl.scan_parquet(source.cache_path)
+                .select(pl.all().name.prefix(f"{source.name}_"))
+                .with_columns(pl.lit(source.name).alias("source"))
+                .rename({source.qualified_key: "key"})
+                for source in self.sources
+            ]
 
             mb_ids = pl.scan_parquet(mb_ids_path)
 
@@ -271,7 +242,6 @@ class Query:
         description: str | None = None,
     ) -> Model:
         """Create deduper for data in this query."""
-        self._assert_pipeline_safe()
         return self.dag.model(
             name=name,
             description=description,
@@ -289,8 +259,6 @@ class Query:
         description: str | None = None,
     ) -> Model:
         """Create linker for data in this query and another query."""
-        self._assert_pipeline_safe()
-        other_query._assert_pipeline_safe()
         return self.dag.model(
             name=name,
             description=description,

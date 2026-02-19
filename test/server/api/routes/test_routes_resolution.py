@@ -21,6 +21,7 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import source_factory
+from matchbox.server.uploads import resolver_mapping_key
 
 
 def test_get_source(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -398,6 +399,59 @@ def test_get_results_resolver(
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"
     mock_backend.get_resolver_data.assert_called_once()
+
+
+def test_get_resolver_mapping(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution = Mock(
+        return_value=Mock(resolution_type=ResolutionType.RESOLVER)
+    )
+    mapping_bytes = table_to_buffer(
+        pa.table(
+            {
+                "client_cluster_id": pa.array([1], type=pa.uint64()),
+                "cluster_id": pa.array([10], type=pa.uint64()),
+            }
+        )
+    ).read()
+    object_body = Mock()
+    object_body.read.return_value = mapping_bytes
+    mock_client = Mock()
+    mock_client.get_object.return_value = {"Body": object_body}
+    mock_backend.settings.datastore.get_client.return_value = mock_client
+    mock_backend.settings.datastore.cache_bucket_name = "cache-bucket"
+
+    response = test_client.get(
+        "/collections/default/runs/1/resolutions/resolver/data/mapping",
+        params={"upload_id": "upload-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == mapping_bytes
+    mock_client.get_object.assert_called_once_with(
+        Bucket="cache-bucket",
+        Key=resolver_mapping_key("upload-1"),
+    )
+
+
+def test_get_resolver_mapping_rejects_non_resolver(
+    api_client_and_mocks: tuple[TestClient, Mock, Mock],
+) -> None:
+    test_client, mock_backend, _ = api_client_and_mocks
+    mock_backend.get_resolution = Mock(
+        return_value=Mock(resolution_type=ResolutionType.MODEL)
+    )
+
+    response = test_client.get(
+        "/collections/default/runs/1/resolutions/not-resolver/data/mapping",
+        params={"upload_id": "upload-1"},
+    )
+
+    assert response.status_code == 400
+    error = ErrorResponse.model_validate(response.json())
+    assert error.exception_type == "MatchboxServerFileError"
 
 
 def test_get_results_rejects_source_resolution(

@@ -114,7 +114,7 @@ def test_query_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     assert response.json()["exception_type"] == "MatchboxResolutionNotFoundError"
 
 
-def test_query_with_overrides_requires_resolution(
+def test_query_post_not_allowed(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ) -> None:
     test_client, _, _ = api_client_and_mocks
@@ -127,29 +127,29 @@ def test_query_with_overrides_requires_resolution(
             "source": "foo",
             "return_leaf_id": False,
         },
-        json={"resolver_overrides": {"thresholds": {"model_a": 101}}},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 405
 
 
-def test_query_with_overrides_requires_body(
+def test_match_post_not_allowed(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ) -> None:
     test_client, _, _ = api_client_and_mocks
 
     response = test_client.post(
-        "/query",
+        "/match",
         params={
             "collection": "test_collection",
             "run_id": 1,
-            "source": "foo",
-            "resolution": "resolver",
-            "return_leaf_id": False,
+            "targets": "foo",
+            "source": "bar",
+            "key": "k",
+            "resolution": "res",
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 405
 
 
 def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
@@ -184,47 +184,6 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     assert response.status_code == 200
     [Match.model_validate(m) for m in response.json()]
     mock_backend.match.assert_called_once()
-
-
-def test_match_invalid_resolver_overrides(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, _, _ = api_client_and_mocks
-
-    response = test_client.post(
-        "/match",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "targets": "foo",
-            "source": "bar",
-            "key": 1,
-            "resolution": "res",
-        },
-        json={"resolver_overrides": "not-a-dict"},
-    )
-
-    assert response.status_code == 422
-
-
-def test_match_with_overrides_requires_body(
-    api_client_and_mocks: tuple[TestClient, Mock, Mock],
-) -> None:
-    test_client, _, _ = api_client_and_mocks
-
-    response = test_client.post(
-        "/match",
-        params={
-            "collection": "test_collection",
-            "run_id": 1,
-            "targets": "foo",
-            "source": "bar",
-            "key": "k",
-            "resolution": "res",
-        },
-    )
-
-    assert response.status_code == 422
 
 
 def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

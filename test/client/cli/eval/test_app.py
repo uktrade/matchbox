@@ -11,10 +11,10 @@ from textual.widgets import Footer, Label
 from matchbox.client.cli.eval.app import EntityResolutionApp, EvaluationQueue
 from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
+from matchbox.client.resolvers import Components, ComponentsSettings
 from matchbox.common.dtos import ResolverResolutionPath
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.scenarios import setup_scenario
-from matchbox.common.resolvers import Components, ComponentsSettings
 from matchbox.server.base import MatchboxDBAdapter
 
 backends = [

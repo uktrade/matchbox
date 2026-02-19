@@ -18,7 +18,6 @@ from matchbox.common.exceptions import (
     MatchboxEmptyServerResponse,
 )
 from matchbox.common.logging import logger
-from matchbox.common.resolvers import ResolverSettings
 
 
 @http_retry
@@ -26,7 +25,6 @@ def query(
     source: SourceResolutionPath,
     return_leaf_id: bool,
     resolution: ResolverResolutionPath | None = None,
-    resolver_overrides: ResolverSettings | None = None,
     limit: int | None = None,
 ) -> Table:
     """Query a source in Matchbox."""
@@ -43,23 +41,14 @@ def query(
             "limit": limit,
         }
     )
-    if resolver_overrides is None:
-        res = CLIENT.get("/query", params=params)
-    else:
-        res = CLIENT.post(
-            "/query",
-            params=params,
-            json={"resolver_overrides": resolver_overrides.model_dump(mode="json")},
-        )
+    res = CLIENT.get("/query", params=params)
 
     buffer = BytesIO(res.content)
     table = read_table(buffer)
 
     logger.debug("Finished", prefix=log_prefix)
 
-    expected_schema = SCHEMA_QUERY
-    if return_leaf_id:
-        expected_schema = SCHEMA_QUERY_WITH_LEAVES
+    expected_schema = SCHEMA_QUERY_WITH_LEAVES if return_leaf_id else SCHEMA_QUERY
 
     check_schema(expected_schema, table.schema)
 
@@ -75,12 +64,12 @@ def match(
     source: SourceResolutionPath,
     key: str,
     resolution: ResolverResolutionPath,
-    resolver_overrides: ResolverSettings | None = None,
 ) -> list[Match]:
     """Match a source against a list of targets."""
     log_prefix = f"Query {source}"
+    target_names = ", ".join(str(target) for target in targets)
     logger.debug(
-        f"{key} to {', '.join(str(targets))} using {resolution}",
+        f"{key} to {target_names} using {resolution}",
         prefix=log_prefix,
     )
 
@@ -94,14 +83,7 @@ def match(
             "resolution": resolution.name,
         }
     )
-    if resolver_overrides is None:
-        res = CLIENT.get("/match", params=params)
-    else:
-        res = CLIENT.post(
-            "/match",
-            params=params,
-            json={"resolver_overrides": resolver_overrides.model_dump(mode="json")},
-        )
+    res = CLIENT.get("/match", params=params)
 
     logger.debug("Finished", prefix=log_prefix)
 

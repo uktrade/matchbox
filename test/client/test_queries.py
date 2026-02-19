@@ -1,5 +1,3 @@
-import json
-
 import polars as pl
 import pyarrow as pa
 import pytest
@@ -28,7 +26,6 @@ from matchbox.common.factories.sources import (
     source_factory,
     source_from_tuple,
 )
-from matchbox.common.resolvers import ComponentsSettings
 
 
 def _resolver_for_sources() -> tuple:
@@ -78,73 +75,7 @@ def test_init_query() -> None:
     )
 
 
-def test_query_resolver_overrides_normalised() -> None:
-    """Resolver overrides are validated via resolver settings schema."""
-    source, _, resolver = _resolver_for_sources()
-    input_names = [node.name for node in resolver.inputs]
-
-    query = Query(
-        source,
-        dag=source.dag,
-        resolver=resolver,
-        resolver_overrides={
-            "thresholds": {input_names[0]: 0.63, input_names[1]: 0},
-        },
-    )
-
-    assert isinstance(query.resolver_overrides, ComponentsSettings)
-    assert query.resolver_overrides.thresholds == {
-        input_names[0]: 63,
-        input_names[1]: 0,
-    }
-
-
-def test_query_resolver_overrides_require_resolver() -> None:
-    """Resolver overrides require a resolver-backed query."""
-    source_testkit = source_factory(name="foo")
-    source = source_testkit.source
-
-    with pytest.raises(ValueError, match="require a resolver-backed query"):
-        Query(
-            source,
-            dag=source.dag,
-            resolver_overrides={"thresholds": {}},
-        )
-
-
-def test_query_resolver_overrides_reject_invalid_payload() -> None:
-    """Invalid resolver override payloads raise validation errors."""
-    source, _, resolver = _resolver_for_sources()
-
-    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
-        Query(
-            source,
-            dag=source.dag,
-            resolver=resolver,
-            resolver_overrides={"not_thresholds": {}},
-        )
-
-
-def test_query_resolver_overrides_are_analysis_only() -> None:
-    """Override queries cannot be used to build model pipelines."""
-    source, _, resolver = _resolver_for_sources()
-    input_names = [node.name for node in resolver.inputs]
-    query = Query(
-        source,
-        dag=source.dag,
-        resolver=resolver,
-        resolver_overrides={"thresholds": {name: 0 for name in input_names}},
-    )
-
-    with pytest.raises(ValueError, match="analysis-only"):
-        query.deduper(
-            name="blocked",
-            model_class="NaiveDeduper",
-            model_settings={"unique_fields": []},
-        )
-
-
-def test_query_with_resolver_overrides_uses_post(
+def test_query_with_resolver_uses_get(
     matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     source_testkit = source_from_tuple(
@@ -166,7 +97,7 @@ def test_query_with_resolver_overrides_uses_post(
         inputs=[model],
         thresholds={model.name: 0},
     ).resolver
-    post_route = matchbox_api.post("/query").mock(
+    get_route = matchbox_api.get("/query").mock(
         return_value=Response(
             200,
             content=table_to_buffer(
@@ -178,21 +109,15 @@ def test_query_with_resolver_overrides_uses_post(
         )
     )
 
-    resolver.query(
-        source,
-        resolver_overrides={"thresholds": {model.name: 0}},
-    ).data_raw()
+    resolver.query(source).data_raw()
 
-    request = post_route.calls.last.request
+    request = get_route.calls.last.request
     assert dict(request.url.params) == {
         "collection": source.dag.name,
         "run_id": str(source.dag.run),
         "source": source.name,
         "resolution": resolver.name,
         "return_leaf_id": "False",
-    }
-    assert json.loads(request.content.decode()) == {
-        "resolver_overrides": {"thresholds": {model.name: 0}}
     }
 
 

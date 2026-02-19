@@ -15,7 +15,7 @@ from matchbox.client._settings import settings
 from matchbox.client.locations import Location
 from matchbox.client.models import Model
 from matchbox.client.queries import Query
-from matchbox.client.resolvers import Resolver
+from matchbox.client.resolvers import Resolver, ResolverMethod, ResolverSettings
 from matchbox.client.results import ResolvedMatches
 from matchbox.client.sources import Source
 from matchbox.common.dtos import (
@@ -38,10 +38,6 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
 )
 from matchbox.common.logging import log_mem_usage, logger, profile_time
-from matchbox.common.resolvers import (
-    ResolverMethod,
-    ResolverSettings,
-)
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -641,7 +637,6 @@ class DAG:
         from_source: str,
         to_sources: list[str],
         key: str,
-        resolver_overrides: ResolverSettings | dict[str, Any] | None = None,
     ) -> dict[str, list[str]]:
         """Matches IDs against the selected backend.
 
@@ -649,8 +644,6 @@ class DAG:
             from_source: Name of source the provided key belongs to
             to_sources: Names of sources to find keys in
             key: The value to match from the source. Usually a primary key
-            resolver_overrides (optional): Full replacement settings object to apply
-                to the queried resolver for this lookup.
 
         Returns:
             Dictionary mapping source names to list of keys within that source.
@@ -670,12 +663,6 @@ class DAG:
         if not isinstance(self.final_step, Resolver):
             raise ValueError("lookup_key requires the DAG apex to be a resolver")
 
-        effective_overrides = (
-            None
-            if resolver_overrides is None
-            else self.final_step.resolver_class(settings=resolver_overrides).settings
-        )
-
         matches = _handler.match(
             targets=[
                 ResolutionPath(name=target, collection=self.name, run=self.run)
@@ -684,7 +671,6 @@ class DAG:
             source=ResolutionPath(name=from_source, collection=self.name, run=self.run),
             key=key,
             resolution=self.final_step.resolution_path,
-            resolver_overrides=effective_overrides,
         )
 
         to_sources_results = {m.target.name: list(m.target_id) for m in matches}
@@ -698,7 +684,6 @@ class DAG:
         node: ResolutionName | None = None,
         source_filter: list[str] | None = None,
         location_names: list[str] | None = None,
-        resolver_overrides: ResolverSettings | dict[str, Any] | None = None,
     ) -> ResolvedMatches:
         """Returns ResolvedMatches, optionally filtering.
 
@@ -707,17 +692,10 @@ class DAG:
                 If not provided, will look for an apex.
             source_filter: An optional list of source resolution names to filter by.
             location_names: An optional list of location names to filter by.
-            resolver_overrides (optional): Full replacement settings object to apply
-                to the queried resolver for this request.
         """
         point_of_truth = self.nodes[node] if node else self.final_step
         if not isinstance(point_of_truth, Resolver):
             raise ValueError("get_matches can only query from resolver nodes")
-        effective_overrides = (
-            None
-            if resolver_overrides is None
-            else point_of_truth.resolver_class(settings=resolver_overrides).settings
-        )
 
         available_sources = {
             node_name: self.get_source(node_name)
@@ -750,7 +728,6 @@ class DAG:
                     _handler.query(
                         source=available_sources[source_name].resolution_path,
                         resolution=point_of_truth.resolution_path,
-                        resolver_overrides=effective_overrides,
                         return_leaf_id=True,
                     )
                 )

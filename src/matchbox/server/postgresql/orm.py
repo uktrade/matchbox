@@ -15,7 +15,6 @@ from sqlalchemy import (
     Identity,
     Index,
     UniqueConstraint,
-    case,
     func,
     select,
     text,
@@ -48,13 +47,16 @@ from matchbox.common.exceptions import (
     MatchboxResolutionNotFoundError,
     MatchboxRunNotFoundError,
 )
-from matchbox.common.resolvers import get_resolver_class
 from matchbox.server.base import (
     DEFAULT_GROUPS,
     DEFAULT_PERMISSIONS,
 )
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.mixin import CountMixin
+
+_RESOLVER_CLASS_TO_TYPE: dict[str, ResolverType] = {
+    "Components": ResolverType.COMPONENTS,
+}
 
 
 class Collections(CountMixin, MBDB.MatchboxBase):
@@ -227,7 +229,6 @@ class ResolutionFrom(CountMixin, MBDB.MatchboxBase):
         primary_key=True,
     )
     level: Mapped[int] = mapped_column(INTEGER, nullable=False)
-    truth_cache: Mapped[int | None] = mapped_column(SMALLINT, nullable=True)
 
     # Constraints
     __table_args__ = (
@@ -324,7 +325,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
     def get_lineage(
         self, sources: list["SourceConfigs"] | None = None
-    ) -> list[tuple[int, int | None, int | None]]:
+    ) -> list[tuple[int, int | None]]:
         """Returns lineage ordered by priority.
 
         Highest priority (lowest level) first, then by resolution_id for stability.
@@ -333,15 +334,13 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             sources: If provided, only return lineage paths that lead to these sources
 
         Returns:
-            List of tuples (resolution_id, source_config_id, threshold cache)
-                ordered by priority.
+            List of tuples (resolution_id, source_config_id) ordered by priority.
         """
         with MBDB.get_session() as session:
             query = (
                 select(
                     ResolutionFrom.parent,
                     SourceConfigs.source_config_id,
-                    ResolutionFrom.truth_cache,
                 )
                 .join(
                     SourceConfigs,
@@ -379,7 +378,7 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             )
 
             # Add self at beginning (highest priority - level 0)
-            return [(self.resolution_id, self_source_config_id, None)] + list(results)
+            return [(self.resolution_id, self_source_config_id)] + list(results)
 
     @classmethod
     def from_path(
@@ -510,14 +509,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
 
         elif resolution.resolution_type == ResolutionType.RESOLVER:
             resolution_orm.resolver_config = ResolverConfigs.from_dto(resolution.config)
-            component_thresholds: dict[str, int] = {}
-            if resolution.config.type == ResolverType.COMPONENTS:
-                raw_thresholds = json.loads(resolution.config.resolver_settings).get(
-                    "thresholds", {}
-                )
-                component_thresholds = {
-                    key: int(value) for key, value in raw_thresholds.items()
-                }
             for parent_name in dict.fromkeys(resolution.config.inputs):
                 parent = cls.from_path(
                     path=ResolutionPath(
@@ -531,7 +522,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                     session,
                     resolution_orm,
                     parent,
-                    direct_threshold_cache=component_thresholds.get(parent_name),
                 )
 
         return resolution_orm
@@ -558,7 +548,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         parent_id: int,
         child_id: int,
         level: int,
-        truth_cache: int | None = None,
     ) -> None:
         """Insert or update closure table entry with shortest known level."""
         session.execute(
@@ -567,16 +556,11 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                 parent=parent_id,
                 child=child_id,
                 level=level,
-                truth_cache=truth_cache,
             )
             .on_conflict_do_update(
                 index_elements=[ResolutionFrom.parent, ResolutionFrom.child],
                 set_={
                     "level": func.least(ResolutionFrom.level, level),
-                    "truth_cache": case(
-                        (level < ResolutionFrom.level, truth_cache),
-                        else_=func.coalesce(ResolutionFrom.truth_cache, truth_cache),
-                    ),
                 },
             )
         )
@@ -586,7 +570,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
         session: Session,
         child: "Resolutions",
         parent: "Resolutions",
-        direct_threshold_cache: int | None = None,
     ) -> None:
         """Create closure table entries for a parent-child relationship."""
         # Direct relationship.
@@ -595,7 +578,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
             parent_id=parent.resolution_id,
             child_id=child.resolution_id,
             level=1,
-            truth_cache=direct_threshold_cache,
         )
 
         # Transitive closure
@@ -615,7 +597,6 @@ class Resolutions(CountMixin, MBDB.MatchboxBase):
                 parent_id=ancestor.parent,
                 child_id=child.resolution_id,
                 level=ancestor.level + 1,
-                truth_cache=ancestor.truth_cache,
             )
 
 
@@ -922,14 +903,11 @@ class ResolverConfigs(CountMixin, MBDB.MatchboxBase):
 
     def to_dto(self) -> CommonResolverConfig:
         """Convert ORM resolver config to a matchbox.common ResolverConfig object."""
-        resolver_class = get_resolver_class(self.resolver_class)
-        resolver_type_value = getattr(resolver_class, "resolver_type", None)
-        if resolver_type_value is None:
+        resolver_type = _RESOLVER_CLASS_TO_TYPE.get(self.resolver_class)
+        if resolver_type is None:
             raise ValueError(
-                "Resolver class "
-                f"{resolver_class.__name__} does not define resolver_type."
+                f"Unknown resolver_class in resolver_configs: {self.resolver_class!r}"
             )
-        resolver_type = ResolverType(resolver_type_value)
         return CommonResolverConfig(
             type=resolver_type,
             resolver_class=self.resolver_class,

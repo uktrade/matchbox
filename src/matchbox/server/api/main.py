@@ -16,22 +16,32 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import HTMLResponse
 
+from matchbox.common.arrow import table_to_buffer
 from matchbox.common.dtos import (
     BackendCountableType,
+    CollectionName,
     CountResult,
     CRUDOperation,
     ErrorResponse,
+    Match,
     OKMessage,
+    ResolverResolutionName,
+    ResolverResolutionPath,
     ResourceOperationStatus,
+    RunID,
+    SourceResolutionName,
+    SourceResolutionPath,
 )
 from matchbox.common.exceptions import MatchboxHttpException
 from matchbox.common.logging import logger
 from matchbox.server.api.dependencies import (
     BackendDependency,
+    ParquetResponse,
+    RequireCollectionRead,
     RequireSysAdmin,
     lifespan,
 )
-from matchbox.server.api.routers import auth, collections, eval, groups, query
+from matchbox.server.api.routers import auth, collections, eval, groups
 
 app = FastAPI(
     title="matchbox API",
@@ -40,7 +50,6 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
-app.include_router(query.router)
 app.include_router(collections.router)
 app.include_router(eval.router)
 app.include_router(auth.router)
@@ -110,6 +119,77 @@ async def add_security_headers(
 async def healthcheck() -> OKMessage:
     """Perform a health check and return the status."""
     return OKMessage()
+
+
+# Retrieval
+
+
+@app.get(
+    "/query",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    dependencies=[Depends(RequireCollectionRead)],
+)
+def query(
+    backend: BackendDependency,
+    collection: CollectionName,
+    run_id: RunID,
+    source: SourceResolutionName,
+    return_leaf_id: bool,
+    resolution: ResolverResolutionName | None = None,
+    limit: int | None = None,
+) -> ParquetResponse:
+    """Query Matchbox for matches based on a source resolution name."""
+    point_of_truth = (
+        ResolverResolutionPath(collection=collection, run=run_id, name=resolution)
+        if resolution
+        else None
+    )
+    res = backend.query(
+        source=SourceResolutionPath(collection=collection, run=run_id, name=source),
+        point_of_truth=point_of_truth,
+        return_leaf_id=return_leaf_id,
+        limit=limit,
+    )
+    buffer = table_to_buffer(res)
+    return ParquetResponse(buffer.getvalue())
+
+
+@app.get(
+    "/match",
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    dependencies=[Depends(RequireCollectionRead)],
+)
+def match(
+    backend: BackendDependency,
+    collection: CollectionName,
+    run_id: RunID,
+    targets: Annotated[list[SourceResolutionName], Query()],
+    source: SourceResolutionName,
+    key: str,
+    resolution: ResolverResolutionName,
+) -> list[Match]:
+    """Match a source key against a list of target source resolutions."""
+    return backend.match(
+        key=key,
+        source=SourceResolutionPath(collection=collection, run=run_id, name=source),
+        targets=[
+            SourceResolutionPath(collection=collection, run=run_id, name=target)
+            for target in targets
+        ],
+        point_of_truth=ResolverResolutionPath(
+            collection=collection,
+            run=run_id,
+            name=resolution,
+        ),
+    )
 
 
 # Admin

@@ -749,7 +749,7 @@ def test_lookup_key_ok(matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine) 
     assert matches == {foo.name: ["a"], bar.name: ["b"], baz.name: ["b"]}
 
 
-def test_lookup_key_with_resolver_overrides_uses_post(
+def test_lookup_key_uses_get(
     matchbox_api: MockRouter, sqla_sqlite_warehouse: Engine
 ) -> None:
     foo_testkit = source_factory(
@@ -807,7 +807,7 @@ def test_lookup_key_with_resolver_overrides_uses_post(
             ).model_dump(),
         ]
     )
-    post_route = matchbox_api.post("/match").mock(
+    get_route = matchbox_api.get("/match").mock(
         return_value=Response(200, content=serialised_matches)
     )
 
@@ -815,24 +815,16 @@ def test_lookup_key_with_resolver_overrides_uses_post(
         from_source="foo",
         to_sources=["bar", "baz"],
         key="pk1",
-        resolver_overrides={
-            "thresholds": {linker_foo_bar.name: 0, linker_bar_baz.name: 0}
-        },
     )
 
     assert matches == {foo.name: ["a"], bar.name: ["b"], baz.name: ["b"]}
-    request = post_route.calls.last.request
+    request = get_route.calls.last.request
     assert request.url.params["collection"] == dag.name
     assert request.url.params["run_id"] == str(dag.run)
     assert request.url.params.get_list("targets") == ["bar", "baz"]
     assert request.url.params["source"] == "foo"
     assert request.url.params["key"] == "pk1"
     assert request.url.params["resolution"] == "root"
-    assert json.loads(request.content.decode()) == {
-        "resolver_overrides": {
-            "thresholds": {linker_foo_bar.name: 0, linker_bar_baz.name: 0}
-        }
-    }
 
 
 def test_lookup_key_404_source(matchbox_api: MockRouter) -> None:

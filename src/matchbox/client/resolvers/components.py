@@ -6,9 +6,14 @@ from typing import ClassVar
 import polars as pl
 from pydantic import Field, field_validator
 
+from matchbox.client.resolvers.base import ResolverMethod, ResolverSettings
 from matchbox.common.dtos import ResolutionName, ResolverType
-from matchbox.common.resolvers.base import ResolverMethod, ResolverSettings
 from matchbox.common.transform import DisjointSet, threshold_float_to_int
+
+_ASSIGNMENT_SCHEMA: dict[str, pl.DataType] = {
+    "cluster_id": pl.UInt64,
+    "node_id": pl.UInt64,
+}
 
 
 class ComponentsSettings(ResolverSettings):
@@ -48,14 +53,9 @@ class Components(ResolverMethod):
     def _as_component_assignments(assignments: pl.DataFrame) -> pl.DataFrame:
         """Normalise assignments to a stable ``cluster_id``/``node_id`` shape."""
         if assignments.height == 0:
-            return pl.DataFrame(schema={"cluster_id": pl.UInt64, "node_id": pl.UInt64})
+            return pl.DataFrame(schema=_ASSIGNMENT_SCHEMA)
 
-        return assignments.select("cluster_id", "node_id").cast(
-            {
-                "cluster_id": pl.UInt64,
-                "node_id": pl.UInt64,
-            }
-        )
+        return assignments.select("cluster_id", "node_id").cast(_ASSIGNMENT_SCHEMA)
 
     def compute_clusters(
         self,
@@ -107,15 +107,11 @@ class Components(ResolverMethod):
 
         rows: list[dict[str, int]] = []
         for cluster_id, component in enumerate(components, start=1):
-            for node_id in component:
-                rows.append(
-                    {
-                        "cluster_id": cluster_id,
-                        "node_id": node_id,
-                    }
-                )
+            rows.extend(
+                {"cluster_id": cluster_id, "node_id": node_id} for node_id in component
+            )
 
         if not rows:
-            return pl.DataFrame(schema={"cluster_id": pl.UInt64, "node_id": pl.UInt64})
+            return pl.DataFrame(schema=_ASSIGNMENT_SCHEMA)
 
-        return pl.DataFrame(rows).cast({"cluster_id": pl.UInt64, "node_id": pl.UInt64})
+        return pl.DataFrame(rows).cast(_ASSIGNMENT_SCHEMA)

@@ -1,4 +1,4 @@
-"""Resolver nodes that materialise clusters from model and resolver inputs."""
+"""Resolver nodes and methodology registry for client-side execution."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import polars as pl
 from matchbox.client import _handler
 from matchbox.client.models.models import Model
 from matchbox.client.queries import Query
+from matchbox.client.resolvers.base import ResolverMethod, ResolverSettings
+from matchbox.client.resolvers.components import Components, ComponentsSettings
 from matchbox.common.arrow import SCHEMA_RESOLVER_UPLOAD
 from matchbox.common.dtos import (
     Resolution,
@@ -24,14 +26,6 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_arrow_table
 from matchbox.common.logging import logger, profile_time
-from matchbox.common.resolvers import (
-    Components,
-    ComponentsSettings,
-    ResolverMethod,
-    ResolverSettings,
-    get_resolver_class,
-    run_resolver_method,
-)
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -40,9 +34,83 @@ else:
     DAG = Any
     Source = Any
 
+_MODEL_EDGE_SCHEMA = {
+    "left_id": pl.UInt64,
+    "right_id": pl.UInt64,
+    "probability": pl.UInt8,
+}
+_ASSIGNMENT_SCHEMA = {
+    "cluster_id": pl.UInt64,
+    "node_id": pl.UInt64,
+}
+_RESOLVER_CLASSES: dict[str, type[ResolverMethod]] = {}
+
+
+def _normalise_model_edges(edges: pl.DataFrame) -> pl.DataFrame:
+    """Normalise model-edge inputs to the canonical resolver schema."""
+    if edges.height == 0:
+        return pl.DataFrame(schema=_MODEL_EDGE_SCHEMA)
+
+    return edges.select("left_id", "right_id", "probability").cast(_MODEL_EDGE_SCHEMA)
+
+
+def _normalise_assignments(assignments: pl.DataFrame) -> pl.DataFrame:
+    """Normalise assignment tables to the canonical resolver schema."""
+    if assignments.height == 0:
+        return pl.DataFrame(schema=_ASSIGNMENT_SCHEMA)
+
+    return (
+        assignments.select("cluster_id", "node_id")
+        .cast(_ASSIGNMENT_SCHEMA)
+        .unique()
+        .sort(["cluster_id", "node_id"])
+    )
+
+
+def run_resolver_method(
+    resolver_class: type[ResolverMethod],
+    settings_payload: ResolverSettings,
+    model_edges: Mapping[ResolutionName, pl.DataFrame],
+    resolver_assignments: Mapping[ResolutionName, pl.DataFrame],
+) -> pl.DataFrame:
+    """Validate settings, execute resolver method, and normalise output."""
+    method = resolver_class(settings=settings_payload)
+    normalised_model_edges = {
+        resolution_name: _normalise_model_edges(edges)
+        for resolution_name, edges in model_edges.items()
+    }
+    normalised_resolver_assignments = {
+        resolution_name: _normalise_assignments(assignments)
+        for resolution_name, assignments in resolver_assignments.items()
+    }
+    computed = method.compute_clusters(
+        model_edges=normalised_model_edges,
+        resolver_assignments=normalised_resolver_assignments,
+    )
+    return _normalise_assignments(computed)
+
+
+def add_resolver_class(resolver_class: type[ResolverMethod]) -> None:
+    """Register a resolver methodology class."""
+    if not issubclass(resolver_class, ResolverMethod):
+        raise ValueError("The argument is not a proper subclass of ResolverMethod.")
+    _RESOLVER_CLASSES[resolver_class.__name__] = resolver_class
+    logger.debug(f"Registered resolver class: {resolver_class.__name__}")
+
+
+def get_resolver_class(class_name: str) -> type[ResolverMethod]:
+    """Retrieve a resolver methodology class by name."""
+    try:
+        return _RESOLVER_CLASSES[class_name]
+    except KeyError as e:
+        raise ValueError(f"Unknown resolver class: {class_name}") from e
+
+
+add_resolver_class(Components)
+
 
 class Resolver:
-    """Client-side node that computes clusters from model/resolver inputs."""
+    """Client-side node that computes clusters from model and resolver inputs."""
 
     def __init__(
         self,
@@ -187,22 +255,18 @@ class Resolver:
         resolver_assignments: dict[ResolutionName, pl.DataFrame] = {}
 
         for node in self.inputs:
-            if isinstance(node, Model):
-                if node.results is None:
-                    raise ValueError(
-                        f"Resolver input model '{node.name}' has no local results. "
-                        "Run or download upstream nodes before running this resolver."
-                    )
-                model_edges[node.name] = node.results.probabilities
-            else:
-                if node.results is None:
-                    raise ValueError(
-                        f"Resolver input resolver '{node.name}' has no local results. "
-                        "Run or download upstream nodes before running this resolver."
-                    )
-                resolver_assignments[node.name] = node.results.select(
-                    "cluster_id", "node_id"
+            if node.results is None:
+                raise ValueError(
+                    f"Resolver input '{node.name}' has no local results. "
+                    "Run or download upstream nodes before running this resolver."
                 )
+            if isinstance(node, Model):
+                model_edges[node.name] = node.results.probabilities
+                continue
+
+            resolver_assignments[node.name] = node.results.select(
+                "cluster_id", "node_id"
+            )
 
         clusters = self.compute_clusters(
             model_edges=model_edges,
@@ -337,5 +401,7 @@ class Resolver:
 
     def delete(self, certain: bool = False) -> bool:
         """Delete resolver and associated data from backend."""
-        result = _handler.delete_resolution(path=self.resolution_path, certain=certain)
-        return result.success
+        return _handler.delete_resolution(
+            path=self.resolution_path,
+            certain=certain,
+        ).success

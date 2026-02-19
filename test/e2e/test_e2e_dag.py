@@ -12,6 +12,7 @@ from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
 from matchbox.client.models.dedupers import NaiveDeduper
 from matchbox.client.models.linkers import DeterministicLinker
+from matchbox.client.resolvers import Components, ComponentsSettings
 from matchbox.client.sources import Source, SourceField
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
@@ -21,7 +22,6 @@ from matchbox.common.factories.sources import (
     SuffixRule,
     linked_sources_factory,
 )
-from matchbox.common.resolvers import Components, ComponentsSettings
 
 
 @pytest.mark.docker

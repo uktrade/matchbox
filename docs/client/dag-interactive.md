@@ -65,7 +65,7 @@ source1_query.data(raw_query_data)
 
 ## Iterating on models
 
-Running a model returns [`ModelResults`][matchbox.client.results.ModelResults] that can be inspected. The same results are accessible using the attribute `results` on a model node which has been run:
+Running a model returns results that can be inspected. The same results are accessible using the attribute `results` on a model node which has been run:
 
 ```python
 results = dedupe_source1.run()

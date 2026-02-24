@@ -2,6 +2,7 @@
 
 from functools import partial
 
+import polars as pl
 import pyarrow as pa
 import pytest
 from sqlalchemy import Engine
@@ -14,6 +15,7 @@ from matchbox.common.dtos import (
     ModelConfig,
     PermissionGrant,
     PermissionType,
+    QueryCombineType,
     Resolution,
     ResolutionPath,
     SourceConfig,
@@ -25,15 +27,19 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxResolutionAlreadyExists,
     MatchboxResolutionExistingData,
+    MatchboxResolutionInvalidData,
     MatchboxResolutionNotFoundError,
+    MatchboxResolutionNotQueriable,
     MatchboxResolutionUpdateError,
     MatchboxRunNotFoundError,
     MatchboxRunNotWriteable,
 )
 from matchbox.common.factories.entities import diff_results, query_to_cluster_entities
 from matchbox.common.factories.models import model_factory
+from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.factories.sources import SourceTestkit
+from matchbox.common.hash import hash_arrow_table
 from matchbox.server.base import MatchboxDBAdapter
 
 
@@ -565,7 +571,7 @@ class TestMatchboxCollectionsBackend:
                 old_resolution.config.model_copy(
                     update={
                         "left_query": old_resolution.config.left_query.model_copy(
-                            update={"threshold": 99}
+                            update={"combine_type": QueryCombineType.SET_AGG}
                         )
                     }
                 )
@@ -574,7 +580,6 @@ class TestMatchboxCollectionsBackend:
                 old_resolution.model_copy(
                     update={
                         "description": "updated",
-                        "truth": 33,
                         "config": updated_config,
                     }
                 )
@@ -589,15 +594,17 @@ class TestMatchboxCollectionsBackend:
                 linker_testkit.resolution_path
             )
             assert linker_retrieved.description == "updated"
-            assert linker_retrieved.truth == 33
-            assert linker_retrieved.config.left_query.threshold == 99
+            assert (
+                linker_retrieved.config.left_query.combine_type
+                == QueryCombineType.SET_AGG
+            )
 
             # We cannot change a model's inputs
             rewired_config = ModelConfig.model_validate(
                 old_resolution.config.model_copy(
                     update={
                         "left_query": old_resolution.config.left_query.model_copy(
-                            update={"model_resolution": "new_model"}
+                            update={"source_resolutions": ("new_source",)}
                         )
                     }
                 )
@@ -627,6 +634,9 @@ class TestMatchboxCollectionsBackend:
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
             naive_crn_testkit = dag_testkit.models.get("naive_test_crn")
+            naive_crn_resolver = dag_testkit.resolvers.get(
+                "resolver_naive_test_crn"
+            ).resolver
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately.
@@ -634,7 +644,7 @@ class TestMatchboxCollectionsBackend:
             # marked as complete)
             res = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=naive_crn_testkit.resolution_path,
+                point_of_truth=naive_crn_resolver.resolution_path,
             )
             res_clusters = query_to_cluster_entities(
                 data=res,
@@ -680,12 +690,15 @@ class TestMatchboxCollectionsBackend:
         with self.scenario(self.backend, "probabilistic_dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
             prob_crn_testkit = dag_testkit.models.get("probabilistic_test_crn")
+            prob_crn_resolver = dag_testkit.resolvers.get(
+                "resolver_probabilistic_test_crn"
+            ).resolver
 
             # Query returns the same results as the testkit, showing
             # that processing was performed accurately
             res = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=prob_crn_testkit.resolution_path,
+                point_of_truth=prob_crn_resolver.resolution_path,
             )
             res_clusters = query_to_cluster_entities(
                 data=res,
@@ -710,6 +723,164 @@ class TestMatchboxCollectionsBackend:
             self.backend.validate_ids(ids=pre_results["left_id"].to_pylist())
             self.backend.validate_ids(ids=pre_results["right_id"].to_pylist())
 
+    def test_get_resolver_data_includes_root_membership(self) -> None:
+        """Resolver data retrieval returns canonical assignments with root rows."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            resolver_data = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+
+            assert resolver_data.columns == ["cluster_id", "node_id"]
+            assert resolver_data.equals(resolver_data.sort(["cluster_id", "node_id"]))
+
+            roots = resolver_data.select("cluster_id").unique().sort("cluster_id")
+            root_rows = (
+                resolver_data.filter(pl.col("cluster_id") == pl.col("node_id"))
+                .select("cluster_id")
+                .unique()
+                .sort("cluster_id")
+            )
+            assert roots.equals(root_rows)
+
+    def test_insert_resolver_data_expands_root_inputs(self) -> None:
+        """Uploading resolver roots expands to leaves when available in ``contains``."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            existing = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+
+            selected_root: int | None = None
+            expected_leaves: set[int] = set()
+            for cluster_id in (
+                existing.get_column("cluster_id").unique().sort().to_list()
+            ):
+                leaves = set(
+                    int(node_id)
+                    for node_id in existing.filter(
+                        (pl.col("cluster_id") == cluster_id)
+                        & (pl.col("node_id") != cluster_id)
+                    )
+                    .get_column("node_id")
+                    .to_list()
+                )
+                if leaves:
+                    selected_root = int(cluster_id)
+                    expected_leaves = leaves
+                    break
+
+            assert selected_root is not None
+            upload = pa.table(
+                {
+                    "client_cluster_id": pa.array([2], type=pa.uint64()),
+                    "node_id": pa.array([selected_root], type=pa.uint64()),
+                }
+            )
+            path = resolver.resolution_path.model_copy(
+                update={"name": "resolver_root_expansion"}
+            )
+            resolution = resolver.to_resolution().model_copy(
+                update={"fingerprint": hash_arrow_table(upload)}
+            )
+
+            self.backend.create_resolution(resolution=resolution, path=path)
+            mapping = pl.from_arrow(
+                self.backend.insert_resolver_data(path=path, data=upload)
+            )
+            mapped_cluster_id = int(mapping.get_column("cluster_id").item())
+
+            uploaded = pl.from_arrow(self.backend.get_resolver_data(path=path))
+            mapped_members = set(
+                int(node_id)
+                for node_id in uploaded.filter(
+                    pl.col("cluster_id") == mapped_cluster_id
+                )
+                .get_column("node_id")
+                .to_list()
+            )
+            assert expected_leaves.issubset(mapped_members)
+            assert mapped_cluster_id in mapped_members
+
+    def test_insert_resolver_data_deduplicates_and_sorts_mapping(self) -> None:
+        """Duplicate uploaded rows should still return sorted unique mapping rows."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            existing = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+            node_candidates = [
+                int(node_id)
+                for node_id in existing.get_column("node_id").unique().sort().to_list()
+            ]
+            assert len(node_candidates) >= 2
+            left, right = node_candidates[:2]
+
+            upload = pa.table(
+                {
+                    "client_cluster_id": pa.array([9, 7, 9, 7, 7], type=pa.uint64()),
+                    "node_id": pa.array(
+                        [left, right, left, right, right], type=pa.uint64()
+                    ),
+                }
+            )
+            path = resolver.resolution_path.model_copy(
+                update={"name": "resolver_duplicate_upload"}
+            )
+            resolution = resolver.to_resolution().model_copy(
+                update={"fingerprint": hash_arrow_table(upload)}
+            )
+
+            self.backend.create_resolution(resolution=resolution, path=path)
+            mapping = pl.from_arrow(
+                self.backend.insert_resolver_data(path=path, data=upload)
+            )
+
+            assert mapping.equals(mapping.sort("client_cluster_id"))
+            assert mapping.get_column("client_cluster_id").to_list() == [7, 9]
+            assert mapping.select("client_cluster_id").n_unique() == 2
+
+    def test_insert_resolver_data_rejects_unknown_cluster_ids(self) -> None:
+        """Resolver uploads fail clearly when assignments reference unknown clusters."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers.get("resolver_naive_test_crn").resolver
+            existing = pl.from_arrow(
+                self.backend.get_resolver_data(path=resolver.resolution_path)
+            )
+            unknown_cluster_id = int(existing.get_column("node_id").max()) + 10000
+            upload = pa.table(
+                {
+                    "client_cluster_id": pa.array([1], type=pa.uint64()),
+                    "node_id": pa.array([unknown_cluster_id], type=pa.uint64()),
+                }
+            )
+            path = resolver.resolution_path.model_copy(
+                update={"name": "resolver_unknown_cluster"}
+            )
+            resolution = resolver.to_resolution().model_copy(
+                update={"fingerprint": hash_arrow_table(upload)}
+            )
+
+            self.backend.create_resolution(resolution=resolution, path=path)
+            with pytest.raises(
+                MatchboxResolutionInvalidData, match="unknown cluster IDs"
+            ):
+                self.backend.insert_resolver_data(path=path, data=upload)
+
+    def test_get_resolver_data_rejects_incomplete_resolver(self) -> None:
+        """Resolver data cannot be downloaded before upload completion."""
+        with self.scenario(self.backend, "dedupe") as dag_testkit:
+            resolver = dag_testkit.resolvers["resolver_naive_test_crn"].resolver
+            pending_path = resolver.resolution_path.model_copy(
+                update={"name": "pending_resolver"}
+            )
+            self.backend.create_resolution(
+                resolution=resolver.to_resolution(),
+                path=pending_path,
+            )
+            with pytest.raises(MatchboxResolutionNotQueriable):
+                self.backend.get_resolver_data(path=pending_path)
+
     def test_model_results_empty(self) -> None:
         """Can insert and retrieve empty model results"""
         with self.scenario(self.backend, "index") as dag_testkit:
@@ -726,15 +897,51 @@ class TestMatchboxCollectionsBackend:
 
             self.backend.insert_model_data(
                 path=model_testkit.model.resolution_path,
-                results=model_testkit.model.results.probabilities.to_arrow(),
+                results=model_testkit.model.results.to_arrow(),
             )
+            dag_testkit.add_model(model_testkit)
+            resolver_tkit = resolver_factory(
+                dag=dag_testkit.dag,
+                name=f"resolver_{model_testkit.model.name}",
+                inputs=[model_testkit],
+                true_entities=tuple(
+                    dag_testkit.source_to_linked[crn_testkit.name].true_entities
+                ),
+                thresholds={model_testkit.model.name: model_testkit.threshold},
+            )
+            dag_testkit.add_resolver(resolver_tkit)
+            resolver = dag_testkit.resolvers[resolver_tkit.name].resolver
+
+            resolver.run()
+            self.backend.create_resolution(
+                resolution=resolver.to_resolution(),
+                path=resolver.resolution_path,
+            )
+            if resolver._upload_results is None:  # noqa: SLF001
+                raise RuntimeError("Resolver upload payload missing after run().")
+            mapping = pl.from_arrow(
+                self.backend.insert_resolver_data(
+                    path=resolver.resolution_path,
+                    data=resolver._upload_results.to_arrow(),  # noqa: SLF001
+                )
+            ).cast({"client_cluster_id": pl.UInt64, "cluster_id": pl.UInt64})
+            resolver.results = (
+                resolver._upload_results.join(  # noqa: SLF001
+                    mapping,
+                    on="client_cluster_id",
+                    how="left",
+                )
+                .drop("client_cluster_id")
+                .select("cluster_id", "node_id")
+            )
+            resolver.results = resolver._with_root_membership(resolver.results)  # noqa: SLF001
 
             # Querying from deduper with no results is the same as querying from source
             # (That we can query also implies that resolution marked as complete)
             source_query = self.backend.query(source=crn_testkit.resolution_path)
             dedupe_query = self.backend.query(
                 source=crn_testkit.resolution_path,
-                point_of_truth=model_testkit.resolution_path,
+                point_of_truth=resolver.resolution_path,
             )
 
             assert source_query == dedupe_query

@@ -18,20 +18,18 @@ from matchbox.client import _handler
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.common.db import QueryReturnClass, QueryReturnType
-from matchbox.common.dtos import (
-    QueryCombineType,
-    QueryConfig,
-)
+from matchbox.common.dtos import QueryCombineType, QueryConfig
 from matchbox.common.logging import profile_time
-from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
-    from matchbox.client.models import Model
+    from matchbox.client.models.models import Model
+    from matchbox.client.resolvers import Resolver
     from matchbox.client.sources import Source
 else:
     DAG = Any
     Model = Any
+    Resolver = Any
     Source = Any
 
 
@@ -42,9 +40,8 @@ class Query:
         self,
         *sources: Source,
         dag: DAG,
-        model: Model | None = None,
+        resolver: Resolver | None = None,
         combine_type: QueryCombineType = QueryCombineType.CONCAT,
-        threshold: float | None = None,
         cleaning: dict[str, str] | None = None,
     ) -> None:
         """Initialise query.
@@ -52,7 +49,7 @@ class Query:
         Args:
             sources: List of sources to query from
             dag: DAG containing sources and models.
-            model (optional): Model to use to resolve sources. It can only be missing
+            resolver (optional): Resolver to use to resolve sources. It can be missing
                 if querying from a single source.
             combine_type (optional): How to combine the data from different sources.
                 Default is `concat`.
@@ -66,32 +63,23 @@ class Query:
                     aggregate to nested lists of unique values. One row per ID,
                     but all requested data is in nested arrays
 
-            threshold (optional): The threshold to use for creating clusters
-                If None, uses the resolutions' default threshold
-                If an integer, uses that threshold for the specified resolution, and the
-                resolution's cached thresholds for its ancestors
-
             cleaning (optional): A dictionary mapping an output column name to a SQL
                 expression that will populate a new column.
         """
         self.raw_data: PolarsDataFrame | None = None
         self.dag = dag
         self.sources = sources
-        self.model = model
+        self.resolver = resolver
         self.combine_type = combine_type
-        self.threshold = threshold
         self.cleaning = cleaning
 
     @property
     def config(self) -> QueryConfig:
         """The query configuration for the current DAG."""
         return QueryConfig(
-            source_resolutions=[source.name for source in self.sources],
-            model_resolution=self.model.name if self.model else None,
+            source_resolutions=tuple(source.name for source in self.sources),
+            resolver_resolution=self.resolver.name if self.resolver else None,
             combine_type=self.combine_type,
-            threshold=threshold_float_to_int(self.threshold)
-            if self.threshold
-            else None,
             cleaning=self.cleaning,
         )
 
@@ -111,22 +99,18 @@ class Query:
         # Get sources from DAG
         sources = [dag.get_source(res) for res in config.source_resolutions]
 
-        # Get model if specified
-        model = (
-            dag.get_model(config.model_resolution) if config.model_resolution else None
-        )
-
-        # Convert threshold back to float
-        threshold = (
-            threshold_int_to_float(config.threshold) if config.threshold else None
+        # Get resolver if specified
+        resolver = (
+            dag.get_resolver(config.resolver_resolution)
+            if config.resolver_resolution
+            else None
         )
 
         return cls(
             *sources,
             dag=dag,
-            model=model,
+            resolver=resolver,
             combine_type=config.combine_type,
-            threshold=threshold,
             cleaning=config.cleaning,
         )
 
@@ -177,8 +161,7 @@ class Query:
             for source in self.sources:
                 res = _handler.query(
                     source=source.resolution_path,
-                    resolution=self.model.resolution_path if self.model else None,
-                    threshold=self.config.threshold,
+                    resolution=self.resolver.resolution_path if self.resolver else None,
                     return_leaf_id=return_leaf_id,
                 )
 
@@ -197,14 +180,13 @@ class Query:
             writer.close()
 
             # Download sources from warehouse
-            lazy_sources = []
-            for source in self.sources:
-                lazy_sources.append(
-                    pl.scan_parquet(source.cache_path)
-                    .select(pl.all().name.prefix(f"{source.name}_"))
-                    .with_columns(pl.lit(source.name).alias("source"))
-                    .rename({source.qualified_key: "key"})
-                )
+            lazy_sources = [
+                pl.scan_parquet(source.cache_path)
+                .select(pl.all().name.prefix(f"{source.name}_"))
+                .with_columns(pl.lit(source.name).alias("source"))
+                .rename({source.qualified_key: "key"})
+                for source in self.sources
+            ]
 
             mb_ids = pl.scan_parquet(mb_ids_path)
 

@@ -5,9 +5,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from matchbox.client.dags import DAG
 from matchbox.common.dtos import (
     ModelResolutionName,
+    ResolverResolutionName,
     SourceResolutionName,
 )
 from matchbox.common.factories.models import ModelTestkit
+from matchbox.common.factories.resolvers import ResolverTestkit
 from matchbox.common.factories.sources import LinkedSourcesTestkit, SourceTestkit
 
 
@@ -29,6 +31,7 @@ class TestkitDAG(BaseModel):
     # Just registries of test data - no complex logic
     sources: dict[SourceResolutionName, SourceTestkit] = {}
     models: dict[ModelResolutionName, ModelTestkit] = {}
+    resolvers: dict[ResolverResolutionName, ResolverTestkit] = {}
     linked: dict[str, LinkedSourcesTestkit] = {}
     source_to_linked: dict[str, LinkedSourcesTestkit] = {}
 
@@ -50,3 +53,10 @@ class TestkitDAG(BaseModel):
         """Add model to the real DAG and register test data."""
         self.dag._add_step(testkit.model)
         self.models[testkit.name] = testkit
+
+    def add_resolver(self, testkit: ResolverTestkit) -> None:
+        """Add resolver to the real DAG and register test data."""
+        resolver = self.dag.resolver(**testkit.into_dag())
+        resolver.results = testkit.assignments
+        testkit.resolver = resolver
+        self.resolvers[testkit.name] = testkit

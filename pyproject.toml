@@ -24,7 +24,6 @@ dependencies = [
     "pydantic-settings>=2.5.2",
     "pydantic>=2.9.2",
     "rich>=13.9.4",
-    "rustworkx>=0.15.1",
     "splink>=4.0.5,<4.1.0",
     "sqlalchemy>=2.0.35",
     "sqlglot[rs]>=26.12.1",

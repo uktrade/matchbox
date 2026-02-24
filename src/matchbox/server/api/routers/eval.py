@@ -17,9 +17,9 @@ from matchbox.common.dtos import (
     CollectionName,
     DefaultUser,
     ErrorResponse,
-    ModelResolutionName,
-    ModelResolutionPath,
     PermissionType,
+    ResolverResolutionName,
+    ResolverResolutionPath,
     RunID,
     User,
 )
@@ -92,7 +92,7 @@ def sample(
     backend: BackendDependency,
     collection: CollectionName,
     run_id: RunID,
-    resolution: ModelResolutionName,
+    resolution: ResolverResolutionName,
     n: int,
     user: Annotated[
         User,
@@ -107,7 +107,7 @@ def sample(
 ) -> ParquetResponse:
     """Sample n cluster to validate."""
     sample = backend.sample_for_eval(
-        path=ModelResolutionPath(collection=collection, run=run_id, name=resolution),
+        path=ResolverResolutionPath(collection=collection, run=run_id, name=resolution),
         n=n,
         user_name=user.user_name,
     )

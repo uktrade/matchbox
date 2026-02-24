@@ -24,7 +24,6 @@ from matchbox.client.models.linkers.weighteddeterministic import (
     WeightedDeterministicSettings,
 )
 from matchbox.client.queries import Query
-from matchbox.client.results import ModelResults
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.sources import (
     SourceTestkit,
@@ -333,11 +332,11 @@ def test_exact_match_linking(
         left_query=Query(left_source.source, dag=linked.dag),
         right_query=Query(right_source.source, dag=linked.dag),
     )
-    results: ModelResults = linker.run()
+    results = linker.run()
 
     # Validate results against ground truth
     identical, report = linked.diff_results(
-        probabilities=results.probabilities,
+        probabilities=results,
         left_clusters=left_source.entities,
         right_clusters=right_source.entities,
         sources=["source_left", "source_right"],
@@ -399,11 +398,11 @@ def test_exact_match_with_duplicates_linking(
         left_query=Query(left_source, dag=linked.dag),
         right_query=Query(right_source, dag=linked.dag),
     )
-    results: ModelResults = linker.run()
+    results = linker.run()
 
     # Validate results against ground truth
     identical, report = linked.diff_results(
-        probabilities=results.probabilities,
+        probabilities=results,
         left_clusters=left_source.entities,
         right_clusters=right_source.entities,
         sources=["source_left", "source_right"],
@@ -474,7 +473,7 @@ def test_partial_entity_linking(
 
     # Validate results against ground truth
     identical, report = linked.diff_results(
-        probabilities=results.probabilities,
+        probabilities=results,
         left_clusters=left_source.entities,
         right_clusters=right_source.entities,
         sources=["source_left", "source_right"],
@@ -537,7 +536,7 @@ def test_no_matching_entities_linking(
 
     # Validate results against ground truth
     identical, report = linked.diff_results(
-        probabilities=results.probabilities,
+        probabilities=results,
         left_clusters=left_source.entities,
         right_clusters=right_source.entities,
         sources=["source_left", "source_right"],
@@ -545,4 +544,4 @@ def test_no_matching_entities_linking(
     )
 
     assert not identical
-    assert len(results.probabilities) == 0
+    assert len(results) == 0

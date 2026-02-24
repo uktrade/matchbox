@@ -6,6 +6,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
+import polars as pl
 from polars import DataFrame
 
 from matchbox.client import _handler
@@ -13,7 +14,7 @@ from matchbox.client.models import dedupers, linkers
 from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.queries import Query
-from matchbox.client.results import ModelResults
+from matchbox.client.results import normalise_model_probabilities
 from matchbox.common.dtos import (
     ModelConfig,
     ModelResolutionName,
@@ -26,14 +27,11 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxResolutionNotFoundError
 from matchbox.common.hash import hash_model_results
 from matchbox.common.logging import logger, profile_time
-from matchbox.common.transform import threshold_float_to_int, threshold_int_to_float
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
-    from matchbox.client.sources import Source
 else:
     DAG = Any
-    Source = Any
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -84,7 +82,6 @@ class Model:
         model_settings: DeduperSettings | dict,
         left_query: Query,
         right_query: None = None,
-        truth: float = 1.0,
         description: str | None = None,
     ) -> None: ...
 
@@ -97,7 +94,6 @@ class Model:
         model_settings: LinkerSettings | dict,
         left_query: Query,
         right_query: Query,
-        truth: float = 1.0,
         description: str | None = None,
     ) -> None: ...
 
@@ -109,7 +105,6 @@ class Model:
         model_settings: DeduperSettings | LinkerSettings | dict,
         left_query: Query,
         right_query: Query | None = None,
-        truth: float = 1.0,
         description: str | None = None,
     ):
         """Create a new model instance.
@@ -117,7 +112,6 @@ class Model:
         Args:
             dag: DAG containing this model.
             name: Unique name for the model
-            truth: Truth threshold. Defaults to 1.0. Can be set later after analysis.
             model_class: Class of Linker or Deduper, or its name.
             model_settings: Appropriate settings object to pass to model class.
             left_query: The query that will get the data to deduplicate, or the data to
@@ -128,10 +122,9 @@ class Model:
         self.dag = dag
         self.name = name
         self.description = description
-        self._truth: int = threshold_float_to_int(truth)
         self.left_query = left_query
         self.right_query = right_query
-        self.results: ModelResults | None = None
+        self.results: pl.DataFrame | None = None
 
         if isinstance(model_class, str):
             self.model_class: type[Linker | Deduper] = _MODEL_CLASSES[model_class]
@@ -178,10 +171,9 @@ class Model:
         """Convert to Resolution for API calls."""
         return Resolution(
             description=self.description,
-            truth=self._truth,
             resolution_type=ResolutionType.MODEL,
             config=self.config,
-            fingerprint=hash_model_results(self.results.probabilities),
+            fingerprint=hash_model_results(self.results.to_arrow()),
         )
 
     @classmethod
@@ -205,7 +197,6 @@ class Model:
             right_query=Query.from_config(resolution.config.right_query, dag=dag)
             if resolution.config.right_query
             else None,
-            truth=threshold_int_to_float(resolution.truth),
         )
 
     @property
@@ -216,18 +207,6 @@ class Model:
             run=self.dag.run,
             name=self.name,
         )
-
-    @property
-    def truth(self) -> float | None:
-        """Returns the truth threshold for the model as a float."""
-        if self._truth is not None:
-            return threshold_int_to_float(self._truth)
-        return None
-
-    @truth.setter
-    def truth(self, truth: float) -> None:
-        """Set the truth threshold for the model."""
-        self._truth = threshold_float_to_int(truth)
 
     def delete(self, certain: bool = False) -> bool:
         """Delete the model from the database."""
@@ -253,8 +232,7 @@ class Model:
         self,
         left_data: DataFrame | None = None,
         right_data: DataFrame | None = None,
-        for_validation: bool = False,
-    ) -> ModelResults:
+    ) -> pl.DataFrame:
         """Execute the model pipeline and return results.
 
         Args:
@@ -262,40 +240,20 @@ class Model:
                 a deduper, or link on the left if the model is a linker.
             right_data (optional): Pre-fetched query data to link on the right, if the
                 model is a linker. If the model is a deduper, this argument is ignored.
-            for_validation: Whether to download and store extra data to explore and
-                score results.
         """
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)
 
-        left_df = (
-            left_data
-            if left_data is not None
-            else self.left_query.data(return_leaf_id=for_validation)
-        )
+        left_df = left_data if left_data is not None else self.left_query.data()
         right_df = None
 
         if self.config.type == ModelType.LINKER:
             logger.info("Executing right query", prefix=log_prefix)
-            right_df = (
-                right_data
-                if right_data is not None
-                else self.right_query.data(return_leaf_id=for_validation)
-            )
+            right_df = right_data if right_data is not None else self.right_query.data()
 
         logger.info("Running model logic", prefix=log_prefix)
         probabilities = self.compute_probabilities(left_df, right_df)
-
-        if for_validation:
-            self.results = ModelResults(
-                probabilities=probabilities,
-                left_root_leaf=self.left_query.leaf_id,
-                right_root_leaf=self.right_query.leaf_id
-                if right_df is not None
-                else None,
-            )
-        else:
-            self.results = ModelResults(probabilities=probabilities)
+        self.results = normalise_model_probabilities(probabilities)
 
         return self.results
 
@@ -340,18 +298,12 @@ class Model:
             _handler.create_resolution(resolution=resolution, path=self.resolution_path)
             logger.info("Setting data for new resolution", prefix=log_prefix)
             # Assumes resolution has not been deleted or made incompatible
-            _handler.set_data(
-                path=self.resolution_path, data=self.results.probabilities
-            )
+            _handler.set_data(path=self.resolution_path, data=self.results)
 
-    def download_results(self) -> ModelResults:
+    def download_results(self) -> pl.DataFrame:
         """Retrieve results associated with the model from the database."""
-        results = _handler.get_results(name=self.name)
-        return ModelResults(probabilities=results)
-
-    def query(self, *sources: Source, **kwargs: Any) -> Query:
-        """Generate a query for this model."""
-        return Query(*sources, **kwargs, model=self, dag=self.dag)
+        results = _handler.get_results(path=self.resolution_path)
+        return normalise_model_probabilities(pl.from_arrow(results))
 
     def clear_data(self) -> None:
         """Deletes data computed for node."""

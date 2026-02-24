@@ -18,7 +18,7 @@ from matchbox.client.cli.eval.widgets.styling import get_group_style
 from matchbox.client.cli.eval.widgets.table import ComparisonDisplayTable
 from matchbox.client.dags import DAG
 from matchbox.client.eval import EvaluationItem, create_judgement, get_samples
-from matchbox.common.dtos import ModelResolutionPath
+from matchbox.common.dtos import ResolverResolutionPath
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class EntityResolutionApp(App):
     current_assignments: reactive[dict[int, str]] = reactive({}, init=False)
 
     sample_limit: int
-    resolution: ModelResolutionPath
+    resolution: ResolverResolutionPath
     dag: DAG
     session_tag: str | None
     sample_file: str | None
@@ -117,7 +117,7 @@ class EntityResolutionApp(App):
     def __init__(
         self,
         num_samples: int = 5,
-        resolution: ModelResolutionPath | None = None,
+        resolution: ResolverResolutionPath | None = None,
         dag: DAG | None = None,
         session_tag: str | None = None,
         sample_file: str | None = None,

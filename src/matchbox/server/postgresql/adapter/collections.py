@@ -1,5 +1,6 @@
 """Collections PostgreSQL mixin for Matchbox server."""
 
+import pyarrow as pa
 from psycopg.errors import LockNotAvailable
 from pyarrow import Table
 from sqlalchemy import CursorResult, delete, select, update
@@ -13,12 +14,14 @@ from matchbox.common.dtos import (
     Resolution,
     ResolutionPath,
     ResolutionType,
+    ResolverResolutionPath,
     Run,
     RunID,
     SourceResolutionPath,
     UploadStage,
 )
 from matchbox.common.dtos import ModelConfig as CommonModelConfig
+from matchbox.common.dtos import ResolverConfig as CommonResolverConfig
 from matchbox.common.dtos import SourceConfig as CommonSourceConfig
 from matchbox.common.exceptions import (
     MatchboxCollectionAlreadyExists,
@@ -32,15 +35,24 @@ from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Collections,
     ModelConfigs,
+    ModelEdges,
     Resolutions,
-    Results,
+    ResolverConfigs,
     Runs,
     SourceConfigs,
     SourceFields,
     insert,
 )
 from matchbox.server.postgresql.utils.db import compile_sql, grant_permission
-from matchbox.server.postgresql.utils.insert import insert_hashes, insert_results
+from matchbox.server.postgresql.utils.insert import (
+    insert_hashes,
+    insert_model_edges,
+    insert_resolver_clusters,
+)
+from matchbox.server.postgresql.utils.query import (
+    require_complete_resolver,
+    resolver_membership_subquery,
+)
 
 
 class MatchboxPostgresCollectionsMixin:
@@ -230,7 +242,6 @@ class MatchboxPostgresCollectionsMixin:
 
             # Update top-level metadata
             old_resolution.description = resolution.description
-            old_resolution.truth = resolution.truth
 
             # Update config
             if old_resolution.type == "source":
@@ -272,7 +283,7 @@ class MatchboxPostgresCollectionsMixin:
 
                     old_config.fields = new_fields
 
-            else:
+            elif old_resolution.type == ResolutionType.MODEL:
                 old_config: ModelConfigs = old_resolution.model_config
                 if not isinstance(new_config, CommonModelConfig):
                     raise ValueError("Config for model resolution expected.")
@@ -283,6 +294,17 @@ class MatchboxPostgresCollectionsMixin:
                     None
                     if not new_config.right_query
                     else new_config.right_query.model_dump_json()
+                )
+            elif old_resolution.type == ResolutionType.RESOLVER:
+                old_config: ResolverConfigs = old_resolution.resolver_config
+                if not isinstance(new_config, CommonResolverConfig):
+                    raise ValueError("Config for resolver resolution expected.")
+                old_config.resolver_class = new_config.resolver_class
+                old_config.inputs = list(new_config.inputs)
+                old_config.resolver_settings = new_config.resolver_settings
+            else:
+                raise ValueError(
+                    f"Unsupported resolution type for update: {old_resolution.type}"
                 )
 
             session.commit()
@@ -363,8 +385,21 @@ class MatchboxPostgresCollectionsMixin:
 
     def insert_model_data(self, path: ModelResolutionPath, results: Table) -> None:  # noqa: D102
         self._check_writeable(path)
-        insert_results(path=path, results=results, batch_size=self.settings.batch_size)
+        insert_model_edges(
+            path=path, results=results, batch_size=self.settings.batch_size
+        )
         self.unlock_resolution_data(path=path, complete=True)
+
+    def insert_resolver_data(self, path: ResolverResolutionPath, data: Table) -> Table:
+        """Insert resolver assignments and return mapping table."""
+        self._check_writeable(path)
+        mapping = insert_resolver_clusters(
+            path=path,
+            assignments=data,
+            batch_size=self.settings.batch_size,
+        )
+        self.unlock_resolution_data(path=path, complete=True)
+        return mapping
 
     def get_model_data(self, path: ModelResolutionPath) -> Table:  # noqa: D102
         with MBDB.get_session() as session:
@@ -373,9 +408,36 @@ class MatchboxPostgresCollectionsMixin:
             )
 
             results_query = select(
-                Results.left_id, Results.right_id, Results.probability
-            ).where(Results.resolution_id == resolution.resolution_id)
+                ModelEdges.left_id, ModelEdges.right_id, ModelEdges.probability
+            ).where(ModelEdges.resolution_id == resolution.resolution_id)
 
         with MBDB.get_adbc_connection() as conn:
             stmt: str = compile_sql(results_query)
             return sql_to_df(stmt=stmt, connection=conn, return_type="arrow")
+
+    def get_resolver_data(self, path: ResolverResolutionPath) -> Table:  # noqa: D102
+        with MBDB.get_session() as session:
+            resolution = require_complete_resolver(session=session, path=path)
+            assignments_query = resolver_membership_subquery(
+                resolution_id=resolution.resolution_id,
+                alias="assignments",
+            )
+            ordered_query = select(
+                assignments_query.c.cluster_id,
+                assignments_query.c.node_id,
+            ).order_by(
+                assignments_query.c.cluster_id,
+                assignments_query.c.node_id,
+            )
+
+        with MBDB.get_adbc_connection() as conn:
+            stmt = compile_sql(ordered_query)
+            res = sql_to_df(stmt=stmt, connection=conn, return_type="arrow")
+            return res.cast(
+                pa.schema(
+                    [
+                        ("cluster_id", pa.uint64()),
+                        ("node_id", pa.uint64()),
+                    ]
+                )
+            )

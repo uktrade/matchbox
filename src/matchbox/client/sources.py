@@ -188,7 +188,6 @@ class Source:
         """Convert to Resolution for API calls."""
         return Resolution(
             description=self.description,
-            truth=None,
             resolution_type=ResolutionType.SOURCE,
             config=self.config,
             fingerprint=hash_arrow_table(self.hashes),

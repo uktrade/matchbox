@@ -15,15 +15,15 @@ from matchbox.common.arrow import (
     check_schema,
 )
 from matchbox.common.dtos import (
-    ModelResolutionPath,
+    ResolverResolutionPath,
 )
 from matchbox.common.eval import Judgement
 from matchbox.common.logging import logger
 
 
 @http_retry
-def sample_for_eval(n: int, resolution: ModelResolutionPath) -> Table:
-    """Sample model results for evaluation."""
+def sample_for_eval(n: int, resolution: ResolverResolutionPath) -> Table:
+    """Sample resolver clusters for evaluation."""
     res = CLIENT.get(
         "/eval/samples",
         params=url_params(

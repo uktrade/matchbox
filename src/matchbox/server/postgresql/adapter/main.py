@@ -1,7 +1,7 @@
 """Composed PostgreSQL adapter for Matchbox server."""
 
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_
+from sqlalchemy import func, or_
 
 from matchbox.common.dtos import ResolutionType
 from matchbox.server.base import MatchboxDBAdapter
@@ -19,7 +19,8 @@ from matchbox.server.postgresql.orm import (
     Contains,
     EvalJudgements,
     Groups,
-    Probabilities,
+    ModelEdges,
+    ResolutionClusters,
     Resolutions,
     SourceConfigs,
     Users,
@@ -47,8 +48,8 @@ class FilteredClusters(BaseModel):
                 else:
                     query = (
                         query.join(
-                            Probabilities,
-                            Probabilities.cluster_id == Clusters.cluster_id,
+                            ResolutionClusters,
+                            ResolutionClusters.cluster_id == Clusters.cluster_id,
                             isouter=True,
                         )
                         .join(
@@ -59,7 +60,7 @@ class FilteredClusters(BaseModel):
                         .filter(
                             or_(
                                 EvalJudgements.endorsed_cluster_id.is_not(None),
-                                Probabilities.cluster_id.is_not(None),
+                                ResolutionClusters.cluster_id.is_not(None),
                             )
                         )
                     )
@@ -68,26 +69,12 @@ class FilteredClusters(BaseModel):
 
 
 class FilteredProbabilities(BaseModel):
-    """Wrapper class for filtered probability queries."""
-
-    over_truth: bool = False
+    """Wrapper class for filtered model edge queries."""
 
     def count(self) -> int:
-        """Counts the number of probabilities in the database."""
+        """Counts the number of model edges in the database."""
         with MBDB.get_session() as session:
-            query = session.query(func.count()).select_from(Probabilities)
-
-            if self.over_truth:
-                query = query.join(
-                    Resolutions,
-                    Probabilities.resolution_id == Resolutions.resolution_id,
-                ).filter(
-                    and_(
-                        Resolutions.truth.isnot(None),
-                        Probabilities.probability >= Resolutions.truth,
-                    )
-                )
-            return query.scalar()
+            return session.query(func.count()).select_from(ModelEdges).scalar()
 
 
 class FilteredResolutions(BaseModel):
@@ -95,6 +82,7 @@ class FilteredResolutions(BaseModel):
 
     sources: bool = False
     models: bool = False
+    resolvers: bool = False
 
     def count(self) -> int:
         """Counts the number of resolutions in the database."""
@@ -106,6 +94,8 @@ class FilteredResolutions(BaseModel):
                 filter_list.append(Resolutions.type == ResolutionType.SOURCE)
             if self.models:
                 filter_list.append(Resolutions.type == ResolutionType.MODEL)
+            if self.resolvers:
+                filter_list.append(Resolutions.type == ResolutionType.RESOLVER)
 
             if filter_list:
                 query = query.filter(or_(*filter_list))
@@ -135,8 +125,10 @@ class MatchboxPostgres(
         self.source_clusters = FilteredClusters(has_source=True)
         self.model_clusters = FilteredClusters(has_source=False)
         self.all_clusters = FilteredClusters()
-        self.creates = FilteredProbabilities(over_truth=True)
+        self.creates = ResolutionClusters
         self.merges = Contains
         self.proposes = FilteredProbabilities()
-        self.source_resolutions = FilteredResolutions(sources=True, models=False)
+        self.source_resolutions = FilteredResolutions(
+            sources=True, models=False, resolvers=False
+        )
         self.users = Users

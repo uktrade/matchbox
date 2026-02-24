@@ -11,7 +11,6 @@ from typing import Any, Self, TypeVar
 import numpy as np
 import polars as pl
 import pyarrow as pa
-import rustworkx as rx
 from faker import Faker
 from pyarrow import compute as pc
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -23,7 +22,7 @@ from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.client.models.models import Model
 from matchbox.client.queries import Query
-from matchbox.client.results import ModelResults
+from matchbox.client.results import normalise_model_probabilities
 from matchbox.common.arrow import SCHEMA_RESULTS
 from matchbox.common.dtos import (
     ModelResolutionName,
@@ -44,7 +43,7 @@ from matchbox.common.factories.sources import (
     SourceTestkitParameters,
     linked_sources_factory,
 )
-from matchbox.common.transform import DisjointSet, graph_results
+from matchbox.common.transform import DisjointSet
 
 T = TypeVar("T", bound=Hashable)
 
@@ -78,7 +77,7 @@ add_model_class(MockLinker)
 
 
 def component_report(all_nodes: list[Any], table: pl.DataFrame) -> dict:
-    """Fast reporting on connected components using rustworkx.
+    """Fast reporting on connected components.
 
     Args:
         all_nodes: list of identities of inputs being matched
@@ -87,17 +86,23 @@ def component_report(all_nodes: list[Any], table: pl.DataFrame) -> dict:
     Returns:
         dictionary containing basic component statistics
     """
-    graph, _, _ = graph_results(table, all_nodes)
-    components = rx.connected_components(graph)
+    ds = DisjointSet[Any]()
+    for node in all_nodes:
+        ds.add(node)
+    for left_id, right_id in table.select(["left_id", "right_id"]).rows():
+        ds.union(left_id, right_id)
+
+    components = ds.get_components()
     component_sizes = Counter(len(component) for component in components)
+    total_nodes = sum(component_sizes.values())
 
     return {
         "num_components": len(components),
-        "total_nodes": graph.num_nodes(),
-        "total_edges": graph.num_edges(),
+        "total_nodes": total_nodes,
+        "total_edges": len(table),
         "component_sizes": component_sizes,
-        "min_component_size": min(component_sizes.keys()),
-        "max_component_size": max(component_sizes.keys()),
+        "min_component_size": min(component_sizes.keys()) if component_sizes else 0,
+        "max_component_size": max(component_sizes.keys()) if component_sizes else 0,
     }
 
 
@@ -544,6 +549,7 @@ class ModelTestkit(BaseModel):
     right_query: Query | None
     right_clusters: dict[int, ClusterEntity] | None
     probabilities: pl.DataFrame
+    threshold_value: int = 0
 
     _entities: tuple[ClusterEntity, ...]
     _query_lookup: pa.Table
@@ -593,12 +599,12 @@ class ModelTestkit(BaseModel):
     @property
     def threshold(self) -> int:
         """Threshold for the model."""
-        return self.model._truth
+        return self.threshold_value
 
     @threshold.setter
     def threshold(self, value: int) -> None:
         """Set the threshold for the model."""
-        self.model._truth = value
+        self.threshold_value = value
         right_clusters = self.right_clusters.values() if self.right_clusters else []
         input_results = set(self.left_clusters.values()) | set(right_clusters)
 
@@ -630,7 +636,7 @@ class ModelTestkit(BaseModel):
 
     def fake_run(self) -> Self:
         """Set model results without running model."""
-        self.model.results = ModelResults(probabilities=self.probabilities)
+        self.model.results = normalise_model_probabilities(self.probabilities)
 
         return self
 
@@ -642,7 +648,6 @@ class ModelTestkit(BaseModel):
             "model_settings": json.loads(self.model.config.model_settings),
             "left_query": self.model.left_query,
             "right_query": self.model.right_query,
-            "truth": self.model.truth,
             "description": self.model.description,
         }
 
@@ -660,11 +665,12 @@ def _testkit_to_query(testkit: SourceTestkit | ModelTestkit) -> Query:
         all_sources = list(testkit.model.left_query.sources)
         if testkit.model.right_query is not None:
             all_sources += list(testkit.model.right_query.sources)
-        return Query(
-            *all_sources,
-            model=testkit.model,
-            dag=testkit.model.dag,
-        )
+        if len(all_sources) > 1:
+            raise ValueError(
+                "ModelTestkit no longer exposes a queryable point-of-truth. "
+                "Create a resolver for multi-source queries."
+            )
+        return Query(*all_sources, dag=testkit.model.dag)
 
 
 def model_factory(
@@ -848,7 +854,6 @@ def model_factory(
         model_settings=model_settings,
         left_query=left_query,
         right_query=right_query,
-        truth=min(prob_range),
     )
 
     # ==== Entity and probability generation ====
@@ -884,7 +889,7 @@ def model_factory(
         if right_entities
         else None,
         probabilities=probabilities,
-        _threshold=model._truth,
+        threshold_value=0,
     )
 
 
@@ -964,7 +969,6 @@ def query_to_model_factory(
         model_settings=model_settings,
         left_query=left_query,
         right_query=right_query,
-        truth=min(prob_range),
     )
 
     # Generate probabilities
@@ -988,5 +992,5 @@ def query_to_model_factory(
         if right_clusters
         else None,
         probabilities=probabilities,
-        _threshold=model._truth,
+        threshold_value=0,
     )

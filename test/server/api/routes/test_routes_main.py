@@ -41,8 +41,8 @@ def test_query(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
     mock_backend.query = Mock(
         return_value=pa.Table.from_pylist(
             [
-                {"keys": "a", "id": 1},
-                {"keys": "b", "id": 2},
+                {"key": "a", "id": 1},
+                {"key": "b", "id": 2},
             ],
             schema=SCHEMA_QUERY,
         )
@@ -140,12 +140,12 @@ def test_match(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:
             "source": "bar",
             "key": 1,
             "resolution": "res",
-            "threshold": 50,
         },
     )
 
     assert response.status_code == 200
     [Match.model_validate(m) for m in response.json()]
+    mock_backend.match.assert_called_once()
 
 
 def test_match_404(api_client_and_mocks: tuple[TestClient, Mock, Mock]) -> None:

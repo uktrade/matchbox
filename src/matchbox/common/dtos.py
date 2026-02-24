@@ -1,5 +1,6 @@
 """Data transfer objects for Matchbox API."""
 
+import hashlib
 import json
 import re
 import textwrap
@@ -25,6 +26,12 @@ from pydantic import (
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.exceptions import MatchboxExceptionType, MatchboxNameError
 from matchbox.common.hash import base64_to_hash, hash_to_base64
+
+
+def stable_hash_dict(payload: dict[str, Any]) -> str:
+    """Return a deterministic hash for a JSON-serialisable payload."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def validate_matchbox_name(value: str) -> str:
@@ -87,13 +94,6 @@ class BackendCountableType(StrEnum):
     CREATES = "creates"
     MERGES = "merges"
     PROPOSES = "proposes"
-
-
-class ModelResultsType(StrEnum):
-    """Enumeration of supported model results types."""
-
-    PROBABILITIES = "probabilities"
-    CLUSTERS = "clusters"
 
 
 class BackendResourceType(StrEnum):
@@ -200,7 +200,12 @@ SourceResolutionName: TypeAlias = MatchboxName
 ModelResolutionName: TypeAlias = MatchboxName
 """Type alias for model resolution names."""
 
-ResolutionName: TypeAlias = SourceResolutionName | ModelResolutionName
+ResolverResolutionName: TypeAlias = MatchboxName
+"""Type alias for resolver resolution names."""
+
+ResolutionName: TypeAlias = (
+    SourceResolutionName | ModelResolutionName | ResolverResolutionName
+)
 """Type alias for any resolution names."""
 
 
@@ -224,12 +229,16 @@ SourceResolutionPath: TypeAlias = ResolutionPath
 ModelResolutionPath: TypeAlias = ResolutionPath
 """Type alias for model resolution paths."""
 
+ResolverResolutionPath: TypeAlias = ResolutionPath
+"""Type alias for resolver resolution paths."""
+
 
 class ResolutionType(StrEnum):
     """Types of nodes in a resolution."""
 
     SOURCE = "source"
     MODEL = "model"
+    RESOLVER = "resolver"
 
 
 class LocationConfig(BaseModel):
@@ -396,6 +405,10 @@ class SourceConfig(BaseModel):
             return self.qualify_field(name, fields)
         return [self.qualify_field(name, field_name) for field_name in fields]
 
+    def stable_hash(self) -> str:
+        """Return deterministic hash for this config."""
+        return stable_hash_dict(self.model_dump(mode="json"))
+
 
 class QueryCombineType(StrEnum):
     """Enumeration of ways to combine multiple rows having the same matchbox ID."""
@@ -411,9 +424,8 @@ class QueryConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source_resolutions: tuple[SourceResolutionName, ...]
-    model_resolution: ModelResolutionName | None = None
+    resolver_resolution: ResolverResolutionName | None = None
     combine_type: QueryCombineType = QueryCombineType.CONCAT
-    threshold: int | None = None
     cleaning: dict[str, str] | None = None
 
     @model_validator(mode="after")
@@ -421,9 +433,9 @@ class QueryConfig(BaseModel):
         """Ensure that resolution settings are compatible."""
         if not self.source_resolutions:
             raise ValueError("At least one source resolution required.")
-        if len(self.source_resolutions) > 1 and not self.model_resolution:
+        if len(self.source_resolutions) > 1 and not self.resolver_resolution:
             raise ValueError(
-                "A model resolution must be set if querying from multiple sources"
+                "A resolver resolution must be set if querying from multiple sources"
             )
         return self
 
@@ -431,17 +443,21 @@ class QueryConfig(BaseModel):
     def dependencies(self) -> list[ResolutionName]:
         """Return all resolutions that this query needs."""
         deps = list(self.source_resolutions)
-        if self.model_resolution:
-            deps.append(self.model_resolution)
+        if self.resolver_resolution:
+            deps.append(self.resolver_resolution)
 
         return deps
 
     @property
     def point_of_truth(self) -> ResolutionName:
         """Return path of resolution that will be used as point of truth."""
-        if self.model_resolution:
-            return self.model_resolution
+        if self.resolver_resolution:
+            return self.resolver_resolution
         return self.source_resolutions[0]
+
+    def stable_hash(self) -> str:
+        """Return deterministic hash for this config."""
+        return stable_hash_dict(self.model_dump(mode="json"))
 
 
 class ModelType(StrEnum):
@@ -511,6 +527,56 @@ class ModelConfig(BaseModel):
             ]
         return [self.left_query.point_of_truth]
 
+    def stable_hash(self) -> str:
+        """Return deterministic hash for this config."""
+        return stable_hash_dict(self.model_dump(mode="json"))
+
+
+class ResolverType(StrEnum):
+    """Enumeration of supported resolver methodology types."""
+
+    COMPONENTS = "components"
+
+
+class ResolverConfig(BaseModel):
+    """Configuration for resolver that combines model and resolver outputs."""
+
+    type: ResolverType
+    resolver_class: str
+    resolver_settings: str
+    inputs: tuple[ResolutionName, ...]
+
+    @model_validator(mode="after")
+    def validate_inputs(self) -> Self:
+        """Ensure resolver config has at least one input."""
+        if len(self.inputs) < 1:
+            raise ValueError("Resolver must have at least one input.")
+        return self
+
+    @field_validator("resolver_settings", mode="after")
+    @classmethod
+    def validate_settings_json(cls, value: str) -> str:
+        """Ensure that resolver settings are valid JSON."""
+        try:
+            isinstance(json.loads(value), dict)
+        except json.JSONDecodeError as e:
+            raise ValueError("Resolver settings are not valid JSON") from e
+        return value
+
+    @property
+    def dependencies(self) -> list[ResolutionName]:
+        """Return all resolutions that this resolver needs."""
+        return list(self.inputs)
+
+    @property
+    def parents(self) -> list[ResolutionName]:
+        """Returns all resolution names directly input to this config."""
+        return list(self.inputs)
+
+    def stable_hash(self) -> str:
+        """Return deterministic hash for this config."""
+        return stable_hash_dict(self.model_dump(mode="json"))
+
 
 class Match(BaseModel):
     """A match between primary keys in the Matchbox database."""
@@ -542,7 +608,6 @@ class Resolution(BaseModel):
     """Unified resolution type with common fields and discriminated config."""
 
     description: str | None = Field(default=None, description="Description")
-    truth: int | None = Field(default=None, ge=0, le=100, strict=True)
     fingerprint: Annotated[
         bytes,
         PlainSerializer(hash_to_base64, return_type=str),
@@ -553,7 +618,7 @@ class Resolution(BaseModel):
     resolution_type: ResolutionType
 
     # Type-specific config as discriminated union
-    config: SourceConfig | ModelConfig
+    config: SourceConfig | ModelConfig | ResolverConfig
 
     @field_validator("description", mode="after")
     @classmethod
@@ -570,24 +635,14 @@ class Resolution(BaseModel):
             assert isinstance(self.config, SourceConfig), (
                 "Config must be SourceConfig when resolution_type is 'source'"
             )
-        else:
+        elif self.resolution_type == ResolutionType.MODEL:
             assert isinstance(self.config, ModelConfig), (
                 "Config must be ModelConfig when resolution_type is 'model'"
             )
-        return self
-
-    @model_validator(mode="after")
-    def validate_truth_matches_type(self) -> Self:
-        """Ensure truth field matches resolution type requirements."""
-        if self.resolution_type == ResolutionType.SOURCE and self.truth is not None:
-            raise ValueError("Truth must be None for source resolutions")
-        elif self.resolution_type == ResolutionType.MODEL:
-            if self.truth is None:
-                raise ValueError("Truth is required for model resolutions")
-            if not (0 <= self.truth <= 100):
-                raise ValueError(
-                    "Truth must be between 0 and 100 for model resolutions"
-                )
+        else:
+            assert isinstance(self.config, ResolverConfig), (
+                "Config must be ResolverConfig when resolution_type is 'resolver'"
+            )
         return self
 
 

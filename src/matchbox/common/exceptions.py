@@ -510,6 +510,12 @@ class MatchboxNoJudgements(MatchboxHttpException):
     http_status = 404
 
 
+class MatchboxServerError(MatchboxHttpException):
+    """Generic server-side failure."""
+
+    http_status = 500
+
+
 class MatchboxDatabaseWriteError(MatchboxException):
     """Could not be written to the backend DB, likely due to a constraint violation."""
 

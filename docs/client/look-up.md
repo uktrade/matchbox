@@ -32,7 +32,7 @@ You can download an entire lookup as a PyArrow table.
     ```python
     from matchbox.client.dags import DAG
 
-    lookup = DAG("companies").load_default().resolve().as_lookup()
+    lookup = DAG("companies").load_default().get_matches().as_lookup()
     ```
 
-The output of `dag.resolve()` has type [`ResolvedMatches`][matchbox.client.results.ResolvedMatches], which lets you explore your resolved entities in different ways.
+The output of `dag.get_matches()` has type [`ResolvedMatches`][matchbox.client.results.ResolvedMatches], which lets you explore your resolved entities in different ways.

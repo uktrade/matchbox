@@ -152,6 +152,7 @@ class Location(ABC):
         rename: dict[str, str] | Callable | None = None,
         return_type: QueryReturnType = QueryReturnType.POLARS,
         keys: tuple[str, list[str]] | None = None,
+        limit: int | None = None,
     ) -> Iterator[QueryReturnClass]:
         """Execute ET logic against location and return batches.
 
@@ -168,6 +169,7 @@ class Location(ABC):
             keys: Rule to only retrieve rows by specific keys.
                 The key of the dictionary is a field name on which to filter.
                 Filters source entries where the key field is in the dict values.
+            limit: Maximum number of rows to return. If None, returns all rows.
 
         Raises:
             AttributeError: If the cliet is not set.
@@ -328,6 +330,7 @@ class RelationalDBLocation(Location):
         return_type: Literal[QueryReturnType.POLARS] = ...,
         keys: tuple[str, list[str]] | None = None,
         schema_overrides: dict[str, pl.DataType] | None = None,
+        limit: int | None = None,
     ) -> Generator[PolarsDataFrame, None, None]: ...
 
     @overload
@@ -339,6 +342,7 @@ class RelationalDBLocation(Location):
         return_type: Literal[QueryReturnType.PANDAS] = ...,
         keys: tuple[str, list[str]] | None = None,
         schema_overrides: dict[str, pl.DataType] | None = None,
+        limit: int | None = None,
     ) -> Generator[PandasDataFrame, None, None]: ...
 
     @overload
@@ -350,6 +354,7 @@ class RelationalDBLocation(Location):
         return_type: Literal[QueryReturnType.ARROW] = ...,
         keys: tuple[str, list[str]] | None = None,
         schema_overrides: dict[str, pl.DataType] | None = None,
+        limit: int | None = None,
     ) -> Generator[ArrowTable, None, None]: ...
 
     @requires_client
@@ -361,6 +366,7 @@ class RelationalDBLocation(Location):
         return_type: QueryReturnType = QueryReturnType.POLARS,
         keys: tuple[str, list[str]] | None = None,
         schema_overrides: dict[str, pl.DataType] | None = None,
+        limit: int | None = None,
     ) -> Generator[QueryReturnClass, None, None]:
         # Strip semicolon, as it can block extended query protocol
         # and slow some engines down
@@ -382,6 +388,11 @@ class RelationalDBLocation(Location):
                         f"select * from ({extract_transform}) as sub "
                         f"where {key_field} in ({comma_separated_values})"
                     )
+            # Add LIMIT clause if limit is specified
+            if limit is not None:
+                extract_transform = (
+                    f"select * from ({extract_transform}) as sub_limit limit {limit}"
+                )
             yield from sql_to_df(
                 stmt=extract_transform,
                 schema_overrides=schema_overrides,

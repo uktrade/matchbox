@@ -480,7 +480,7 @@ def delete_resolution(
     dependencies=[Depends(RequireCollectionWrite)],
     status_code=status.HTTP_202_ACCEPTED,
     summary="Set resolution data",
-    description="Create an upload task for source hashes or model results.",
+    description="Create an upload task for any step data.",
 )
 def set_data(
     backend: BackendDependency,
@@ -492,7 +492,7 @@ def set_data(
     resolution_name: ResolutionName,
     file: UploadFile,
 ) -> ResourceOperationStatus:
-    """Create an upload task for source hashes or model results."""
+    """Create an upload task for any step data."""
     resolution_path = ResolutionPath(
         collection=collection, run=run_id, name=resolution_name
     )

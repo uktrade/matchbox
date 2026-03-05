@@ -1,6 +1,7 @@
 from io import BytesIO
 from unittest.mock import Mock, patch
 
+import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
 from pyarrow import parquet as pq
@@ -20,10 +21,7 @@ from matchbox.common.exceptions import (
     MatchboxLockError,
     MatchboxResolutionNotFoundError,
 )
-from matchbox.common.factories.models import (
-    model_factory,
-    resolver_upload_from_model_testkit,
-)
+from matchbox.common.factories.models import model_factory
 from matchbox.common.factories.sources import source_factory
 
 
@@ -384,8 +382,10 @@ def test_get_results(
 def test_get_results_resolver(
     api_client_and_mocks: tuple[TestClient, Mock, Mock],
 ) -> None:
-    testkit = model_factory().fake_run()
-    resolver_data = resolver_upload_from_model_testkit(testkit).to_arrow()
+    resolver_data = pa.Table.from_pylist(
+        [{"parent_id": 1, "child_id": 1}],
+        schema=SCHEMA_CLUSTERS,
+    )
 
     test_client, mock_backend, _ = api_client_and_mocks
     mock_backend.get_resolution = Mock(

@@ -5,6 +5,7 @@ import pytest
 from matchbox.common.factories.dags import TestkitDAG
 from matchbox.common.factories.entities import FeatureConfig
 from matchbox.common.factories.models import model_factory
+from matchbox.common.factories.resolvers import resolver_factory
 from matchbox.common.factories.sources import (
     SourceTestkitParameters,
     linked_sources_factory,
@@ -180,3 +181,52 @@ def test_empty_dag_properties() -> None:
     # Final_step should raise on empty DAG
     with pytest.raises(ValueError):
         _ = dag_testkit.dag.final_step
+
+
+def test_diff_model_edges_and_diff_clusters_perfect_match() -> None:
+    """Both diffs should report identical against factory ground truth."""
+    dag_testkit = TestkitDAG()
+    linked = linked_sources_factory(dag=dag_testkit.dag)
+    dag_testkit.add_linked_sources(linked)
+    true_entities = tuple(linked.true_entities)
+
+    crn_dh_model = model_factory(
+        name="link_crn_dh",
+        left_testkit=linked.sources["crn"],
+        right_testkit=linked.sources["dh"],
+        true_entities=true_entities,
+    ).fake_run()
+    crn_cdms_model = model_factory(
+        name="link_crn_cdms",
+        left_testkit=linked.sources["crn"],
+        right_testkit=linked.sources["cdms"],
+        true_entities=true_entities,
+    ).fake_run()
+    dag_testkit.add_model(crn_dh_model)
+    dag_testkit.add_model(crn_cdms_model)
+
+    resolver_testkit = resolver_factory(
+        dag=dag_testkit.dag,
+        inputs=[crn_dh_model, crn_cdms_model],
+        true_entities=true_entities,
+    )
+
+    edges_identical, edges_report = linked.diff_model_edges(
+        probabilities=crn_cdms_model.probabilities,
+        sources=["crn", "cdms"],
+        left_clusters=tuple(crn_cdms_model.left_clusters.values()),
+        right_clusters=tuple(crn_cdms_model.right_clusters.values()),
+    )
+    clusters_identical, clusters_report = linked.diff_clusters(
+        assignments=resolver_testkit.assignments,
+        sources=["crn", "dh", "cdms"],
+        input_clusters={
+            crn_dh_model.name: tuple(crn_dh_model.left_clusters.values())
+            + tuple(crn_dh_model.right_clusters.values()),
+            crn_cdms_model.name: tuple(crn_cdms_model.left_clusters.values())
+            + tuple(crn_cdms_model.right_clusters.values()),
+        },
+    )
+
+    assert edges_identical, f"Expected perfect model edges but got: {edges_report}"
+    assert clusters_identical, f"Expected perfect clusters but got: {clusters_report}"

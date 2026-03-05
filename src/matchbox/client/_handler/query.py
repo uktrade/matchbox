@@ -4,7 +4,6 @@ from pyarrow import Table
 from pyarrow.parquet import read_table
 
 from matchbox.client._handler.main import CLIENT, http_retry, url_params
-from matchbox.client._handler.shim import compat_resolver_path
 from matchbox.common.arrow import (
     SCHEMA_QUERY,
     SCHEMA_QUERY_WITH_LEAVES,
@@ -12,7 +11,7 @@ from matchbox.common.arrow import (
 )
 from matchbox.common.dtos import (
     Match,
-    ResolutionPath,
+    ResolverResolutionPath,
     SourceResolutionPath,
 )
 from matchbox.common.exceptions import MatchboxEmptyServerResponse
@@ -23,23 +22,19 @@ from matchbox.common.logging import logger
 def query(
     source: SourceResolutionPath,
     return_leaf_id: bool,
-    resolution: ResolutionPath | None = None,
-    threshold: int | None = None,
+    resolution: ResolverResolutionPath | None = None,
     limit: int | None = None,
 ) -> Table:
     """Query a source in Matchbox."""
-    # TODO: remove legacy argument in Resolution PR2
-    del threshold
     log_prefix = f"Query {source}"
-    resolver = compat_resolver_path(resolution)
-    logger.debug(f"Using {resolver}", prefix=log_prefix)
+    logger.debug(f"Using {resolution}", prefix=log_prefix)
 
     params = url_params(
         {
             "collection": source.collection,
             "run_id": source.run,
             "source": source.name,
-            "resolution": resolver.name if resolver else None,
+            "resolution": resolution.name if resolution else None,
             "return_leaf_id": return_leaf_id,
             "limit": limit,
         }
@@ -66,30 +61,24 @@ def match(
     targets: list[SourceResolutionPath],
     source: SourceResolutionPath,
     key: str,
-    resolution: ResolutionPath,
-    threshold: int | None = None,
+    resolution: ResolverResolutionPath,
 ) -> list[Match]:
     """Match a source against a list of targets."""
-    # TODO: remove legacy argument in Resolution PR2
-    del threshold
     log_prefix = f"Query {source}"
-    resolver = compat_resolver_path(resolution)
-    if resolver is None:
-        raise ValueError("resolution is required for match operations.")
     target_names = ", ".join(str(target) for target in targets)
     logger.debug(
-        f"{key} to {target_names} using {resolver}",
+        f"{key} to {target_names} using {resolution}",
         prefix=log_prefix,
     )
 
     params = url_params(
         {
-            "collection": resolver.collection,
-            "run_id": resolver.run,
+            "collection": resolution.collection,
+            "run_id": resolution.run,
             "targets": [t.name for t in targets],
             "source": source.name,
             "key": key,
-            "resolution": resolver.name,
+            "resolution": resolution.name,
         }
     )
     res = CLIENT.get("/match", params=params)

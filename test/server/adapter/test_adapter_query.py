@@ -11,7 +11,6 @@ from test.fixtures.db import BACKENDS
 from matchbox.common.arrow import SCHEMA_QUERY, SCHEMA_QUERY_WITH_LEAVES
 from matchbox.common.dtos import Match
 from matchbox.common.factories.entities import SourceEntity
-from matchbox.common.factories.models import canonical_resolver_path_for_model
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
@@ -60,9 +59,9 @@ class TestMatchboxQueryBackend:
         """Test querying data from a deduplication resolver point of truth."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            dedupe_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models["naive_test_crn"].resolution_path
-            )
+            dedupe_resolver_path = dag_testkit.resolvers[
+                "resolver_naive_test_crn"
+            ].resolver.resolution_path
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -85,9 +84,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models[linker_name].resolution_path
-            )
+            linker_resolver_path = dag_testkit.resolvers[
+                f"resolver_{linker_name}"
+            ].resolver.resolution_path
 
             df_crn = self.backend.query(
                 source=crn_testkit.resolution_path,
@@ -124,9 +123,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models[linker_name].resolution_path
-            )
+            linker_resolver_path = dag_testkit.resolvers[
+                f"resolver_{linker_name}"
+            ].resolver.resolution_path
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -158,9 +157,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models[linker_name].resolution_path
-            )
+            linker_resolver_path = dag_testkit.resolvers[
+                f"resolver_{linker_name}"
+            ].resolver.resolution_path
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -192,9 +191,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models[linker_name].resolution_path
-            )
+            linker_resolver_path = dag_testkit.resolvers[
+                f"resolver_{linker_name}"
+            ].resolver.resolution_path
 
             # Assumes CRN and DH come from same LinkedSourcesTestkit
             linked = dag_testkit.source_to_linked["crn"]
@@ -226,9 +225,9 @@ class TestMatchboxQueryBackend:
             linker_name = "deterministic_naive_test_crn_naive_test_dh"
             crn_testkit = dag_testkit.sources.get("crn")
             dh_testkit = dag_testkit.sources.get("dh")
-            linker_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models[linker_name].resolution_path
-            )
+            linker_resolver_path = dag_testkit.resolvers[
+                f"resolver_{linker_name}"
+            ].resolver.resolution_path
 
             # Use a non-existent source key
             non_existent_key = "foo"

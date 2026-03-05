@@ -17,31 +17,6 @@ from matchbox.common.factories.models import (
 from matchbox.common.factories.sources import linked_sources_factory, source_factory
 
 
-def test_model_factory_entity_preservation() -> None:
-    """Test that model_factory preserves keys with incomplete probabilities."""
-    linked = linked_sources_factory()
-    all_true_sources = list(linked.true_entities)
-
-    # Create first model
-    first_model = model_factory(
-        left_testkit=linked.sources["crn"],
-        true_entities=all_true_sources[:1],  # Just one source entity
-    )
-
-    # Record input entities for second model
-    input_entities = set(first_model.entities)
-    assert len(input_entities) > 0
-
-    # Create second model with no matching true entities
-    second_model = model_factory(
-        left_testkit=first_model,
-        true_entities=all_true_sources[1:],  # Different source entities
-    )
-
-    # Even with no probabilities possible, should describe same keys
-    assert sum(second_model.entities) == sum(first_model.entities)
-
-
 @pytest.mark.parametrize(
     ("left_testkit", "right_testkit", "expected_type", "should_have_right"),
     [
@@ -51,10 +26,6 @@ def test_model_factory_entity_preservation() -> None:
         ),
         pytest.param(
             "source", "source", "linker", True, id="both_sources_creates_linker"
-        ),
-        pytest.param("model", None, "deduper", False, id="left_model_creates_deduper"),
-        pytest.param(
-            "model", "source", "linker", True, id="mixed_types_creates_linker"
         ),
     ],
 )
@@ -102,27 +73,11 @@ def test_model_type_creation(
     assert len(model.probabilities) > 0
     assert model.probabilities.schema == pl.Schema(SCHEMA_MODEL_EDGES)
 
-    # Test threshold setting and querying
-    initial_threshold = 80
-    model.threshold = initial_threshold
-    assert model.model.truth == initial_threshold / 100
-    initial_data = model.data
-    initial_ids = set(initial_data["id"].to_pylist())
-    assert len(initial_ids) > 0
-
-    # Test threshold change affects results
-    new_threshold = 90
-    model.threshold = new_threshold
-    assert model.model.truth == new_threshold / 100
-    new_data = model.data
-    new_ids = set(new_data["id"].to_pylist())
-
-    # Higher threshold should result in more distinct entities, as fewer merge
-    assert len(new_ids) >= len(initial_ids)
-
-    # Verify schema consistency
-    assert initial_data.schema == new_data.schema
-    assert "id" in initial_data.column_names
+    # Verify derived model data exists and includes ids
+    query_data = model.data
+    query_ids = set(query_data["id"].to_pylist())
+    assert len(query_ids) > 0
+    assert "id" in query_data.column_names
 
     # For linkers, verify we maintain separation between left and right IDs
     if expected_type == "linker":
@@ -198,30 +153,23 @@ def test_model_pipeline_with_dummy_methodology(
         sources = [left_testkit]
         model_entities = (tuple(linked.sources[left_testkit].entities), None)
     else:  # linker
-        # Create perfect deduped models first
-        left_deduped = model_factory(
-            left_testkit=linked.sources[left_testkit],
-            true_entities=all_true_sources,
-        )
-        right_deduped = model_factory(
-            left_testkit=linked.sources[right_testkit],
-            true_entities=all_true_sources,
-        )
-
         # Get inputs to final model for later diff
-        left_clusters = left_deduped.entities
-        right_clusters = right_deduped.entities
+        left_clusters = linked.sources[left_testkit].entities
+        right_clusters = linked.sources[right_testkit].entities
 
         perfect_model = model_factory(
-            left_testkit=left_deduped,
-            right_testkit=right_deduped,
+            left_testkit=linked.sources[left_testkit],
+            right_testkit=linked.sources[right_testkit],
             true_entities=all_true_sources,
         )
         sources = [left_testkit, right_testkit]
-        model_entities = (tuple(left_deduped.entities), tuple(right_deduped.entities))
+        model_entities = (
+            tuple(linked.sources[left_testkit].entities),
+            tuple(linked.sources[right_testkit].entities),
+        )
 
     # Verify perfect model works
-    identical, _ = linked.diff_results(
+    identical, _ = linked.diff_model_edges(
         probabilities=perfect_model.probabilities,
         left_clusters=left_clusters,
         right_clusters=right_clusters,
@@ -240,7 +188,7 @@ def test_model_pipeline_with_dummy_methodology(
         num_components=len(all_true_sources) - 1,  # Intentionally wrong
     )
 
-    identical, report = linked.diff_results(
+    identical, report = linked.diff_model_edges(
         probabilities=random_probabilities,
         left_clusters=left_clusters,
         right_clusters=right_clusters,
@@ -740,12 +688,8 @@ def test_query_to_model_factory_compare_with_model_factory() -> None:
     # but probabilities should match with the same seed
     assert standard_model.probabilities.equals(query_model.probabilities)
 
-    # Set the same threshold and verify queries
-    standard_model.threshold = 80
-    query_model.threshold = 80
-
     # Compare entities
-    assert len(standard_model.entities) == len(query_model.entities)
+    assert set(standard_model.entities) == set(query_model.entities)
 
     # Compare model type
     assert str(standard_model.model.config.type) == str(query_model.model.config.type)

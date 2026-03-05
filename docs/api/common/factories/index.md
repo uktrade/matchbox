@@ -161,7 +161,7 @@ Configure the true state of your data with `linked_sources_factory()`. Its defau
 
 `linked_sources_factory()` can be configured using tuples of [`SourceTestkitParameters`][matchbox.common.factories.sources.SourceTestkitParameters] objects. Using these you can create complex sets of interweaving sources for methodologies to be tested against.
 
-The `model_factory()` is designed so you can chain together known processes in any order, before using your real methodology. [`LinkedSourcesTestkit.diff_results()`][matchbox.common.factories.sources.LinkedSourcesTestkit.diff_results] will make any probabilistic output comparable with the true source entities, and give a detailed diff to help you debug.
+The `model_factory()` is designed so you can chain together known processes in any order, before using your real methodology. [`LinkedSourcesTestkit.diff_model_edges()`][matchbox.common.factories.sources.LinkedSourcesTestkit.diff_model_edges] will make any probabilistic output comparable with the true source entities, and give a detailed diff to help you debug.
 
 ```python
 linked_testkit: LinkedSourcesTestkit = linked_sources_factory()
@@ -185,7 +185,7 @@ model: Model = Model(
 results: Results = model.run()
 
 # Diff, assert, and log the message if it fails
-identical, report = linked_testkit.diff_results(
+identical, report = linked_testkit.diff_model_edges(
     probabilities=results.probabilities,  # Your methodology's output
     left_clusters=left_deduped.entities,  # Output of left deduper -- left input to your methodology
     right_clusters=right_deduped.entities,  # Output of right deduper -- left input to your methodology

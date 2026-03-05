@@ -25,7 +25,6 @@ from matchbox.common.exceptions import (
     MatchboxSystemGroupError,
     MatchboxUserNotFoundError,
 )
-from matchbox.common.factories.models import canonical_resolver_path_for_model
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
@@ -743,9 +742,9 @@ class TestMatchboxAdminBackend:
         """Test validating data IDs."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models["naive_test_crn"].resolution_path
-            )
+            naive_crn_resolver_path = dag_testkit.resolvers[
+                "resolver_naive_test_crn"
+            ].resolver.resolution_path
 
             df_crn = self.backend.query(
                 source=crn_testkit.source.resolution_path,
@@ -784,9 +783,9 @@ class TestMatchboxAdminBackend:
         """Test that clearing and restoring the database works."""
         with self.scenario(self.backend, "link") as dag_testkit:
             crn_testkit = dag_testkit.sources.get("crn")
-            naive_crn_resolver_path = canonical_resolver_path_for_model(
-                dag_testkit.models["naive_test_crn"].resolution_path
-            )
+            naive_crn_resolver_path = dag_testkit.resolvers[
+                "resolver_naive_test_crn"
+            ].resolver.resolution_path
 
             count_funcs = [
                 self.backend.sources.count,

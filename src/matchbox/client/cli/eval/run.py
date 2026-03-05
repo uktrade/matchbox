@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 from matchbox.client.cli.annotations import CollectionOpt
 from matchbox.client.cli.eval.app import EntityResolutionApp
 from matchbox.client.dags import DAG
+from matchbox.client.resolvers import Resolver
 
 
 def evaluate(
@@ -94,9 +95,21 @@ def evaluate(
     if sample_file:
         resolution = None
     else:
-        # Get resolution name from --resolution or DAG's final_step
-        model = dag.get_model(resolution) if resolution is not None else dag.final_step
-        resolution = model.resolution_path
+        # Resolve explicit name (or default final step) to a resolver path.
+        if resolution is None:
+            node = dag.final_step
+        elif (node := dag.nodes.get(resolution)) is None:
+            raise typer.BadParameter(
+                f"Resolution '{resolution}' not found in DAG '{collection}'."
+            )
+
+        if not isinstance(node, Resolver):
+            raise typer.BadParameter(
+                "Evaluation requires a resolver resolution. "
+                f"'{node.name}' is a {node.__class__.__name__}."
+            )
+
+        resolution = node.resolution_path
 
     try:
         # Create app with loaded DAG (not warehouse string)

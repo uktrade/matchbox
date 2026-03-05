@@ -1,8 +1,9 @@
 import json
 
-import pyarrow as pa
+import polars as pl
 import pytest
 from httpx import Response
+from polars.testing import assert_frame_equal
 from respx.router import MockRouter
 from sqlalchemy import Engine
 
@@ -10,7 +11,7 @@ from matchbox.client.dags import DAG
 from matchbox.client.models import Model, add_model_class
 from matchbox.client.models.linkers.base import LinkerSettings
 from matchbox.client.queries import Query
-from matchbox.common.arrow import table_to_buffer
+from matchbox.common.arrow import SCHEMA_MODEL_EDGES, table_to_buffer
 from matchbox.common.dtos import (
     CRUDOperation,
     ErrorResponse,
@@ -42,17 +43,6 @@ def test_init_and_run_model(
     bar = source_factory(engine=sqla_sqlite_warehouse).write_to_location()
     bar.source.run()
 
-    foo_leafy_data = foo.data.append_column(
-        "leaf_id", pa.array(range(len(foo.data)), type=pa.int64())
-    )
-    bar_leafy_data = foo.data.append_column(
-        "leaf_id",
-        pa.array(
-            range(len(foo_leafy_data), len(foo_leafy_data) + len(bar.data)),
-            type=pa.int64(),
-        ),
-    )
-
     # Mock API
     query_endpoint = matchbox_api.get("/query").mock(
         side_effect=[
@@ -62,9 +52,6 @@ def test_init_and_run_model(
             # Second query (for pre-fetching)
             Response(200, content=table_to_buffer(foo.data).read()),
             Response(200, content=table_to_buffer(bar.data).read()),
-            # Third query (for validation)
-            Response(200, content=table_to_buffer(foo_leafy_data).read()),
-            Response(200, content=table_to_buffer(bar_leafy_data).read()),
         ]
     )
     dag = DAG("collection")
@@ -89,9 +76,9 @@ def test_init_and_run_model(
         right_query=bar_query.config,
     )
 
-    model.run()
-    assert model.results.left_root_leaf is None
-    assert model.results.right_root_leaf is None
+    results = model.run()
+    assert_frame_equal(results, model.results)
+    assert results.schema == pl.Schema(SCHEMA_MODEL_EDGES)
 
     # Can use pre-fetched query data
     left_df, right_df = foo_query.data(), bar_query.data()
@@ -99,37 +86,24 @@ def test_init_and_run_model(
     model.run(left_df, right_df)
     assert query_endpoint.call_count == old_query_count
 
-    model.run(for_validation=True)
-    assert model.results.left_root_leaf is not None
-    assert model.results.right_root_leaf is not None
-
 
 def test_model_sync(matchbox_api: MockRouter) -> None:
     # Mock model
     testkit = model_factory(model_type="linker")
-    resolver_name = f"resolver_{testkit.model.name}"
 
     # Mock the routes:
     # Resolution doesn't yet exist
-    resolution_get_calls = {"count": 0}
-
-    # TODO: remove shim in Resolution PR2
-    # will be done with a resolver_factory
-    def model_resolution_response(_: object) -> Response:
-        resolution_get_calls["count"] += 1
-        if resolution_get_calls["count"] <= 2:
-            return Response(
-                404,
-                json=ErrorResponse(
-                    exception_type="MatchboxResolutionNotFoundError",
-                    message="Model not found",
-                ).model_dump(),
-            )
-        return Response(200, json=testkit.model.to_resolution().model_dump())
-
     matchbox_api.get(
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}"
-    ).mock(side_effect=model_resolution_response)
+    ).mock(
+        return_value=Response(
+            404,
+            json=ErrorResponse(
+                exception_type="MatchboxResolutionNotFoundError",
+                message="Model not found",
+            ).model_dump(),
+        )
+    )
 
     # Resolution can be inserted
     insert_config_route = matchbox_api.post(
@@ -154,40 +128,6 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
             json=ResourceOperationStatus(
                 success=True, target="", operation=CRUDOperation.CREATE
             ).model_dump(),
-        )
-    )
-
-    # Canonical resolver_<model> can be created and uploaded.
-    matchbox_api.post(
-        f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{resolver_name}"
-    ).mock(
-        return_value=Response(
-            201,
-            json=ResourceOperationStatus(
-                success=True,
-                target=f"Resolution {resolver_name}",
-                operation=CRUDOperation.CREATE,
-            ).model_dump(),
-        )
-    )
-    matchbox_api.post(
-        f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{resolver_name}/data"
-    ).mock(
-        return_value=Response(
-            202,
-            json=ResourceOperationStatus(
-                success=True,
-                target=f"Resolution {resolver_name}",
-                operation=CRUDOperation.CREATE,
-            ).model_dump(),
-        )
-    )
-    matchbox_api.get(
-        f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{resolver_name}/data/status"
-    ).mock(
-        return_value=Response(
-            200,
-            json=UploadInfo(stage=UploadStage.COMPLETE).model_dump(),
         )
     )
 
@@ -299,9 +239,9 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
         f"/collections/{testkit.model.dag.name}/runs/{testkit.model.dag.run}/resolutions/{testkit.model.name}"
     ).mock(return_value=Response(200, json=testkit.model.to_resolution().model_dump()))
 
-    # Changing data requires deletion and re-insertion
-    testkit.probabilities = testkit.probabilities.slice(1, 3)
-    testkit.fake_run()
+    # Changing local model results requires deletion and re-insertion
+    assert testkit.model.results is not None
+    testkit.model.results = testkit.model.results.slice(1, 3)
 
     # Resolution data is first ready to upload, and then uploaded
     matchbox_api.get(
@@ -315,29 +255,6 @@ def test_model_sync(matchbox_api: MockRouter) -> None:
     testkit.model.sync()
     assert delete_route.called
     assert insert_results_route.called
-
-
-def test_truth_getter() -> None:
-    """Test getting model truth threshold from config."""
-    # Create testkit with specific truth value
-    testkit = model_factory(model_type="linker")
-    # Update the model to have a truth value
-    testkit.model._truth = 90  # Integer truth value (90 = 0.9 as float)
-
-    # Get truth as float
-    truth = testkit.model.truth
-
-    # Verify it returns the correct value converted to float
-    assert truth == 0.9
-
-
-def test_truth_setter_validation_error() -> None:
-    """Test setting invalid truth values."""
-    testkit = model_factory(model_type="linker")
-
-    # Attempt to set an invalid truth value using the validated setter
-    with pytest.raises(ValueError):
-        testkit.model.truth = 1.5
 
 
 def test_delete_resolution(matchbox_api: MockRouter) -> None:

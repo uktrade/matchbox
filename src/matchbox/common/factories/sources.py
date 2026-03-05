@@ -1,7 +1,7 @@
 """Factories for generating sources and linked source testkits for testing."""
 
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import cache, wraps
 from itertools import product
 from math import prod
@@ -19,10 +19,12 @@ from sqlglot.expressions import column
 
 from matchbox.client.dags import DAG
 from matchbox.client.locations import RelationalDBLocation
+from matchbox.client.queries import Query
 from matchbox.client.sources import Source
 from matchbox.common.arrow import SCHEMA_INDEX, SCHEMA_QUERY
 from matchbox.common.datatypes import DataTypes
 from matchbox.common.dtos import (
+    ModelResolutionName,
     SourceConfig,
     SourceField,
     SourceResolutionName,
@@ -134,6 +136,10 @@ class SourceTestkit(BaseModel):
         """Return the SourceConfig from the source."""
         return self.source.config
 
+    def query(self) -> Query:
+        """Thin wrapper to Query this testkit's Source."""
+        return self.source.query()
+
     def fake_run(self) -> Self:
         """Set source hashes before source is run."""
         self.source.hashes = self.data_hashes
@@ -217,7 +223,7 @@ class LinkedSourcesTestkit(BaseModel):
         ]
         return [entity for entity in cluster_entities if entity is not None]
 
-    def diff_results(
+    def diff_model_edges(
         self,
         probabilities: pl.DataFrame,
         sources: list[SourceResolutionName],
@@ -225,18 +231,18 @@ class LinkedSourcesTestkit(BaseModel):
         right_clusters: tuple[ClusterEntity, ...] | None = None,
         threshold: int | float = 0,
     ) -> tuple[bool, dict]:
-        """Diff a results of probabilities with the true SourceEntities.
+        """Diff model edge outputs with the true SourceEntities.
 
         Args:
-            probabilities: Probabilities table to diff
+            probabilities: Model edge table to diff
             sources: Subset of the LinkedSourcesTestkit.sources that represents
                 the true sources to compare against
             left_clusters: ClusterEntity objects from the object used as an input
-                to the process that produced the probabilities table. Should
-                be a SourceTestkit.entities or ModelTestkit.entities.
+                to the process that produced the model edge table. Should
+                be a SourceTestkit.entities or ResolverTestkit.entities
             right_clusters: ClusterEntity objects from the object used as an input
-                to the process that produced the probabilities table. Should
-                be a SourceTestkit.entities or ModelTestkit.entities.
+                to the process that produced the model edge table. Should
+                be a SourceTestkit.entities or ResolverTestkit.entities
             threshold: Threshold for considering a match true
 
         Returns:
@@ -252,6 +258,41 @@ class LinkedSourcesTestkit(BaseModel):
                 right_clusters=right_clusters,
                 threshold=threshold,
             ),
+        )
+
+    def diff_clusters(
+        self,
+        assignments: pl.DataFrame,
+        sources: list[SourceResolutionName],
+        input_clusters: Mapping[ModelResolutionName, tuple[ClusterEntity, ...]],
+    ) -> tuple[bool, dict]:
+        """Diff cluster assignments with the true SourceEntities.
+
+        Args:
+            assignments: Cluster assignment table to diff
+            sources: Subset of the LinkedSourcesTestkit.sources that represents
+                the true sources to compare against
+            input_clusters: raw input ClusterEntity from the
+                ModelTestkit.left/right_clusters used as inputs in to the resolver
+                that produced the assignments table
+
+        Returns:
+            A tuple of whether the results are identical, and a report dictionary.
+                See [`diff_results()`][matchbox.common.factories.entities.diff_results]
+                for the report format.
+        """
+        id_to_entity: dict[int, ClusterEntity] = {
+            entity.id: entity
+            for entities in input_clusters.values()
+            for entity in entities
+        }
+        actual = [
+            sum(id_to_entity[child_id] for child_id in group["child_id"].to_list())
+            for group in assignments.partition_by("parent_id")
+        ]
+        return diff_results(
+            expected=self.true_entity_subset(*sources),
+            actual=actual,
         )
 
     def write_to_location(self) -> Self:

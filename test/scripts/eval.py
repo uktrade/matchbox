@@ -66,15 +66,15 @@ def scenario_setup(scenario_name: str) -> Generator[dict[str, object], None, Non
                 case "bare" | "index" | "convergent":
                     raise RuntimeError("Scenario has nothing to evaluate.")
                 case "dedupe":
-                    resolution = dag.dag.nodes["naive_test_crn"]
+                    resolution = dag.dag.nodes["resolver_naive_test_crn"]
                 case "probabilistic_dedupe":
-                    resolution = dag.dag.nodes["probabilistic_test_crn"]
+                    resolution = dag.dag.nodes["resolver_probabilistic_test_crn"]
                 case "link":
-                    resolution = dag.dag.nodes["final_join"]
+                    resolution = dag.dag.nodes["resolver_final_join"]
                 case "alt_dedupe":
-                    resolution = dag.dag.nodes["dedupe_foo_a"]
+                    resolution = dag.dag.nodes["resolver_dedupe_foo_a"]
                 case "mega":
-                    resolution = dag.dag.nodes["mega_product_linker"]
+                    resolution = dag.dag.nodes["resolver_mega_product_linker"]
                 case _:
                     raise ValueError(f"Unknown scenario: {scenario_name}")
 

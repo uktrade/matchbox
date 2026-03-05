@@ -8,7 +8,6 @@ from pyarrow import Table
 from pyarrow.parquet import read_table
 
 from matchbox.client._handler.main import CLIENT, http_retry, url_params
-from matchbox.client._handler.shim import compat_resolver_path
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
     SCHEMA_JUDGEMENTS,
@@ -23,18 +22,14 @@ from matchbox.common.logging import logger
 @http_retry
 def sample_for_eval(n: int, resolution: ResolverResolutionPath) -> Table:
     """Sample resolver clusters for evaluation."""
-    resolver = compat_resolver_path(resolution)
-    if resolver is None:
-        raise ValueError("resolution is required for evaluation sampling.")
-
     res = CLIENT.get(
         "/eval/samples",
         params=url_params(
             {
                 "n": n,
-                "collection": resolver.collection,
-                "run_id": resolver.run,
-                "resolution": resolver.name,
+                "collection": resolution.collection,
+                "run_id": resolution.run,
+                "resolution": resolution.name,
             }
         ),
     )

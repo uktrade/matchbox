@@ -156,6 +156,51 @@ def test_source_fetch_and_sample(sqla_sqlite_warehouse: Engine) -> None:
     assert len(result) == 5
 
 
+def test_source_sample_validation(sqla_sqlite_warehouse: Engine) -> None:
+    """Test that source.sample validates input correctly."""
+    # Create test data
+    source_testkit = source_factory(
+        n_true_entities=5,
+        features=[
+            {"name": "name", "base_generator": "word", "datatype": DataTypes.STRING},
+        ],
+        engine=sqla_sqlite_warehouse,
+    ).write_to_location()
+
+    # Create location and source
+    location = RelationalDBLocation(name="dbname").set_client(sqla_sqlite_warehouse)
+    source = Source(
+        dag=source_testkit.source.dag,
+        location=location,
+        name="test_source",
+        extract_transform=source_testkit.source_config.extract_transform,
+        infer_types=True,
+        key_field="key",
+        index_fields=["name"],
+    )
+
+    # Test that string n raises TypeError
+    with pytest.raises(TypeError, match="n must be an integer"):
+        source.sample(n="asdf")
+
+    # Test that negative n raises ValueError
+    with pytest.raises(ValueError, match="n must be a positive integer"):
+        source.sample(n=-1)
+
+    # Test that zero n raises ValueError
+    with pytest.raises(ValueError, match="n must be a positive integer"):
+        source.sample(n=0)
+
+    # Test that float n raises TypeError
+    with pytest.raises(TypeError, match="n must be an integer"):
+        source.sample(n=10.5)
+
+    # Test that valid positive integer works
+    result = source.sample(n=3)
+    assert isinstance(result, pl.DataFrame)
+    assert len(result) == 3
+
+
 @pytest.mark.parametrize(
     "qualify_names",
     [

@@ -1,0 +1,3 @@
+/src/docs/
+/src/test/
+/src/src/matchbox/common/factories/

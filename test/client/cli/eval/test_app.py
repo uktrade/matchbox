@@ -17,7 +17,7 @@ from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
 backends = [
-    pytest.param("shared_matchbox_postgres", id="postgres"),
+    pytest.param("serial_matchbox_postgres", id="postgres"),
 ]
 
 

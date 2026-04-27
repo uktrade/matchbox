@@ -156,11 +156,15 @@ def drop_all_tables(engine: Engine) -> None:
 
 
 @pytest.fixture(scope="session")
-def postgres_warehouse_database(
+def worker_postgres_warehouse_database(
     development_settings: DevelopmentSettings,
     worker_id: str,
 ) -> Generator[str, None, None]:
-    """Create an isolated warehouse database for this pytest worker."""
+    """Internal fixture for PostgreSQL warehouse tests.
+
+    Creates one warehouse database per pytest worker for the whole test session, so
+    parallel workers do not share warehouse state.
+    """
     port = development_settings.warehouse_port
     database = _worker_database_name("warehouse", worker_id)
 
@@ -172,7 +176,7 @@ def postgres_warehouse_database(
 @pytest.fixture(scope="function")
 def sqla_postgres_warehouse(
     development_settings: DevelopmentSettings,
-    postgres_warehouse_database: str,
+    worker_postgres_warehouse_database: str,
 ) -> Generator[Engine, None, None]:
     """Creates an engine for the test warehouse database"""
     engine = create_engine(
@@ -180,7 +184,7 @@ def sqla_postgres_warehouse(
             WAREHOUSE_USER,
             WAREHOUSE_PASSWORD,
             development_settings.warehouse_port,
-            postgres_warehouse_database,
+            worker_postgres_warehouse_database,
         )
     )
     yield engine
@@ -306,12 +310,17 @@ def _build_matchbox_postgres_settings(
 
 
 @pytest.fixture(scope="session")
-def matchbox_postgres_session(
+def worker_matchbox_postgres(
     development_settings: DevelopmentSettings,
     matchbox_datastore: MatchboxDatastoreSettings,
     worker_id: str,
 ) -> Generator[MatchboxPostgres, None, None]:
-    """The worker-scoped Matchbox PostgreSQL adapter."""
+    """Internal fixture backing the default Matchbox PostgreSQL backend.
+
+    Creates one MatchboxPostgres adapter per pytest worker for the whole test
+    session, backed by a worker-specific database. matchbox_postgres wraps this
+    fixture and clears it before each test.
+    """
     port = development_settings.postgres_backend_port
     database = _worker_database_name("matchbox", worker_id)
     _recreate_database(MATCHBOX_USER, MATCHBOX_PASSWORD, port, database)
@@ -331,19 +340,29 @@ def matchbox_postgres_session(
 
 @pytest.fixture(scope="function")
 def matchbox_postgres(
-    matchbox_postgres_session: MatchboxPostgres,
+    worker_matchbox_postgres: MatchboxPostgres,
 ) -> MatchboxPostgres:
-    """The Matchbox PostgreSQL database, cleared before each test."""
-    matchbox_postgres_session.clear(certain=True)
-    return matchbox_postgres_session
+    """Default Matchbox PostgreSQL fixture for parallel tests.
+
+    Reuses the worker-local Matchbox database from worker_matchbox_postgres and
+    clears all Matchbox state before each test, giving isolated tests that are safe
+    to run in parallel.
+    """
+    worker_matchbox_postgres.clear(certain=True)
+    return worker_matchbox_postgres
 
 
 @pytest.fixture(scope="function")
-def shared_matchbox_postgres(
+def serial_matchbox_postgres(
     development_settings: DevelopmentSettings,
     matchbox_datastore: MatchboxDatastoreSettings,
 ) -> Generator[MatchboxPostgres, None, None]:
-    """The API container's shared Matchbox PostgreSQL database."""
+    """Matchbox PostgreSQL fixture for tests marked serial.
+
+    Connects to the fixed matchbox database name instead of a worker-specific one.
+    Use this only in serial tests that must share that database name. The database
+    is cleared before each test.
+    """
     settings = _build_matchbox_postgres_settings(
         development_settings=development_settings,
         matchbox_datastore=matchbox_datastore,

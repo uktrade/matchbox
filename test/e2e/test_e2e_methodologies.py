@@ -40,11 +40,11 @@ class TestE2EMethodologyIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        shared_matchbox_postgres: MatchboxDBAdapter,
+        serial_matchbox_postgres: MatchboxDBAdapter,
         sqla_sqlite_warehouse: Engine,
     ) -> None:
         """Set up scenario system for tests."""
-        self.backend = shared_matchbox_postgres
+        self.backend = serial_matchbox_postgres
         self.warehouse = sqla_sqlite_warehouse
 
     def _clean_field(self, column: str) -> str:

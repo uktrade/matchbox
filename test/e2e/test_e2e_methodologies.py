@@ -32,17 +32,19 @@ LinkerConfigurator = Callable[[SourceTestkit, SourceTestkit], dict[str, Any]]
 
 
 @pytest.mark.docker
+@pytest.mark.serial
+@pytest.mark.xdist_group("serial")
 class TestE2EMethodologyIntegration:
     """Integration tests for all methodology classes with real pipeline execution."""
 
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        matchbox_postgres: MatchboxDBAdapter,
+        serial_matchbox_postgres: MatchboxDBAdapter,
         sqla_sqlite_warehouse: Engine,
     ) -> None:
         """Set up scenario system for tests."""
-        self.backend = matchbox_postgres
+        self.backend = serial_matchbox_postgres
         self.warehouse = sqla_sqlite_warehouse
 
     def _clean_field(self, column: str) -> str:

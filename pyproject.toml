@@ -61,6 +61,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "pytest-env>=1.1.5",
+    "pytest-xdist>=3.8.0",
     "pytest>=8.3.3",
     "respx>=0.22.0",
     "setuptools-scm>=8.3.1",
@@ -93,7 +94,6 @@ default-groups = ["dev", "typing"]
 package = true
 upgrade-package = ["ruff"]
 constraint-dependencies = [
-    "griffelib<2.0.0",
     "urllib3>=2.6.3",
     "werkzeug>=3.1.5",
     "setuptools-scm>=9.2.0",
@@ -148,7 +148,7 @@ docstring-code-format = true
 [tool.pytest.ini_options]
 testpaths = ["test"]
 pythonpath = ["."]
-addopts = "--cov=matchbox"
+addopts = "-n auto --dist=loadgroup"
 norecursedirs = "src"
 log_cli = false  # Set to true to enable logs and individual tests
 log_cli_level = "DEBUG"  # Set to "INFO" to see less detailed logging
@@ -163,4 +163,5 @@ filterwarnings = [
 ]
 markers = [
     "docker: marks tests that require resources in Docker to be available",
+    "serial: marks tests that share state and must run in one xdist group",
 ]

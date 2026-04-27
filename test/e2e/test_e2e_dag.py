@@ -25,6 +25,8 @@ from matchbox.common.factories.sources import (
 
 
 @pytest.mark.docker
+@pytest.mark.serial
+@pytest.mark.xdist_group("serial")
 class TestE2EPipelineBuilder:
     """End to end tests for DAG pipeline functionality."""
 

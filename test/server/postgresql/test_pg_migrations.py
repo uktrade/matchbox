@@ -8,19 +8,19 @@ from sqlalchemy import Engine
 
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.common.logging import logger
-from matchbox.server.postgresql import MatchboxPostgres, MatchboxPostgresSettings
+from matchbox.server.postgresql import MatchboxPostgres
 
 
 @pytest.mark.docker
 def test_migrations_stairway(
-    matchbox_postgres_settings: MatchboxPostgresSettings,
+    matchbox_postgres: MatchboxPostgres,
 ) -> None:
     """Tests that all migrations can be applied and then rolled back in sequence.
 
     This test runs migrations in their natural order and shows which one fails.
     """
     # Set up revisions in reverse order
-    alembic_config: Config = matchbox_postgres_settings.postgres.get_alembic_config()
+    alembic_config: Config = matchbox_postgres.settings.postgres.get_alembic_config()
     revisions_dir = ScriptDirectory.from_config(alembic_config)
     revisions = list(revisions_dir.walk_revisions("base", "heads"))
     revisions.reverse()

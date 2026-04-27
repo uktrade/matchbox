@@ -36,6 +36,9 @@ site/
 # Keys
 *.pem
 
+# AI
+.codex
+
 ##########################
 # Boilerplate .gitignore #
 ##########################

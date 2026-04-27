@@ -13,6 +13,8 @@ runner = CliRunner()
 
 
 @pytest.mark.docker
+@pytest.mark.serial
+@pytest.mark.xdist_group("serial")
 class TestE2ECLI:
     """End-to-end tests for the Matchbox CLI commands."""
 

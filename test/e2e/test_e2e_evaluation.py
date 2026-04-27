@@ -23,6 +23,8 @@ from matchbox.common.factories.sources import (
 
 
 @pytest.mark.docker
+@pytest.mark.serial
+@pytest.mark.xdist_group("serial")
 class TestE2EModelEvaluation:
     """End to end tests for model evaluation functionality."""
 

@@ -17,7 +17,7 @@ from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
 backends = [
-    pytest.param("matchbox_postgres", id="postgres"),
+    pytest.param("serial_matchbox_postgres", id="postgres"),
 ]
 
 
@@ -119,6 +119,8 @@ class TestEvaluationQueue:
 
 @pytest.mark.parametrize("backend", backends)
 @pytest.mark.docker
+@pytest.mark.serial
+@pytest.mark.xdist_group("serial")
 class TestScenarioIntegration:
     """Integration tests using real scenario data with backend."""
 
@@ -130,7 +132,9 @@ class TestScenarioIntegration:
         )
 
     @pytest.fixture(autouse=True)
-    def setup(self, backend_instance: str, sqla_sqlite_warehouse: Engine) -> None:
+    def setup(
+        self, backend_instance: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
+    ) -> None:
         """Set up test fixtures."""
         self.backend: MatchboxDBAdapter = backend_instance
         self.warehouse_engine: Engine = sqla_sqlite_warehouse

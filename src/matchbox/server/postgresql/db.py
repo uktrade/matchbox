@@ -129,6 +129,27 @@ class MatchboxDatabase:
             self._source_adbc_connection.close()
             self._source_adbc_connection = None
 
+    @contextmanager
+    def settings_scope(
+        self, new_settings: MatchboxPostgresSettings
+    ) -> Generator[None, None, None]:
+        """Temporarily point this database at different settings."""
+        old_settings = self.settings
+        old_alembic_config = self.alembic_config
+
+        self._disconnect()
+        self._disconnect_adbc()
+        self.settings = new_settings
+        self.alembic_config = new_settings.postgres.get_alembic_config()
+
+        try:
+            yield
+        finally:
+            self._disconnect()
+            self._disconnect_adbc()
+            self.settings = old_settings
+            self.alembic_config = old_alembic_config
+
     def _reset_connections(self) -> None:
         """Dispose and re-initialise SQLAlchemy and ADBC connection managers."""
         self._disconnect()

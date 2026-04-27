@@ -7,9 +7,14 @@ default *ARGS:
 
 # Run local tests only
 local *ARGS:
-    uv run pytest -m "not docker" {{ARGS}}
+    uv run pytest {{ARGS}} -m "not docker"
 
 # Run docker tests only
 docker *ARGS:
     just build -d
-    uv run pytest -m "docker" {{ARGS}}
+    uv run pytest {{ARGS}} -m "docker"
+
+# Run serial tests only
+serial *ARGS:
+    just build -d
+    uv run pytest {{ARGS}} -m serial -n 0

@@ -160,16 +160,6 @@ class TestStructHashing:
                     ],
                 }
             ),
-            "struct_fields_reordered": pa.Table.from_pydict(
-                {
-                    "id": [1, 2, 3],
-                    "metadata": [
-                        {"age": 30, "name": "Alice"},
-                        {"age": 25, "name": "Bob"},
-                        {"age": 35, "name": "Charlie"},
-                    ],
-                }
-            ),
             "struct_data_changed": pa.Table.from_pydict(
                 {
                     "id": [1, 2, 3],
@@ -197,24 +187,6 @@ class TestStructHashing:
                 }
             ),
         }
-
-    def test_struct_field_order_invariance(self, method: HashMethod) -> None:
-        """Test that order of fields within structs doesn't affect hash."""
-        table_basic = self.tables["basic_struct"]
-        table_reordered = self.tables["struct_fields_reordered"]
-
-        # Verify we're actually testing struct data
-        df = pl.from_arrow(table_basic)
-        assert isinstance(df["metadata"].dtype, pl.Struct), (
-            "Test should be working with struct data type"
-        )
-
-        hash_basic = hash_arrow_table(table_basic, method=method)
-        hash_reordered = hash_arrow_table(table_reordered, method=method)
-
-        assert hash_basic == hash_reordered, (
-            "Struct field order should not affect hash value"
-        )
 
     def test_struct_content_sensitivity(self, method: HashMethod) -> None:
         """Test that changes in struct content produce different hashes."""

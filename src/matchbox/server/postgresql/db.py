@@ -38,7 +38,7 @@ class MatchboxPostgresCoreSettings(BaseModel):
     database: str
     db_schema: str
     alembic_config: Path = Field(
-        default=Path("src/matchbox/server/postgresql/alembic.ini")
+        default=Path(__file__).resolve().with_name("alembic.ini")
     )
 
     def get_alembic_config(self) -> Config:

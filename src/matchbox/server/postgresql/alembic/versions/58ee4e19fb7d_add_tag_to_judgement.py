@@ -20,11 +20,13 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.add_column(
-        "eval_judgements", sa.Column("tag", sa.TEXT(), nullable=True), schema="mb"
+        "eval_judgements", sa.Column("tag", sa.TEXT(), nullable=True), schema=schema
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_column("eval_judgements", "tag", schema="mb")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_column("eval_judgements", "tag", schema=schema)

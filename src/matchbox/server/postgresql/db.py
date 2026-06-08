@@ -209,7 +209,8 @@ class MatchboxDatabase:
                 "exists prior to upgrading to head. "
             )
             with engine.connect() as conn:
-                conn.execute(text("DROP SCHEMA IF EXISTS mb CASCADE;"))
+                schema = self.settings.postgres.db_schema
+                conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE;"))
                 conn.commit()
             command.upgrade(self.alembic_config, "head")
 

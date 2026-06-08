@@ -22,21 +22,22 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Add new columns
     op.add_column(
         "source_configs",
         sa.Column("location_type", sa.TEXT(), nullable=True),
-        schema="mb",
+        schema=schema,
     )
     op.add_column(
         "source_configs",
         sa.Column("location_uri", sa.TEXT(), nullable=True),
-        schema="mb",
+        schema=schema,
     )
     op.add_column(
         "source_configs",
         sa.Column("extract_transform", sa.TEXT(), nullable=True),
-        schema="mb",
+        schema=schema,
     )
 
     # Populate new columns with data from existing columns
@@ -49,8 +50,8 @@ def upgrade() -> None:
             sc.source_config_id,
             sc.full_name, 
             array_agg(sf.name ORDER BY sf.index) as field_names
-        FROM mb.source_configs sc
-        LEFT JOIN mb.source_fields sf ON sc.source_config_id = sf.source_config_id
+        FROM {schema}.source_configs sc
+        LEFT JOIN {schema}.source_fields sf ON sc.source_config_id = sf.source_config_id
         GROUP BY sc.source_config_id, sc.full_name
     """)
     )
@@ -73,7 +74,7 @@ def upgrade() -> None:
         # Update the record
         connection.execute(
             sa.text("""
-            UPDATE mb.source_configs 
+            UPDATE {schema}.source_configs 
             SET location_type = :location_type,
                 location_uri = :location_uri,
                 extract_transform = :extract_transform
@@ -88,34 +89,35 @@ def upgrade() -> None:
         )
 
     # Make new columns non-nullable
-    op.alter_column("source_configs", "location_type", nullable=False, schema="mb")
-    op.alter_column("source_configs", "location_uri", nullable=False, schema="mb")
-    op.alter_column("source_configs", "extract_transform", nullable=False, schema="mb")
+    op.alter_column("source_configs", "location_type", nullable=False, schema=schema)
+    op.alter_column("source_configs", "location_uri", nullable=False, schema=schema)
+    op.alter_column("source_configs", "extract_transform", nullable=False, schema=schema)
 
     # Drop old constraint and create new one
     op.drop_constraint(
-        "unique_source_address", "source_configs", schema="mb", type_="unique"
+        "unique_source_address", "source_configs", schema=schema, type_="unique"
     )
 
     # Drop old columns
-    op.drop_column("source_configs", "warehouse_hash", schema="mb")
-    op.drop_column("source_configs", "full_name", schema="mb")
+    op.drop_column("source_configs", "warehouse_hash", schema=schema)
+    op.drop_column("source_configs", "full_name", schema=schema)
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Add back old columns
     op.add_column(
         "source_configs",
         sa.Column("full_name", sa.TEXT(), autoincrement=False, nullable=True),
-        schema="mb",
+        schema=schema,
     )
     op.add_column(
         "source_configs",
         sa.Column(
             "warehouse_hash", postgresql.BYTEA(), autoincrement=False, nullable=True
         ),
-        schema="mb",
+        schema=schema,
     )
 
     # Populate old columns from new columns
@@ -125,7 +127,7 @@ def downgrade() -> None:
     result = connection.execute(
         sa.text("""
         SELECT source_config_id, location_uri, extract_transform
-        FROM mb.source_configs
+        FROM {schema}.source_configs
     """)
     )
 
@@ -145,7 +147,7 @@ def downgrade() -> None:
         # Update the record
         connection.execute(
             sa.text("""
-            UPDATE mb.source_configs 
+            UPDATE {schema}.source_configs 
             SET full_name = :full_name,
                 warehouse_hash = :warehouse_hash
             WHERE source_config_id = :config_id
@@ -158,18 +160,18 @@ def downgrade() -> None:
         )
 
     # Make old columns non-nullable
-    op.alter_column("source_configs", "full_name", nullable=False, schema="mb")
-    op.alter_column("source_configs", "warehouse_hash", nullable=False, schema="mb")
+    op.alter_column("source_configs", "full_name", nullable=False, schema=schema)
+    op.alter_column("source_configs", "warehouse_hash", nullable=False, schema=schema)
 
     # Recreate old unique constraint
     op.create_unique_constraint(
         "unique_source_address",
         "source_configs",
         ["full_name", "warehouse_hash"],
-        schema="mb",
+        schema=schema,
     )
 
     # Drop new columns
-    op.drop_column("source_configs", "extract_transform", schema="mb")
-    op.drop_column("source_configs", "location_uri", schema="mb")
-    op.drop_column("source_configs", "location_type", schema="mb")
+    op.drop_column("source_configs", "extract_transform", schema=schema)
+    op.drop_column("source_configs", "location_uri", schema=schema)
+    op.drop_column("source_configs", "location_type", schema=schema)

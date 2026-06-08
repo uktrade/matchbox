@@ -20,6 +20,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Create collections table
     op.create_table(
         "collections",
@@ -27,7 +28,7 @@ def upgrade() -> None:
         sa.Column("name", sa.TEXT(), nullable=False),
         sa.PrimaryKeyConstraint("collection_id"),
         sa.UniqueConstraint("name", name="collections_name_key"),
-        schema="mb",
+        schema=schema,
     )
 
     # Create runs table
@@ -38,11 +39,11 @@ def upgrade() -> None:
         sa.Column("is_mutable", sa.BOOLEAN(), nullable=True),
         sa.Column("is_default", sa.BOOLEAN(), nullable=True),
         sa.ForeignKeyConstraint(
-            ["collection_id"], ["mb.collections.collection_id"], ondelete="CASCADE"
+            ["collection_id"], [f"{schema}.collections.collection_id"], ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("run_id"),
         sa.UniqueConstraint("collection_id", "run_id", name="unique_run_id"),
-        schema="mb",
+        schema=schema,
     )
 
     # Create the partial index for default runs
@@ -51,27 +52,27 @@ def upgrade() -> None:
         "runs",
         ["collection_id"],
         unique=True,
-        schema="mb",
+        schema=schema,
         postgresql_where=sa.text("is_default = true"),
     )
 
     # Add run_id column to resolutions (initially nullable for data migration)
     op.add_column(
-        "resolutions", sa.Column("run_id", sa.BIGINT(), nullable=True), schema="mb"
+        "resolutions", sa.Column("run_id", sa.BIGINT(), nullable=True), schema=schema
     )
 
     # Data migration: Create default collection and run for existing resolutions
     # Only do this if there are existing resolutions
     bind = op.get_bind()
     existing_resolutions = bind.execute(
-        sa.text("SELECT COUNT(*) FROM mb.resolutions")
+        sa.text(f"SELECT COUNT(*) FROM {schema}.resolutions")
     ).scalar()
 
     if existing_resolutions > 0:
         # Create default collection
         collection_result = bind.execute(
             sa.text(
-                "INSERT INTO mb.collections (name) VALUES ('default') "
+                f"INSERT INTO {schema}.collections (name) VALUES ('default') "
                 "RETURNING collection_id"
             )
         )
@@ -80,7 +81,7 @@ def upgrade() -> None:
         # Create default run
         run_result = bind.execute(
             sa.text("""
-            INSERT INTO mb.runs (collection_id, is_mutable, is_default)
+            INSERT INTO {schema}.runs (collection_id, is_mutable, is_default)
             VALUES (:collection_id, false, true)
             RETURNING run_id
             """),
@@ -91,7 +92,7 @@ def upgrade() -> None:
         # Associate all existing resolutions with the new default run
         bind.execute(
             sa.text("""
-            UPDATE mb.resolutions
+            UPDATE {schema}.resolutions
             SET run_id = :run_id
             WHERE run_id IS NULL
             """),
@@ -104,15 +105,15 @@ def upgrade() -> None:
         "run_id",
         existing_type=sa.BIGINT(),
         nullable=False,
-        schema="mb",
+        schema=schema,
     )
 
     # Update unique constraints on resolutions
     op.drop_constraint(
-        op.f("resolutions_name_key"), "resolutions", schema="mb", type_="unique"
+        op.f("resolutions_name_key"), "resolutions", schema=schema, type_="unique"
     )
     op.create_unique_constraint(
-        "resolutions_name_key", "resolutions", ["run_id", "name"], schema="mb"
+        "resolutions_name_key", "resolutions", ["run_id", "name"], schema=schema
     )
 
     # Create foreign key constraint for run_id
@@ -122,42 +123,43 @@ def upgrade() -> None:
         "runs",
         ["run_id"],
         ["run_id"],
-        source_schema="mb",
-        referent_schema="mb",
+        source_schema=schema,
+        referent_schema=schema,
         ondelete="CASCADE",
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Drop foreign key constraint
     op.drop_constraint(
-        "resolutions_run_fkey", "resolutions", schema="mb", type_="foreignkey"
+        "resolutions_run_fkey", "resolutions", schema=schema, type_="foreignkey"
     )
 
     # Revert unique constraint changes
     op.drop_constraint(
-        "resolutions_name_key", "resolutions", schema="mb", type_="unique"
+        "resolutions_name_key", "resolutions", schema=schema, type_="unique"
     )
     op.create_unique_constraint(
         op.f("resolutions_name_key"),
         "resolutions",
         ["name"],
-        schema="mb",
+        schema=schema,
         postgresql_nulls_not_distinct=False,
     )
 
     # Drop the run_id column
-    op.drop_column("resolutions", "run_id", schema="mb")
+    op.drop_column("resolutions", "run_id", schema=schema)
 
     # Drop the partial index
     op.drop_index(
         "ix_default_run_collection",
         table_name="runs",
-        schema="mb",
+        schema=schema,
         postgresql_where=sa.text("is_default = true"),
     )
 
     # Drop the tables
-    op.drop_table("runs", schema="mb")
-    op.drop_table("collections", schema="mb")
+    op.drop_table("runs", schema=schema)
+    op.drop_table("collections", schema=schema)

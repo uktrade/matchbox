@@ -117,6 +117,7 @@ def _rewrite_model_query_configs() -> None:
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Extend the resolution type constraint to include the new resolver type.
     op.drop_constraint(
         "resolution_type_constraints",
@@ -211,7 +212,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["step_id"], ["mb.resolutions.resolution_id"], ondelete="CASCADE"
+            ["step_id"], [f"{schema}.resolutions.resolution_id"], ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("resolver_config_id"),
         sa.UniqueConstraint("step_id", name="resolver_configs_step_key"),
@@ -232,7 +233,7 @@ def upgrade() -> None:
     # matches the SHA-256 output of matchbox.common.hash.HASH_FUNC.
     op.execute(
         sa.text("""
-            INSERT INTO mb.resolutions (
+            INSERT INTO {schema}.resolutions (
                 name,
                 type,
                 description,
@@ -247,14 +248,14 @@ def upgrade() -> None:
                 decode(repeat('00', 32), 'hex'),
                 r.run_id,
                 'READY'
-            FROM mb.resolutions r
+            FROM {schema}.resolutions r
             WHERE r.type = 'model'
         """)
     )
 
     op.execute(
         sa.text("""
-            INSERT INTO mb.resolver_configs (
+            INSERT INTO {schema}.resolver_configs (
                 step_id,
                 resolver_class,
                 resolver_settings
@@ -274,8 +275,8 @@ def upgrade() -> None:
                         )
                     )
                 )
-            FROM mb.resolutions model
-            JOIN mb.resolutions resolver
+            FROM {schema}.resolutions model
+            JOIN {schema}.resolutions resolver
                 ON resolver.name = model.name || '_resolver'
                 AND resolver.run_id = model.run_id
             WHERE model.type = 'model'
@@ -286,10 +287,10 @@ def upgrade() -> None:
     # Move cluster associations from the model to its paired resolver.
     op.execute(
         sa.text("""
-            UPDATE mb.resolver_clusters rc
+            UPDATE {schema}.resolver_clusters rc
             SET resolution_id = resolver.resolution_id
-            FROM mb.resolutions model
-            JOIN mb.resolutions resolver
+            FROM {schema}.resolutions model
+            JOIN {schema}.resolutions resolver
                 ON resolver.name = model.name || '_resolver'
                 AND resolver.run_id = model.run_id
             WHERE rc.resolution_id = model.resolution_id
@@ -301,13 +302,13 @@ def upgrade() -> None:
     # edge, then all transitive ancestors so the closure table remains complete.
     op.execute(
         sa.text("""
-            INSERT INTO mb.resolution_from (parent, child, level)
+            INSERT INTO {schema}.resolution_from (parent, child, level)
             SELECT
                 model.resolution_id,
                 resolver.resolution_id,
                 1
-            FROM mb.resolutions model
-            JOIN mb.resolutions resolver
+            FROM {schema}.resolutions model
+            JOIN {schema}.resolutions resolver
                 ON resolver.name = model.name || '_resolver'
                 AND resolver.run_id = model.run_id
             WHERE model.type = 'model'
@@ -315,14 +316,14 @@ def upgrade() -> None:
     )
     op.execute(
         sa.text("""
-            INSERT INTO mb.resolution_from (parent, child, level)
+            INSERT INTO {schema}.resolution_from (parent, child, level)
             SELECT
                 rf.parent,
                 resolver.resolution_id,
                 rf.level + 1
-            FROM mb.resolution_from rf
-            JOIN mb.resolutions model ON model.resolution_id = rf.child
-            JOIN mb.resolutions resolver
+            FROM {schema}.resolution_from rf
+            JOIN {schema}.resolutions model ON model.resolution_id = rf.child
+            JOIN {schema}.resolutions resolver
                 ON resolver.name = model.name || '_resolver'
                 AND resolver.run_id = model.run_id
             WHERE model.type = 'model'
@@ -405,6 +406,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Reverse all constraint renames before touching columns or tables, so that
     # every subsequent operation can use the restored pre-migration names.
 
@@ -525,7 +527,7 @@ def downgrade() -> None:
     # first. Cascades clear resolver lineage, resolver_configs, and resolver_clusters.
     # The paired model resolutions are left intact but will have no cluster
     # associations. This split is not reversible.
-    op.execute(sa.text("DELETE FROM mb.resolutions WHERE type = 'resolver'"))
+    op.execute(sa.text(f"DELETE FROM {schema}.resolutions WHERE type = 'resolver'"))
     op.create_check_constraint(
         "resolution_type_constraints",
         "resolutions",
@@ -553,7 +555,7 @@ def downgrade() -> None:
     )
     op.execute(
         sa.text(
-            "UPDATE mb.resolver_clusters "
+            f"UPDATE {schema}.resolver_clusters "
             "SET probability = 100 "
             "WHERE probability IS NULL"
         )

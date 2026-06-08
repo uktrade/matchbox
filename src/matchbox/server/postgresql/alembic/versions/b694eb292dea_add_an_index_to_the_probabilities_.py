@@ -19,17 +19,19 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.create_index(
         "ix_probabilities_resolution",
         "probabilities",
         ["resolution"],
         unique=False,
-        schema="mb",
+        schema=schema,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.drop_index(
-        "ix_probabilities_resolution", table_name="probabilities", schema="mb"
+        "ix_probabilities_resolution", table_name="probabilities", schema=schema
     )

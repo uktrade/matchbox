@@ -30,6 +30,8 @@ def run_migrations_online() -> None:
         else:
             return True
 
+    context.config.set_main_option("db_schema", MBDB.settings.postgres.db_schema)
+
     with connectable.connect() as connection:
         context.configure(
             connection=connection,

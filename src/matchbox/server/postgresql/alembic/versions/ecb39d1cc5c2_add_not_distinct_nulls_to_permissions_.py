@@ -19,27 +19,29 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.drop_constraint(
-        op.f("unique_permission_grant"), "permissions", schema="mb", type_="unique"
+        op.f("unique_permission_grant"), "permissions", schema=schema, type_="unique"
     )
     op.create_unique_constraint(
         "unique_permission_grant",
         "permissions",
         ["permission", "group_id", "collection_id", "is_system"],
-        schema="mb",
+        schema=schema,
         postgresql_nulls_not_distinct=True,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.drop_constraint(
-        "unique_permission_grant", "permissions", schema="mb", type_="unique"
+        "unique_permission_grant", "permissions", schema=schema, type_="unique"
     )
     op.create_unique_constraint(
         op.f("unique_permission_grant"),
         "permissions",
         ["permission", "group_id", "collection_id", "is_system"],
-        schema="mb",
+        schema=schema,
         postgresql_nulls_not_distinct=False,
     )

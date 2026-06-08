@@ -200,8 +200,9 @@ class MatchboxDatabase:
         """Create the database and all tables expected in the schema."""
         alembic_version = self._look_for_alembic_version()
         engine = self.get_engine()
-        logger.info("Determinded alembic in use so upgrading to head")
+        schema = self.settings.postgres.db_schema
         if alembic_version is not None:
+            logger.info("Determinded alembic in use so upgrading to head")
             command.upgrade(self.alembic_config, "head")
         else:
             logger.info(
@@ -209,8 +210,8 @@ class MatchboxDatabase:
                 "exists prior to upgrading to head. "
             )
             with engine.connect() as conn:
-                schema = self.settings.postgres.db_schema
                 conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE;"))
+                conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema};"))
                 conn.commit()
             command.upgrade(self.alembic_config, "head")
 

@@ -33,7 +33,9 @@ def upgrade() -> None:
         schema=schema,
     )
     # Remove default value for location names
-    op.alter_column("source_configs", "location_name", server_default=None, schema=schema)
+    op.alter_column(
+        "source_configs", "location_name", server_default=None, schema=schema
+    )
     op.drop_column("source_configs", "location_uri", schema=schema)
 
 
@@ -53,5 +55,7 @@ def downgrade() -> None:
         schema=schema,
     )
     # Remove default value for location URIs
-    op.alter_column("source_configs", "location_uri", server_default=None, schema=schema)
+    op.alter_column(
+        "source_configs", "location_uri", server_default=None, schema=schema
+    )
     op.drop_column("source_configs", "location_name", schema=schema)

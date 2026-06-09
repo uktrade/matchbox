@@ -47,7 +47,9 @@ def upgrade() -> None:
             name="exactly_one_resource",
         ),
         sa.ForeignKeyConstraint(
-            ["collection_id"], [f"{schema}.collections.collection_id"], ondelete="CASCADE"
+            ["collection_id"],
+            [f"{schema}.collections.collection_id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["group_id"], [f"{schema}.groups.group_id"], ondelete="CASCADE"
@@ -69,7 +71,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["group_id"], [f"{schema}.groups.group_id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], [f"{schema}.users.user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], [f"{schema}.users.user_id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("user_id", "group_id"),
         schema=schema,
     )

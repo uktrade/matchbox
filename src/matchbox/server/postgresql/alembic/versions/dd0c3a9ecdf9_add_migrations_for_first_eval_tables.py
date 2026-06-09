@@ -37,12 +37,16 @@ def upgrade() -> None:
         sa.Column("shown_cluster_id", sa.BIGINT(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
-            ["endorsed_cluster_id"], [f"{schema}.clusters.cluster_id"], ondelete="CASCADE"
+            ["endorsed_cluster_id"],
+            [f"{schema}.clusters.cluster_id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["shown_cluster_id"], [f"{schema}.clusters.cluster_id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], [f"{schema}.users.user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], [f"{schema}.users.user_id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("judgement_id"),
         schema=schema,
     )

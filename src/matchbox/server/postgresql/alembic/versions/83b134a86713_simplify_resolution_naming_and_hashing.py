@@ -65,7 +65,7 @@ def upgrade() -> None:
 
     # Update any 'dataset' types to 'source' types
     op.execute(
-        """
+        f"""
         UPDATE {schema}.resolutions 
         SET type = 'source'
         WHERE type = 'dataset'
@@ -82,12 +82,14 @@ def upgrade() -> None:
 
     # Add the new hash column
     op.add_column(
-        "resolutions", sa.Column("hash", postgresql.BYTEA(), nullable=True), schema=schema
+        "resolutions",
+        sa.Column("hash", postgresql.BYTEA(), nullable=True),
+        schema=schema,
     )
 
     # Populate the new hash column based on type
     op.execute(
-        """
+        f"""
         UPDATE {schema}.resolutions 
         SET hash = CASE 
             WHEN type = 'model' THEN resolution_hash
@@ -123,7 +125,7 @@ def downgrade() -> None:
     # Populate source_configs.resolution_name with resolutions.name
     # Use the correct column names based on the ORM
     op.execute(
-        """
+        f"""
         UPDATE {schema}.source_configs 
         SET resolution_name = r.name
         FROM {schema}.resolutions r
@@ -163,7 +165,9 @@ def downgrade() -> None:
     # Get parent relationships
     relationships = list(
         connection.execute(
-            sa.text(f"SELECT child, parent FROM {schema}.resolution_from WHERE level = 1")
+            sa.text(
+                f"SELECT child, parent FROM {schema}.resolution_from WHERE level = 1"
+            )
         )
     )
 
@@ -182,7 +186,7 @@ def downgrade() -> None:
 
     # Set content_hash from hash for sources only
     op.execute(
-        """
+        f"""
         UPDATE {schema}.resolutions 
         SET content_hash = CASE 
             WHEN type = 'source' THEN hash
@@ -209,7 +213,7 @@ def downgrade() -> None:
 
     # Update any 'source' types back to 'dataset' types
     op.execute(
-        """
+        f"""
         UPDATE {schema}.resolutions 
         SET type = 'dataset'
         WHERE type = 'source'

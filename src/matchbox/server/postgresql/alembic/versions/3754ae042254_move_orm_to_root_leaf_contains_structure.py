@@ -39,10 +39,18 @@ def upgrade() -> None:
     op.drop_index("ix_contains_child_parent", table_name="contains", schema=schema)
     op.drop_index("ix_contains_parent_child", table_name="contains", schema=schema)
     op.create_index(
-        "ix_contains_leaf_root", "contains", ["leaf", "root"], unique=False, schema=schema
+        "ix_contains_leaf_root",
+        "contains",
+        ["leaf", "root"],
+        unique=False,
+        schema=schema,
     )
     op.create_index(
-        "ix_contains_root_leaf", "contains", ["root", "leaf"], unique=False, schema=schema
+        "ix_contains_root_leaf",
+        "contains",
+        ["root", "leaf"],
+        unique=False,
+        schema=schema,
     )
     op.drop_constraint(
         "contains_child_fkey", "contains", schema=schema, type_="foreignkey"
@@ -145,7 +153,9 @@ def upgrade() -> None:
         sa.Column("probability", sa.SMALLINT(), nullable=False),
         sa.CheckConstraint("probability BETWEEN 0 AND 100", name="valid_probability"),
         sa.ForeignKeyConstraint(
-            ["resolution_id"], [f"{schema}.resolutions.resolution_id"], ondelete="CASCADE"
+            ["resolution_id"],
+            [f"{schema}.resolutions.resolution_id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["left_id"], [f"{schema}.clusters.cluster_id"], ondelete="CASCADE"

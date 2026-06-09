@@ -232,7 +232,7 @@ def upgrade() -> None:
     # upload hash, so all clients will be forced to re-upload and replace it. 32 bytes
     # matches the SHA-256 output of matchbox.common.hash.HASH_FUNC.
     op.execute(
-        sa.text("""
+        sa.text(f"""
             INSERT INTO {schema}.resolutions (
                 name,
                 type,
@@ -254,7 +254,7 @@ def upgrade() -> None:
     )
 
     op.execute(
-        sa.text("""
+        sa.text(f"""
             INSERT INTO {schema}.resolver_configs (
                 step_id,
                 resolver_class,
@@ -286,7 +286,7 @@ def upgrade() -> None:
 
     # Move cluster associations from the model to its paired resolver.
     op.execute(
-        sa.text("""
+        sa.text(f"""
             UPDATE {schema}.resolver_clusters rc
             SET resolution_id = resolver.resolution_id
             FROM {schema}.resolutions model
@@ -301,7 +301,7 @@ def upgrade() -> None:
     # Add the resolver into the closure table: first the direct model → resolver
     # edge, then all transitive ancestors so the closure table remains complete.
     op.execute(
-        sa.text("""
+        sa.text(f"""
             INSERT INTO {schema}.resolution_from (parent, child, level)
             SELECT
                 model.resolution_id,
@@ -315,7 +315,7 @@ def upgrade() -> None:
         """)
     )
     op.execute(
-        sa.text("""
+        sa.text(f"""
             INSERT INTO {schema}.resolution_from (parent, child, level)
             SELECT
                 rf.parent,

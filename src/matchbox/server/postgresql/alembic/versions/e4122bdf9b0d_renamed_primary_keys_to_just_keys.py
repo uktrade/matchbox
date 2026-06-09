@@ -68,17 +68,23 @@ def upgrade() -> None:
     )
 
     # Rename column in source_configs table
-    op.alter_column("source_configs", "db_pk", new_column_name="key_field", schema=schema)
+    op.alter_column(
+        "source_configs", "db_pk", new_column_name="key_field", schema=schema
+    )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     schema = op.get_context().config.get_main_option("db_schema")
     # Rename column in source_configs table back
-    op.alter_column("source_configs", "key_field", new_column_name="db_pk", schema=schema)
+    op.alter_column(
+        "source_configs", "key_field", new_column_name="db_pk", schema=schema
+    )
 
     # Rename indexes back
-    op.drop_index("ix_cluster_keys_cluster_id", table_name="cluster_keys", schema=schema)
+    op.drop_index(
+        "ix_cluster_keys_cluster_id", table_name="cluster_keys", schema=schema
+    )
     op.drop_index("ix_cluster_keys_keys", table_name="cluster_keys", schema=schema)
 
     op.create_index(
@@ -99,7 +105,10 @@ def downgrade() -> None:
     # Rename constraint back
     op.drop_constraint("unique_keys_source", "cluster_keys", schema=schema)
     op.create_unique_constraint(
-        "unique_pk_source", "cluster_keys", ["key_id", "source_config_id"], schema=schema
+        "unique_pk_source",
+        "cluster_keys",
+        ["key_id", "source_config_id"],
+        schema=schema,
     )
 
     # Rename columns back in cluster_keys table

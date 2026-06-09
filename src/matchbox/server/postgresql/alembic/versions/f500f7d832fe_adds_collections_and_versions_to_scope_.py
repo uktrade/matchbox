@@ -39,7 +39,9 @@ def upgrade() -> None:
         sa.Column("is_mutable", sa.BOOLEAN(), nullable=True),
         sa.Column("is_default", sa.BOOLEAN(), nullable=True),
         sa.ForeignKeyConstraint(
-            ["collection_id"], [f"{schema}.collections.collection_id"], ondelete="CASCADE"
+            ["collection_id"],
+            [f"{schema}.collections.collection_id"],
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("run_id"),
         sa.UniqueConstraint("collection_id", "run_id", name="unique_run_id"),
@@ -80,7 +82,7 @@ def upgrade() -> None:
 
         # Create default run
         run_result = bind.execute(
-            sa.text("""
+            sa.text(f"""
             INSERT INTO {schema}.runs (collection_id, is_mutable, is_default)
             VALUES (:collection_id, false, true)
             RETURNING run_id
@@ -91,7 +93,7 @@ def upgrade() -> None:
 
         # Associate all existing resolutions with the new default run
         bind.execute(
-            sa.text("""
+            sa.text(f"""
             UPDATE {schema}.resolutions
             SET run_id = :run_id
             WHERE run_id IS NULL

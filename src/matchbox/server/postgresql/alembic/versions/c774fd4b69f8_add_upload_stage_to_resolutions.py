@@ -42,7 +42,9 @@ def upgrade() -> None:
     op.alter_column("resolutions", "upload_stage", nullable=False, schema=schema)
 
     # Change "content hash" to "fingerprint"
-    op.execute(f"UPDATE {schema}.resolutions SET hash = decode('', 'hex') WHERE hash IS NULL")
+    op.execute(
+        f"UPDATE {schema}.resolutions SET hash = decode('', 'hex') WHERE hash IS NULL"
+    )
 
     op.alter_column(
         "resolutions",

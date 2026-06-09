@@ -42,7 +42,9 @@ def upgrade() -> None:
             "right_query", postgresql.JSONB(astext_type=sa.Text()), nullable=True
         ),
         sa.ForeignKeyConstraint(
-            ["resolution_id"], [f"{schema}.resolutions.resolution_id"], ondelete="CASCADE"
+            ["resolution_id"],
+            [f"{schema}.resolutions.resolution_id"],
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("model_config_id"),
         schema=schema,

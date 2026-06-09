@@ -32,7 +32,7 @@ def downgrade() -> None:
     op.drop_constraint("step_from_pkey", "step_from", schema=schema, type_="primary")
 
     # Remove duplicate (parent, child) pairs if any exist
-    op.execute("""
+    op.execute(f"""
         DELETE FROM {schema}.step_from sf1
         WHERE EXISTS (
             SELECT 1 FROM {schema}.step_from sf2

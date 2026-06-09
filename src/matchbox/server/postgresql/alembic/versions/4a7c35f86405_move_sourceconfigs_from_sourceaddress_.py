@@ -45,7 +45,7 @@ def upgrade() -> None:
 
     # Get source configs and their source fields
     result = connection.execute(
-        sa.text("""
+        sa.text(f"""
         SELECT 
             sc.source_config_id,
             sc.full_name, 
@@ -73,7 +73,7 @@ def upgrade() -> None:
 
         # Update the record
         connection.execute(
-            sa.text("""
+            sa.text(f"""
             UPDATE {schema}.source_configs 
             SET location_type = :location_type,
                 location_uri = :location_uri,
@@ -91,7 +91,9 @@ def upgrade() -> None:
     # Make new columns non-nullable
     op.alter_column("source_configs", "location_type", nullable=False, schema=schema)
     op.alter_column("source_configs", "location_uri", nullable=False, schema=schema)
-    op.alter_column("source_configs", "extract_transform", nullable=False, schema=schema)
+    op.alter_column(
+        "source_configs", "extract_transform", nullable=False, schema=schema
+    )
 
     # Drop old constraint and create new one
     op.drop_constraint(
@@ -125,7 +127,7 @@ def downgrade() -> None:
 
     # Extract data from new columns
     result = connection.execute(
-        sa.text("""
+        sa.text(f"""
         SELECT source_config_id, location_uri, extract_transform
         FROM {schema}.source_configs
     """)
@@ -146,7 +148,7 @@ def downgrade() -> None:
 
         # Update the record
         connection.execute(
-            sa.text("""
+            sa.text(f"""
             UPDATE {schema}.source_configs 
             SET full_name = :full_name,
                 warehouse_hash = :warehouse_hash

@@ -27,7 +27,7 @@ def upgrade() -> None:
 
     # Update existing rows from 'dataset' to 'source'
     op.execute(
-        """
+        f"""
         UPDATE {schema}.resolutions
         SET type = 'source'
         WHERE type = 'dataset'
@@ -53,7 +53,7 @@ def downgrade() -> None:
 
     # Revert 'source' back to 'dataset'
     op.execute(
-        """
+        f"""
         UPDATE {schema}.resolutions
         SET type = 'dataset'
         WHERE type = 'source'

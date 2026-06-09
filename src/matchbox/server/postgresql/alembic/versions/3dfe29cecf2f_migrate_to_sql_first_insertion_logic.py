@@ -87,12 +87,16 @@ def downgrade() -> None:
     pk_space = sa.Table("pk_space", metadata, autoload_with=connection)
     next_cluster_id = connection.execute(
         sa.select(
-            sa.func.nextval(sa.func.pg_get_serial_sequence(f"{schema}.clusters", "cluster_id"))
+            sa.func.nextval(
+                sa.func.pg_get_serial_sequence(f"{schema}.clusters", "cluster_id")
+            )
         )
     ).scalar()
     next_cluster_key_id = connection.execute(
         sa.select(
-            sa.func.nextval(sa.func.pg_get_serial_sequence(f"{schema}.cluster_keys", "key_id"))
+            sa.func.nextval(
+                sa.func.pg_get_serial_sequence(f"{schema}.cluster_keys", "key_id")
+            )
         )
     ).scalar()
 

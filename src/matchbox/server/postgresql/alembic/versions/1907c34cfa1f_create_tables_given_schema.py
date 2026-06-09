@@ -115,7 +115,9 @@ def upgrade() -> None:
         sa.Column("warehouse_hash", postgresql.BYTEA(), nullable=False),
         sa.Column("db_pk", sa.TEXT(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["resolution_id"], [f"{schema}.resolutions.resolution_id"], ondelete="CASCADE"
+            ["resolution_id"],
+            [f"{schema}.resolutions.resolution_id"],
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("source_id"),
         sa.UniqueConstraint(
@@ -184,10 +186,14 @@ def downgrade() -> None:
     )
     op.drop_table("source_columns", schema=schema)
     op.drop_index(
-        "ix_cluster_source_pks_source_pk", table_name="cluster_source_pks", schema=schema
+        "ix_cluster_source_pks_source_pk",
+        table_name="cluster_source_pks",
+        schema=schema,
     )
     op.drop_index(
-        "ix_cluster_source_pks_cluster_id", table_name="cluster_source_pks", schema=schema
+        "ix_cluster_source_pks_cluster_id",
+        table_name="cluster_source_pks",
+        schema=schema,
     )
     op.drop_table("cluster_source_pks", schema=schema)
     op.drop_table("sources", schema=schema)

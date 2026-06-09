@@ -26,7 +26,7 @@ def upgrade() -> None:
 
     # Step 1: Move all indexes to negative values
     op.execute(
-        text("""
+        text(f"""
         UPDATE {schema}.source_fields 
         SET index = -(index + 1)
     """)
@@ -34,7 +34,7 @@ def upgrade() -> None:
 
     # Step 2: Convert back to positive values (now shifted up by 1)
     op.execute(
-        text("""
+        text(f"""
         UPDATE {schema}.source_fields 
         SET index = -index
     """)
@@ -54,7 +54,7 @@ def upgrade() -> None:
     for source_config_id, key_field_name in source_configs:
         # Insert new source_field for the key field at index 0 with is_key=True
         connection.execute(
-            text("""
+            text(f"""
                 INSERT INTO {schema}.source_fields
                     (source_config_id, index, name, type, is_key)
                 VALUES
@@ -65,7 +65,7 @@ def upgrade() -> None:
 
     # Set all existing fields to is_key=False since they're not key fields
     op.execute(
-        text("""
+        text(f"""
         UPDATE {schema}.source_fields 
         SET is_key = false 
         WHERE is_key IS NULL
@@ -101,7 +101,7 @@ def downgrade() -> None:
 
     # Populate key_field with names from key source_fields (is_key=True)
     op.execute(
-        text("""
+        text(f"""
         UPDATE {schema}.source_configs sc
         SET key_field = sf.name
         FROM {schema}.source_fields sf
@@ -118,7 +118,7 @@ def downgrade() -> None:
 
     # Remove the key field entries from source_fields (is_key=True)
     op.execute(
-        text("""
+        text(f"""
         DELETE FROM {schema}.source_fields 
         WHERE is_key = true
     """)
@@ -126,7 +126,7 @@ def downgrade() -> None:
 
     # Shift remaining source_fields indexes back down by 1
     op.execute(
-        text("""
+        text(f"""
         UPDATE {schema}.source_fields 
         SET index = index - 1
     """)

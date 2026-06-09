@@ -61,7 +61,8 @@ services:
       - "${MB__DEV__POSTGRES_BACKEND_PORT}:5432"
     volumes:
       - matchbox_data:/var/lib/postgresql/data
-      - ./tests/scripts:/docker-entrypoint-initdb.d
+      # Pre-seed schema: https://docs.docker.com/guides/pre-seeding/
+      - ./test/scripts/postgres:/docker-entrypoint-initdb.d
     environment:
       - POSTGRES_DB=matchbox
       - POSTGRES_PASSWORD=matchbox_password

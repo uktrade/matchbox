@@ -11,22 +11,16 @@ services:
       - POSTGRES_PASSWORD=warehouse_password
       - POSTGRES_DB=warehouse
   filestorage:
-    image: minio/minio:latest
-    restart: always
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
     volumes:
       - matchbox_store:/data
-    command: server --console-address ":9001" /data
     ports:
       - "${MB__DEV__DATASTORE_PORT}:9000"
       - "${MB__DEV__DATASTORE_CONSOLE_PORT}:9001"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     environment:
-      MINIO_ROOT_USER: ${MB__SERVER__DATASTORE__ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${MB__SERVER__DATASTORE__SECRET_ACCESS_KEY}
+      RUSTFS_ACCESS_KEY: ${MB__SERVER__DATASTORE__ACCESS_KEY_ID}
+      RUSTFS_SECRET_KEY: ${MB__SERVER__DATASTORE__SECRET_ACCESS_KEY}
   api:
     build:
       context: .

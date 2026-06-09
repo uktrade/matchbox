@@ -19,21 +19,23 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.drop_constraint("step_from_pkey", "step_from", schema="mb", type_="primary")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_constraint("step_from_pkey", "step_from", schema=schema, type_="primary")
     op.create_primary_key(
-        "step_from_pkey", "step_from", ["parent", "child", "level"], schema="mb"
+        "step_from_pkey", "step_from", ["parent", "child", "level"], schema=schema
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_constraint("step_from_pkey", "step_from", schema="mb", type_="primary")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_constraint("step_from_pkey", "step_from", schema=schema, type_="primary")
 
     # Remove duplicate (parent, child) pairs if any exist
-    op.execute("""
-        DELETE FROM mb.step_from sf1
+    op.execute(f"""
+        DELETE FROM {schema}.step_from sf1
         WHERE EXISTS (
-            SELECT 1 FROM mb.step_from sf2
+            SELECT 1 FROM {schema}.step_from sf2
             WHERE sf1.parent = sf2.parent
             AND sf1.child = sf2.child
             AND sf1.level > sf2.level
@@ -41,5 +43,5 @@ def downgrade() -> None:
     """)
 
     op.create_primary_key(
-        "step_from_pkey", "step_from", ["parent", "child"], schema="mb"
+        "step_from_pkey", "step_from", ["parent", "child"], schema=schema
     )

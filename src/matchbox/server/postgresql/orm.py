@@ -244,7 +244,12 @@ class Steps(CountMixin, MBDB.MatchboxBase):
         BIGINT, ForeignKey("runs.run_id", ondelete="CASCADE"), nullable=False
     )
     upload_stage: Mapped[UploadStage] = mapped_column(
-        Enum(UploadStage, native_enum=True, name="upload_stages", schema="mb"),
+        Enum(
+            UploadStage,
+            native_enum=True,
+            name="upload_stages",
+            schema=MBDB.settings.postgres.db_schema,
+        ),
         nullable=False,
         default=UploadStage.READY,
     )

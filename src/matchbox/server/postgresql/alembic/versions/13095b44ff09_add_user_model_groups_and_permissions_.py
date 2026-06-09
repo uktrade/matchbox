@@ -20,6 +20,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.create_table(
         "groups",
         sa.Column("group_id", sa.BIGINT(), autoincrement=True, nullable=False),
@@ -28,7 +29,7 @@ def upgrade() -> None:
         sa.Column("is_system", sa.BOOLEAN(), nullable=False),
         sa.PrimaryKeyConstraint("group_id"),
         sa.UniqueConstraint("name", name="groups_name_key"),
-        schema="mb",
+        schema=schema,
     )
     op.create_table(
         "permissions",
@@ -46,10 +47,12 @@ def upgrade() -> None:
             name="exactly_one_resource",
         ),
         sa.ForeignKeyConstraint(
-            ["collection_id"], ["mb.collections.collection_id"], ondelete="CASCADE"
+            ["collection_id"],
+            [f"{schema}.collections.collection_id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["group_id"], ["mb.groups.group_id"], ondelete="CASCADE"
+            ["group_id"], [f"{schema}.groups.group_id"], ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("permission_id"),
         sa.UniqueConstraint(
@@ -59,25 +62,28 @@ def upgrade() -> None:
             "is_system",
             name="unique_permission_grant",
         ),
-        schema="mb",
+        schema=schema,
     )
     op.create_table(
         "user_groups",
         sa.Column("user_id", sa.BIGINT(), nullable=False),
         sa.Column("group_id", sa.BIGINT(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["group_id"], ["mb.groups.group_id"], ondelete="CASCADE"
+            ["group_id"], [f"{schema}.groups.group_id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["mb.users.user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], [f"{schema}.users.user_id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("user_id", "group_id"),
-        schema="mb",
+        schema=schema,
     )
-    op.add_column("users", sa.Column("email", sa.TEXT(), nullable=True), schema="mb")
+    op.add_column("users", sa.Column("email", sa.TEXT(), nullable=True), schema=schema)
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_column("users", "email", schema="mb")
-    op.drop_table("user_groups", schema="mb")
-    op.drop_table("permissions", schema="mb")
-    op.drop_table("groups", schema="mb")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_column("users", "email", schema=schema)
+    op.drop_table("user_groups", schema=schema)
+    op.drop_table("permissions", schema=schema)
+    op.drop_table("groups", schema=schema)

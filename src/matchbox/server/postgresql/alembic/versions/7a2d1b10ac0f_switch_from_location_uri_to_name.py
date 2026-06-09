@@ -20,6 +20,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Add default value for rows without location names
     op.add_column(
         "source_configs",
@@ -29,15 +30,18 @@ def upgrade() -> None:
             nullable=False,
             server_default="legacy",
         ),
-        schema="mb",
+        schema=schema,
     )
     # Remove default value for location names
-    op.alter_column("source_configs", "location_name", server_default=None, schema="mb")
-    op.drop_column("source_configs", "location_uri", schema="mb")
+    op.alter_column(
+        "source_configs", "location_name", server_default=None, schema=schema
+    )
+    op.drop_column("source_configs", "location_uri", schema=schema)
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Add default value for rows without location URIs
     op.add_column(
         "source_configs",
@@ -48,8 +52,10 @@ def downgrade() -> None:
             nullable=False,
             server_default="sqlite:///:memory:",
         ),
-        schema="mb",
+        schema=schema,
     )
     # Remove default value for location URIs
-    op.alter_column("source_configs", "location_uri", server_default=None, schema="mb")
-    op.drop_column("source_configs", "location_name", schema="mb")
+    op.alter_column(
+        "source_configs", "location_uri", server_default=None, schema=schema
+    )
+    op.drop_column("source_configs", "location_name", schema=schema)

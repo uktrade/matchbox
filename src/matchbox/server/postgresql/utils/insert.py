@@ -87,7 +87,7 @@ def insert_hashes(path: SourceStepPath, data_hashes: pa.Table, batch_size: int) 
     with (
         ingest_to_temporary_table(
             table_name="incoming_hashes",
-            schema_name="mb",
+            schema_name=MBDB.settings.postgres.db_schema,
             column_types={"hash": BYTEA(), "keys": ARRAY(TEXT)},
             data=data_hashes.select(["hash", "keys"]),
             max_chunksize=batch_size,
@@ -188,7 +188,7 @@ def insert_model_edges(
         MBDB.get_session() as session,
         ingest_to_temporary_table(
             table_name="incoming_model_edges",
-            schema_name="mb",
+            schema_name=MBDB.settings.postgres.db_schema,
             column_types={
                 "left_id": BIGINT(),
                 "right_id": BIGINT(),
@@ -372,7 +372,7 @@ def insert_clusters(
     with (
         ingest_to_temporary_table(
             table_name="resolver_assignments",
-            schema_name="mb",
+            schema_name=MBDB.settings.postgres.db_schema,
             column_types={
                 "parent_id": BIGINT(),
                 "child_id": BIGINT(),
@@ -391,7 +391,7 @@ def insert_clusters(
         # 3) Insert everything
         with ingest_to_temporary_table(
             table_name="resolver_hashes",
-            schema_name="mb",
+            schema_name=MBDB.settings.postgres.db_schema,
             column_types={"parent_id": BIGINT(), "cluster_hash": BYTEA()},
             data=hash_data,
             max_chunksize=batch_size,

@@ -21,13 +21,15 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.add_column(
         "resolutions",
         sa.Column("content_hash", postgresql.BYTEA(), nullable=True),
-        schema="mb",
+        schema=schema,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_column("resolutions", "content_hash", schema="mb")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_column("resolutions", "content_hash", schema=schema)

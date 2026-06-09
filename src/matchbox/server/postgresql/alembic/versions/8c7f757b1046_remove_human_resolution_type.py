@@ -19,15 +19,16 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Drop the old constraint
     op.drop_constraint(
-        "resolution_type_constraints", "resolutions", type_="check", schema="mb"
+        "resolution_type_constraints", "resolutions", type_="check", schema=schema
     )
 
     # Update existing rows from 'dataset' to 'source'
     op.execute(
-        """
-        UPDATE mb.resolutions
+        f"""
+        UPDATE {schema}.resolutions
         SET type = 'source'
         WHERE type = 'dataset'
         """
@@ -38,21 +39,22 @@ def upgrade() -> None:
         "resolution_type_constraints",
         "resolutions",
         "type IN ('model', 'source')",
-        schema="mb",
+        schema=schema,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     # Drop the new constraint
     op.drop_constraint(
-        "resolution_type_constraints", "resolutions", type_="check", schema="mb"
+        "resolution_type_constraints", "resolutions", type_="check", schema=schema
     )
 
     # Revert 'source' back to 'dataset'
     op.execute(
-        """
-        UPDATE mb.resolutions
+        f"""
+        UPDATE {schema}.resolutions
         SET type = 'dataset'
         WHERE type = 'source'
         """
@@ -62,5 +64,5 @@ def downgrade() -> None:
         "resolution_type_constraints",
         "resolutions",
         "type IN ('model', 'dataset', 'human')",
-        schema="mb",
+        schema=schema,
     )

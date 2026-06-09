@@ -18,13 +18,13 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.execute("CREATE SCHEMA mb")
+    # Schema must be created by the operator before running migrations.
     op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
     op.execute('CREATE EXTENSION IF NOT EXISTS "pgcrypto"')
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.execute("DROP SCHEMA IF EXISTS mb CASCADE")
+    # Schema lifecycle is managed by the operator, not migrations.
     op.execute('DROP EXTENSION IF EXISTS "uuid-ossp"')
     op.execute('DROP EXTENSION IF EXISTS "pgcrypto"')

@@ -21,6 +21,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.create_table(
         "model_configs",
         sa.Column(
@@ -41,13 +42,16 @@ def upgrade() -> None:
             "right_query", postgresql.JSONB(astext_type=sa.Text()), nullable=True
         ),
         sa.ForeignKeyConstraint(
-            ["resolution_id"], ["mb.resolutions.resolution_id"], ondelete="CASCADE"
+            ["resolution_id"],
+            [f"{schema}.resolutions.resolution_id"],
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("model_config_id"),
-        schema="mb",
+        schema=schema,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_table("model_configs", schema="mb")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_table("model_configs", schema=schema)

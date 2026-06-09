@@ -169,7 +169,7 @@ class MatchboxPostgresEvaluationMixin(_MixinBase):
 
         with ingest_to_temporary_table(
             table_name="judgements",
-            schema_name="mb",
+            schema_name=MBDB.settings.postgres.db_schema,
             column_types={
                 "root": BIGINT(),
             },

@@ -18,37 +18,39 @@ down_revision: str | None = "8c7f757b1046"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-upload_stages = sa.Enum(
-    "READY", "PROCESSING", "COMPLETE", name="upload_stages", schema="mb"
-)
-
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
+    upload_stages = sa.Enum(
+        "READY", "PROCESSING", "COMPLETE", name="upload_stages", schema=schema
+    )
     # Create upload stage
     connection = op.get_bind()
     upload_stages.create(connection)
     op.add_column(
         "resolutions",
         sa.Column("upload_stage", upload_stages, nullable=True),
-        schema="mb",
+        schema=schema,
     )
 
     connection.execute(
-        sa.text("UPDATE mb.resolutions SET upload_stage = :stage"),
+        sa.text(f"UPDATE {schema}.resolutions SET upload_stage = :stage"),
         {"stage": "COMPLETE"},
     )
 
-    op.alter_column("resolutions", "upload_stage", nullable=False, schema="mb")
+    op.alter_column("resolutions", "upload_stage", nullable=False, schema=schema)
 
     # Change "content hash" to "fingerprint"
-    op.execute("UPDATE mb.resolutions SET hash = decode('', 'hex') WHERE hash IS NULL")
+    op.execute(
+        f"UPDATE {schema}.resolutions SET hash = decode('', 'hex') WHERE hash IS NULL"
+    )
 
     op.alter_column(
         "resolutions",
         "hash",
         new_column_name="fingerprint",
-        schema="mb",
+        schema=schema,
         existing_type=postgresql.BYTEA(),
         nullable=False,
     )
@@ -56,8 +58,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
+    upload_stages = sa.Enum(
+        "READY", "PROCESSING", "COMPLETE", name="upload_stages", schema=schema
+    )
     # Drop upload stage
-    op.drop_column("resolutions", "upload_stage", schema="mb")
+    op.drop_column("resolutions", "upload_stage", schema=schema)
     upload_stages.drop(op.get_bind())
 
     # Change "fingerprint" to "content hash"
@@ -65,7 +71,7 @@ def downgrade() -> None:
         "resolutions",
         "fingerprint",
         new_column_name="hash",
-        schema="mb",
+        schema=schema,
         existing_type=postgresql.BYTEA(),
         nullable=True,
     )

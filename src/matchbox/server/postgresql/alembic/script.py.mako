@@ -20,9 +20,11 @@ depends_on: str | Sequence[str] | None = ${repr(depends_on)}
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     ${upgrades if upgrades else "pass"}
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     ${downgrades if downgrades else "pass"}

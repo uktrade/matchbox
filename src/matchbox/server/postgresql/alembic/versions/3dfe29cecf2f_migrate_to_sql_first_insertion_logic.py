@@ -20,8 +20,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     connection = op.get_bind()
-    metadata = sa.MetaData(schema="mb")
+    metadata = sa.MetaData(schema=schema)
     pk_space = sa.Table("pk_space", metadata, autoload_with=connection)
 
     # Migrate next IDs from PKSpace to sequences
@@ -33,7 +34,7 @@ def upgrade() -> None:
         connection.execute(
             sa.select(
                 sa.func.setval(
-                    sa.func.pg_get_serial_sequence("mb.clusters", "cluster_id"),
+                    sa.func.pg_get_serial_sequence(f"{schema}.clusters", "cluster_id"),
                     next_ids.next_cluster_id,
                     False,
                 ),
@@ -43,7 +44,7 @@ def upgrade() -> None:
         connection.execute(
             sa.select(
                 sa.func.setval(
-                    sa.func.pg_get_serial_sequence("mb.cluster_keys", "key_id"),
+                    sa.func.pg_get_serial_sequence(f"{schema}.cluster_keys", "key_id"),
                     next_ids.next_cluster_keys_id,
                     False,
                 ),
@@ -51,22 +52,23 @@ def upgrade() -> None:
         )
 
     # Drop PKSpace
-    op.drop_table("pk_space", schema="mb")
+    op.drop_table("pk_space", schema=schema)
 
     # Create constraint on Contains
     op.create_unique_constraint(
-        "contains_unique_root_leaf", "contains", ["root", "leaf"], schema="mb"
+        "contains_unique_root_leaf", "contains", ["root", "leaf"], schema=schema
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     connection = op.get_bind()
-    metadata = sa.MetaData(schema="mb")
+    metadata = sa.MetaData(schema=schema)
 
     # Drop constraint on Contains
     op.drop_constraint(
-        "contains_unique_root_leaf", "contains", schema="mb", type_="unique"
+        "contains_unique_root_leaf", "contains", schema=schema, type_="unique"
     )
 
     # Create PKSpace
@@ -78,19 +80,23 @@ def downgrade() -> None:
             "next_cluster_keys_id", sa.BIGINT(), autoincrement=False, nullable=False
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_space_pkey")),
-        schema="mb",
+        schema=schema,
     )
 
     # Migrate next IDs from sequences to PKSpace
     pk_space = sa.Table("pk_space", metadata, autoload_with=connection)
     next_cluster_id = connection.execute(
         sa.select(
-            sa.func.nextval(sa.func.pg_get_serial_sequence("mb.clusters", "cluster_id"))
+            sa.func.nextval(
+                sa.func.pg_get_serial_sequence(f"{schema}.clusters", "cluster_id")
+            )
         )
     ).scalar()
     next_cluster_key_id = connection.execute(
         sa.select(
-            sa.func.nextval(sa.func.pg_get_serial_sequence("mb.cluster_keys", "key_id"))
+            sa.func.nextval(
+                sa.func.pg_get_serial_sequence(f"{schema}.cluster_keys", "key_id")
+            )
         )
     ).scalar()
 

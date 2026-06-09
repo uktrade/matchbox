@@ -20,13 +20,14 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    schema = op.get_context().config.get_main_option("db_schema")
     op.create_table(
         "pk_space",
         sa.Column("id", sa.BIGINT(), nullable=False),
         sa.Column("next_cluster_id", sa.BIGINT(), nullable=False),
         sa.Column("next_cluster_source_pk_id", sa.BIGINT(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        schema="mb",
+        schema=schema,
     )
 
     op.alter_column(
@@ -34,17 +35,18 @@ def upgrade() -> None:
         "resolution_id",
         existing_type=sa.BIGINT(),
         nullable=False,
-        schema="mb",
+        schema=schema,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_table("pk_space", schema="mb")
+    schema = op.get_context().config.get_main_option("db_schema")
+    op.drop_table("pk_space", schema=schema)
     op.alter_column(
         "sources",
         "resolution_id",
         existing_type=sa.BIGINT(),
         nullable=True,
-        schema="mb",
+        schema=schema,
     )

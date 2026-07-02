@@ -37,6 +37,7 @@ WAREHOUSE_PASSWORD = "warehouse_password"
 
 
 def _worker_database_name(prefix: str, worker_id: str) -> str:
+    "Generate a worker name."
     return f"{prefix}_test_{worker_id}"
 
 
@@ -46,6 +47,7 @@ def _postgres_url(
     port: int,
     database: str,
 ) -> str:
+    """Shape a PostgreSQL URL."""
     return f"postgresql+psycopg://{user}:{password}@{POSTGRES_HOST}:{port}/{database}"
 
 
@@ -55,6 +57,7 @@ def _drop_database(
     port: int,
     database: str,
 ) -> None:
+    """Drop the specified database."""
     maintenance_engine = create_engine(
         _postgres_url(user, password, port, "postgres"),
         isolation_level="AUTOCOMMIT",
@@ -82,6 +85,7 @@ def _drop_database(
 
 
 def _recreate_database(user: str, password: str, port: int, database: str) -> None:
+    """Create a fresh database."""
     _drop_database(user, password, port, database)
     maintenance_engine = create_engine(
         _postgres_url(user, password, port, "postgres"),
@@ -93,6 +97,19 @@ def _recreate_database(user: str, password: str, port: int, database: str) -> No
             connection.execute(text(f'CREATE DATABASE "{database}"'))
     finally:
         maintenance_engine.dispose()
+
+
+def _create_schema(
+    user: str, password: str, port: int, database: str, schema: str
+) -> None:
+    """Create the Matchbox schema in a database."""
+    engine = create_engine(_postgres_url(user, password, port, database))
+    try:
+        with engine.connect() as connection:
+            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+            connection.commit()
+    finally:
+        engine.dispose()
 
 
 class DevelopmentSettings(BaseSettings):
@@ -329,6 +346,10 @@ def worker_matchbox_postgres(
         development_settings=development_settings,
         matchbox_datastore=matchbox_datastore,
         database=database,
+    )
+
+    _create_schema(
+        MATCHBOX_USER, MATCHBOX_PASSWORD, port, database, settings.postgres.db_schema
     )
 
     try:

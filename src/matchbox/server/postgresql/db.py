@@ -17,7 +17,6 @@ from sqlalchemy import (
     MetaData,
     Table,
     create_engine,
-    inspect,
     text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
@@ -197,23 +196,8 @@ class MatchboxDatabase:
             pool.close()
 
     def run_migrations(self) -> None:
-        """Create the database and all tables expected in the schema."""
-        alembic_version = self._look_for_alembic_version()
-        engine = self.get_engine()
-        schema = self.settings.postgres.db_schema
-        if alembic_version is not None:
-            logger.info("Determinded alembic in use so upgrading to head")
-            command.upgrade(self.alembic_config, "head")
-        else:
-            logger.info(
-                "Determinded alembic not in use so dropping schema if it "
-                "exists prior to upgrading to head. "
-            )
-            with engine.connect() as conn:
-                conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE;"))
-                conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema};"))
-                conn.commit()
-            command.upgrade(self.alembic_config, "head")
+        """Create or migrate all tables expected in the schema."""
+        command.upgrade(self.alembic_config, "head")
 
     def clear_database(self) -> None:
         """Delete all rows in every table in the database schema.
@@ -293,22 +277,6 @@ class MatchboxDatabase:
                     conn.execute(text(f"VACUUM ANALYZE {table_name};"))
             else:
                 conn.execute(text("VACUUM ANALYZE;"))
-
-    def _look_for_alembic_version(self) -> bool:
-        engine = self.get_engine()
-        inspector = inspect(engine)
-        alembic_version_table = "alembic_version" in inspector.get_table_names(
-            schema="public"
-        )
-        if alembic_version_table:
-            with engine.connect() as conn:
-                result = conn.execute(
-                    text("SELECT version_num FROM public.alembic_version;")
-                )
-                alembic_version = result.scalar()
-        else:
-            alembic_version = None
-        return alembic_version
 
     @property
     def sorted_tables(self) -> list[Table]:

@@ -201,7 +201,9 @@ class Query:
                 raw_data = raw_data.group_by("id").agg(pl.all().exclude("id").unique())
             if self.config.combine_type == QueryCombineType.EXPLODE:
                 raw_data = raw_data.group_by("id").agg(pl.all().exclude("id"))
-                raw_data = raw_data.explode(pl.all().exclude("id")).unique()
+                raw_data = raw_data.explode(
+                    pl.all().exclude("id"), empty_as_null=True
+                ).unique()
 
             return _convert_df(raw_data.collect(), return_type=return_type)
 

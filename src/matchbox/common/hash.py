@@ -208,7 +208,7 @@ def hash_arrow_table(
     # Explode list fields
     for column in columns:
         if isinstance(df.schema[column], pl.List):
-            df = df.explode(column)
+            df = df.explode(column, empty_as_null=True)
 
     df = df.sort(by=columns)
     row_hashes = hash_rows(df=df, columns=columns, method=method)
@@ -242,7 +242,7 @@ def hash_clusters(assignments: pa.Table) -> bytes:
         .select("child_ids")
         .sort("child_ids")
         .with_row_index(name="cluster_ordinal", offset=1)
-        .explode("child_ids")
+        .explode("child_ids", empty_as_null=True)
         .rename({"child_ids": "child_id"})
         .cast(
             {

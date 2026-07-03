@@ -108,11 +108,17 @@ def insert_hashes(path: SourceStepPath, data_hashes: pa.Table, batch_size: int) 
                 insert(Clusters)
                 .from_select(["cluster_hash"], new_hashes)
                 .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
+                .returning(Clusters.cluster_id)
             )
 
-            result = session.execute(stmt_insert_clusters)
+            result: int = session.execute(
+                select(func.count()).select_from(
+                    stmt_insert_clusters.cte("inserted_clusters")
+                )
+            ).scalar_one()
+
             logger.info(
-                f"Will add {result.rowcount:,} entries to Clusters table",
+                f"Will add {result:,} entries to Clusters table",
                 prefix=log_prefix,
             )
             session.flush()
@@ -126,14 +132,21 @@ def insert_hashes(path: SourceStepPath, data_hashes: pa.Table, batch_size: int) 
                 incoming.join(Clusters, Clusters.cluster_hash == incoming.c.hash)
             )
 
-            stmt_insert_keys = insert(ClusterSourceKey).from_select(
-                ["cluster_id", "source_config_id", "key"],
-                exploded,
+            stmt_insert_keys = (
+                insert(ClusterSourceKey)
+                .from_select(
+                    ["cluster_id", "source_config_id", "key"],
+                    exploded,
+                )
+                .returning(ClusterSourceKey.key_id)
             )
 
-            result = session.execute(stmt_insert_keys)
+            result: int = session.execute(
+                select(func.count()).select_from(stmt_insert_keys.cte("inserted_keys"))
+            ).scalar_one()
+
             logger.info(
-                f"Will add {result.rowcount:,} entries to ClusterSourceKey table",
+                f"Will add {result:,} entries to ClusterSourceKey table",
                 prefix=log_prefix,
             )
             session.commit()
@@ -205,14 +218,22 @@ def insert_model_edges(
                 incoming_edges.c.right_id,
                 incoming_edges.c.score,
             )
-            inserted = session.execute(
-                insert(ModelEdges).from_select(
+            stmt_insert_edges = (
+                insert(ModelEdges)
+                .from_select(
                     ["step_id", "left_id", "right_id", "score"],
                     edges_select,
                 )
+                .returning(ModelEdges.result_id)
             )
+            result: int = session.execute(
+                select(func.count()).select_from(
+                    stmt_insert_edges.cte("inserted_edges")
+                )
+            ).scalar_one()
+
             logger.info(
-                f"Will add {inserted.rowcount:,} entries to ModelEdges table",
+                f"Will add {result:,} entries to ModelEdges table",
                 prefix=log_prefix,
             )
             session.commit()

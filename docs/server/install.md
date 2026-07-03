@@ -18,15 +18,17 @@ At a minimum, you will need to provision the following infrastructure:
 * The main Matchbox database (like Postgres)
 * A bucket in object storage (like S3)
 
-### Database schema
+### Database setup
 
-Before running migrations, the PostgreSQL schema must exist. Create it once with:
+Before running migrations, the PostgreSQL schema must exist, and the extensions Matchbox depends on must be installed. Create them once with:
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS mb;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 ```
 
-Replace `mb` with the value of `MB__SERVER__POSTGRES__DB_SCHEMA` if you are using a custom schema name. The local development `docker-compose.yml` handles this automatically via an init script.
+Replace `mb` with the value of `MB__SERVER__POSTGRES__DB_SCHEMA` if you are using a custom schema name.
 
 This requires that the processing of files uploaded by clients happens on the same instance as the API. Thus, it is not advised to run the Matchbox server in this fashion, except for development or very small setups. The Matchbox server variable `MB__SERVER__TASK_RUNNER` needs to be set to "api" for this minimal setup.
 

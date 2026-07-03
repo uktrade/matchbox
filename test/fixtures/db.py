@@ -112,6 +112,18 @@ def _create_schema(
         engine.dispose()
 
 
+def _create_extensions(user: str, password: str, port: int, database: str) -> None:
+    """Create the PostgreSQL extensions Matchbox requires in a database."""
+    engine = create_engine(_postgres_url(user, password, port, database))
+    try:
+        with engine.connect() as connection:
+            connection.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+            connection.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
+            connection.commit()
+    finally:
+        engine.dispose()
+
+
 class DevelopmentSettings(BaseSettings):
     api_port: int = 8000
     datastore_console_port: int = 9003
@@ -351,6 +363,7 @@ def worker_matchbox_postgres(
     _create_schema(
         MATCHBOX_USER, MATCHBOX_PASSWORD, port, database, settings.postgres.db_schema
     )
+    _create_extensions(MATCHBOX_USER, MATCHBOX_PASSWORD, port, database)
 
     try:
         with MBDB.settings_scope(settings):

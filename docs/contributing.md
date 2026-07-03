@@ -87,13 +87,13 @@ just test
 ```
 
 
-## Database Migrations for PostgreSQL backend
+## Database migrations for PostgreSQL backend
 
 Migrations for the PostgreSQL backend are managed by [Alembic](https://alembic.sqlalchemy.org/en/latest/).
 
 !!! warning
 
-    Do not make alternations to the database using mechanisms other then Alembic. This will interfere with the migration scripts.
+    Migrations must only manage tables. Creating the schema itself, or PostgreSQL extensions, is an operator/DBA responsibility (see [Installation](server/install.md#database-schema-and-extensions)), not something a migration should do.
 
 If:
 

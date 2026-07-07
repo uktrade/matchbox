@@ -19,7 +19,8 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxStepNotFoundError
 from matchbox.common.hash import hash_arrow_table
-from matchbox.common.logging import logger, profile_time
+from matchbox.common.logging import logger
+from matchbox.common.stats import DAGStats
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -79,6 +80,7 @@ class StepABC(ABC):
         self.name = name
         self.description = description
         self._local_data: pl.DataFrame | None = None
+        self._stats: DAGStats = dag.stats
 
     # Local data access
 
@@ -172,7 +174,7 @@ class StepABC(ABC):
         return self._local_data
 
     @post_run
-    @profile_time(attr="name")
+    @DAGStats.time("sync")
     def sync(self) -> None:
         """Send step config and local data to the server.
 

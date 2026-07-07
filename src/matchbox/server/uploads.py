@@ -24,7 +24,8 @@ from matchbox.common.dtos import (
     StepType,
 )
 from matchbox.common.exceptions import MatchboxServerFileError
-from matchbox.common.logging import configure_celery_logging, log_mem_usage, logger
+from matchbox.common.logging import configure_celery_logging, logger
+from matchbox.common.stats import log_mem_usage
 from matchbox.server.base import (
     MatchboxBackends,
     MatchboxDBAdapter,
@@ -280,7 +281,7 @@ def process_upload_celery(
         MBDB._disconnect_adbc()
 
     celery_logger.info("Uploading data for step %s, ID %s", str(step_path), upload_id)
-    log_mem_usage()
+    log_mem_usage(str(step_path))
 
     upload_function = partial(
         process_upload,
@@ -311,7 +312,7 @@ def process_upload_celery(
             raise
 
     finally:
-        log_mem_usage()
+        log_mem_usage(str(step_path))
 
         # Cleanup connections
         if CELERY_SETTINGS.backend_type == MatchboxBackends.POSTGRES:

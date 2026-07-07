@@ -26,6 +26,7 @@ site/
 /CLAUDE.md
 /GEMINI.md
 /AGENTS.md
+.codex
 
 # .agents dir
 .agents

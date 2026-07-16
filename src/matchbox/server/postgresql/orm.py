@@ -330,7 +330,7 @@ class Steps(CountMixin, MBDB.MatchboxBase):
     ) -> list[tuple[int, int | None]]:
         """Returns lineage ordered by priority.
 
-        Highest priority (lowest level) first, then by step_id for stability.
+        Highest priority (lowest level) first, then by step name for stability.
 
         Args:
             sources: If provided, only return lineage paths that lead to these sources
@@ -386,7 +386,7 @@ class Steps(CountMixin, MBDB.MatchboxBase):
                 )
 
             results = session.execute(
-                query.order_by(StepFrom.level.asc(), StepFrom.parent.asc())
+                query.order_by(StepFrom.level.asc(), Steps.name.collate("C").asc())
             ).all()
 
             # Get self's source config ID

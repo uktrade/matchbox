@@ -1,151 +1,78 @@
 name: CI
+
 on:
   pull_request:
-    branches:
-      - main
-      - "feature/**"
-      - "chore/**"
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
-  format-and-lint:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-
-      - name: Install just
-        uses: extractions/setup-crate@7577c1bdf2d95e6d65d532788f35ed79d4b1dda2 # v2.0.1
-        with:
-          repo: casey/just
-          version: 1.42.4
-
-      - name: Format and lint
-        run: just format
-
   test:
     name: test ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version:
-          - "3.11"
-          - "3.12"
-          - "3.13"
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - name: Setup uv and just toolchain
+      uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
+      with:
+        python-version: ${{ matrix.python-version }}
 
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-          python-version: ${{ matrix.python-version }}
+    - name: Copy environment variables
+      run: cp environments/development.env .env
 
-      - name: Install the project
-        run: uv sync --frozen --all-extras --dev
+    - name: Generate test keys
+      run: |
+        uv run test/scripts/authorisation.py keygen > /tmp/keys.json
+        
+        echo "MB__DEV__PRIVATE_KEY=\"$(jq -r '.private_key' /tmp/keys.json)\"" >> .env
+        
+        echo "MB__SERVER__PUBLIC_KEY=\"$(jq -r '.public_key' /tmp/keys.json)\"" >> .env
+              
+        echo "MB__CLIENT__JWT=$(jq -r .private_key /tmp/keys.json | \
+          uv run test/scripts/authorisation.py jwt \
+            --sub e9ba93b3-e4d5-4dee-868c-d011116142bd \
+            --api-root https://localhost:8000/ \
+            --expiry 999999 | \
+          tr -d '\n')" >> .env
 
-      - name: Copy environment variables
-        run: cp environments/development.env .env
+    - name: Run tests
+      run: just test
 
-      - name: Generate test keys
-        run: |
-          uv run test/scripts/authorisation.py keygen > /tmp/keys.json
-          
-          echo "MB__DEV__PRIVATE_KEY=\"$(jq -r '.private_key' /tmp/keys.json)\"" >> .env
-          
-          echo "MB__SERVER__PUBLIC_KEY=\"$(jq -r '.public_key' /tmp/keys.json)\"" >> .env
-                
-          echo "MB__CLIENT__JWT=$(jq -r .private_key /tmp/keys.json | \
-            uv run test/scripts/authorisation.py jwt \
-              --sub e9ba93b3-e4d5-4dee-868c-d011116142bd \
-              --api-root https://localhost:8000/ \
-              --expiry 999999 | \
-            tr -d '\n')" >> .env
+    - name: Dump docker logs
+      if: failure()
+      uses: jwalton/gh-docker-logs@2741064ab9d7af54b0b1ffb6076cf64c16f0220e # v2.2.2
 
-      - name: Run databases and API
-        run: docker compose --env-file .env --env-file environments/containers.env up -d --wait
-
-      - name: Run Python tests
-        run: uv run pytest
-
-      - name: Dump docker logs
-        if: failure()
-        uses: jwalton/gh-docker-logs@2741064ab9d7af54b0b1ffb6076cf64c16f0220e # v2.2.2
-
-  scan-for-secrets:
+  format-and-lint:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
+    - name: Setup uv and just toolchain
+      uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
+      with:
+        python-version: "3.11"
 
-      - name: Run TruffleHog scan
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/repo \
-            trufflesecurity/trufflehog:latest \
-            git file:///repo \
-            --since-commit main \
-            --branch ${{ github.head_ref }} \
-            --github-actions \
-            --fail
+    - name: Format and lint
+      run: just format
 
-  build-docs:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-      contents: read
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Setup uv and just toolchain
+        uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
 
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: "3.11"
-
-      - name: Install the project
-        run: uv sync --frozen --all-extras --dev
-
-      - name: Build with MkDocs
-        run: uv run mkdocs build
-
-  build-package:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: "3.11"
-
-      - name: Build package
+      - name: Build the package
         run: uv build
 
+      - name: Build docs
+        run: uv run mkdocs build
+
   ci-success:
-    needs: [format-and-lint, test, scan-for-secrets, build-docs, build-package]
+    needs: [format-and-lint, test, build]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    
+
     steps:
-      - name: CI success
+      - name: CI Success
         run: echo "All CI checks passed!"

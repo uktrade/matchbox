@@ -199,26 +199,34 @@ def create_preindex_scenario(
     The warehouse contains three interlinked tables that cover common linkage
     realistic scenarios, but are not yet indexed.
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
+    # Server-only: local backends have no users, collections, or runs
+    if isinstance(backend, MatchboxDBAdapter):
+        # First user is admin
+        response = backend.login(User(user_name="alice", email="alice@example.org"))
+        assert response.setup_mode_admin
 
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+        # Set default public permissions
+        default_permissions: list[PermissionGrant] = [
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.READ,
+            ),
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.WRITE,
+            ),
+        ]
+
+        # Create collection and run
+        backend.create_collection(
+            name=dag_testkit.dag.name, permissions=default_permissions
+        )
+        dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
     linked = linked_sources_factory(
@@ -646,26 +654,34 @@ def create_alt_dedupe_scenario(
     The warehouse contains a single table, indexed in the backend. It has
     been deduplicated twice, by two rival proabilistic models.
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
+    # Server-only: local backends have no users, collections, or runs
+    if isinstance(backend, MatchboxDBAdapter):
+        # First user is admin
+        response = backend.login(User(user_name="alice", email="alice@example.org"))
+        assert response.setup_mode_admin
 
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+        # Set default public permissions
+        default_permissions: list[PermissionGrant] = [
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.READ,
+            ),
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.WRITE,
+            ),
+        ]
+
+        # Create collection and run
+        backend.create_collection(
+            name=dag_testkit.dag.name, permissions=default_permissions
+        )
+        dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
     company_name_feature = FeatureConfig(
@@ -776,26 +792,34 @@ def create_convergent_partial_scenario(
     with repetition, and two naive dedupe models that haven't yet had their
     results inserted.
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
+    # Server-only: local backends have no users, collections, or runs
+    if isinstance(backend, MatchboxDBAdapter):
+        # First user is admin
+        response = backend.login(User(user_name="alice", email="alice@example.org"))
+        assert response.setup_mode_admin
 
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+        # Set default public permissions
+        default_permissions: list[PermissionGrant] = [
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.READ,
+            ),
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.WRITE,
+            ),
+        ]
+
+        # Create collection and run
+        backend.create_collection(
+            name=dag_testkit.dag.name, permissions=default_permissions
+        )
+        dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # Create linked sources
     company_name_feature = FeatureConfig(
@@ -925,26 +949,34 @@ def create_mega_scenario(
     Aims to produce "mega" clusters with more features than the CLI has screen rows,
     and more variations than the CLI has screen columns.
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
+    # Server-only: local backends have no users, collections, or runs
+    if isinstance(backend, MatchboxDBAdapter):
+        # First user is admin
+        response = backend.login(User(user_name="alice", email="alice@example.org"))
+        assert response.setup_mode_admin
 
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+        # Set default public permissions
+        default_permissions: list[PermissionGrant] = [
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.READ,
+            ),
+            PermissionGrant(
+                group_name=GroupName(DefaultGroup.PUBLIC),
+                permission=PermissionType.WRITE,
+            ),
+        ]
+
+        # Create collection and run
+        backend.create_collection(
+            name=dag_testkit.dag.name, permissions=default_permissions
+        )
+        dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
 
     # ===== FEATURES WITH VARIATIONS (4 string features, 1 variation each) =====
 

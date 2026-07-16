@@ -21,7 +21,9 @@ def run_migrations_online() -> None:
         config_section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-    )
+    ).execution_options(
+        schema_translate_map={"mb": MBDB.settings.postgres.db_schema}
+    )  # schema="mb" is a symbolic token
 
     def _include_name(name: str, type_: str, _: dict[str, str]) -> bool:
         """Ensure only Matchbox's schema is used to generate diffs."""

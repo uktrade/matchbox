@@ -462,9 +462,14 @@ def upload_tracker_redis(
 
 # Backends
 
-BACKENDS = [
+SERVER_BACKENDS = [
     pytest.param("matchbox_postgres", id="postgres"),
 ]
+
+LOCAL_BACKENDS: list = []
+# TODO: populate once the local duckdb adapter lands
+
+CLUSTER_STORES = SERVER_BACKENDS + LOCAL_BACKENDS
 
 
 @pytest.fixture(scope="function")

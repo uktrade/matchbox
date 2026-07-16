@@ -6,7 +6,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 from sqlalchemy import Engine
-from test.fixtures.db import BACKENDS
+from test.fixtures.db import SERVER_BACKENDS
 
 from matchbox.common.arrow import SCHEMA_QUERY, SCHEMA_QUERY_WITH_LEAVES
 from matchbox.common.dtos import Match
@@ -15,7 +15,7 @@ from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("backend", SERVER_BACKENDS)
 @pytest.mark.docker
 class TestMatchboxQueryBackend:
     @pytest.fixture(autouse=True)

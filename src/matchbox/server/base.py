@@ -3,7 +3,7 @@
 import json
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 import boto3
 from botocore.exceptions import ClientError
@@ -19,6 +19,11 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from matchbox.common.adapters.protocol import (
+    Countable,
+    ListableAndCountable,
+    MatchboxClusterStoreAdapter,
+)
 from matchbox.common.dtos import (
     BackendResourceType,
     Collection,
@@ -28,14 +33,11 @@ from matchbox.common.dtos import (
     Group,
     GroupName,
     LoginResponse,
-    Match,
-    ModelStepPath,
     PermissionGrant,
     PermissionType,
     ResolverStepPath,
     Run,
     RunID,
-    SourceStepPath,
     Step,
     StepPath,
     UploadStage,
@@ -304,33 +306,15 @@ def initialise_matchbox() -> None:
     BackendManager.initialise(settings)
 
 
-class Countable(Protocol):
-    """A protocol for objects that can be counted."""
-
-    def count(self) -> int:
-        """Counts the number of items in the object."""
-        ...
-
-
-class Listable(Protocol):
-    """A protocol for objects that can be listed."""
-
-    def list_all(self) -> list[str]:
-        """Lists the items in the object."""
-        ...
-
-
-class ListableAndCountable(Countable, Listable):
-    """A protocol for objects that can be counted and listed."""
-
-    pass
-
-
-class MatchboxDBAdapter(ABC):
+class MatchboxDBAdapter(MatchboxClusterStoreAdapter, ABC):
     """An abstract base class for Matchbox database adapters.
 
     By default the database should contain the users, groups and permissions found in
     DEFAULT_GROUPS and DEFAULT_PERMISSIONS.
+
+    Extends MatchboxClusterStoreAdapter (the query block, data block, and
+    cluster counts) with the server-only surface: collections, runs, step
+    metadata management, upload staging, admin, groups, and evaluation.
     """
 
     settings: "MatchboxServerSettings"
@@ -338,56 +322,8 @@ class MatchboxDBAdapter(ABC):
     sources: ListableAndCountable
     models: Countable
     resolvers: Countable
-    source_clusters: Countable
-    model_clusters: Countable
-    all_clusters: Countable
-    creates: Countable
-    merges: Countable
-    proposes: Countable
     source_steps: Countable
     users: Countable
-
-    # Retrieval
-
-    @abstractmethod
-    def query(
-        self,
-        source: SourceStepPath,
-        resolver: ResolverStepPath | None = None,
-        return_leaf_id: bool = False,
-        limit: int | None = None,
-    ) -> Table:
-        """Queries the database from an optional resolution.
-
-        Args:
-            source: The step path identifying the source to query.
-            resolver (optional): The resolver path to use for filtering results.
-                If not specified, the source step is used for the queried source.
-            return_leaf_id (optional): whether to return cluster ID of leaves
-            limit (optional): the number to use in a limit clause. Useful for testing
-
-        Returns:
-            The resulting matchbox IDs in Arrow format
-        """
-        ...
-
-    @abstractmethod
-    def match(
-        self,
-        key: str,
-        source: SourceStepPath,
-        targets: list[SourceStepPath],
-        resolver: ResolverStepPath,
-    ) -> list[Match]:
-        """Match an ID in a source step and return the keys in the targets.
-
-        Args:
-            key: The key to match from the source.
-            source: The path of the source step.
-            targets: The paths of the target source steps.
-            resolver: The resolver path to use for matching.
-        """
-        ...
 
     # Collection management
 
@@ -511,16 +447,6 @@ class MatchboxDBAdapter(ABC):
     # Step management
 
     @abstractmethod
-    def create_step(self, step: Step, path: StepPath) -> None:
-        """Write a step to Matchbox.
-
-        Args:
-            step: Step object with a source, model, or resolver config
-            path: The step path
-        """
-        ...
-
-    @abstractmethod
     def get_step(self, path: StepPath) -> Step:
         """Get a step from its path.
 
@@ -586,43 +512,6 @@ class MatchboxDBAdapter(ABC):
         Args:
             path: The path of the step to target.
         """
-        ...
-
-    @abstractmethod
-    def insert_source_data(self, path: SourceStepPath, data_hashes: Table) -> None:
-        """Insert hash data for a source step.
-
-        Only possible if data fingerprint matches fingerprint declared when the
-        step was created. Data can only be set once on a step.
-
-        Args:
-            path: The path of the source step to index.
-            data_hashes: The Arrow table with the hash of each data row
-        """
-        ...
-
-    @abstractmethod
-    def insert_model_data(self, path: ModelStepPath, results: Table) -> None:
-        """Insert results data for a model step.
-
-        Only possible if data fingerprint matches fingerprint declared when the
-        step was created. Data can only be set once on a step.
-        """
-        ...
-
-    @abstractmethod
-    def insert_resolver_data(self, path: ResolverStepPath, data: Table) -> None:
-        """Insert resolver cluster assignments for a resolver step."""
-        ...
-
-    @abstractmethod
-    def get_model_data(self, path: ModelStepPath) -> Table:
-        """Get the results for a model step."""
-        ...
-
-    @abstractmethod
-    def get_resolver_data(self, path: ResolverStepPath) -> Table:
-        """Get cluster assignments for a resolver step."""
         ...
 
     # Data management

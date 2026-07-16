@@ -335,7 +335,7 @@ class MatchboxPostgresAdminMixin:
         if missing_ids:
             raise MatchboxDataNotFound(
                 message="Some items don't exist in Clusters table.",
-                table=Clusters.__tablename__,
+                table=Clusters.__table__.name,
                 data=list(missing_ids),
             )
 

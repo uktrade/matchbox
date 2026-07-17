@@ -1,11 +1,37 @@
 import pyarrow as pa
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import BIGINT, TEXT
 
 from matchbox.server.postgresql import MatchboxPostgres
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.utils.db import ingest_to_temporary_table
+
+
+@pytest.mark.docker
+def test_adbc_pool_state(matchbox_postgres: MatchboxPostgres) -> None:
+    """Ensure pooled ADBC connections do not retain open transactions.
+
+    ADBC starts a new transaction after commit or rollback when autocommit is
+    disabled. PostgreSQL can terminate a connection returned in that state when
+    it reaches the idle-in-transaction timeout, so pooled connections must be idle.
+    """
+    with (
+        MBDB.get_adbc_connection() as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute("SELECT pg_backend_pid()")
+        row = cursor.fetchone()
+        assert row is not None
+        backend_pid = row[0]
+
+    with MBDB.get_session() as session:
+        state = session.execute(
+            text("SELECT state FROM pg_stat_activity WHERE pid = :pid"),
+            {"pid": backend_pid},
+        ).scalar_one()
+
+    assert state == "idle"
 
 
 @pytest.mark.docker

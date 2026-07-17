@@ -7,7 +7,6 @@ from itertools import product
 from math import prod
 from typing import Any, ParamSpec, Self, TypeVar
 
-import pandas as pd
 import polars as pl
 import pyarrow as pa
 from adbc_driver_manager.dbapi import Connection as AdbcConnection
@@ -403,18 +402,19 @@ def generate_rows(
     id_keys = {}
     id_hashes = {}
     value_to_id = {}
+    random = generator.random  # Faker's proxy is too slow for the hot loop
 
     def add_row(entity_id: int, values: tuple) -> None:
         """Add a row of data, handling IDs and keys."""
-        key = str(generator.uuid4())
+        # Cheaper than generator.uuid4()
+        key = f"{random.getrandbits(128):032x}"
         entity_keys[entity_id].append(key)
-        row_hash = hash_values(*(str(v) for v in values))
 
         if values not in value_to_id:
-            mb_id = generator.random_number(digits=16)
+            mb_id = random.getrandbits(63)
             value_to_id[values] = mb_id
             id_keys[mb_id] = []
-            id_hashes[mb_id] = row_hash
+            id_hashes[mb_id] = hash_values(*(str(v) for v in values))
 
         row_id = value_to_id[values]
         id_keys[row_id].append(key)
@@ -494,9 +494,6 @@ def generate_source(
         repetition=repetition,
     )
 
-    # Create DataFrame
-    df = pd.DataFrame(raw_data)
-
     # Create hash groups
     keys = []
     hashes = []
@@ -513,14 +510,16 @@ def generate_source(
     )
 
     # Update variation counts
+    key_to_id = dict(zip(raw_data["key"], raw_data["id"], strict=True))
     for entity in selected_entities:
         if entity.id in entity_keys:
             # Count unique row IDs this entity appears in
-            entity_rows = df[df["key"].isin(entity_keys[entity.id])]
-            entity.total_unique_variations = len(set(entity_rows["id"]))
+            entity.total_unique_variations = len(
+                {key_to_id[key] for key in entity_keys[entity.id]}
+            )
 
     return (
-        pa.Table.from_pandas(df, preserve_index=False),
+        pa.table(raw_data),
         data_hashes,
         entity_keys,
         id_keys,
@@ -558,7 +557,9 @@ def source_factory(
         repetition: Number of times to repeat the generated data. Defaults to 0.
         seed: Random seed for reproducibility. Defaults to 42.
     """
-    generator = Faker()
+    # Weighted sampling is much slower and causes heavy collision-driven
+    # retries when generating unique values at scale
+    generator = Faker(use_weighting=False)
     generator.seed_instance(seed)
 
     if features is None:
@@ -644,7 +645,7 @@ def source_factory(
         features=features,
         data=data,
         data_hashes=data_hashes,
-        entities=tuple(sorted(results_entities)),
+        entities=tuple(sorted(results_entities, key=lambda e: e.id)),
     )
 
 
@@ -658,7 +659,9 @@ def source_from_tuple(
     seed: int = 42,
 ) -> SourceTestkit:
     """Generate a complete source testkit from dummy data."""
-    generator = Faker()
+    # Weighted sampling is much slower and causes heavy collision-driven
+    # retries when generating unique values at scale
+    generator = Faker(use_weighting=False)
     generator.seed_instance(seed)
 
     if name is None:
@@ -732,7 +735,7 @@ def source_from_tuple(
         source=source,
         data=data,
         data_hashes=data_hashes,
-        entities=tuple(sorted(results_entities)),
+        entities=tuple(sorted(results_entities, key=lambda e: e.id)),
     )
 
 
@@ -941,7 +944,7 @@ def linked_sources_factory(
             features=tuple(parameters.features),
             data=data,
             data_hashes=data_hashes,
-            entities=tuple(sorted(results_entities)),
+            entities=tuple(sorted(results_entities, key=lambda e: e.id)),
         )
 
         # Update entities with source references

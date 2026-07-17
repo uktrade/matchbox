@@ -505,22 +505,42 @@ def generate_entities(
     n: int,
 ) -> tuple[SourceEntity]:
     """Generate base entities with their ground truth values from generator."""
-    entities = []
-    for _ in range(n):
-        base_values = {}
-        for feature in features:
-            generator_func = generator.unique if feature.unique else generator
-            value_generator = getattr(generator_func, feature.base_generator)
-            parameters = {} if not feature.parameters else dict(feature.parameters)
 
-            value = value_generator(**parameters)
-            # Explicitly cast lists to tuples to ensure they are hashable
-            if isinstance(value, list):
-                value = tuple(value)
-            base_values[feature.name] = value
+    def _batch(k: int, feature: FeatureConfig) -> list[Any]:
+        """Generate k values for a feature."""
+        value_generator = getattr(generator, feature.base_generator)
+        parameters = {} if not feature.parameters else dict(feature.parameters)
+        values = (value_generator(**parameters) for _ in range(k))
+        # Explicitly cast lists to tuples to ensure they are hashable
+        return [tuple(v) if isinstance(v, list) else v for v in values]
 
-        entities.append(SourceEntity(base_values=base_values, keys=EntityReference()))
-    return tuple(entities)
+    # Generate one column of values per feature. Uniqueness is enforced by
+    # generate-and-deduplicate, which is far faster than Faker's unique proxy.
+    columns: list[list[Any]] = []
+    for feature in features:
+        if not feature.unique:
+            columns.append(_batch(n, feature))
+            continue
+
+        unique_values: dict[Any, None] = {}  # dict preserves insertion order
+        for _ in range(1000):  # retry budget for collisions
+            if (shortfall := n - len(unique_values)) == 0:
+                break
+            for value in _batch(shortfall, feature):
+                unique_values.setdefault(value)
+        else:
+            raise RuntimeError(
+                f"Could not generate {n:,} unique values for feature {feature.name!r}"
+            )
+        columns.append(list(unique_values))
+
+    return tuple(
+        SourceEntity(
+            base_values=dict(zip((f.name for f in features), row, strict=True)),
+            keys=EntityReference(),
+        )
+        for row in zip(*columns, strict=True)
+    )
 
 
 def scores_to_results_entities(

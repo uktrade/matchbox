@@ -4,7 +4,7 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from adbc_driver_postgresql import dbapi as adbc_dbapi
 from adbc_driver_postgresql.dbapi import Connection as AdbcConnection
@@ -19,6 +19,7 @@ from sqlalchemy import (
     create_engine,
     text,
 )
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
 
@@ -80,7 +81,6 @@ class MatchboxDatabase:
         self._SessionLocal: sessionmaker | None = None
         self._adbc_pool: QueuePool | None = None
         self._adbc_lock = threading.Lock()
-        self._source_adbc_connection: adbc_dbapi.Connection | None = None
         self.MatchboxBase = declarative_base(
             metadata=MetaData(schema=settings.postgres.db_schema)
         )
@@ -113,20 +113,20 @@ class MatchboxDatabase:
             self._SessionLocal = None
 
     def _connect_adbc(self) -> None:
-        self._source_adbc_connection = adbc_dbapi.connect(
-            self.connection_string(driver=False)
-        )
+        # adbc clones default to non-autocommit and stay idle in transaction
         self._adbc_pool = QueuePool(
-            self._source_adbc_connection.adbc_clone,
+            lambda: cast(
+                DBAPIConnection,
+                adbc_dbapi.connect(
+                    self.connection_string(driver=False), autocommit=True
+                ),
+            ),
         )
 
     def _disconnect_adbc(self) -> None:
         if self._adbc_pool:
             self._adbc_pool.dispose()
             self._adbc_pool = None
-
-            self._source_adbc_connection.close()
-            self._source_adbc_connection = None
 
     @contextmanager
     def settings_scope(
@@ -188,9 +188,8 @@ class MatchboxDatabase:
 
         try:
             yield connection
-            connection.commit()
-        except BaseException:
-            connection.rollback()
+        except adbc_dbapi.Error as exc:
+            pool.invalidate(exc)
             raise
         finally:
             pool.close()

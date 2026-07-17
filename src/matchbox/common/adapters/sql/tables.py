@@ -42,7 +42,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
-metadata = MetaData(schema="mb")
+METADATA = MetaData(schema="mb")
 """Shared metadata for the five cluster tables.
 
 schema="mb" is a symbolic token, translated to a real schema, or none, by
@@ -52,7 +52,7 @@ literal schema name.
 
 Clusters = Table(
     "clusters",
-    metadata,
+    METADATA,
     Column("cluster_id", BigInteger, primary_key=True),
     Column("cluster_hash", LargeBinary, nullable=False),
     UniqueConstraint("cluster_hash", name="clusters_hash_key"),
@@ -61,7 +61,7 @@ Clusters = Table(
 
 ClusterSourceKey = Table(
     "cluster_keys",
-    metadata,
+    METADATA,
     Column("key_id", BigInteger, primary_key=True),
     Column(
         "cluster_id",
@@ -85,7 +85,7 @@ ClusterSourceKey = Table(
 
 Contains = Table(
     "contains",
-    metadata,
+    METADATA,
     Column(
         "root",
         BigInteger,
@@ -107,7 +107,7 @@ Contains = Table(
 
 ModelEdges = Table(
     "model_edges",
-    metadata,
+    METADATA,
     Column("result_id", BigInteger, primary_key=True, autoincrement=True),
     Column(
         "step_id",
@@ -139,7 +139,7 @@ Stores the raw left/right scores created by a model.
 
 ResolverClusters = Table(
     "resolver_clusters",
-    metadata,
+    METADATA,
     Column(
         "step_id",
         BigInteger,

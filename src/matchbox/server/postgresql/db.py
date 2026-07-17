@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from matchbox.common.adapters.sql.tables import metadata as shared_metadata
+from matchbox.common.adapters.sql.tables import METADATA
 from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
@@ -82,7 +82,7 @@ class MatchboxDatabase:
         self._adbc_pool: QueuePool | None = None
         self._adbc_lock = threading.Lock()
         self._source_adbc_connection: adbc_dbapi.Connection | None = None
-        self.MatchboxBase = declarative_base(metadata=shared_metadata)
+        self.MatchboxBase = declarative_base(metadata=METADATA)
         self.alembic_config = settings.postgres.get_alembic_config()
 
     def connection_string(self, driver: bool = True) -> str:

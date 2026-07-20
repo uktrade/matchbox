@@ -1,8 +1,6 @@
 """Base classes and utilities for Matchbox database adapters."""
 
-import json
 from abc import ABC, abstractmethod
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import boto3
@@ -10,7 +8,6 @@ from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from pyarrow import Table
 from pydantic import (
-    BaseModel,
     Field,
     SecretBytes,
     SecretStr,
@@ -22,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from matchbox.common.adapters.protocol import (
     Countable,
     ListableAndCountable,
+    MatchboxBackends,
     MatchboxClusterStoreAdapter,
 )
 from matchbox.common.dtos import (
@@ -104,29 +102,6 @@ A list of tuples in the form:
 * The resource type to grant it on
 * The resource name to grant it on, if applicable
 """
-
-
-class MatchboxBackends(StrEnum):
-    """The available backends for Matchbox."""
-
-    POSTGRES = "postgres"
-
-
-class MatchboxSnapshot(BaseModel):
-    """A snapshot of the Matchbox database."""
-
-    backend_type: MatchboxBackends
-    data: dict[str, Any]
-
-    @field_validator("data")
-    @classmethod
-    def check_serialisable(cls, value: dict[str, Any]) -> dict[str, Any]:
-        """Validate that the value can be serialised to JSON."""
-        try:
-            json.dumps(value)
-            return value
-        except (TypeError, OverflowError) as e:
-            raise ValueError(f"Value is not JSON serialisable: {e}") from e
 
 
 class MatchboxDatastoreSettings(BaseSettings):
@@ -525,47 +500,6 @@ class MatchboxDBAdapter(MatchboxClusterStoreAdapter, ABC):
 
         Raises:
             MatchboxDataNotFound: If some items don't exist in the target table.
-        """
-        ...
-
-    @abstractmethod
-    def dump(self) -> MatchboxSnapshot:
-        """Dumps the entire database to a snapshot.
-
-        Returns:
-            A MatchboxSnapshot object of type "postgres" with the database's
-                current state.
-        """
-        ...
-
-    @abstractmethod
-    def drop(self, certain: bool) -> None:
-        """Hard clear the database by dropping all tables and re-creating.
-
-        Args:
-            certain: Whether to drop the database without confirmation.
-        """
-        ...
-
-    @abstractmethod
-    def clear(self, certain: bool) -> None:
-        """Soft clear the database by deleting all rows but retaining tables.
-
-        Args:
-            certain: Whether to delete the database without confirmation.
-        """
-        ...
-
-    @abstractmethod
-    def restore(self, snapshot: MatchboxSnapshot) -> None:
-        """Restores the database from a snapshot.
-
-        Args:
-            snapshot: A MatchboxSnapshot object of type "postgres" with the
-                database's state
-
-        Raises:
-            TypeError: If the snapshot is not compatible with PostgreSQL
         """
         ...
 

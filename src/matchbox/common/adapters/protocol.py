@@ -1,9 +1,12 @@
 """The cluster store protocol shared by every Matchbox backend."""
 
+import json
 from abc import ABC, abstractmethod
-from typing import Protocol
+from enum import StrEnum
+from typing import Any, Protocol
 
 from pyarrow import Table
+from pydantic import BaseModel, field_validator
 
 from matchbox.common.dtos import (
     Match,
@@ -37,6 +40,29 @@ class ListableAndCountable(Countable, Listable):
     pass
 
 
+class MatchboxBackends(StrEnum):
+    """The available backends for Matchbox."""
+
+    POSTGRES = "postgres"
+
+
+class MatchboxSnapshot(BaseModel):
+    """A snapshot of the Matchbox database."""
+
+    backend_type: MatchboxBackends
+    data: dict[str, Any]
+
+    @field_validator("data")
+    @classmethod
+    def check_serialisable(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Validate that the value can be serialised to JSON."""
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, OverflowError) as e:
+            raise ValueError(f"Value is not JSON serialisable: {e}") from e
+
+
 class MatchboxClusterStoreAdapter(ABC):
     """The contract shared by anything that stores and serves cluster data.
 
@@ -50,9 +76,9 @@ class MatchboxClusterStoreAdapter(ABC):
     source_clusters: Countable
     model_clusters: Countable
     all_clusters: Countable
-    creates: Countable
-    merges: Countable
-    proposes: Countable
+    creates: Countable  # clusters proposed by resolver
+    merges: Countable  # cluster lineage tree
+    proposes: Countable  # raw model edge scores
 
     # Query block
 
@@ -143,4 +169,46 @@ class MatchboxClusterStoreAdapter(ABC):
     @abstractmethod
     def get_resolver_data(self, path: ResolverStepPath) -> Table:
         """Get cluster assignments for a resolver step."""
+        ...
+
+    # Data management
+
+    @abstractmethod
+    def dump(self) -> MatchboxSnapshot:
+        """Dumps the entire database to a snapshot.
+
+        Returns:
+            A MatchboxSnapshot with the database's current state, tagged
+                with the backend type that produced it.
+        """
+        ...
+
+    @abstractmethod
+    def restore(self, snapshot: MatchboxSnapshot) -> None:
+        """Restores the database from a snapshot.
+
+        Args:
+            snapshot: A MatchboxSnapshot with the database's state
+
+        Raises:
+            TypeError: If the snapshot's backend type doesn't match this one
+        """
+        ...
+
+    @abstractmethod
+    def clear(self, certain: bool) -> None:
+        """Soft clear the database by deleting all rows but retaining tables.
+
+        Args:
+            certain: Whether to delete the database without confirmation.
+        """
+        ...
+
+    @abstractmethod
+    def drop(self, certain: bool) -> None:
+        """Hard clear the database by dropping all tables and re-creating.
+
+        Args:
+            certain: Whether to drop the database without confirmation.
+        """
         ...

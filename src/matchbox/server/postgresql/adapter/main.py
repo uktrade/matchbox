@@ -128,8 +128,8 @@ class MatchboxPostgres(
         self.source_clusters = FilteredClusters(has_source=True)
         self.model_clusters = FilteredClusters(has_source=False)
         self.all_clusters = FilteredClusters()
-        self.creates = ResolverClusters
-        self.merges = Contains
-        self.proposes = FilteredProbabilities()
+        self.creates = ResolverClusters  # clusters proposed by resolver
+        self.merges = Contains  # cluster lineage tree
+        self.proposes = FilteredProbabilities()  # raw model edge scores
         self.source_steps = FilteredSteps(sources=True, models=False, resolvers=False)
         self.users = Users

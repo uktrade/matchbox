@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
-from test.fixtures.db import BACKENDS
+from test.fixtures.db import SERVER_BACKENDS
 
 from matchbox.common.arrow import (
     SCHEMA_CLUSTER_EXPANSION,
@@ -23,7 +23,7 @@ from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("backend", SERVER_BACKENDS)
 @pytest.mark.docker
 class TestMatchboxEvaluationBackend:
     @pytest.fixture(autouse=True)

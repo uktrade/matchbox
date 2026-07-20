@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
+from matchbox.common.adapters.protocol import MatchboxBackends, MatchboxSnapshot
 from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendResourceType,
@@ -30,7 +31,6 @@ from matchbox.common.exceptions import (
     MatchboxGroupNotFoundError,
 )
 from matchbox.common.logging import logger
-from matchbox.server.base import MatchboxBackends, MatchboxSnapshot
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import Collections, Groups, Permissions
 

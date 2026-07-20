@@ -4,6 +4,7 @@ from psycopg.errors import LockNotAvailable
 from pyarrow import Table
 from sqlalchemy import CursorResult, delete, select, update
 
+from matchbox.common.adapters.sql.query import resolver_membership_subquery
 from matchbox.common.arrow import SCHEMA_CLUSTERS, SCHEMA_MODEL_EDGES
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
@@ -51,7 +52,6 @@ from matchbox.server.postgresql.utils.insert import (
 )
 from matchbox.server.postgresql.utils.query import (
     require_complete_resolver,
-    resolver_membership_subquery,
 )
 
 

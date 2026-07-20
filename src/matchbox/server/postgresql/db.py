@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
 
+from matchbox.common.adapters.sql.tables import METADATA
 from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
 from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
@@ -81,9 +82,7 @@ class MatchboxDatabase:
         self._adbc_pool: QueuePool | None = None
         self._adbc_lock = threading.Lock()
         self._source_adbc_connection: adbc_dbapi.Connection | None = None
-        self.MatchboxBase = declarative_base(
-            metadata=MetaData(schema=settings.postgres.db_schema)
-        )
+        self.MatchboxBase = declarative_base(metadata=METADATA)
         self.alembic_config = settings.postgres.get_alembic_config()
 
     def connection_string(self, driver: bool = True) -> str:
@@ -101,7 +100,9 @@ class MatchboxDatabase:
         """Connect to the database."""
         self._engine = create_engine(
             url=self.connection_string(), logging_name="matchbox.engine", echo=False
-        )
+        ).execution_options(
+            schema_translate_map={"mb": self.settings.postgres.db_schema}
+        )  # schema="mb" is a symbolic token
         self._SessionLocal = sessionmaker(
             autocommit=False, autoflush=False, bind=self._engine
         )
@@ -205,7 +206,7 @@ class MatchboxDatabase:
         - TRUNCATE tables that are part of the core ORM (preserves structure)
         - DROP tables that are not in the ORM (removes temporary/test tables)
         """
-        schema_name = self.MatchboxBase.metadata.schema
+        schema_name = self.settings.postgres.db_schema
         engine = self.get_engine()  # Get the engine
 
         with self.get_session() as session:

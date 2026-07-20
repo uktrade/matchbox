@@ -12,8 +12,12 @@ from sqlalchemy.dialects.postgresql import (
 )
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import TableClause
-from sqlalchemy.sql.selectable import Subquery
 
+from matchbox.common.adapters.sql.resolver import (
+    build_expanded_leaves_subquery,
+    build_leaf_hash_groups_query,
+    hash_resolver_parents,
+)
 from matchbox.common.dtos import (
     ModelStepPath,
     ResolverStepPath,
@@ -26,7 +30,6 @@ from matchbox.common.exceptions import (
 )
 from matchbox.common.hash import hash_arrow_table, hash_clusters, hash_model_results
 from matchbox.common.logging import logger
-from matchbox.common.transform import hash_cluster_leaves
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     Clusters,
@@ -250,30 +253,6 @@ def insert_model_edges(
     logger.info("Model edge insert complete!", prefix=log_prefix)
 
 
-def _build_expanded_leaves_subquery(
-    incoming_cluster_assignments: TableClause,
-) -> Subquery:
-    """Expand child assignments to leaf-level cluster IDs per parent cluster."""
-    return (
-        select(
-            incoming_cluster_assignments.c.parent_id,
-            func.coalesce(
-                Contains.leaf,
-                incoming_cluster_assignments.c.child_id,
-            ).label("leaf_id"),
-        )
-        .distinct()
-        .select_from(
-            # Clusters with no children in Contains resolve to themselves
-            incoming_cluster_assignments.outerjoin(
-                Contains,
-                Contains.root == incoming_cluster_assignments.c.child_id,
-            )
-        )
-        .subquery("expanded_leaves")
-    )
-
-
 def _compute_resolver_hashes(
     incoming_cluster_assignments: TableClause,
     session: Session,
@@ -302,32 +281,11 @@ def _compute_resolver_hashes(
         Arrow table with columns (parent_id: int64, cluster_hash: binary).
     """
     # Expand each child_id to its constituent leaves
-    expanded_leaves = _build_expanded_leaves_subquery(incoming_cluster_assignments)
+    expanded_leaves = build_expanded_leaves_subquery(incoming_cluster_assignments)
 
-    # Group leaf hashes per parent_id
-    rows = session.execute(
-        select(
-            expanded_leaves.c.parent_id,
-            func.array_agg(Clusters.cluster_hash).label("leaf_hashes"),
-        )
-        .select_from(
-            expanded_leaves.join(
-                Clusters,
-                Clusters.cluster_id == expanded_leaves.c.leaf_id,
-            )
-        )
-        .group_by(expanded_leaves.c.parent_id)
-    ).all()
-
-    # Compute a single composite hash per parent cluster from leaf hashes
-    return pa.table(
-        {
-            "parent_id": [int(r[0]) for r in rows],
-            "cluster_hash": [
-                hash_cluster_leaves([bytes(h) for h in r[1]]) for r in rows
-            ],
-        }
-    )
+    # Group leaf hashes per parent_id, then hash them into a composite hash
+    rows = session.execute(build_leaf_hash_groups_query(expanded_leaves)).all()
+    return hash_resolver_parents(rows)
 
 
 def insert_clusters(
@@ -407,7 +365,7 @@ def insert_clusters(
         hash_data = _compute_resolver_hashes(incoming_cluster_assignments, session)
 
         # Leaf expansion subquery
-        expanded_leaves = _build_expanded_leaves_subquery(incoming_cluster_assignments)
+        expanded_leaves = build_expanded_leaves_subquery(incoming_cluster_assignments)
 
         # 3) Insert everything
         with ingest_to_temporary_table(

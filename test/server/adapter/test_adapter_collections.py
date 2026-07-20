@@ -5,7 +5,7 @@ from functools import partial
 import pyarrow as pa
 import pytest
 from sqlalchemy import Engine
-from test.fixtures.db import BACKENDS
+from test.fixtures.db import SERVER_BACKENDS
 
 from matchbox.client.queries import Query
 from matchbox.common.datatypes import DataTypes
@@ -41,7 +41,7 @@ from matchbox.common.factories.sources import SourceTestkit
 from matchbox.server.base import MatchboxDBAdapter
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("backend", SERVER_BACKENDS)
 @pytest.mark.docker
 class TestMatchboxCollectionsBackend:
     @pytest.fixture(autouse=True)

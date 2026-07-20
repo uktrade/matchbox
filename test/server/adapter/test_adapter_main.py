@@ -4,13 +4,13 @@ from functools import partial
 
 import pytest
 from sqlalchemy import Engine
-from test.fixtures.db import BACKENDS
+from test.fixtures.db import SERVER_BACKENDS
 
 from matchbox.common.factories.scenarios import setup_scenario
 from matchbox.server.base import MatchboxDBAdapter
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("backend", SERVER_BACKENDS)
 @pytest.mark.docker
 class TestMatchboxMainBackend:
     @pytest.fixture(autouse=True)

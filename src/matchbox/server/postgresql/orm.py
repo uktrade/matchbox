@@ -7,7 +7,6 @@ from sqlalchemy import (
     BIGINT,
     BOOLEAN,
     INTEGER,
-    REAL,
     CheckConstraint,
     DateTime,
     Enum,
@@ -21,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TEXT, insert
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, selectinload
 
+from matchbox.common.adapters.sql import tables
 from matchbox.common.dtos import (
     BackendResourceType,
     CollectionName,
@@ -670,31 +670,11 @@ class SourceFields(CountMixin, MBDB.MatchboxBase):
 class ClusterSourceKey(CountMixin, MBDB.MatchboxBase):
     """Table for storing source primary keys for clusters."""
 
-    __tablename__ = "cluster_keys"
-
-    # Columns
-    key_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    cluster_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
-    )
-    source_config_id: Mapped[int] = mapped_column(
-        BIGINT,
-        ForeignKey("source_configs.source_config_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    key: Mapped[str] = mapped_column(TEXT, nullable=False)
+    __table__ = tables.ClusterSourceKey
 
     # Relationships
     cluster: Mapped["Clusters"] = relationship(back_populates="keys")
     source_config: Mapped["SourceConfigs"] = relationship(back_populates="cluster_keys")
-
-    # Constraints and indices
-    __table_args__ = (
-        Index("ix_cluster_keys_cluster_id", "cluster_id"),
-        Index("ix_cluster_keys_keys", "key"),
-        Index("ix_cluster_keys_source_config_id", "source_config_id"),
-        UniqueConstraint("key_id", "source_config_id", name="unique_keys_source"),
-    )
 
 
 class SourceConfigs(CountMixin, MBDB.MatchboxBase):
@@ -936,33 +916,13 @@ class ResolverConfigs(CountMixin, MBDB.MatchboxBase):
 class Contains(CountMixin, MBDB.MatchboxBase):
     """Cluster lineage table."""
 
-    __tablename__ = "contains"
-
-    # Columns
-    root: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
-    )
-    leaf: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
-    )
-
-    # Constraints and indices
-    __table_args__ = (
-        CheckConstraint("root != leaf", name="no_self_containment"),
-        UniqueConstraint("root", "leaf"),
-        Index("ix_contains_root_leaf", "root", "leaf"),
-        Index("ix_contains_leaf_root", "leaf", "root"),
-    )
+    __table__ = tables.Contains
 
 
 class Clusters(CountMixin, MBDB.MatchboxBase):
     """Table of indexed data and clusters that match it."""
 
-    __tablename__ = "clusters"
-
-    # Columns
-    cluster_id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    cluster_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    __table__ = tables.Clusters
 
     # Relationships
     keys: Mapped[list["ClusterSourceKey"]] = relationship(
@@ -984,9 +944,6 @@ class Clusters(CountMixin, MBDB.MatchboxBase):
         ),
         viewonly=True,
     )
-
-    # Constraints and indices
-    __table_args__ = (UniqueConstraint("cluster_hash", name="clusters_hash_key"),)
 
 
 class UserGroups(MBDB.MatchboxBase):
@@ -1212,51 +1169,15 @@ class ModelEdges(CountMixin, MBDB.MatchboxBase):
     Stores the raw left/right scores created by a model.
     """
 
-    __tablename__ = "model_edges"
-
-    # Columns
-    result_id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
-    step_id: Mapped[int] = mapped_column(
-        BIGINT,
-        ForeignKey("steps.step_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    left_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
-    )
-    right_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), nullable=False
-    )
-    score: Mapped[float] = mapped_column(REAL, nullable=False)
+    __table__ = tables.ModelEdges
 
     # Relationships
     proposed_by: Mapped["Steps"] = relationship(back_populates="model_edges")
-
-    # Constraints
-    __table_args__ = (
-        Index("ix_model_edges_step", "step_id"),
-        CheckConstraint(
-            "score >= 0.0 AND score <= 1.0",
-            name="valid_score",
-        ),
-        UniqueConstraint("step_id", "left_id", "right_id"),
-    )
 
 
 class ResolverClusters(CountMixin, MBDB.MatchboxBase):
     """Association table linking resolver steps to cluster IDs."""
 
-    __tablename__ = "resolver_clusters"
-
-    step_id: Mapped[int] = mapped_column(
-        BIGINT,
-        ForeignKey("steps.step_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    cluster_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("clusters.cluster_id", ondelete="CASCADE"), primary_key=True
-    )
+    __table__ = tables.ResolverClusters
 
     proposed_by: Mapped["Steps"] = relationship(back_populates="resolver_clusters")
-
-    __table_args__ = (Index("ix_resolver_clusters_step", "step_id"),)

@@ -1,4 +1,21 @@
-"""Scenario factories for creating TestkitDAG scenarios."""
+"""Scenario factories for creating TestkitDAG scenarios.
+
+A scenario is a builder function registered in SCENARIO_REGISTRY that
+produces a TestkitDAG in a well-defined state, for reuse across tests.
+
+Every scenario's docstring answers two questions.
+
+State: a short, high-level summary of what is set up, such as users, a
+collection or run, and which sources, models, or resolvers exist. Not a
+step-by-step account of the code.
+
+Scope: SERVER or EITHER. SERVER needs a full MatchboxDBAdapter, for
+collections, runs, users, groups, and permissions, guarded by an
+isinstance check that raises TypeError otherwise. EITHER is written only
+against the shared MatchboxClusterStoreAdapter protocol (query, match,
+create_step, insert data). Any server-only setup, such as user permissions
+and runs, is used only when backend is a MatchboxDBAdapter.
+"""
 
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -9,6 +26,10 @@ from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
 from matchbox.client.queries import Query
+from matchbox.common.adapters.protocol import (
+    MatchboxClusterStoreAdapter,
+    MatchboxSnapshot,
+)
 from matchbox.common.dtos import (
     DefaultGroup,
     Group,
@@ -30,7 +51,7 @@ from matchbox.common.factories.sources import (
     SourceTestkitParameters,
     linked_sources_factory,
 )
-from matchbox.server.base import MatchboxDBAdapter, MatchboxSnapshot
+from matchbox.server.base import MatchboxDBAdapter
 
 # Type definitions
 ScenarioBuilder = Callable[..., TestkitDAG]
@@ -79,12 +100,40 @@ def _testkitdag_to_location(client: Engine, dag: TestkitDAG) -> None:
         source_testkit.write_to_location(set_client=client)
 
 
+def _setup_basic_server(backend: MatchboxDBAdapter, dag_testkit: TestkitDAG) -> None:
+    """Basic server-only setup.
+
+    Logs in an admin user, alice, grants the public group default read
+    and write permissions, then creates a collection and run named after
+    the DAG. Local backends have no concept of users, collections, or
+    runs, so callers only use this when backend is a MatchboxDBAdapter.
+    """
+    response = backend.login(User(user_name="alice", email="alice@example.org"))
+    assert response.setup_mode_admin
+
+    default_permissions: list[PermissionGrant] = [
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC),
+            permission=PermissionType.READ,
+        ),
+        PermissionGrant(
+            group_name=GroupName(DefaultGroup.PUBLIC),
+            permission=PermissionType.WRITE,
+        ),
+    ]
+
+    backend.create_collection(
+        name=dag_testkit.dag.name, permissions=default_permissions
+    )
+    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+
+
 # Scenario builders
 
 
 @register_scenario("bare")
 def create_bare_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -92,7 +141,9 @@ def create_bare_scenario(
 ) -> TestkitDAG:
     """Create a bare TestkitDAG scenario.
 
-    The warehouse and backend are empty, no users.
+    State: the warehouse and backend are empty, with no users.
+
+    Scope: EITHER, since it touches nothing on backend.
     """
     return TestkitDAG()
 
@@ -107,8 +158,18 @@ def create_admin_scenario(
 ) -> TestkitDAG:
     """Create an admin TestkitDAG scenario.
 
-    The warehouse and backend are empty except for a single admin user, alice.
+    State: the warehouse and backend are empty except for a single admin
+    user, alice.
+
+    Scope: SERVER only, since it creates a login and admin user, a
+    concept local backends do not have. Raises TypeError if given
+    anything but a MatchboxDBAdapter.
     """
+    if not isinstance(backend, MatchboxDBAdapter):
+        raise TypeError(
+            f"The 'admin' scenario is server-only, not {type(backend).__name__}."
+        )
+
     # First create the bare scenario
     dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -131,16 +192,21 @@ def create_closed_collection_scenario(
 ) -> TestkitDAG:
     """Create a closed collection scenario for permission testing.
 
-    Users:
-    - alice: admin (from setup_mode_admin)
-    - bob: member of 'readers' group (has READ)
-    - charlie: member of 'writers' group (has READ + WRITE)
-    - dave: no permissions (public group only)
+    State:
 
-    Collection 'restricted' has:
-    - READ permission granted to 'readers' group
-    - WRITE permission granted to 'writers' group
-    - No public permissions
+    - Users
+        - alice: admin (from setup_mode_admin)
+        - bob: member of 'readers' group (has READ)
+        - charlie: member of 'writers' group (has READ + WRITE)
+        - dave: no permissions (public group only)
+    - Collection 'restricted' has:
+        - READ permission granted to 'readers' group
+        - WRITE permission granted to 'writers' group
+        - No public permissions
+
+    Scope: SERVER only. Inherits the guard from create_admin_scenario,
+    called first, then uses groups and permissions, concepts local
+    backends also lack.
     """
     # Start with admin scenario
     dag_testkit = create_admin_scenario(
@@ -186,7 +252,7 @@ def create_closed_collection_scenario(
 
 @register_scenario("preindex")
 def create_preindex_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -194,31 +260,19 @@ def create_preindex_scenario(
 ) -> TestkitDAG:
     """Create a preindex TestkitDAG scenario.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. The warehouse holds three
+    linked, unindexed source tables, crn, dh, and cdms, covering common
+    realistic linkage cases.
 
-    The warehouse contains three interlinked tables that cover common linkage
-    realistic scenarios, but are not yet indexed.
+    Scope: EITHER
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
-
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+    if isinstance(backend, MatchboxDBAdapter):
+        _setup_basic_server(backend, dag_testkit)
 
     # Create linked sources
     linked = linked_sources_factory(
@@ -237,7 +291,7 @@ def create_preindex_scenario(
 
 @register_scenario("index")
 def create_index_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -245,10 +299,10 @@ def create_index_scenario(
 ) -> TestkitDAG:
     """Create an index TestkitDAG scenario.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. The warehouse's three
+    linked source tables, crn, dh, and cdms, are indexed in the backend.
 
-    The warehouse contains three interlinked tables that cover common linkage
-    realistic scenarios. They are indexed in the backend.
+    Scope: EITHER
     """
     # First create the preindex scenario
     dag_testkit = create_preindex_scenario(
@@ -271,7 +325,7 @@ def create_index_scenario(
 
 @register_scenario("dedupe")
 def create_dedupe_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -279,10 +333,11 @@ def create_dedupe_scenario(
 ) -> TestkitDAG:
     """Create a dedupe TestkitDAG scenario.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. The warehouse's three
+    linked source tables are indexed, and each is deduplicated by its own
+    naive model and resolver.
 
-    The warehouse contains three interlinked tables that cover common linkage
-    realistic scenarios. They are indexed and deduplicated in the backend.
+    Scope: EITHER
     """
     # First create the index scenario
     dag_testkit = create_index_scenario(
@@ -342,7 +397,7 @@ def create_dedupe_scenario(
 
 @register_scenario("scored_dedupe")
 def create_scored_dedupe_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -350,11 +405,11 @@ def create_scored_dedupe_scenario(
 ) -> TestkitDAG:
     """Create a scored dedupe TestkitDAG scenario.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. The warehouse's three
+    linked source tables are indexed and deduplicated using scored, not
+    deterministic, methodologies, each resolved at a 0.5 threshold.
 
-    The warehouse contains three interlinked tables that cover common linkage
-    realistic scenarios. They are indexed and deduplicated in the backend using
-    scored methodologies.
+    Scope: EITHER
     """
     # First create the index scenario
     dag_testkit = create_index_scenario(
@@ -415,7 +470,7 @@ def create_scored_dedupe_scenario(
 
 @register_scenario("link")
 def create_link_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -423,10 +478,11 @@ def create_link_scenario(
 ) -> TestkitDAG:
     """Create a link TestkitDAG scenario.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. Builds on dedupe. Crn and
+    dh are linked, as are crn and cdms, then everything is joined into a
+    single final_join resolver.
 
-    The warehouse contains three interlinked tables that cover common linkage
-    realistic scenarios. They are indexed, deduplicated and linked in the backend.
+    Scope: EITHER
     """
     # First create the dedupe scenario
     dag_testkit = create_dedupe_scenario(
@@ -633,7 +689,7 @@ def create_link_scenario(
 
 @register_scenario("alt_dedupe")
 def create_alt_dedupe_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -641,31 +697,19 @@ def create_alt_dedupe_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with two alternative dedupers.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. The warehouse has a single
+    table, foo_a, indexed and deduplicated twice by two rival
+    probabilistic models at different thresholds, 0.5 and 0.75.
 
-    The warehouse contains a single table, indexed in the backend. It has
-    been deduplicated twice, by two rival proabilistic models.
+    Scope: EITHER
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
-
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+    if isinstance(backend, MatchboxDBAdapter):
+        _setup_basic_server(backend, dag_testkit)
 
     # Create linked sources
     company_name_feature = FeatureConfig(
@@ -762,7 +806,7 @@ def create_alt_dedupe_scenario(
 
 @register_scenario("convergent_partial")
 def create_convergent_partial_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -770,32 +814,19 @@ def create_convergent_partial_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with convergent sources.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. Two sources, foo_a and
+    foo_b, index almost identically, each with repetition, and each has
+    a naive dedupe model built but not yet inserted.
 
-    Two sources index almost identically. TestkitDAG contains two indexed sources
-    with repetition, and two naive dedupe models that haven't yet had their
-    results inserted.
+    Scope: EITHER
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
-
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+    if isinstance(backend, MatchboxDBAdapter):
+        _setup_basic_server(backend, dag_testkit)
 
     # Create linked sources
     company_name_feature = FeatureConfig(
@@ -858,7 +889,7 @@ def create_convergent_partial_scenario(
 
 @register_scenario("convergent")
 def create_convergent_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -866,10 +897,11 @@ def create_convergent_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario with convergent sources, deduped.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. Builds on
+    convergent_partial. Both near-identical sources have their dedupe
+    models and resolvers inserted into the backend.
 
-    This is where two sources index almost identically. TestkitDAG contains two
-    indexed sources with repetition, and two naive dedupe models, all inserted.
+    Scope: EITHER
     """
     dag_testkit = create_convergent_partial_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
@@ -909,7 +941,7 @@ def create_convergent_scenario(
 
 @register_scenario("mega")
 def create_mega_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     warehouse_engine: Engine,
     n_entities: int = 10,
     seed: int = 42,
@@ -917,34 +949,20 @@ def create_mega_scenario(
 ) -> TestkitDAG:
     """Create a TestkitDAG scenario that produces large clusters.
 
-    One admin user, alice.
+    State: one admin user, alice, server only. Two tables with many
+    features, marketplace_a and marketplace_b, are indexed and linked,
+    producing mega clusters with more features than the CLI has screen
+    rows, and more variations than it has screen columns.
 
-    Two tables with many features are in the warehouse. They are indexed and linked
-    in the backend.
-
-    Aims to produce "mega" clusters with more features than the CLI has screen rows,
-    and more variations than the CLI has screen columns.
+    Scope: EITHER
     """
-    # First create the admin scenario
-    dag_testkit = create_admin_scenario(
+    # First create the bare scenario
+    dag_testkit = create_bare_scenario(
         backend, warehouse_engine, n_entities, seed, **kwargs
     )
 
-    # Set default public permissions
-    default_permissions: list[PermissionGrant] = [
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.READ
-        ),
-        PermissionGrant(
-            group_name=GroupName(DefaultGroup.PUBLIC), permission=PermissionType.WRITE
-        ),
-    ]
-
-    # Create collection and run
-    backend.create_collection(
-        name=dag_testkit.dag.name, permissions=default_permissions
-    )
-    dag_testkit.dag.run = backend.create_run(collection=dag_testkit.dag.name).run_id
+    if isinstance(backend, MatchboxDBAdapter):
+        _setup_basic_server(backend, dag_testkit)
 
     # ===== FEATURES WITH VARIATIONS (4 string features, 1 variation each) =====
 

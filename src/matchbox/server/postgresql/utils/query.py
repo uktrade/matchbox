@@ -1,14 +1,16 @@
 """Utilities for querying and matching in the PostgreSQL backend."""
 
 from collections import defaultdict
-from typing import Literal
 
 import pyarrow as pa
-from sqlalchemy import and_, func, join, literal_column, select
+from sqlalchemy import literal_column, select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql.elements import ColumnElement
-from sqlalchemy.sql.selectable import CTE, Select, Subquery
 
+from matchbox.common.adapters.sql.query import (
+    build_matching_leaves_cte,
+    build_target_cluster_cte,
+    build_unified_query,
+)
 from matchbox.common.db import sql_to_df
 from matchbox.common.dtos import (
     Match,
@@ -25,156 +27,10 @@ from matchbox.common.logging import logger
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.postgresql.orm import (
     ClusterSourceKey,
-    Contains,
-    ResolverClusters,
     SourceConfigs,
     Steps,
 )
 from matchbox.server.postgresql.utils.db import compile_sql
-
-
-def _build_unified_query(
-    step: Steps,
-    sources: list[SourceConfigs] | None = None,
-    level: Literal["leaf", "key"] = "leaf",
-    include_source_config_id: bool = False,
-) -> Select:
-    """Build a query that projects records to root IDs through the hierarchy."""
-    lineage = step.get_lineage(sources=sources, queryable_only=True)
-
-    # Separate lineage entries into resolver steps and source config IDs.
-    # Entries without a source_config_id are resolver nodes, the rest are sources
-    resolver_ids: list[int] = []
-    source_config_ids: list[int] = []
-    for step_id, source_config_id in lineage:
-        if source_config_id is None:
-            resolver_ids.append(step_id)
-        else:
-            source_config_ids.append(source_config_id)
-
-    # ClusterSourceKey is the base table, resolver subqueries are LEFT JOINed onto it
-    from_clause = ClusterSourceKey
-    projected_roots: list[ColumnElement[int]] = []
-
-    for resolver_id in resolver_ids:
-        # For each resolver, build a subquery that maps leaf cluster IDs to their
-        # root cluster IDs at that step level via the Contains table.
-        assignments: Subquery = (
-            select(
-                Contains.leaf.label("leaf_id"),
-                Contains.root.label("root_id"),
-            )
-            .select_from(Contains)
-            .join(
-                ResolverClusters,
-                and_(
-                    ResolverClusters.cluster_id == Contains.root,
-                    ResolverClusters.step_id == resolver_id,
-                ),
-            )
-            .subquery(f"resolver_assignments_{resolver_id}")
-        )
-        # LEFT JOIN so that records not claimed by this resolver are still returned
-        from_clause = join(
-            from_clause,
-            assignments,
-            assignments.c.leaf_id == ClusterSourceKey.cluster_id,
-            isouter=True,
-        )
-        projected_roots.append(assignments.c.root_id)
-
-    # COALESCE across all resolver root columns
-    # First non-null wins, giving higher-priority resolvers precedence
-    # Falls back to the source cluster ID when no resolver has claimed the record
-    root_projection: ColumnElement[int] = (
-        func.coalesce(*projected_roots, ClusterSourceKey.cluster_id)
-        if projected_roots
-        else ClusterSourceKey.cluster_id
-    )
-
-    selection: list[ColumnElement] = [
-        root_projection.label("root_id"),
-        ClusterSourceKey.cluster_id.label("leaf_id"),
-    ]
-    if level == "key":
-        # "key" level adds the source key, producing more rows than "leaf" because
-        # multiple keys can share the same leaf cluster
-        selection.append(ClusterSourceKey.key)
-    if include_source_config_id:
-        selection.append(ClusterSourceKey.source_config_id.label("source_config_id"))
-
-    query_stmt = (
-        select(*selection)
-        .select_from(from_clause)
-        .where(ClusterSourceKey.source_config_id.in_(source_config_ids))
-    )
-
-    # At "leaf" level, deduplicate rows introduced because multiple keys share
-    # the same leaf cluster
-    if level == "leaf":
-        query_stmt = query_stmt.distinct()
-
-    return query_stmt
-
-
-def _build_target_cluster_cte(
-    key: str,
-    source_config_id: int,
-    step: Steps,
-) -> CTE:
-    """Build the target cluster CTE for a source key."""
-    # Reuse the unified query at key level, filtered to this source config,
-    # so we get the resolved root cluster for the given key
-    source_projection = _build_unified_query(
-        step=step,
-        level="key",
-        include_source_config_id=True,
-    ).subquery("source_projection")
-
-    return (
-        select(source_projection.c.root_id.label("cluster_id"))
-        .where(
-            and_(
-                source_projection.c.source_config_id == source_config_id,
-                source_projection.c.key == key,
-            )
-        )
-        # Exactly one cluster per key
-        # LIMIT 1 avoids a redundant scan
-        .limit(1)
-        .cte("target_cluster")
-    )
-
-
-def _build_matching_leaves_cte(
-    source_and_target_ids: list[int],
-    step: Steps,
-    target_cluster_cte: CTE,
-) -> CTE:
-    """Build the matching keys CTE for a resolved cluster."""
-    # Project all source + target keys through the hierarchy, then filter to those
-    # whose resolved root matches the target cluster
-    full_projection = _build_unified_query(
-        step=step,
-        level="key",
-        include_source_config_id=True,
-    ).subquery("full_projection")
-
-    return (
-        select(
-            full_projection.c.root_id.label("cluster_id"),
-            full_projection.c.source_config_id,
-            full_projection.c.key,
-        )
-        .where(
-            and_(
-                full_projection.c.source_config_id.in_(source_and_target_ids),
-                full_projection.c.root_id == target_cluster_cte.c.cluster_id,
-            )
-        )
-        .distinct()
-        .cte("matching_leaves")
-    )
 
 
 def require_complete_resolver(
@@ -192,32 +48,6 @@ def require_complete_resolver(
     if resolver_step.upload_stage != UploadStage.COMPLETE:
         raise MatchboxStepNotQueriable
     return resolver_step
-
-
-def resolver_membership_subquery(
-    step_id: int,
-    alias: str = "resolver_membership",
-) -> Subquery:
-    """Build root_id/leaf_id membership rows for a resolver."""
-    # First branch: root clusters count as their own leaf (self-membership)
-    roots_query = select(
-        ResolverClusters.cluster_id.label("root_id"),
-        ResolverClusters.cluster_id.label("leaf_id"),
-    ).where(ResolverClusters.step_id == step_id)
-
-    # Second branch: all clusters contained within a root via the Contains table
-    leaves_query = (
-        select(
-            ResolverClusters.cluster_id.label("root_id"),
-            Contains.leaf.label("leaf_id"),
-        )
-        .select_from(ResolverClusters)
-        .join(Contains, Contains.root == ResolverClusters.cluster_id)
-        .where(ResolverClusters.step_id == step_id)
-    )
-
-    # UNION deduplicates in case a root cluster also appears as a leaf
-    return roots_query.union(leaves_query).subquery(alias)
 
 
 def query(
@@ -244,9 +74,9 @@ def query(
         if step.upload_stage != UploadStage.COMPLETE:
             raise MatchboxStepNotQueriable
 
-        query_stmt = _build_unified_query(
-            step=step,
-            sources=[source_config],
+        lineage = step.get_lineage(sources=[source_config], queryable_only=True)
+        query_stmt = build_unified_query(
+            lineage=lineage,
             level="key",
             include_source_config_id=False,
         )
@@ -302,16 +132,19 @@ def match(
             *(tc.source_config_id for tc in target_configs),
         ]
 
-        # Resolve which cluster this key belongs to according to the resolver
-        target_cluster_cte = _build_target_cluster_cte(
+        # Resolve which cluster this key belongs to according to the resolver.
+        # Lineage is unfiltered (no sources) and shared by both CTEs below
+        lineage = resolver_step.get_lineage(queryable_only=True)
+
+        target_cluster_cte = build_target_cluster_cte(
             key=key,
             source_config_id=source_config.source_config_id,
-            step=resolver_step,
+            lineage=lineage,
         )
 
-        matching_leaves_cte = _build_matching_leaves_cte(
+        matching_leaves_cte = build_matching_leaves_cte(
             source_and_target_ids=source_and_target_ids,
-            step=resolver_step,
+            lineage=lineage,
             target_cluster_cte=target_cluster_cte,
         )
 

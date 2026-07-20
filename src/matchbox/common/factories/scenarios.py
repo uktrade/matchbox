@@ -101,7 +101,7 @@ def _testkitdag_to_location(client: Engine, dag: TestkitDAG) -> None:
 
 
 def _setup_basic_server(backend: MatchboxDBAdapter, dag_testkit: TestkitDAG) -> None:
-    """Basic server-only setup shared by EITHER scenarios.
+    """Basic server-only setup.
 
     Logs in an admin user, alice, grants the public group default read
     and write permissions, then creates a collection and run named after

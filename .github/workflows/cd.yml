@@ -9,7 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pages: write
 
     steps:
       - name: Checkout repository
@@ -17,10 +16,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup uv and just toolchain
-        uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
+      - name: Setup toolchain
+        uses: ./.github/actions/setup-toolchain
         with:
-          python-version: "3.11"
           install-just: "false"
 
       - name: Build package

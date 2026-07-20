@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: test ${{ matrix.python-version }}
@@ -14,8 +17,11 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-    - name: Setup uv and just toolchain
-      uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
+    - name: Checkout repository
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+    - name: Setup toolchain
+      uses: ./.github/actions/setup-toolchain
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -25,11 +31,11 @@ jobs:
     - name: Generate test keys
       run: |
         uv run test/scripts/authorisation.py keygen > /tmp/keys.json
-        
+
         echo "MB__DEV__PRIVATE_KEY=\"$(jq -r '.private_key' /tmp/keys.json)\"" >> .env
-        
+
         echo "MB__SERVER__PUBLIC_KEY=\"$(jq -r '.public_key' /tmp/keys.json)\"" >> .env
-              
+
         echo "MB__CLIENT__JWT=$(jq -r .private_key /tmp/keys.json | \
           uv run test/scripts/authorisation.py jwt \
             --sub e9ba93b3-e4d5-4dee-868c-d011116142bd \
@@ -48,10 +54,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Setup uv and just toolchain
-      uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
-      with:
-        python-version: "3.11"
+    - name: Checkout repository
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+    - name: Setup toolchain
+      uses: ./.github/actions/setup-toolchain
 
     - name: Format and lint
       run: just format
@@ -60,8 +67,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup uv and just toolchain
-        uses: uktrade/actions-data-matching/setup-toolchain@f67fade25dc6c04707d341d6c524b81db42514a5 # v1.0.0
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup toolchain
+        uses: ./.github/actions/setup-toolchain
+        with:
+          install-just: "false"
 
       - name: Build the package
         run: uv build

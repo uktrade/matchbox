@@ -151,12 +151,9 @@ We have a VSCode default debugging profile called "API debug", which allows you 
 
 ## Releasing
 
-We release our software exclusively through our automated Release GitHub Action workflow, which follows the [semantic versioning syntax](https://semver.org) (`vX.X.X`). This means version numbers must be formatted with a 'v' prefix followed by MAJOR.MINOR.PATCH numbers (for example, `v1.2.3` for a patch release or `v2.0.0` for a major release with breaking changes).
+We release Matchbox by creating and publishing a GitHub release from `main`. Tags must follow [semantic versioning](https://semver.org) in the form `vX.X.X` (for example, `v1.2.3` for a patch release or `v2.0.0` for a major release with breaking changes).
 
-> [!CAUTION]
-> Do not use GitHub's built-in release creation interface via the web browser to create releases manually. 
->
-> Manual releases created through the web interface will fail to build the necessary artefacts and will not deploy to our environments correctly.
+Publishing the release triggers the CD workflow, which builds and publishes the Python package to PyPI and deploys the documentation to GitHub Pages.
 
 ## Standards
 

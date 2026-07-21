@@ -22,10 +22,6 @@ Contains, ModelEdges, ResolverClusters), so import this module and
 reference tables.Clusters rather than importing names directly. These are
 Table instances, not classes: the PascalCase name signals the pairing,
 not that they can be subclassed or instantiated.
-
-TODO: once a second backend exists, add dedicated tests for this module
-and the rest of matchbox.common.adapters.sql, rather than relying solely
-on the PostgreSQL adapter test suite.
 """
 
 from sqlalchemy import (
@@ -33,6 +29,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     Column,
+    FetchedValue,
     ForeignKey,
     Index,
     LargeBinary,
@@ -53,7 +50,13 @@ literal schema name.
 Clusters = Table(
     "clusters",
     METADATA,
-    Column("cluster_id", BigInteger, primary_key=True),
+    Column(
+        "cluster_id",
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+        server_default=FetchedValue(),
+    ),
     Column("cluster_hash", LargeBinary, nullable=False),
     UniqueConstraint("cluster_hash", name="clusters_hash_key"),
 )
@@ -62,7 +65,13 @@ Clusters = Table(
 ClusterSourceKey = Table(
     "cluster_keys",
     METADATA,
-    Column("key_id", BigInteger, primary_key=True),
+    Column(
+        "key_id",
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+        server_default=FetchedValue(),
+    ),
     Column(
         "cluster_id",
         BigInteger,
@@ -108,7 +117,13 @@ Contains = Table(
 ModelEdges = Table(
     "model_edges",
     METADATA,
-    Column("result_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "result_id",
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+        server_default=FetchedValue(),
+    ),
     Column(
         "step_id",
         BigInteger,

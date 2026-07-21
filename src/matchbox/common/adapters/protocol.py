@@ -3,7 +3,7 @@
 import json
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 from pyarrow import Table
 from pydantic import BaseModel, field_validator
@@ -40,10 +40,20 @@ class ListableAndCountable(Countable, Listable):
     pass
 
 
-class MatchboxBackends(StrEnum):
-    """The available backends for Matchbox."""
+class MatchboxServerBackends(StrEnum):
+    """The available server backends for Matchbox."""
 
     POSTGRES = "postgres"
+
+
+class MatchboxLocalBackends(StrEnum):
+    """The available local (client-side) backends for Matchbox."""
+
+    DUCKDB = "duckdb"
+
+
+MatchboxBackends: TypeAlias = MatchboxServerBackends | MatchboxLocalBackends
+"""Any backend, server or local, that can produce a MatchboxSnapshot."""
 
 
 class MatchboxSnapshot(BaseModel):

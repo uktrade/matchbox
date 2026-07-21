@@ -706,6 +706,20 @@ wheels = [
 ]
 
 [[package]]
+name = "duckdb-engine"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "duckdb" },
+    { name = "packaging" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/d5/c0d8d0a4ca3ffea92266f33d92a375e2794820ad89f9be97cf0c9a9697d0/duckdb_engine-0.17.0.tar.gz", hash = "sha256:396b23869754e536aa80881a92622b8b488015cf711c5a40032d05d2cf08f3cf", size = 48054, upload-time = "2025-03-29T09:49:17.663Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/a2/e90242f53f7ae41554419b1695b4820b364df87c8350aa420b60b20cab92/duckdb_engine-0.17.0-py3-none-any.whl", hash = "sha256:3aa72085e536b43faab635f487baf77ddc5750069c16a2f8d9c6c3cb6083e979", size = 49676, upload-time = "2025-03-29T09:49:15.564Z" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1340,6 +1354,7 @@ dependencies = [
     { name = "click" },
     { name = "cryptography" },
     { name = "duckdb" },
+    { name = "duckdb-engine" },
     { name = "email-validator" },
     { name = "faker" },
     { name = "frozendict" },
@@ -1412,6 +1427,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
     { name = "cryptography", specifier = ">=44.0.2" },
     { name = "duckdb", specifier = ">=1.1.1" },
+    { name = "duckdb-engine", specifier = ">=0.13.6" },
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "faker", specifier = ">=36.1.1" },
     { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], marker = "extra == 'server'", specifier = ">=0.116.0" },

@@ -6,23 +6,24 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
 from sqlalchemy import Engine
-from test.fixtures.db import SERVER_BACKENDS
 
+from matchbox.common.adapters.protocol import MatchboxClusterStoreAdapter
 from matchbox.common.arrow import SCHEMA_QUERY, SCHEMA_QUERY_WITH_LEAVES
 from matchbox.common.dtos import Match
 from matchbox.common.factories.entities import SourceEntity
 from matchbox.common.factories.scenarios import setup_scenario
-from matchbox.server.base import MatchboxDBAdapter
+from test.fixtures.db import CLUSTER_STORES
 
 
-@pytest.mark.parametrize("backend", SERVER_BACKENDS)
-@pytest.mark.docker
+@pytest.mark.parametrize("backend", CLUSTER_STORES)
 class TestMatchboxQueryBackend:
     @pytest.fixture(autouse=True)
     def setup(
-        self, backend_instance: MatchboxDBAdapter, sqla_sqlite_warehouse: Engine
+        self,
+        backend_instance: MatchboxClusterStoreAdapter,
+        sqla_sqlite_warehouse: Engine,
     ) -> None:
-        self.backend: MatchboxDBAdapter = backend_instance
+        self.backend: MatchboxClusterStoreAdapter = backend_instance
         self.scenario = partial(setup_scenario, warehouse=sqla_sqlite_warehouse)
 
     def test_query_only_source(self) -> None:

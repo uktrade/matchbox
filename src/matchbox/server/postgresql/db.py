@@ -25,7 +25,7 @@ from sqlalchemy.pool import QueuePool
 from matchbox.common.adapters.sql.tables import METADATA
 from matchbox.common.datatypes import require
 from matchbox.common.logging import logger
-from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
+from matchbox.server.base import MatchboxServerBackends, MatchboxServerSettings
 
 
 class MatchboxPostgresCoreSettings(BaseModel):
@@ -64,7 +64,7 @@ class MatchboxPostgresSettings(MatchboxServerSettings):
     Inherits the core settings and adds the PostgreSQL-specific settings.
     """
 
-    backend_type: MatchboxBackends = MatchboxBackends.POSTGRES
+    backend_type: MatchboxServerBackends = MatchboxServerBackends.POSTGRES
 
     postgres: MatchboxPostgresCoreSettings = Field(
         default_factory=MatchboxPostgresCoreSettings

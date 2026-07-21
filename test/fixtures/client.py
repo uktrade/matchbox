@@ -13,7 +13,7 @@ from matchbox.client._handler.main import create_client
 from matchbox.client._settings import ClientSettings
 from matchbox.client._settings import settings as client_settings
 from matchbox.server.api import app, dependencies
-from matchbox.server.base import MatchboxBackends, MatchboxServerSettings
+from matchbox.server.base import MatchboxServerBackends, MatchboxServerSettings
 from matchbox.server.uploads import InMemoryUploadTracker
 from test.scripts.authorisation import (
     generate_EdDSA_key_pair,
@@ -89,7 +89,7 @@ def api_client_and_mocks(
 
     # 4) Override server settings used by API
     test_settings = MatchboxServerSettings(
-        backend_type=MatchboxBackends.POSTGRES,
+        backend_type=MatchboxServerBackends.POSTGRES,
         task_runner="api",
         authorisation=True,
         public_key=SecretBytes(public_key),

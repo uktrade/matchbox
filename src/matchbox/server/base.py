@@ -19,8 +19,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from matchbox.common.adapters.protocol import (
     Countable,
     ListableAndCountable,
-    MatchboxBackends,
     MatchboxClusterStoreAdapter,
+    MatchboxServerBackends,
 )
 from matchbox.common.dtos import (
     BackendResourceType,
@@ -164,7 +164,7 @@ class MatchboxServerSettings(BaseSettings):
     )
 
     batch_size: int = Field(default=250_000)
-    backend_type: MatchboxBackends
+    backend_type: MatchboxServerBackends
     datastore: MatchboxDatastoreSettings
     task_runner: Literal["api", "celery"]
     redis_uri: str | None
@@ -242,10 +242,10 @@ class BackendManager:
 
 
 def get_backend_settings(
-    backend_type: MatchboxBackends,
+    backend_type: MatchboxServerBackends,
 ) -> type[MatchboxServerSettings]:
     """Get the appropriate settings class based on the backend type."""
-    if backend_type == MatchboxBackends.POSTGRES:
+    if backend_type == MatchboxServerBackends.POSTGRES:
         from matchbox.server.postgresql import MatchboxPostgresSettings  # noqa: PLC0415
 
         return MatchboxPostgresSettings
@@ -254,9 +254,11 @@ def get_backend_settings(
         raise ValueError(f"Unsupported backend type: {backend_type}")
 
 
-def get_backend_class(backend_type: MatchboxBackends) -> type["MatchboxDBAdapter"]:
+def get_backend_class(
+    backend_type: MatchboxServerBackends,
+) -> type["MatchboxDBAdapter"]:
     """Get the appropriate backend class based on the backend type."""
-    if backend_type == MatchboxBackends.POSTGRES:
+    if backend_type == MatchboxServerBackends.POSTGRES:
         from matchbox.server.postgresql import MatchboxPostgres  # noqa: PLC0415
 
         return MatchboxPostgres

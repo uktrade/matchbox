@@ -15,7 +15,9 @@ from pydantic import Field, SecretBytes, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Engine, MetaData, create_engine, text
 
-from matchbox.server.base import MatchboxDatastoreSettings, MatchboxDBAdapter
+from matchbox.client.adapters.duckdb import MatchboxLocalDuckDB
+from matchbox.common.adapters.protocol import MatchboxClusterStoreAdapter
+from matchbox.server.base import MatchboxDatastoreSettings
 from matchbox.server.postgresql import MatchboxPostgres, MatchboxPostgresSettings
 from matchbox.server.postgresql.db import MBDB
 from matchbox.server.uploads import InMemoryUploadTracker, RedisUploadTracker
@@ -463,17 +465,29 @@ def upload_tracker_redis(
 # Backends
 
 SERVER_BACKENDS = [
-    pytest.param("matchbox_postgres", id="postgres"),
+    pytest.param("matchbox_postgres", id="postgres", marks=pytest.mark.docker),
 ]
 
-LOCAL_BACKENDS: list = []
-# TODO: populate once the local duckdb adapter lands
+LOCAL_BACKENDS = [
+    pytest.param("matchbox_local_duckdb", id="local_duckdb"),
+]
 
 CLUSTER_STORES = SERVER_BACKENDS + LOCAL_BACKENDS
 
 
 @pytest.fixture(scope="function")
-def backend_instance(request: pytest.FixtureRequest, backend: str) -> MatchboxDBAdapter:
+def matchbox_local_duckdb() -> MatchboxLocalDuckDB:
+    """Fresh in-memory MatchboxLocalDuckDB for each test.
+
+    An in-memory duckdb file is cheap enough to create fresh for every test.
+    """
+    return MatchboxLocalDuckDB()
+
+
+@pytest.fixture(scope="function")
+def backend_instance(
+    request: pytest.FixtureRequest, backend: str
+) -> MatchboxClusterStoreAdapter:
     """Create a fresh backend instance for each test."""
     backend_obj = request.getfixturevalue(backend)
     backend_obj.clear(certain=True)

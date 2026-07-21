@@ -1613,3 +1613,163 @@ def test_dag_set_default_unreachable_nodes(sqla_sqlite_warehouse: Engine) -> Non
 
     with pytest.raises(ValueError, match="unreachable"):
         dag.set_default()
+
+
+def test_run_and_sync_records_stats(
+    sqla_sqlite_warehouse: Engine,
+) -> None:
+    """run_and_sync resets stats and records dag_run_seconds.
+
+    When run/sync are mocked the decorated method bodies are bypassed, so
+    individual operation timings may be empty.  We assert the wall-clock
+    field and that every node gets an entry (empty or not).
+    """
+    foo_tkit = source_factory(
+        name="foo", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+    bar_tkit = source_factory(
+        name="bar", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+
+    dag = TestkitDAG().dag
+    foo = dag.source(**foo_tkit.into_dag())
+    dag.source(**bar_tkit.into_dag())
+    foo_dedupe = foo.query().deduper(
+        name="foo_dedupe",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
+    )
+    foo_dedupe.resolver(name="root", resolver_class=Components)
+
+    with (
+        patch.object(Source, "run"),
+        patch.object(Source, "sync"),
+        patch.object(Model, "run"),
+        patch.object(Model, "sync"),
+        patch.object(Resolver, "run"),
+        patch.object(Resolver, "sync"),
+    ):
+        dag.run_and_sync()
+
+    # Wall clock is always recorded
+    assert dag.stats.dag_run_seconds is not None
+    assert dag.stats.dag_run_seconds > 0
+
+
+def test_get_matches_records_stats(
+    matchbox_api: MockRouter,
+) -> None:
+    """get_matches records 'query' timing per source."""
+    foo = source_factory(name="foo", location_name="sqlite")
+    bar = source_factory(name="bar", location_name="postgres")
+
+    foo_data = pa.Table.from_pylist(
+        [{"id": 1, "leaf_id": 1, "key": "1"}],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+    bar_data = pa.Table.from_pylist(
+        [{"id": 2, "leaf_id": 2, "key": "a"}],
+        schema=SCHEMA_QUERY_WITH_LEAVES,
+    )
+
+    dag = DAG("companies")
+
+    matchbox_api.get(f"/collections/{dag.name}").mock(
+        return_value=Response(
+            200,
+            json=Collection(name=dag.name, runs=[], default_run=None).model_dump(),
+        )
+    )
+    matchbox_api.post(f"/collections/{dag.name}/runs").mock(
+        return_value=Response(200, json=Run(run_id=1, steps={}).model_dump()),
+    )
+
+    foo_source = dag.source(**foo.into_dag())
+    bar_source = dag.source(**bar.into_dag())
+    foo_dedupe = foo_source.query().deduper(
+        name="foo_dedupe",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
+    )
+    foo_bar = foo_source.query().linker(
+        bar_source.query(),
+        name="foo_bar",
+        model_class=DeterministicLinker,
+        model_settings={"comparisons": "l.field=r.field"},
+    )
+    foo_bar_resolver = foo_bar.resolver(
+        foo_dedupe, name="foo_bar_resolver", resolver_class=Components
+    )
+    dag.new_run()
+
+    matchbox_api.get(
+        "/query",
+        params={
+            "source": "foo",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolver": foo_bar_resolver.name,
+            "return_leaf_id": "True",
+        },
+    ).mock(return_value=Response(200, content=table_to_buffer(foo_data).read()))
+
+    matchbox_api.get(
+        "/query",
+        params={
+            "source": "bar",
+            "run_id": 1,
+            "collection": dag.name,
+            "resolver": foo_bar_resolver.name,
+            "return_leaf_id": "True",
+        },
+    ).mock(return_value=Response(200, content=table_to_buffer(bar_data).read()))
+
+    dag.get_matches()
+
+    assert "foo" in dag.stats.timings
+    assert "query" in dag.stats.timings["foo"]
+    assert "bar" in dag.stats.timings
+    assert "query" in dag.stats.timings["bar"]
+
+
+def test_stats_reset_between_calls(
+    sqla_sqlite_warehouse: Engine,
+) -> None:
+    """Stats are reset between run_and_sync calls."""
+    foo_tkit = source_factory(
+        name="foo", engine=sqla_sqlite_warehouse
+    ).write_to_location()
+
+    dag = TestkitDAG().dag
+    foo = dag.source(**foo_tkit.into_dag())
+    foo.query().deduper(
+        name="foo_dedupe",
+        model_class=NaiveDeduper,
+        model_settings={"unique_fields": []},
+    ).resolver(name="root", resolver_class=Components)
+
+    with (
+        patch.object(Source, "run"),
+        patch.object(Source, "sync"),
+        patch.object(Model, "run"),
+        patch.object(Model, "sync"),
+        patch.object(Resolver, "run"),
+        patch.object(Resolver, "sync"),
+    ):
+        dag.run_and_sync()
+    assert dag.stats.dag_run_seconds is not None
+    first_run_seconds = dag.stats.dag_run_seconds
+
+    with (
+        patch.object(Source, "run"),
+        patch.object(Source, "sync"),
+        patch.object(Model, "run"),
+        patch.object(Model, "sync"),
+        patch.object(Resolver, "run"),
+        patch.object(Resolver, "sync"),
+    ):
+        dag.run_and_sync()
+
+    # dag_run_seconds should reflect only the second run (reset worked)
+    assert dag.stats.dag_run_seconds is not None
+    assert dag.stats.dag_run_seconds != first_run_seconds

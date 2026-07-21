@@ -24,7 +24,8 @@ from matchbox.common.dtos import (
     StepType,
 )
 from matchbox.common.hash import hash_arrow_table
-from matchbox.common.logging import logger, profile_time
+from matchbox.common.logging import logger
+from matchbox.common.stats import DAGStats
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -206,7 +207,7 @@ class Model(StepABC):
             name=self.name,
         )
 
-    @profile_time(attr="name")
+    @DAGStats.time("compute")
     def compute_scores(
         self, left_df: DataFrame, right_df: DataFrame | None = None
     ) -> DataFrame:
@@ -238,20 +239,21 @@ class Model(StepABC):
         log_prefix = f"Run {self.name}"
         logger.info("Executing left query", prefix=log_prefix)
 
-        left_df = (
-            left_data
-            if left_data is not None
-            else self.left_query.data(cache_leaf_ids=(not low_memory))
-        )
-        right_df = None
-
-        if self.config.type == ModelType.LINKER:
-            logger.info("Executing right query", prefix=log_prefix)
-            right_df = (
-                right_data
-                if right_data is not None
-                else self.right_query.data(cache_leaf_ids=(not low_memory))
+        with DAGStats.time("query", name=self.name, stats=self._stats):
+            left_df = (
+                left_data
+                if left_data is not None
+                else self.left_query.data(cache_leaf_ids=(not low_memory))
             )
+            right_df = None
+
+            if self.config.type == ModelType.LINKER:
+                logger.info("Executing right query", prefix=log_prefix)
+                right_df = (
+                    right_data
+                    if right_data is not None
+                    else self.right_query.data(cache_leaf_ids=(not low_memory))
+                )
 
         logger.info("Running model logic", prefix=log_prefix)
         scores = self.compute_scores(left_df, right_df)

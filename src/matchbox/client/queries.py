@@ -19,7 +19,6 @@ from matchbox.client.models.dedupers.base import Deduper, DeduperSettings
 from matchbox.client.models.linkers.base import Linker, LinkerSettings
 from matchbox.common.db import QueryReturnClass, QueryReturnType
 from matchbox.common.dtos import QueryCombineType, QueryConfig
-from matchbox.common.logging import profile_time
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -207,7 +206,6 @@ class Query:
 
             return _convert_df(raw_data.collect(), return_type=return_type)
 
-    @profile_time()
     def data(
         self,
         raw_data: pl.DataFrame | None = None,

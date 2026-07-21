@@ -285,6 +285,11 @@ class TestE2EPipelineBuilder:
         logging.info("Running DAG for the first time")
         dag.run_and_sync()
 
+        # Stats should cover every node
+        assert len(dag.stats.timings) == len(dag.nodes)
+        assert dag.stats.dag_run_seconds is not None
+        assert dag.stats.dag_run_seconds > 0
+
         assert DAG.list_all() == [dag.name]
 
         # Update metadata of one node, will check later
@@ -319,6 +324,11 @@ class TestE2EPipelineBuilder:
 
         # Can retrieve whole lookup
         dag1_lookup = dag.get_matches().as_lookup()
+
+        # get_matches should record a "query" entry per queried source
+        for source_name in dag.default_resolver.sources:
+            assert source_name in dag.stats.timings
+            assert "query" in dag.stats.timings[source_name]
 
         # Set as new default
         dag.set_default()
@@ -355,6 +365,11 @@ class TestE2EPipelineBuilder:
         rerun_dag = reconstructed_dag.set_client(self.warehouse_engine).new_run()
         assert rerun_dag.run != dag.run
         rerun_dag.run_and_sync()
+
+        # Re-run should have fresh stats with all nodes
+        assert len(rerun_dag.stats.timings) == len(rerun_dag.nodes)
+        assert rerun_dag.stats.dag_run_seconds is not None
+        assert rerun_dag.stats.dag_run_seconds > 0
 
         # The lookup is identical
         assert_frame_equal(

@@ -30,7 +30,7 @@ def create_local_engine(path: Path | None) -> Engine:
     return create_engine(url).execution_options(schema_translate_map={"mb": None})
 
 
-def create_all_duckdb_safe(engine: Engine, order: list[Table]) -> None:
+def create_db(engine: Engine, order: list[Table]) -> None:
     """Create tables in order, without FK constraints.
 
     Duckdb has no ON DELETE CASCADE, so the adapter enforces integrity
@@ -60,7 +60,7 @@ def create_all_duckdb_safe(engine: Engine, order: list[Table]) -> None:
                 )
 
 
-def drop_all_duckdb(engine: Engine, tables: list[Table]) -> None:
+def drop_db(engine: Engine, tables: list[Table]) -> None:
     """Drop the given tables, if they exist."""
     with engine.begin() as conn:
         for tbl in tables:

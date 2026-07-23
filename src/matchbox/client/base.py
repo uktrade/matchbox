@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from pyarrow import Table
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from matchbox.common.adapters.protocol import (
     MatchboxClusterStoreAdapter,
@@ -16,7 +16,7 @@ from matchbox.common.dtos import SourceStepPath, StepName, StepPath
 
 
 class HasGraph(Protocol):
-    """Structural type for anything exposing step topology as `graph`."""
+    """Structural type for anything exposing step topology as graph."""
 
     graph: dict[StepName, list[StepName]]
 
@@ -24,7 +24,7 @@ class HasGraph(Protocol):
 def _ancestor_depths(
     graph: dict[StepName, list[StepName]], start: StepName
 ) -> dict[StepName, int]:
-    """BFS over parent edges from `start`.
+    """BFS over parent edges from start.
 
     Shortest depth per ancestor, self excluded.
     """
@@ -46,10 +46,10 @@ def compute_lineage(
     resolver: StepName,
     sources: list[StepName] | None = None,
 ) -> list[StepName]:
-    """Ordered ancestor step names for `resolver`, closest first, self first.
+    """Ordered ancestor step names for resolver, closest first, self first.
 
-    When `sources` is given, ancestors are restricted to those on a path
-    to one of `sources`: kept if it is a source, or is itself downstream
+    When sources is given, ancestors are restricted to those on a path
+    to one of sources: kept if it is a source, or is itself downstream
     of one.
     """
     ancestors = _ancestor_depths(graph, resolver)
@@ -74,7 +74,7 @@ def compute_lineage(
 def compute_descendants(
     graph: dict[StepName, list[StepName]], step: StepName
 ) -> list[StepName]:
-    """All step names downstream of `step` - inverts the parent graph, then BFS."""
+    """All step names downstream of step - inverts the parent graph, then BFS."""
     children: dict[StepName, list[StepName]] = {}
     for name, parents in graph.items():
         for parent in parents:
@@ -86,8 +86,12 @@ class MatchboxLocalSettings(BaseModel):
     """Settings for a local (client-side) Matchbox backend."""
 
     backend_type: MatchboxLocalBackends = MatchboxLocalBackends.DUCKDB
-    path: Path | None = None
-    """Path to the local database file. None means in-memory and ephemeral."""
+    path: Path | None = Field(
+        default=None,
+        description=(
+            "Path to the local database file. None means in-memory and ephemeral."
+        ),
+    )
 
 
 class MatchboxLocalDBAdapter(MatchboxClusterStoreAdapter, ABC):
@@ -129,13 +133,13 @@ class MatchboxLocalDBAdapter(MatchboxClusterStoreAdapter, ABC):
     ) -> list[StepName]:
         """Ordered ancestor step names, highest priority first, self first.
 
-        Restricted to paths that lead to `sources`, when given. Walks the
+        Restricted to paths that lead to sources, when given. Walks the
         bound graph fresh on every call.
         """
         return compute_lineage(self._graph(), resolver, sources)
 
     def descendants(self, step: StepName) -> list[StepName]:
-        """All step names downstream of `step` (for cascade invalidation)."""
+        """All step names downstream of step (for cascade invalidation)."""
         return compute_descendants(self._graph(), step)
 
     @abstractmethod

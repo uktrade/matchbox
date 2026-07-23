@@ -1,4 +1,4 @@
-"""Tests for MatchboxLocalDuckDBLocalMixin: raw data, query cache, cascade."""
+"""Tests for MatchboxLocalDuckDBCacheMixin: raw data, query cache, cascade."""
 
 from functools import partial
 
@@ -28,6 +28,7 @@ class TestRawData:
         self.scenario = partial(setup_scenario, warehouse=sqla_sqlite_warehouse)
 
     def test_round_trip(self) -> None:
+        """Insertion and retrieval of raw data returns that data."""
         with self.scenario(self.backend, "index") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
 
@@ -40,6 +41,7 @@ class TestRawData:
             )
 
     def test_filters_by_keys(self) -> None:
+        """We can filter retrieved raw data by keys."""
         with self.scenario(self.backend, "index") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
 
@@ -52,6 +54,7 @@ class TestRawData:
             assert fetched.to_pylist() == [{"key": "k2", "name": "Bob"}]
 
     def test_filters_by_empty_keys(self) -> None:
+        """Filtering raw data by empty keys returns nothing."""
         with self.scenario(self.backend, "index") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
             self.backend.insert_raw_data(
@@ -62,6 +65,7 @@ class TestRawData:
             assert fetched.num_rows == 0
 
     def test_missing_raises(self) -> None:
+        """Fetching uncached raw data raises."""
         with self.scenario(self.backend, "index") as dag_testkit:
             dh = dag_testkit.sources["dh"].path
 
@@ -69,10 +73,12 @@ class TestRawData:
                 self.backend.get_raw_data(dh)
 
     def test_unknown_step_raises(self) -> None:
+        """Fetching raw data from an unregistered step raises."""
         with pytest.raises(MatchboxStepNotFoundError):
             self.backend.get_raw_data(_NONEXISTENT_STEP)
 
     def test_replaces(self) -> None:
+        """Reinserting replaces raw data."""
         with self.scenario(self.backend, "index") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
 
@@ -97,6 +103,7 @@ class TestQueryCache:
         self.scenario = partial(setup_scenario, warehouse=sqla_sqlite_warehouse)
 
     def test_round_trip(self) -> None:
+        """Insertion and retrieval of query data returns that data."""
         with self.scenario(self.backend, "index") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
 
@@ -109,9 +116,11 @@ class TestQueryCache:
             )
 
     def test_missing_returns_none(self) -> None:
+        """Fetching uncached query data returns None."""
         assert self.backend.get_cached_query("missing") is None
 
     def test_replaces(self) -> None:
+        """Reinserting replaces query data."""
         with self.scenario(self.backend, "index") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
 
@@ -122,6 +131,7 @@ class TestQueryCache:
             assert fetched.to_pylist() == [{"id": 2}]
 
     def test_unknown_dependency_raises(self) -> None:
+        """Fetching query data from an unregistered dependency step raises."""
         with pytest.raises(MatchboxStepNotFoundError):
             self.backend.cache_query(
                 "key1", pa.table({"id": [1]}), depends_on=[_NONEXISTENT_STEP]
@@ -151,8 +161,8 @@ class TestDropStepData:
             assert self.backend.get_model_data(model.path).num_rows == 0
             assert self.backend.get_resolver_data(resolver.resolver.path).num_rows == 0
 
-    def test_clears_dependent_cache_only(self) -> None:
-        """Only cache entries depending on the dropped step are cleared."""
+    def test_clears_descendant_cache_only(self) -> None:
+        """Only the caches of descendents of the dropped step are cleared."""
         with self.scenario(self.backend, "dedupe") as dag_testkit:
             crn = dag_testkit.sources["crn"].path
             dh = dag_testkit.sources["dh"].path

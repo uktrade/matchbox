@@ -314,7 +314,7 @@ class MatchboxLocalDuckDBQueryMixin:
 
 
 class MatchboxLocalDuckDBDataMixin:
-    """Data mixin for the local DuckDB adapter: protocol block, replace policy."""
+    """Data mixin for the local DuckDB adapter."""
 
     def create_step(self, step: Step, path: StepPath) -> None:  # noqa: D102
         with self._session() as session:
@@ -567,12 +567,12 @@ class MatchboxLocalDuckDBDataMixin:
         db.drop_dynamic_cache_tables(
             self._engine, (_RAW_DATA_TABLE_PREFIX, _QUERY_CACHE_TABLE_PREFIX)
         )
-        db.drop_all_duckdb(self._engine, [*orm.SHARED_TABLES, *orm.LOCAL_TABLES])
-        db.create_all_duckdb_safe(self._engine, orm.LOCAL_TABLES)
-        db.create_all_duckdb_safe(self._engine, orm.SHARED_TABLES)
+        db.drop_db(self._engine, [*orm.SHARED_TABLES, *orm.LOCAL_TABLES])
+        db.create_db(self._engine, orm.LOCAL_TABLES)
+        db.create_db(self._engine, orm.SHARED_TABLES)
 
 
-class MatchboxLocalDuckDBLocalMixin:
+class MatchboxLocalDuckDBCacheMixin:
     """Local-only mixin: raw data, query cache, cascade invalidation."""
 
     def insert_raw_data(self, path: SourceStepPath, table: ArrowTable) -> None:  # noqa: D102
@@ -712,7 +712,7 @@ class MatchboxLocalDuckDBLocalMixin:
 class MatchboxLocalDuckDB(
     MatchboxLocalDuckDBQueryMixin,
     MatchboxLocalDuckDBDataMixin,
-    MatchboxLocalDuckDBLocalMixin,
+    MatchboxLocalDuckDBCacheMixin,
     MatchboxLocalDBAdapter,
 ):
     """A DuckDB adapter for the local (client-side) Matchbox cluster store."""
@@ -727,8 +727,8 @@ class MatchboxLocalDuckDB(
         self._engine: Engine = db.create_local_engine(path)
         self._session_factory: sessionmaker = sessionmaker(bind=self._engine)
 
-        db.create_all_duckdb_safe(self._engine, orm.LOCAL_TABLES)
-        db.create_all_duckdb_safe(self._engine, orm.SHARED_TABLES)
+        db.create_db(self._engine, orm.LOCAL_TABLES)
+        db.create_db(self._engine, orm.SHARED_TABLES)
 
         self.all_clusters = _Countable(self._session_factory, orm.Clusters.count)
         self.source_clusters = _Countable(self._session_factory, _count_source_clusters)

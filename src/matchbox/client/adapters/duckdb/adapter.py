@@ -27,6 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.sql.selectable import Select
 
 from matchbox.client.adapters.duckdb import db, orm
 from matchbox.client.base import MatchboxLocalDBAdapter
@@ -117,20 +118,20 @@ def _materialise(
     session.execute(text(ddl))
 
 
-def _read_all(session: Session, physical_name: str) -> ArrowTable:
-    raw_conn = session.connection().connection.driver_connection
-    return raw_conn.sql(f'SELECT * FROM "{physical_name}"').to_arrow_table()
-
-
-def _read_filtered_by_keys(
-    session: Session, physical_name: str, keys: list[str]
-) -> ArrowTable:
-    """Read rows with a matching key, via SEMI JOIN pushdown."""
-    raw_conn = session.connection().connection.driver_connection
-    raw_conn.register("key_filter", pa.table({"key": keys}))
-    return raw_conn.sql(
-        f'SELECT t.* FROM "{physical_name}" t SEMI JOIN "key_filter" f ON t.key = f.key'
-    ).to_arrow_table()
+def _arrow_query(session: Session, stmt: Select) -> ArrowTable:
+    """Execute a read-only select via DuckDB's native Arrow export."""
+    connection = session.connection()
+    schema_translate_map = connection.get_execution_options().get(
+        "schema_translate_map"
+    )
+    compiled = stmt.compile(
+        dialect=connection.engine.dialect,
+        compile_kwargs={"literal_binds": True},
+        schema_translate_map=schema_translate_map,
+        render_schema_translate=True,
+    )
+    raw_conn = connection.connection.driver_connection
+    return raw_conn.sql(str(compiled)).to_arrow_table()
 
 
 def _dump_dynamic_table(session: Session, name: str) -> list[dict]:
@@ -247,16 +248,19 @@ class MatchboxLocalDuckDBQueryMixin:
             if limit is not None:
                 query_stmt = query_stmt.limit(limit)
 
-            rows = session.execute(query_stmt).all()
+            arrow_table = _arrow_query(session, query_stmt)
 
-        ids = [row.root_id for row in rows]
-        keys = [row.key for row in rows]
         if return_leaf_id:
-            leaf_ids = [row.leaf_id for row in rows]
-            return pa.table({"id": ids, "key": keys, "leaf_id": leaf_ids}).cast(
-                SCHEMA_QUERY_WITH_LEAVES
+            return (
+                arrow_table.select(["root_id", "key", "leaf_id"])
+                .rename_columns(["id", "key", "leaf_id"])
+                .cast(SCHEMA_QUERY_WITH_LEAVES)
             )
-        return pa.table({"id": ids, "key": keys}).cast(SCHEMA_QUERY)
+        return (
+            arrow_table.select(["root_id", "key"])
+            .rename_columns(["id", "key"])
+            .cast(SCHEMA_QUERY)
+        )
 
     def match(  # noqa: D102
         self,
@@ -477,23 +481,15 @@ class MatchboxLocalDuckDBDataMixin:
     def get_model_data(self, path: ModelStepPath) -> ArrowTable:  # noqa: D102
         with self._session() as session:
             step = orm.Steps.from_name(session, path.name, StepType.MODEL)
-            rows = session.execute(
+            arrow_table = _arrow_query(
+                session,
                 select(
                     tables.ModelEdges.c.left_id,
                     tables.ModelEdges.c.right_id,
                     tables.ModelEdges.c.score,
-                ).where(tables.ModelEdges.c.step_id == step.step_id)
-            ).all()
-
-        if not rows:
-            return SCHEMA_MODEL_EDGES.empty_table()
-        return pa.table(
-            {
-                "left_id": [r[0] for r in rows],
-                "right_id": [r[1] for r in rows],
-                "score": [r[2] for r in rows],
-            }
-        ).cast(SCHEMA_MODEL_EDGES)
+                ).where(tables.ModelEdges.c.step_id == step.step_id),
+            )
+        return arrow_table.cast(SCHEMA_MODEL_EDGES)
 
     def get_resolver_data(self, path: ResolverStepPath) -> ArrowTable:  # noqa: D102
         with self._session() as session:
@@ -505,13 +501,9 @@ class MatchboxLocalDuckDBDataMixin:
                 membership.c.root_id.label("parent_id"),
                 membership.c.leaf_id.label("child_id"),
             ).order_by(membership.c.root_id, membership.c.leaf_id)
-            rows = session.execute(stmt).all()
+            arrow_table = _arrow_query(session, stmt)
 
-        if not rows:
-            return SCHEMA_CLUSTERS.empty_table()
-        return pa.table(
-            {"parent_id": [r[0] for r in rows], "child_id": [r[1] for r in rows]}
-        ).cast(SCHEMA_CLUSTERS)
+        return arrow_table.cast(SCHEMA_CLUSTERS)
 
     def dump(self) -> MatchboxSnapshot:  # noqa: D102
         with self._session() as session:
@@ -599,9 +591,14 @@ class MatchboxLocalDuckDBCacheMixin:
                 raise MatchboxDataNotFound(table="raw_data", data=[path.name])
 
             physical_name = _raw_data_table_name(row.source_step_id)
+            raw_conn = session.connection().connection.driver_connection
             if keys is None:
-                return _read_all(session, physical_name)
-            return _read_filtered_by_keys(session, physical_name, keys)
+                return raw_conn.sql(f'SELECT * FROM "{physical_name}"').to_arrow_table()
+            raw_conn.register("key_filter", pa.table({"key": keys}))
+            return raw_conn.sql(
+                f'SELECT t.* FROM "{physical_name}" t '
+                'SEMI JOIN "key_filter" f ON t.key = f.key'
+            ).to_arrow_table()
 
     def cache_query(  # noqa: D102
         self, key: str, table: ArrowTable, depends_on: list[StepPath]
@@ -647,7 +644,9 @@ class MatchboxLocalDuckDBCacheMixin:
             ).scalar_one_or_none()
             if row is None:
                 return None
-            return _read_all(session, _query_cache_table_name(row.cache_id))
+            physical_name = _query_cache_table_name(row.cache_id)
+            raw_conn = session.connection().connection.driver_connection
+            return raw_conn.sql(f'SELECT * FROM "{physical_name}"').to_arrow_table()
 
     def drop_step_data(self, path: StepPath) -> None:  # noqa: D102
         with self._session() as session:
@@ -657,6 +656,8 @@ class MatchboxLocalDuckDBCacheMixin:
 
     def _cascade_invalidate(self, session: Session, step: "orm.Steps") -> None:
         """Drop a step's data and its descendants', and their query cache.
+
+        Responsibility for committing lies with the caller.
 
         Deletes are unconditional and type-agnostic: harmless no-ops for
         tables a step doesn't apply to. RawData and Clusters/Contains are

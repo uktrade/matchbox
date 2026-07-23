@@ -26,8 +26,8 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import MatchboxServerFileError
 from matchbox.common.logging import configure_celery_logging, log_mem_usage, logger
 from matchbox.server.base import (
-    MatchboxBackends,
     MatchboxDBAdapter,
+    MatchboxServerBackends,
     MatchboxServerSettings,
     get_backend_settings,
     settings_to_backend,
@@ -274,7 +274,7 @@ def process_upload_celery(
 
     # If using Postgres, we must reset the global database connections
     # to avoid using inherited C-pointers from the parent process (ADBC).
-    if CELERY_SETTINGS.backend_type == MatchboxBackends.POSTGRES:
+    if CELERY_SETTINGS.backend_type == MatchboxServerBackends.POSTGRES:
         from matchbox.server.postgresql.db import MBDB  # noqa: PLC0415
 
         MBDB._disconnect_adbc()
@@ -314,7 +314,7 @@ def process_upload_celery(
         log_mem_usage()
 
         # Cleanup connections
-        if CELERY_SETTINGS.backend_type == MatchboxBackends.POSTGRES:
+        if CELERY_SETTINGS.backend_type == MatchboxServerBackends.POSTGRES:
             from matchbox.server.postgresql.db import MBDB  # noqa: PLC0415
 
             MBDB._disconnect()

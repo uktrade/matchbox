@@ -26,8 +26,8 @@ from matchbox.common.logging import logger
 from matchbox.server.base import PERMISSION_GRANTS
 from matchbox.server.postgresql.db import (
     MBDB,
-    MatchboxBackends,
     MatchboxPostgresSettings,
+    MatchboxServerBackends,
 )
 from matchbox.server.postgresql.orm import (
     Clusters,
@@ -365,7 +365,7 @@ class MatchboxPostgresAdminMixin:
             )
 
     def restore(self, snapshot: MatchboxSnapshot) -> None:  # noqa: D102
-        if snapshot.backend_type != MatchboxBackends.POSTGRES:
+        if snapshot.backend_type != MatchboxServerBackends.POSTGRES:
             raise TypeError(
                 f"Cannot restore {snapshot.backend_type} snapshot to PostgreSQL backend"
             )

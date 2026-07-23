@@ -1,10 +1,4 @@
-"""Resolver cluster canonicalisation, shared across relational backends.
-
-Expanding a resolver's incoming (parent_id, child_id) assignments to their
-leaf-level cluster IDs, and deriving a single composite hash per parent
-cluster from its sorted leaf hashes, so identical parent clusters dedupe to
-one row regardless of which backend computed them.
-"""
+"""Resolver cluster canonicalisation, shared across relational backends."""
 
 from collections.abc import Iterable
 
@@ -45,8 +39,7 @@ def build_leaf_hash_groups_query(expanded_leaves: Subquery) -> Select:
     """Build a query grouping leaf hashes per parent cluster.
 
     Uses an inner join to the clusters table, so unknown leaf IDs are
-    silently dropped here. Callers relying on validation should catch this
-    downstream, for example as FK violations when inserting into contains.
+    silently dropped.
     """
     return (
         select(

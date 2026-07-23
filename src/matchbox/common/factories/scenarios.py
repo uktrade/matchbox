@@ -25,6 +25,7 @@ import pyarrow as pa
 from polars.testing import assert_frame_equal
 from sqlalchemy import Engine
 
+from matchbox.client.base import MatchboxLocalDBAdapter
 from matchbox.client.queries import Query
 from matchbox.common.adapters.protocol import (
     MatchboxClusterStoreAdapter,
@@ -73,7 +74,7 @@ def register_scenario(name: str) -> Callable[[ScenarioBuilder], ScenarioBuilder]
 
 
 def _generate_cache_key(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     scenario_type: str,
     warehouse: Engine,
     n_entities: int = 10,
@@ -145,7 +146,10 @@ def create_bare_scenario(
 
     Scope: EITHER, since it touches nothing on backend.
     """
-    return TestkitDAG()
+    dag_testkit = TestkitDAG()
+    if isinstance(backend, MatchboxLocalDBAdapter):
+        backend.bind(dag_testkit.dag)
+    return dag_testkit
 
 
 @register_scenario("admin")
@@ -1254,7 +1258,7 @@ def create_mega_scenario(
 
 @contextmanager
 def setup_scenario(
-    backend: MatchboxDBAdapter,
+    backend: MatchboxClusterStoreAdapter,
     scenario_type: Literal[
         "bare",
         "admin",
@@ -1293,9 +1297,11 @@ def setup_scenario(
         # our new warehouse object
         dag_testkit = dag_testkit.model_copy(deep=True)
 
-        # Restore backend and write sources to warehouse
+        # Restore backend, write sources to warehouse, rebind if local
         backend.restore(snapshot=snapshot)
         _testkitdag_to_location(warehouse, dag_testkit)
+        if isinstance(backend, MatchboxLocalDBAdapter):
+            backend.bind(dag_testkit.dag)
     else:
         # Create new TestkitDAG with proper backend integration
         scenario_builder = SCENARIO_REGISTRY[scenario_type]

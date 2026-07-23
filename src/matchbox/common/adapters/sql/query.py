@@ -11,11 +11,12 @@ sources. Priority is encoded by list order, highest first.
 
 from typing import Literal
 
-from sqlalchemy import and_, func, join, select
+from sqlalchemy import Row, and_, func, join, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import CTE, Select, Subquery
 
 from matchbox.common.adapters.sql import tables
+from matchbox.common.dtos import Match, SourceStepPath
 
 
 def build_unified_query(
@@ -197,3 +198,36 @@ def resolver_membership_subquery(
 
     # UNION deduplicates in case a root cluster also appears as a leaf
     return roots_query.union(leaves_query).subquery(alias)
+
+
+def assemble_matches(
+    matched_rows: list[Row],
+    source: SourceStepPath,
+    source_config_id: int,
+    targets: list[SourceStepPath],
+    target_config_ids: list[int],
+) -> list[Match]:
+    """Assemble Match DTOs from (cluster_id, source_config_id, key) rows.
+
+    Groups keys by source_config_id and builds one Match per target,
+    defaulting to an empty set when no keys were found for that target.
+    """
+    cluster: int | None = None
+    matches_by_source_id: dict[int, set[str]] = {}
+    for cluster_id, source_config_id_result, key_in_source in matched_rows:
+        if cluster is None:
+            cluster = cluster_id
+        matches_by_source_id.setdefault(source_config_id_result, set()).add(
+            key_in_source
+        )
+
+    return [
+        Match(
+            cluster=cluster,
+            source=source,
+            source_id=matches_by_source_id.get(source_config_id, set()),
+            target=target,
+            target_id=matches_by_source_id.get(target_config_id, set()),
+        )
+        for target, target_config_id in zip(targets, target_config_ids, strict=False)
+    ]

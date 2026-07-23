@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.type_api import TypeEngine
 
-from matchbox.common.adapters.protocol import MatchboxBackends, MatchboxSnapshot
+from matchbox.common.adapters.protocol import MatchboxServerBackends, MatchboxSnapshot
 from matchbox.common.datatypes import require
 from matchbox.common.dtos import (
     BackendResourceType,
@@ -64,7 +64,7 @@ def dump() -> MatchboxSnapshot:
 
             data[table.name] = table_data
 
-    return MatchboxSnapshot(backend_type=MatchboxBackends.POSTGRES, data=data)
+    return MatchboxSnapshot(backend_type=MatchboxServerBackends.POSTGRES, data=data)
 
 
 def restore(snapshot: MatchboxSnapshot, batch_size: int) -> None:

@@ -1,7 +1,7 @@
 """Utilities for inserting data into the PostgreSQL backend."""
 
 import pyarrow as pa
-from sqlalchemy import exists, func, join, literal, select
+from sqlalchemy import BigInteger, func, join, literal, select
 from sqlalchemy.dialects.postgresql import (
     ARRAY,
     BIGINT,
@@ -13,6 +13,13 @@ from sqlalchemy.dialects.postgresql import (
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import TableClause
 
+from matchbox.common.adapters.sql.insert import (
+    select_cluster_map,
+    select_contains_pairs,
+    select_key_expansion,
+    select_new_cluster_hashes,
+    select_resolver_membership,
+)
 from matchbox.common.adapters.sql.resolver import (
     build_expanded_leaves_subquery,
     build_leaf_hash_groups_query,
@@ -99,17 +106,9 @@ def insert_hashes(path: SourceStepPath, data_hashes: pa.Table, batch_size: int) 
     ):
         try:
             # Add clusters
-            new_hashes = (
-                select(incoming.c.hash)
-                .distinct()
-                .where(
-                    ~exists(select(1).where(Clusters.cluster_hash == incoming.c.hash))
-                )
-            )
-
             stmt_insert_clusters = (
                 insert(Clusters)
-                .from_select(["cluster_hash"], new_hashes)
+                .from_select(["cluster_hash"], select_new_cluster_hashes(incoming))
                 .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
                 .returning(Clusters.cluster_id)
             )
@@ -127,19 +126,11 @@ def insert_hashes(path: SourceStepPath, data_hashes: pa.Table, batch_size: int) 
             session.flush()
 
             # Add source keys
-            exploded = select(
-                Clusters.cluster_id,
-                literal(source_config_id, BIGINT).label("source_config_id"),
-                func.unnest(incoming.c["keys"]).label("key"),
-            ).select_from(
-                incoming.join(Clusters, Clusters.cluster_hash == incoming.c.hash)
-            )
-
             stmt_insert_keys = (
                 insert(ClusterSourceKey)
                 .from_select(
                     ["cluster_id", "source_config_id", "key"],
-                    exploded,
+                    select_key_expansion(incoming, source_config_id),
                 )
                 .returning(ClusterSourceKey.key_id)
             )
@@ -215,17 +206,16 @@ def insert_model_edges(
         ) as incoming_edges,
     ):
         try:
-            edges_select = select(
-                literal(step.step_id, BIGINT).label("step_id"),
-                incoming_edges.c.left_id,
-                incoming_edges.c.right_id,
-                incoming_edges.c.score,
-            )
             stmt_insert_edges = (
                 insert(ModelEdges)
                 .from_select(
                     ["step_id", "left_id", "right_id", "score"],
-                    edges_select,
+                    select(
+                        literal(step.step_id, BigInteger).label("step_id"),
+                        incoming_edges.c.left_id,
+                        incoming_edges.c.right_id,
+                        incoming_edges.c.score,
+                    ),
                 )
                 .returning(ModelEdges.result_id)
             )
@@ -382,15 +372,8 @@ def insert_clusters(
                     insert(Clusters)
                     .from_select(
                         ["cluster_hash"],
-                        select(incoming_hashes.c.cluster_hash)
-                        .distinct()
-                        .where(
-                            ~exists(
-                                select(1).where(
-                                    Clusters.cluster_hash
-                                    == incoming_hashes.c.cluster_hash
-                                )
-                            )
+                        select_new_cluster_hashes(
+                            incoming_hashes, hash_col="cluster_hash"
                         ),
                     )
                     .on_conflict_do_nothing(index_elements=[Clusters.cluster_hash])
@@ -399,19 +382,7 @@ def insert_clusters(
 
                 # Map each parent_id to its canonical Clusters.cluster_id
                 # by joining hashes back to the now-populated Clusters table
-                cluster_map = (
-                    select(
-                        incoming_hashes.c.parent_id,
-                        Clusters.cluster_id,
-                    )
-                    .select_from(
-                        incoming_hashes.join(
-                            Clusters,
-                            Clusters.cluster_hash == incoming_hashes.c.cluster_hash,
-                        )
-                    )
-                    .subquery("cluster_map")
-                )
+                cluster_map = select_cluster_map(incoming_hashes)
 
                 # Contains
                 # Record which leaves belong to each new resolver cluster
@@ -419,17 +390,7 @@ def insert_clusters(
                     insert(Contains)
                     .from_select(
                         ["root", "leaf"],
-                        select(
-                            cluster_map.c.cluster_id,
-                            expanded_leaves.c.leaf_id,
-                        )
-                        .select_from(
-                            expanded_leaves.join(
-                                cluster_map,
-                                expanded_leaves.c.parent_id == cluster_map.c.parent_id,
-                            )
-                        )
-                        .distinct(),
+                        select_contains_pairs(expanded_leaves, cluster_map),
                     )
                     .on_conflict_do_nothing(
                         index_elements=[Contains.root, Contains.leaf]
@@ -442,10 +403,7 @@ def insert_clusters(
                     insert(ResolverClusters)
                     .from_select(
                         ["step_id", "cluster_id"],
-                        select(
-                            literal(step_id, BIGINT).label("step_id"),
-                            cluster_map.c.cluster_id,
-                        ).distinct(),
+                        select_resolver_membership(step_id, cluster_map),
                     )
                     .on_conflict_do_nothing(
                         index_elements=[

@@ -24,7 +24,8 @@ from matchbox.common.dtos import (
     StepType,
 )
 from matchbox.common.hash import HashMethod, hash_rows
-from matchbox.common.logging import logger, profile_time
+from matchbox.common.logging import logger
+from matchbox.common.stats import DAGStats
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -280,7 +281,7 @@ class Source(StepABC):
         """Peek at the top n entries in a source."""
         return next(self.fetch(batch_size=n, return_type=return_type))
 
-    @profile_time(attr="name")
+    @DAGStats.time("hash")
     def run(self, batch_size: int | None = None) -> pl.DataFrame:
         """Hash a dataset from its warehouse, ready to be inserted, and cache hashes.
 

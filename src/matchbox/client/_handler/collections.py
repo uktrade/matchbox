@@ -32,7 +32,7 @@ from matchbox.common.dtos import (
 from matchbox.common.exceptions import (
     MatchboxServerFileError,
 )
-from matchbox.common.logging import logger, profile_time
+from matchbox.common.logging import logger
 
 # Collection management
 
@@ -241,7 +241,6 @@ def update_step(
     return ResourceOperationStatus.model_validate(res.json())
 
 
-@profile_time(kwarg="path")
 @http_retry
 def get_step(path: StepPath) -> Step | None:
     """Get a step from Matchbox."""
@@ -254,7 +253,6 @@ def get_step(path: StepPath) -> Step | None:
     return Step.model_validate(res.json())
 
 
-@profile_time(kwarg="path")
 @http_retry
 def set_data(path: StepPath, data: pl.DataFrame | Table) -> str:
     """Upload any step data to server."""
@@ -293,7 +291,6 @@ def set_data(path: StepPath, data: pl.DataFrame | Table) -> str:
     return upload_id
 
 
-@profile_time(kwarg="path")
 @http_retry
 def get_data(path: ModelStepPath | ResolverStepPath) -> Table:
     """Download step data from Matchbox."""

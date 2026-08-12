@@ -23,7 +23,8 @@ from matchbox.common.dtos import (
 )
 from matchbox.common.exceptions import MatchboxStepTypeError
 from matchbox.common.hash import hash_clusters
-from matchbox.common.logging import logger, profile_time
+from matchbox.common.logging import logger
+from matchbox.common.stats import DAGStats
 
 if TYPE_CHECKING:
     from matchbox.client.dags import DAG
@@ -159,14 +160,13 @@ class Resolver(StepABC):
             name=self.name,
         )
 
-    @profile_time(attr="name")
+    @DAGStats.time("compute")
     def compute_clusters(
         self, model_edges: Mapping[StepName, pl.DataFrame]
     ) -> pl.DataFrame:
         """Delegate cluster computation to the configured resolver instance."""
         return self.resolver_instance.compute_clusters(model_edges=model_edges)
 
-    @profile_time(attr="name")
     def run(self) -> pl.DataFrame:
         """Run the resolver and materialise cluster assignments."""
         model_edges: dict[StepName, pl.DataFrame] = {}

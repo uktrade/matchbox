@@ -1,6 +1,7 @@
 """Objects to define a DAG which indexes, deduplicates and links data."""
 
 import tempfile
+import time
 from collections import deque
 from enum import StrEnum
 from pathlib import Path
@@ -37,7 +38,8 @@ from matchbox.common.exceptions import (
     MatchboxCollectionNotFoundError,
     MatchboxStepNotFoundError,
 )
-from matchbox.common.logging import log_mem_usage, logger, profile_time
+from matchbox.common.logging import logger
+from matchbox.common.stats import DAGStats
 
 
 class DAGNodeExecutionStatus(StrEnum):
@@ -72,6 +74,7 @@ class DAG:
         self._run: RunID | None = None
         self.nodes: dict[StepName, Source | Model | Resolver] = {}
         self.graph: dict[StepName, list[StepName]] = {}
+        self.stats = DAGStats()
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self._cache_dir = tempfile.TemporaryDirectory(dir=str(CACHE_DIR))
@@ -624,6 +627,9 @@ class DAG:
         if batch_size is None:
             batch_size = settings.batch_size
 
+        self.stats.reset()
+        wall_start = time.perf_counter()
+
         sequence: list[StepName] = self.sequence
 
         # Identify skipped nodes
@@ -652,6 +658,8 @@ class DAG:
         status = {
             step_name: DAGNodeExecutionStatus.SKIPPED for step_name in skipped_nodes
         }
+        for step_name in skipped_nodes:
+            self.stats.ensure_step(step_name)
 
         for step_name in sequence:
             node = self.nodes[step_name]
@@ -666,7 +674,7 @@ class DAG:
                     node.run()
                 node.sync()
                 if profile:
-                    log_mem_usage()
+                    self.stats.record_mem(step_name)
             except Exception as e:
                 logger.error(f"❌ {node.name} failed: {e}")
                 raise e
@@ -676,8 +684,10 @@ class DAG:
                 node.clear_data()
                 logger.info("Cleared node data")
                 if profile:
-                    log_mem_usage()
+                    self.stats.record_mem(step_name)
         logger.info("\n" + self.draw(status=status))
+
+        self.stats.dag_run_seconds = time.perf_counter() - wall_start
 
     def set_default(self) -> None:
         """Set the current run as the default for the collection.
@@ -740,7 +750,6 @@ class DAG:
         return {from_source: list(matches[0].source_id), **to_sources_results}
 
     @validate_call
-    @profile_time(kwarg="node")
     def get_matches(
         self,
         resolver: ResolverStepName | None = None,
@@ -758,6 +767,8 @@ class DAG:
         resolver = self.get_resolver(resolver) if resolver else self.default_resolver
         if not isinstance(resolver, Resolver):
             raise ValueError("get_matches can only query from resolver nodes")
+
+        self.stats.reset()
 
         available_sources = {
             node_name: self.get_source(node_name) for node_name in resolver.sources
@@ -784,14 +795,15 @@ class DAG:
         query_results: list[pl.DataFrame] = []
         for source_name in filtered_source_names:
             resolved_sources.append(available_sources[source_name])
-            query_results.append(
-                pl.from_arrow(
-                    _handler.query(
-                        source=available_sources[source_name].path,
-                        resolver=resolver.path,
-                        return_leaf_id=True,
+            with DAGStats.time("query", name=source_name, stats=self.stats):
+                query_results.append(
+                    pl.from_arrow(
+                        _handler.query(
+                            source=available_sources[source_name].path,
+                            resolver=resolver.path,
+                            return_leaf_id=True,
+                        )
                     )
                 )
-            )
 
         return ResolverMatches(sources=resolved_sources, query_results=query_results)

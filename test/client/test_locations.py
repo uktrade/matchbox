@@ -303,6 +303,10 @@ def test_relational_db_execute(
     unfiltered_results = pl.concat(location.execute(sql, batch_size, keys=("key", [])))
     assert_frame_equal(unfiltered_results, combined_df)
 
+    # Try using limit to restrict results
+    limited_results = pl.concat(location.execute(sql, batch_size, limit=3))
+    assert len(limited_results) == 3
+
 
 @pytest.mark.parametrize(
     "warehouse",

@@ -208,6 +208,7 @@ class Source(StepABC):
         batch_size: int | None = None,
         return_type: Literal[QueryReturnType.POLARS] = ...,
         keys: list[str] | None = None,
+        limit: int | None = None,
     ) -> Generator[PolarsDataFrame, None, None]: ...
 
     @overload
@@ -217,6 +218,7 @@ class Source(StepABC):
         batch_size: int | None = None,
         return_type: Literal[QueryReturnType.PANDAS] = ...,
         keys: list[str] | None = None,
+        limit: int | None = None,
     ) -> Generator[PandasDataFrame, None, None]: ...
 
     @overload
@@ -226,6 +228,7 @@ class Source(StepABC):
         batch_size: int | None = None,
         return_type: Literal[QueryReturnType.ARROW] = ...,
         keys: list[str] | None = None,
+        limit: int | None = None,
     ) -> Generator[ArrowTable, None, None]: ...
 
     def fetch(
@@ -234,6 +237,7 @@ class Source(StepABC):
         batch_size: int | None = None,
         return_type: QueryReturnType = QueryReturnType.POLARS,
         keys: list[str] | None = None,
+        limit: int | None = None,
     ) -> Generator[QueryReturnClass, None, None]:
         """Apply the extract/transform logic to the source and return batches lazily.
 
@@ -243,6 +247,7 @@ class Source(StepABC):
             batch_size: Indicate the size of each batch when fetching data in batches.
             return_type: The type of data to return. Defaults to "polars".
             keys: List of keys to select a subset of all source entries.
+            limit: Maximum number of rows to return. If None, returns all rows.
 
         Returns:
             The requested data in the specified format, as an iterator of tables.
@@ -264,6 +269,7 @@ class Source(StepABC):
                 batch_size=batch_size,
                 return_type=return_type,
                 keys=(self.config.key_field.name, keys),
+                limit=limit,
             )
         else:
             yield from self.location.execute(
@@ -272,13 +278,30 @@ class Source(StepABC):
                 rename=_rename,
                 batch_size=batch_size,
                 return_type=return_type,
+                limit=limit,
             )
 
     def sample(
         self, n: int = 100, return_type: QueryReturnType = QueryReturnType.POLARS
-    ) -> None:
-        """Peek at the top n entries in a source."""
-        return next(self.fetch(batch_size=n, return_type=return_type))
+    ) -> QueryReturnClass:
+        """Peek at the top n entries in a source.
+
+        Args:
+            n: The number of rows to return. Must be a positive integer.
+            return_type: The type of data to return. Defaults to "polars".
+
+        Returns:
+            A dataframe containing the first n rows of the source.
+
+        Raises:
+            TypeError: If n is not an integer.
+            ValueError: If n is not a positive integer.
+        """
+        if not isinstance(n, int):
+            raise TypeError(f"n must be an integer, got {type(n).__name__}")
+        if n <= 0:
+            raise ValueError(f"n must be a positive integer, got {n}")
+        return next(self.fetch(limit=n, return_type=return_type))
 
     @profile_time(attr="name")
     def run(self, batch_size: int | None = None) -> pl.DataFrame:
